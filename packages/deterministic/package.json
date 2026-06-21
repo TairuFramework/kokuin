@@ -1,0 +1,45 @@
+{
+  "name": "@kokuin/deterministic",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Deterministic HD keystore",
+  "keywords": [
+    "cryptography",
+    "key-management",
+    "bip39",
+    "slip-0010",
+    "hd-wallet"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TairuFramework/kokuin",
+    "directory": "packages/deterministic"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "files": [
+    "lib/*"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build:clean": "del lib",
+    "build:js": "swc src -d ./lib --config-file ../../node_modules/@kigu/dev/swc.json --strip-leading-paths",
+    "build:types": "tsc --emitDeclarationOnly --skipLibCheck",
+    "build": "pnpm run build:clean && pnpm run build:js && pnpm run build:types",
+    "test:types": "tsc --noEmit --skipLibCheck -p tsconfig.test.json",
+    "test:unit": "vitest run",
+    "test": "pnpm run test:types && pnpm run test:unit",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@sozai/log": "^0.1.0",
+    "@sozai/otel": "^0.1.0",
+    "@kokuin/token": "workspace:^",
+    "@scure/bip39": "catalog:",
+    "micro-key-producer": "catalog:"
+  }
+}

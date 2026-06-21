@@ -1,0 +1,9 @@
+{
+  "extends": "@kigu/dev/tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "rootDir": "./src",
+    "outDir": "./lib"
+  },
+  "include": ["./src/**/*"]
+}

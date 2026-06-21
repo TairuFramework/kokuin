@@ -1,0 +1,9 @@
+{
+  "extends": "@kigu/dev/tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@kokuin/*": ["./packages/*"]
+    },
+    "noEmit": true
+  }
+}
