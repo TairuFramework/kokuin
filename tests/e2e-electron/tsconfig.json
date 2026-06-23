@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2025",
+    "module": "NodeNext",
+    "allowJs": true,
+    "skipLibCheck": true,
+    "noImplicitAny": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "moduleResolution": "nodenext",
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "strict": true
+  }
+}
