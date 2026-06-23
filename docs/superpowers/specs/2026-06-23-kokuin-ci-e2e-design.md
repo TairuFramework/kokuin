@@ -49,13 +49,17 @@ kigu reusable workflow. kokuin (structurally identical to sozai) matches sozai.
 ## Part 2 — Three e2e apps under `tests/`, reduced to kokuin scope
 
 Each app exercises exactly one keystore package + `@kokuin/token`
-(sign a token in the keystore, verify it). Maps:
+(sign a token in the keystore, verify it). Scope rule: strip code/deps whose
+purpose is to test *another* scope (`@enkaku` IPC, `@kumiai` mls). Keep `@sozai`
+deps that the `@kokuin` stack genuinely needs at runtime (e.g.
+`@sozai/runtime-expo`'s crypto polyfill) — kokuin builds on sozai; we just don't
+add explicit coverage *for* sozai. Maps:
 
 | app                | keystore under test                  | stripped (other scope)                                            |
 | ------------------ | ------------------------------------ | ----------------------------------------------------------------- |
 | `tests/e2e-web`      | `@kokuin/browser` + `@kokuin/token`  | nothing — already kokuin-pure                                     |
 | `tests/e2e-electron` | `@kokuin/electron` + `@kokuin/token` | all `@enkaku/*` (client/server/transport/protocol/electron IPC)   |
-| `tests/e2e-expo`     | `@kokuin/expo` + `@kokuin/token`     | `@kumiai/mls`, `GroupEncryption` component, `@sozai/runtime-expo`  |
+| `tests/e2e-expo`     | `@kokuin/expo` + `@kokuin/token`     | `@kumiai/mls`, `GroupEncryption` component                         |
 
 Exports confirmed present in current kokuin packages: `provideSigningIdentity`
 (browser), `provideFullIdentityAsync` (electron), `provideFullIdentity` (expo),
@@ -102,9 +106,13 @@ Port from `enkaku/tests/_ported/e2e-expo`, keep only the `SignVerify` path:
 - Keep `components/SignVerify.tsx` (`provideFullIdentity('test')` → sign →
   verify with `@kokuin/token`). **Delete** `components/GroupEncryption.tsx`.
 - `App.tsx`: render only `<SignVerify/>` (+ `StatusBar`).
-- `package.json`: drop `@kumiai/mls` and `@sozai/runtime-expo`; keep
-  `@kokuin/expo`, `@kokuin/token`, `expo`, `expo-status-bar`, `react`,
-  `react-native`.
+- `index.ts`: **keep** `polyfillCrypto()` from `@sozai/runtime-expo` — it
+  installs `globalThis.crypto.getRandomValues` (via `expo-crypto`), which the
+  `@noble/*` primitives inside `@kokuin/expo`/`@kokuin/token` require under
+  Hermes. This is mls-independent; without it keystore signing throws.
+- `package.json`: drop only `@kumiai/mls`; **keep** `@sozai/runtime-expo`
+  (runtime polyfill, see above) plus `@kokuin/expo`, `@kokuin/token`, `expo`,
+  `expo-status-bar`, `react`, `react-native`.
 - `.maestro/`: keep `sign-verify.yaml`; delete `group-e2ee.yaml`. Change
   `appId: dev.enkaku.e2e` → a kokuin app id (e.g. `dev.kokuin.e2e`); update
   `app.json` slug/scheme to match.
