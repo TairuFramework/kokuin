@@ -31,5 +31,6 @@ export default defineConfig({
     alias: {
       'react-native': 'react-native-web',
     },
+    dedupe: ['react', 'react-dom', 'react-native-web'],
   },
 })

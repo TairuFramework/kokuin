@@ -16,6 +16,32 @@ import { getPublicKey } from './utils.js'
 const tracer = createTracer('keystore.browser')
 const logger = getLogger(['kokuin', 'browser'])
 
+// P-256 curve order n and half-order for low-S normalization.
+// Web Crypto API produces raw r||s signatures that may have s > n/2 (high-S).
+// The @kokuin/token verifier rejects high-S signatures for malleability safety,
+// so we normalize here to ensure cross-stack compatibility.
+const P256_N = BigInt('0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551')
+const P256_HALF_N = P256_N >> 1n
+
+function normalizeSignatureToLowS(sig: Uint8Array): Uint8Array {
+  // sig is IEEE P1363 compact format: r (32 bytes) || s (32 bytes)
+  let s = 0n
+  for (let i = 32; i < 64; i++) {
+    s = (s << 8n) | BigInt(sig[i])
+  }
+  if (s <= P256_HALF_N) return sig
+  // Compute n - s and re-encode
+  const ns = P256_N - s
+  const out = new Uint8Array(64)
+  out.set(sig.slice(0, 32))
+  let tmp = ns
+  for (let i = 63; i >= 32; i--) {
+    out[i] = Number(tmp & 0xffn)
+    tmp >>= 8n
+  }
+  return out
+}
+
 async function createBrowserSigningIdentity(keyPair: CryptoKeyPair): Promise<SigningIdentity> {
   const publicKey = await getPublicKey(keyPair)
   const id = getDID(CODECS.ES256, publicKey)
@@ -43,10 +69,13 @@ async function createBrowserSigningIdentity(keyPair: CryptoKeyPair): Promise<Sig
       messageBytes.buffer as ArrayBuffer,
     )
 
+    // Normalize to low-S: @kokuin/token verifier rejects high-S signatures
+    const normalizedSig = normalizeSignatureToLowS(new Uint8Array(signatureBuffer))
+
     return {
       header: fullHeader,
       payload: fullPayload,
-      signature: toB64U(new Uint8Array(signatureBuffer)),
+      signature: toB64U(normalizedSig),
       data,
     }
   }
