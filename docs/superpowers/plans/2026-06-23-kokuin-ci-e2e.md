@@ -17,7 +17,7 @@
 - **e2e package scripts** are named `test` / `build` / `start` — **never** `test:unit` / `test:types` / `build:js` — so turbo's base CI tasks skip them.
 - **Workflow triggers:** base build-test and every e2e workflow trigger on `pull_request` + `push: branches: [main]` only.
 - **Node versions in CI:** `[24, 26]` for build-test; `24` for e2e jobs.
-- **Catalog versions (exact):** `react` 19.2.3, `react-dom` 19.2.3, `react-native-web` 0.21.2, `@playwright/test` 1.61.0, `vite` ^8.0.16, `@vitejs/plugin-react` ^6.0.2, `@electron-forge/cli` ^7.11.2, `@electron-forge/plugin-vite` ^7.11.2, `@types/react` ^19.2.17, `@types/react-dom` ^19.2.3. Expo SDK 56 deps (`expo`, `expo-status-bar`, `react-native`) resolved via `expo install --check`.
+- **Catalog versions (exact):** `react` 19.2.3, `react-dom` 19.2.3, `react-native-web` 0.21.2, `@playwright/test` 1.61.0, `vite` ^8.0.16, `@vitejs/plugin-react` ^6.0.2, `@electron-forge/cli` ^7.11.2, `@electron-forge/plugin-vite` ^7.11.2, `@types/react` ^19.2.17, `@types/react-dom` ^19.2.3. Expo SDK 56 deps (`expo`, `expo-status-bar`, `react-native`, expo's `react`) are explicit versions in the expo app (not catalog), pinned via `expo install --fix`.
 - **Validate every workflow** with `actionlint <file>` (installed at `/opt/homebrew/bin/actionlint`).
 - **Commit after every task.** Branch: work on current `chore/further-setup` (already off main).
 
@@ -108,14 +108,13 @@ In `pnpm-workspace.yaml`, extend the `catalog:` block with (keep existing entrie
   '@types/react': ^19.2.17
   '@types/react-dom': ^19.2.3
   '@vitejs/plugin-react': ^6.0.2
-  expo-status-bar: ~3.0.0
   react: 19.2.3
   react-dom: 19.2.3
   react-native-web: 0.21.2
   vite: ^8.0.16
 ```
 
-Leave `expo`, `expo-status-bar`, and `react-native` exact pins to be confirmed in Task 9 via `expo install --check` (placeholder `expo-status-bar: ~3.0.0` above will be corrected there alongside `expo`/`react-native`).
+Do **not** catalog the Expo-SDK-managed deps (`expo`, `expo-status-bar`, `react-native`, and expo's own `react`): the `catalog:` protocol is opaque to `expo install --fix`, which manages explicit version strings in `package.json`. Those stay as explicit versions in the expo app (Task 9).
 
 - [ ] **Step 3: Verify the workspace still installs cleanly**
 
@@ -968,10 +967,10 @@ android/
     "@kokuin/expo": "workspace:^",
     "@kokuin/token": "workspace:^",
     "@sozai/runtime-expo": "^0.1.0",
-    "expo": "catalog:",
-    "expo-status-bar": "catalog:",
-    "react": "catalog:",
-    "react-native": "catalog:"
+    "expo": "~56.0.0",
+    "expo-status-bar": "~3.0.0",
+    "react": "19.2.3",
+    "react-native": "0.85.4"
   },
   "devDependencies": {
     "@types/react": "catalog:",
@@ -980,13 +979,16 @@ android/
 }
 ```
 
-- [ ] **Step 7: Pin Expo SDK 56 catalog versions and install**
+The `expo`/`expo-status-bar`/`react`/`react-native` versions above are provisional SDK-56 starting points; Step 7 pins them exactly via `expo install --fix`.
+
+- [ ] **Step 7: Pin exact Expo SDK 56 versions via expo tooling**
 
 ```bash
 pnpm install
-cd tests/e2e-expo && pnpm exec expo install --check; cd -
+cd tests/e2e-expo && pnpm exec expo install --fix; cd -
+pnpm install
 ```
-Expected: `expo install --check` reports the SDK-56-correct versions for `expo`, `expo-status-bar`, `react-native`, `react`. Update the three `catalog:` entries in `pnpm-workspace.yaml` (`expo`, `expo-status-bar`, `react-native` — and reconcile `react` if it flags a mismatch) to those exact versions, then re-run `pnpm install` until `expo install --check` is clean.
+Expected: `expo install --fix` rewrites the four expo-managed versions in `tests/e2e-expo/package.json` to the SDK-56-correct values, then the second `pnpm install` relocks. Re-run `pnpm exec expo install --check` (in `tests/e2e-expo`) and confirm it reports no changes needed. If `--fix` flags `@types/react`, change it from `catalog:` to the explicit version it wants.
 
 - [ ] **Step 8: Type-check the app**
 
