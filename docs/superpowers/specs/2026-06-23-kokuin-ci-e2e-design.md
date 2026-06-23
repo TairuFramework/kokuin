@@ -49,11 +49,21 @@ kigu reusable workflow. kokuin (structurally identical to sozai) matches sozai.
 ## Part 2 — Three e2e apps under `tests/`, reduced to kokuin scope
 
 Each app exercises exactly one keystore package + `@kokuin/token`
-(sign a token in the keystore, verify it). Scope rule: strip code/deps whose
-purpose is to test *another* scope (`@enkaku` IPC, `@kumiai` mls). Keep `@sozai`
-deps that the `@kokuin` stack genuinely needs at runtime (e.g.
-`@sozai/runtime-expo`'s crypto polyfill) — kokuin builds on sozai; we just don't
-add explicit coverage *for* sozai. Maps:
+(sign a token in the keystore, verify it).
+
+Scope rule follows the stack layering (kigu `repo-split-design.md`):
+`@sozai ← @kokuin ← @enkaku ← @kumiai`, deps strictly downward, no cycles.
+
+- **`@enkaku` / `@kumiai` deps are forbidden, not just out-of-scope** — they sit
+  *above* `@kokuin` (enkaku already depends on `@kokuin/token`), so importing
+  them from a kokuin test is an upward dep / cycle. Stripping enkaku IPC and
+  kumiai mls is mandatory.
+- **Any `@sozai` dep is allowed** — sozai sits *below* `@kokuin` (downward). Keep
+  the ones the kokuin stack genuinely needs at runtime (e.g.
+  `@sozai/runtime-expo`'s crypto polyfill). We just add no explicit coverage
+  *for* sozai itself.
+
+Maps:
 
 | app                | keystore under test                  | stripped (other scope)                                            |
 | ------------------ | ------------------------------------ | ----------------------------------------------------------------- |
