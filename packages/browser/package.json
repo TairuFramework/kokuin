@@ -35,6 +35,7 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@noble/curves": "catalog:",
     "@sozai/async": "^0.1.0",
     "@sozai/codec": "^0.1.0",
     "@sozai/log": "^0.1.0",
