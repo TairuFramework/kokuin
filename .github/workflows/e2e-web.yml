@@ -3,41 +3,9 @@ on:
   push:
     branches: [main]
   pull_request:
-env:
-  CI: true
-  DO_NOT_TRACK: 1
 jobs:
   test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Setup environment
-        uses: TairuFramework/kigu/setup@main
-        with:
-          node-version: 24
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-
-      - name: Install Playwright browsers
-        run: pnpm --filter e2e-web exec playwright install --with-deps
-
-      - name: Build app
-        working-directory: tests/e2e-web
-        run: pnpm run build
-
-      - name: Run Playwright tests
-        working-directory: tests/e2e-web
-        run: pnpm run test
-
-      - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
-        with:
-          name: playwright-report-web
-          path: tests/e2e-web/playwright-report/
-          retention-days: 30
+    uses: TairuFramework/kigu/.github/workflows/e2e-web.yml@main
+    with:
+      working-directory: tests/e2e-web
+      node-version: '24'
