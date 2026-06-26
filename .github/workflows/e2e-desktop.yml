@@ -32,14 +32,26 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Fetch electron binary
-        # `pnpm rebuild electron` is a no-op here: pnpm-workspace.yaml sets
-        # `allowBuilds.electron: false`, which blocks electron's install script
-        # (the download+extract of dist/). With dist/ empty, electron-forge's
-        # finalize step downloads the binary inline, and that async download gets
-        # abandoned on the CI runner (process exits 0 mid-finalize, no app bundle).
-        # Run the install script directly to extract dist/ before packaging so
-        # finalize is a pure local copy with no network work.
-        run: node node_modules/electron/install.js
+        shell: bash
+        # pnpm-workspace.yaml sets `allowBuilds.electron: false`, which blocks
+        # electron's install script during `pnpm install` (and makes `pnpm rebuild
+        # electron` a no-op), so dist/ must be extracted explicitly here. The
+        # install script's download is fire-and-forget and has been observed to
+        # exit 0 without populating dist/ on the runner; with dist/ empty,
+        # electron-forge silently produces no app bundle. Retry until dist/ is
+        # non-empty and fail loudly otherwise, printing the size as proof.
+        run: |
+          for attempt in 1 2 3; do
+            node node_modules/electron/install.js || true
+            if [ -n "$(ls -A node_modules/electron/dist 2>/dev/null)" ]; then
+              echo "electron dist extracted ($(du -sh node_modules/electron/dist | cut -f1))"
+              exit 0
+            fi
+            echo "attempt $attempt: electron dist empty after install, retrying" >&2
+            rm -rf node_modules/electron/dist node_modules/electron/path.txt
+          done
+          echo "electron dist never extracted" >&2
+          exit 1
 
       - name: Package app
         working-directory: tests/e2e-electron
