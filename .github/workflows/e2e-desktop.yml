@@ -32,16 +32,22 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Fetch electron binary
-        run: pnpm rebuild electron
+        # `pnpm rebuild electron` is a no-op here: pnpm-workspace.yaml sets
+        # `allowBuilds.electron: false`, which blocks electron's install script
+        # (the download+extract of dist/). With dist/ empty, electron-forge's
+        # finalize step downloads the binary inline, and that async download gets
+        # abandoned on the CI runner (process exits 0 mid-finalize, no app bundle).
+        # Run the install script directly to extract dist/ before packaging so
+        # finalize is a pure local copy with no network work.
+        run: node node_modules/electron/install.js
 
       - name: Package app
         working-directory: tests/e2e-electron
         shell: bash
         run: |
-          # @electron/packager 18.4.4 can exit 0 without finishing the finalize step
-          # on some Node 24.x patches (process abandons an unsettled top-level await),
-          # leaving an incomplete out/ that the green step hides. Retry until the
-          # expected app binary actually exists, then fail loudly if it never does.
+          # electron-forge package can exit 0 without producing the app bundle
+          # (see the Fetch step note). dist/ is pre-extracted now, but assert the
+          # binary exists and fail loudly if a run ever silently skips finalize.
           case "$RUNNER_OS" in
             macOS)   bin="out/e2e-electron-darwin-$(node -p process.arch)/e2e-electron.app/Contents/MacOS/e2e-electron" ;;
             Windows) bin="out/e2e-electron-win32-x64/e2e-electron.exe" ;;
