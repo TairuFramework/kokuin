@@ -1,0 +1,20 @@
+{
+  "name": "@kokuin/ledger-tests",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test:types": "tsc --noEmit --skipLibCheck",
+    "test:unit": "vitest run",
+    "test": "pnpm run test:types && pnpm run test:unit",
+    "test:speculos": "./test-speculos.sh"
+  },
+  "devDependencies": {
+    "@kokuin/deterministic": "workspace:^",
+    "@kokuin/ledger-device": "workspace:^",
+    "@kokuin/token": "workspace:^",
+    "@noble/curves": "catalog:",
+    "@scure/bip39": "catalog:"
+  }
+}

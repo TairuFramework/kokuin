@@ -76,8 +76,8 @@ catalogs:
       specifier: ^56.0.4
       version: 56.0.4
     micro-key-producer:
-      specifier: ^0.8.6
-      version: 0.8.6
+      specifier: ^0.9.0
+      version: 0.9.0
     react:
       specifier: 19.2.3
       version: 19.2.3
@@ -154,7 +154,7 @@ importers:
         version: 0.1.0
       micro-key-producer:
         specifier: 'catalog:'
-        version: 0.8.6
+        version: 0.9.0
 
   packages/electron:
     dependencies:
@@ -386,6 +386,24 @@ importers:
       vite:
         specifier: 'catalog:'
         version: 8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  tests/ledger:
+    devDependencies:
+      '@kokuin/deterministic':
+        specifier: workspace:^
+        version: link:../../packages/deterministic
+      '@kokuin/ledger-device':
+        specifier: workspace:^
+        version: link:../../packages/ledger-device
+      '@kokuin/token':
+        specifier: workspace:^
+        version: link:../../packages/token
+      '@noble/curves':
+        specifier: 'catalog:'
+        version: 2.2.0
+      '@scure/bip39':
+        specifier: 'catalog:'
+        version: 2.2.0
 
 packages:
 
@@ -1878,9 +1896,6 @@ packages:
 
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
-
-  '@scure/base@2.0.0':
-    resolution: {integrity: sha512-3E1kpuZginKkek01ovG8krQ0Z44E3DHPjc5S2rjJw9lZn3KSQOs8S7wqikF/AH7iRanHypj85uGyxk0XAyC37w==}
 
   '@scure/base@2.2.0':
     resolution: {integrity: sha512-b8XEupJibegiXV+tDUseI8oLQc8ei3d/4Jkb2RpbHh3MfE054ov3uIz2dhFkB3FI8iwYkEh0gGCApkrYggkPNg==}
@@ -4051,12 +4066,12 @@ packages:
     engines: {node: ^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0}
     hasBin: true
 
-  micro-key-producer@0.8.6:
-    resolution: {integrity: sha512-jlAjz5sZevIwLXHbcE9TmrPRjeNa+3cnXYeVlu97lLuq2yXmrrM46Ei8ZSMELHVMuziaQDne7wkVW8SYyPG94g==}
+  micro-key-producer@0.9.0:
+    resolution: {integrity: sha512-987j9gtkxCxH0KyNzkj9nq7K6JK/f8J1EJV8qBkEJI50CA/zEM7jBl7im36819mAww7oiFgmHsYzIe0m9v9b3Q==}
     hasBin: true
 
-  micro-packed@0.8.0:
-    resolution: {integrity: sha512-AKb8znIvg9sooythbXzyFeChEY0SkW0C6iXECpy/ls0e5BtwXO45J9wD9SLzBztnS4XmF/5kwZknsq+jyynd/A==}
+  micro-packed@0.9.0:
+    resolution: {integrity: sha512-gFdaWTxEXOwtSOcpxulO4AuXVtp3HWIRmB8eq8+3m1Zku0ubgva0UGpi03YhcvsTJasHngG9gTIUK5kHNKdesg==}
     engines: {node: '>= 20.19.0'}
 
   micromatch@4.0.8:
@@ -7756,8 +7771,6 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.1': {}
 
-  '@scure/base@2.0.0': {}
-
   '@scure/base@2.2.0': {}
 
   '@scure/bip39@2.2.0':
@@ -10275,17 +10288,17 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  micro-key-producer@0.8.6:
+  micro-key-producer@0.9.0:
     dependencies:
       '@noble/ciphers': 2.2.0
       '@noble/curves': 2.2.0
       '@noble/hashes': 2.2.0
       '@scure/base': 2.2.0
-      micro-packed: 0.8.0
+      micro-packed: 0.9.0
 
-  micro-packed@0.8.0:
+  micro-packed@0.9.0:
     dependencies:
-      '@scure/base': 2.0.0
+      '@scure/base': 2.2.0
 
   micromatch@4.0.8:
     dependencies:

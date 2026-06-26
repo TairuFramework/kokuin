@@ -18,7 +18,17 @@ services:
     volumes:
       - .:/app
     working_dir: /app
-    command: bash -c "BOLOS_SDK=$$NANOSP_SDK COIN=KOK make clean && BOLOS_SDK=$$NANOSP_SDK COIN=KOK make"
+    # The BOLOS SDK enumerates app sources via `git ls-files`, so the build
+    # needs a git repo. The bind mount only holds apps/ledger (the repo .git is
+    # above the mount), and we don't want to write a nested .git or build/
+    # artifacts back onto the host. So build inside a container-local copy with
+    # a throwaway git repo, then copy just the ELF back to the mounted bin/.
+    command: >
+      bash -c "rm -rf /tmp/build && cp -a /app /tmp/build && cd /tmp/build &&
+      git init -q && git add -A &&
+      BOLOS_SDK=$$NANOSP_SDK COIN=KOK make clean &&
+      BOLOS_SDK=$$NANOSP_SDK COIN=KOK make &&
+      mkdir -p /app/bin && cp /tmp/build/bin/app.elf /app/bin/app.elf"
 
   speculos:
     image: ghcr.io/ledgerhq/speculos
