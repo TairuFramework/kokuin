@@ -43,6 +43,12 @@ catalog:
   'micro-key-producer': ^0.8.6
   'uint8arrays': ^6.1.1
 
+overrides:
+  # extract-zip 2.0.1 (via @electron/packager) pulls yauzl 2.10.0, whose
+  # extraction lets Node exit 0 mid-package on some runtimes (node 24.17, 26).
+  # yauzl 3.x keeps the event loop alive through extraction. See e2e-desktop.
+  yauzl: ^3.3.1
+
 minimumReleaseAgeExclude:
   - '@kigu/*'
   - '@sozai/*'
