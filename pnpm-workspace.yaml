@@ -1,30 +1,54 @@
 packages:
   - packages/*
+  - tests/*
+
+blockExoticSubdeps: false
 
 allowBuilds:
   '@swc/core': true
   esbuild: false
+  electron: false
 
 nodeLinker: hoisted
 
 catalog:
+  '@sozai/async': ^0.1.0
+  '@sozai/codec': ^0.1.0
+  '@sozai/log': ^0.1.0
+  '@sozai/otel': ^0.1.0
+  '@sozai/runtime-expo': ^0.1.0
+  '@sozai/schema': ^0.1.0
   '@napi-rs/keyring': ^1.3.0
   '@noble/ciphers': ^2.1.1
   '@noble/curves': ^2.0.1
   '@noble/hashes': ^2.0.0
   '@scure/base': ^2.2.0
   '@scure/bip39': ^2.2.0
-  'electron': ^42.4.1
+  '@electron-forge/cli': ^7.11.2
+  '@electron-forge/plugin-vite': ^7.11.2
+  '@playwright/test': 1.61.1
+  '@types/node': ^26.0.1
+  '@types/react': ^19.2.17
+  '@types/react-dom': ^19.2.3
+  '@vitejs/plugin-react': ^6.0.3
+  'electron': ^42.5.0
   'electron-store': ^11.0.2
+  react: 19.2.3
+  react-dom: 19.2.3
+  react-native-web: 0.21.2
+  typescript: ^6.0.3
+  vite: ^8.1.0
   'expo-crypto': ^56.0.4
   'expo-secure-store': ^56.0.4
   'micro-key-producer': ^0.8.6
   'uint8arrays': ^6.1.1
 
+overrides:
+  # extract-zip 2.0.1 (via @electron/packager) pulls yauzl 2.10.0, whose
+  # extraction lets Node exit 0 mid-package on some runtimes (node 24.17, 26).
+  # yauzl 3.x keeps the event loop alive through extraction. See e2e-desktop.
+  yauzl: ^3.3.1
+
 minimumReleaseAgeExclude:
-  - '@kigu/dev@0.1.0'
-  - '@sozai/async@0.1.0'
-  - '@sozai/codec@0.1.0'
-  - '@sozai/log@0.1.0'
-  - '@sozai/otel@0.1.0'
-  - '@sozai/schema@0.1.0'
+  - '@kigu/*'
+  - '@sozai/*'

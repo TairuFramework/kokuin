@@ -6,6 +6,7 @@ import {
   type SigningIdentity,
   type SignTokenOptions,
 } from '@kokuin/token'
+import { p256 } from '@noble/curves/nist.js'
 import { b64uFromJSON, fromUTF, toB64U } from '@sozai/codec'
 import { getLogger } from '@sozai/log'
 import { AttributeKeys, createTracer, SpanNames, withSpan } from '@sozai/otel'
@@ -15,6 +16,20 @@ import { getPublicKey } from './utils.js'
 
 const tracer = createTracer('keystore.browser')
 const logger = getLogger(['kokuin', 'browser'])
+
+// P-256 curve order, used to reflect a high-S signature to its low-S form.
+const P256_N = p256.Point.Fn.ORDER
+
+// Web Crypto's subtle.sign does not enforce low-S, so ~half of ECDSA signatures
+// have s > n/2 (high-S). The @kokuin/token verifier runs with `lowS: true` and
+// rejects those for malleability safety, so we normalize here for cross-stack
+// compatibility. `hasHighS()` is the same predicate noble's verifier applies.
+function normalizeSignatureToLowS(sig: Uint8Array): Uint8Array {
+  // sig is IEEE P1363 compact format: r (32 bytes) || s (32 bytes).
+  const parsed = p256.Signature.fromBytes(sig, 'compact')
+  if (!parsed.hasHighS()) return sig
+  return new p256.Signature(parsed.r, P256_N - parsed.s).toBytes('compact')
+}
 
 async function createBrowserSigningIdentity(keyPair: CryptoKeyPair): Promise<SigningIdentity> {
   const publicKey = await getPublicKey(keyPair)
@@ -43,10 +58,13 @@ async function createBrowserSigningIdentity(keyPair: CryptoKeyPair): Promise<Sig
       messageBytes.buffer as ArrayBuffer,
     )
 
+    // Normalize to low-S: @kokuin/token verifier rejects high-S signatures
+    const normalizedSig = normalizeSignatureToLowS(new Uint8Array(signatureBuffer))
+
     return {
       header: fullHeader,
       payload: fullPayload,
-      signature: toB64U(new Uint8Array(signatureBuffer)),
+      signature: toB64U(normalizedSig),
       data,
     }
   }

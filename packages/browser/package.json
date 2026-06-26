@@ -35,10 +35,11 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@sozai/async": "^0.1.0",
-    "@sozai/codec": "^0.1.0",
-    "@sozai/log": "^0.1.0",
-    "@sozai/otel": "^0.1.0",
+    "@noble/curves": "catalog:",
+    "@sozai/async": "catalog:",
+    "@sozai/codec": "catalog:",
+    "@sozai/log": "catalog:",
+    "@sozai/otel": "catalog:",
     "@kokuin/token": "workspace:^"
   }
 }

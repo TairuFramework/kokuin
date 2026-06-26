@@ -36,9 +36,9 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@sozai/codec": "^0.1.0",
-    "@sozai/schema": "^0.1.0",
-    "@sozai/otel": "^0.1.0",
+    "@sozai/codec": "catalog:",
+    "@sozai/schema": "catalog:",
+    "@sozai/otel": "catalog:",
     "@noble/ciphers": "catalog:",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",

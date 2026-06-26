@@ -1,0 +1,31 @@
+{
+  "name": "e2e-electron",
+  "productName": "e2e-electron",
+  "version": "1.0.1",
+  "private": true,
+  "description": "Kokuin electron keystore e2e",
+  "main": ".vite/build/main.js",
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@kokuin/electron": "workspace:^",
+    "@kokuin/token": "workspace:^",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "catalog:",
+    "@electron-forge/plugin-vite": "catalog:",
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "electron": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

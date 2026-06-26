@@ -78,4 +78,18 @@ describe('provideSigningIdentity()', () => {
     const identity = await provideSigningIdentity('test-key', 'custom-db')
     expect(identity.id).toMatch(/^did:key:z/)
   })
+
+  test('signatures are always low-S (50 iterations, round-trip verifyToken)', async () => {
+    // Regression test: Web Crypto P-256 emits high-S ~50% of the time.
+    // normalizeSignatureToLowS() must flip high-S values; verifyToken enforces
+    // { lowS: true } and will reject any un-normalized signature. Running 50
+    // iterations makes a silent normalization failure fail with probability
+    // 1 - (0.5)^50 ≈ 1 - 8.9e-16.
+    const { verifyToken } = await import('@kokuin/token')
+    const identity = await provideSigningIdentity('test-key')
+    for (let i = 0; i < 50; i++) {
+      const token = await identity.signToken({ iter: i })
+      await expect(verifyToken(token)).resolves.toBeDefined()
+    }
+  }, 30_000)
 })

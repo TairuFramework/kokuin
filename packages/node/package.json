@@ -35,9 +35,9 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@sozai/codec": "^0.1.0",
-    "@sozai/log": "^0.1.0",
-    "@sozai/otel": "^0.1.0",
+    "@sozai/codec": "catalog:",
+    "@sozai/log": "catalog:",
+    "@sozai/otel": "catalog:",
     "@kokuin/token": "workspace:^",
     "@napi-rs/keyring": "catalog:"
   }
