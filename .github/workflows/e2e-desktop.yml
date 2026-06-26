@@ -32,50 +32,13 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Fetch electron binary
-        shell: bash
-        # pnpm-workspace.yaml sets `allowBuilds.electron: false`, which blocks
-        # electron's install script during `pnpm install` (and makes `pnpm rebuild
-        # electron` a no-op), so dist/ must be extracted explicitly here. The
-        # install script's download is fire-and-forget and has been observed to
-        # exit 0 without populating dist/ on the runner; with dist/ empty,
-        # electron-forge silently produces no app bundle. Retry until dist/ is
-        # non-empty and fail loudly otherwise, printing the size as proof.
-        run: |
-          for attempt in 1 2 3; do
-            node node_modules/electron/install.js || true
-            if [ -n "$(ls -A node_modules/electron/dist 2>/dev/null)" ]; then
-              echo "electron dist extracted ($(du -sh node_modules/electron/dist | cut -f1))"
-              exit 0
-            fi
-            echo "attempt $attempt: electron dist empty after install, retrying" >&2
-            rm -rf node_modules/electron/dist node_modules/electron/path.txt
-          done
-          echo "electron dist never extracted" >&2
-          exit 1
+        # allowBuilds.electron:false blocks electron's install script, so extract
+        # dist/ explicitly here (pnpm rebuild electron would be a no-op).
+        run: node node_modules/electron/install.js
 
       - name: Package app
         working-directory: tests/e2e-electron
-        shell: bash
-        run: |
-          # electron-forge package can exit 0 without producing the app bundle
-          # (see the Fetch step note). dist/ is pre-extracted now, but assert the
-          # binary exists and fail loudly if a run ever silently skips finalize.
-          case "$RUNNER_OS" in
-            macOS)   bin="out/e2e-electron-darwin-$(node -p process.arch)/e2e-electron.app/Contents/MacOS/e2e-electron" ;;
-            Windows) bin="out/e2e-electron-win32-x64/e2e-electron.exe" ;;
-            *)       bin="out/e2e-electron-linux-$(node -p process.arch)/e2e-electron" ;;
-          esac
-          for attempt in 1 2 3; do
-            rm -rf out
-            pnpm run package
-            if [ -e "$bin" ]; then
-              echo "packaged ok: $bin"
-              exit 0
-            fi
-            echo "attempt $attempt: $bin missing after package, retrying" >&2
-          done
-          echo "packaging failed to produce $bin after 3 attempts" >&2
-          exit 1
+        run: pnpm run package
 
       - name: Run tests
         working-directory: tests/e2e-electron
