@@ -3,75 +3,9 @@ on:
   push:
     branches: [main]
   pull_request:
-env:
-  CI: true
-  DO_NOT_TRACK: 1
-  MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: true
-  MAESTRO_CLI_NO_ANALYTICS: true
 jobs:
   test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Enable KVM
-        run: |
-          if [ -e /dev/kvm ]; then
-            sudo mkdir -p /etc/udev/rules.d
-            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-            sudo udevadm control --reload-rules
-            sudo udevadm trigger --name-match=kvm
-            sudo usermod -a -G kvm "$USER"
-          else
-            echo "KVM not available, continuing without hardware acceleration"
-          fi
-
-      - name: Setup environment
-        uses: TairuFramework/kigu/setup@main
-        with:
-          node-version: 24
-
-      - name: Cache Gradle
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('tests/e2e-expo/package.json') }}
-
-      - name: Install Maestro
-        shell: bash
-        run: |
-          curl -Ls "https://get.maestro.mobile.dev" | bash
-          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
-
-      - name: Create and boot emulator
-        run: |
-          export ANDROID_AVD_HOME=$HOME/.config/.android/avd
-          export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
-          echo y | sdkmanager "system-images;android-36;google_apis;x86_64"
-          echo no | avdmanager create avd --force -n test-emulator --abi 'google_apis/x86_64' --package 'system-images;android-36;google_apis;x86_64'
-          "$ANDROID_HOME/emulator/emulator" -avd test-emulator -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -memory 4096 -no-snapshot-save &
-          adb wait-for-device
-          # shellcheck disable=SC2016 # $(...) is expanded by the inner `bash -c`, not the outer shell
-          timeout 300 bash -c 'while [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" != "1" ]; do sleep 5; done'
-          adb shell settings put global window_animation_scale 0
-          adb shell settings put global transition_animation_scale 0
-          adb shell settings put global animator_duration_scale 0
-
-      - name: Build Android app
-        working-directory: tests/e2e-expo
-        run: pnpm run android:release
-
-      - name: Run Maestro tests
-        working-directory: tests/e2e-expo
-        run: pnpm run test
-
-      - name: Upload screenshots on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: maestro-screenshots-android
-          path: "*.png"
+    uses: TairuFramework/kigu/.github/workflows/e2e-android.yml@main
+    with:
+      working-directory: tests/e2e-expo
+      node-version: '24'
