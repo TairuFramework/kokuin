@@ -14,7 +14,7 @@
   "dependencies": {
     "@kokuin/expo": "workspace:^",
     "@kokuin/token": "workspace:^",
-    "@sozai/runtime-expo": "^0.1.0",
+    "@sozai/runtime-expo": "catalog:",
     "expo": "56.0.12",
     "expo-status-bar": "~56.0.4",
     "react": "19.2.3",

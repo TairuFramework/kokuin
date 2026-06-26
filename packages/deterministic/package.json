@@ -36,8 +36,8 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@sozai/log": "^0.1.0",
-    "@sozai/otel": "^0.1.0",
+    "@sozai/log": "catalog:",
+    "@sozai/otel": "catalog:",
     "@kokuin/token": "workspace:^",
     "@scure/bip39": "catalog:",
     "micro-key-producer": "catalog:"
