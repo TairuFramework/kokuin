@@ -24,7 +24,7 @@ jobs:
           node-version: 24
 
       - name: Cache electron binary
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/electron
@@ -36,21 +36,42 @@ jobs:
 
       - name: Package app
         working-directory: tests/e2e-electron
-        run: pnpm run package
+        shell: bash
+        run: |
+          # @electron/packager 18.4.4 can exit 0 without finishing the finalize step
+          # on some Node 24.x patches (process abandons an unsettled top-level await),
+          # leaving an incomplete out/ that the green step hides. Retry until the
+          # expected app binary actually exists, then fail loudly if it never does.
+          case "$RUNNER_OS" in
+            macOS)   bin="out/e2e-electron-darwin-$(node -p process.arch)/e2e-electron.app/Contents/MacOS/e2e-electron" ;;
+            Windows) bin="out/e2e-electron-win32-x64/e2e-electron.exe" ;;
+            *)       bin="out/e2e-electron-linux-$(node -p process.arch)/e2e-electron" ;;
+          esac
+          for attempt in 1 2 3; do
+            rm -rf out
+            pnpm run package
+            if [ -e "$bin" ]; then
+              echo "packaged ok: $bin"
+              exit 0
+            fi
+            echo "attempt $attempt: $bin missing after package, retrying" >&2
+          done
+          echo "packaging failed to produce $bin after 3 attempts" >&2
+          exit 1
 
       - name: Run tests
         working-directory: tests/e2e-electron
         run: pnpm run test
 
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report-${{ matrix.os }}
           path: tests/e2e-electron/playwright-report/
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: test-results-${{ matrix.os }}
