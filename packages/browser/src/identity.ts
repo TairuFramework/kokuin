@@ -1,3 +1,4 @@
+import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import {
   CODECS,
   getDID,
@@ -9,7 +10,7 @@ import {
 import { p256 } from '@noble/curves/nist.js'
 import { b64uFromJSON, fromUTF, toB64U } from '@sozai/codec'
 import { getLogger } from '@sozai/log'
-import { AttributeKeys, createTracer, SpanNames, withSpan } from '@sozai/otel'
+import { withSpan } from '@sozai/otel'
 
 import { BrowserKeyStore } from './store.js'
 import { getPublicKey } from './utils.js'
@@ -78,8 +79,8 @@ export async function provideSigningIdentity(
 ): Promise<SigningIdentity> {
   return withSpan(
     tracer,
-    SpanNames.KEYSTORE_GET_OR_CREATE,
-    { attributes: { [AttributeKeys.KEYSTORE_STORE_TYPE]: 'browser' } },
+    KokuinSpanNames.KEYSTORE_GET_OR_CREATE,
+    { attributes: { [KokuinAttributeKeys.KEYSTORE_STORE_TYPE]: 'browser' } },
     async (span) => {
       const storePromise =
         useStore == null || typeof useStore === 'string'
@@ -90,14 +91,14 @@ export async function provideSigningIdentity(
       const existing = await entry.getAsync()
       if (existing != null) {
         const identity = await createBrowserSigningIdentity(existing)
-        span.setAttribute(AttributeKeys.AUTH_DID, identity.id)
-        span.setAttribute(AttributeKeys.KEYSTORE_KEY_CREATED, false)
+        span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
+        span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, false)
         return identity
       }
       const keyPair = await entry.provideAsync()
       const identity = await createBrowserSigningIdentity(keyPair)
-      span.setAttribute(AttributeKeys.AUTH_DID, identity.id)
-      span.setAttribute(AttributeKeys.KEYSTORE_KEY_CREATED, true)
+      span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
+      span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, true)
       logger.info('New identity generated: {did}', { did: identity.id })
       return identity
     },

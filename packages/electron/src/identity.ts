@@ -1,6 +1,7 @@
+import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import { createFullIdentity, decodePrivateKey, type FullIdentity } from '@kokuin/token'
 import { getLogger } from '@sozai/log'
-import { AttributeKeys, createTracer, SpanNames, withSpan, withSyncSpan } from '@sozai/otel'
+import { withSpan, withSyncSpan } from '@sozai/otel'
 
 import { ElectronKeyStore } from './store.js'
 
@@ -14,21 +15,21 @@ function getStore(store: ElectronKeyStore | string): ElectronKeyStore {
 export function provideFullIdentity(store: ElectronKeyStore | string, keyID: string): FullIdentity {
   return withSyncSpan(
     tracer,
-    SpanNames.KEYSTORE_GET_OR_CREATE,
-    { attributes: { [AttributeKeys.KEYSTORE_STORE_TYPE]: 'electron' } },
+    KokuinSpanNames.KEYSTORE_GET_OR_CREATE,
+    { attributes: { [KokuinAttributeKeys.KEYSTORE_STORE_TYPE]: 'electron' } },
     (span) => {
       const entry = getStore(store).entry(keyID)
       const existing = entry.get()
       if (existing != null) {
         const identity = createFullIdentity(decodePrivateKey(existing))
-        span.setAttribute(AttributeKeys.AUTH_DID, identity.id)
-        span.setAttribute(AttributeKeys.KEYSTORE_KEY_CREATED, false)
+        span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
+        span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, false)
         return identity
       }
       const key = entry.provide()
       const identity = createFullIdentity(decodePrivateKey(key))
-      span.setAttribute(AttributeKeys.AUTH_DID, identity.id)
-      span.setAttribute(AttributeKeys.KEYSTORE_KEY_CREATED, true)
+      span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
+      span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, true)
       logger.info('New identity generated: {did}', { did: identity.id })
       return identity
     },
@@ -41,21 +42,21 @@ export async function provideFullIdentityAsync(
 ): Promise<FullIdentity> {
   return withSpan(
     tracer,
-    SpanNames.KEYSTORE_GET_OR_CREATE,
-    { attributes: { [AttributeKeys.KEYSTORE_STORE_TYPE]: 'electron' } },
+    KokuinSpanNames.KEYSTORE_GET_OR_CREATE,
+    { attributes: { [KokuinAttributeKeys.KEYSTORE_STORE_TYPE]: 'electron' } },
     async (span) => {
       const entry = getStore(store).entry(keyID)
       const existing = await entry.getAsync()
       if (existing != null) {
         const identity = createFullIdentity(decodePrivateKey(existing))
-        span.setAttribute(AttributeKeys.AUTH_DID, identity.id)
-        span.setAttribute(AttributeKeys.KEYSTORE_KEY_CREATED, false)
+        span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
+        span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, false)
         return identity
       }
       const key = await entry.provideAsync()
       const identity = createFullIdentity(decodePrivateKey(key))
-      span.setAttribute(AttributeKeys.AUTH_DID, identity.id)
-      span.setAttribute(AttributeKeys.KEYSTORE_KEY_CREATED, true)
+      span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
+      span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, true)
       logger.info('New identity generated: {did}', { did: identity.id })
       return identity
     },

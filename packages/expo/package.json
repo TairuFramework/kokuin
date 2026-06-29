@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/expo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "description": "Key store for React Native",
   "keywords": [
@@ -36,10 +36,11 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@kokuin/otel": "workspace:^",
+    "@kokuin/token": "workspace:^",
     "@sozai/codec": "catalog:",
     "@sozai/log": "catalog:",
     "@sozai/otel": "catalog:",
-    "@kokuin/token": "workspace:^",
     "expo-crypto": "catalog:",
     "expo-secure-store": "catalog:"
   }

@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/ledger-device",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "description": "Ledger hardware wallet identity provider",
   "keywords": [
@@ -35,10 +35,11 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@kokuin/otel": "workspace:^",
+    "@kokuin/token": "workspace:^",
     "@sozai/codec": "catalog:",
     "@sozai/log": "catalog:",
-    "@sozai/otel": "catalog:",
-    "@kokuin/token": "workspace:^"
+    "@sozai/otel": "catalog:"
   },
   "devDependencies": {
     "@kokuin/deterministic": "workspace:^",

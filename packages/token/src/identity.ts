@@ -1,6 +1,7 @@
+import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { b64uFromJSON, fromUTF, toB64U } from '@sozai/codec'
-import { AttributeKeys, createTracer, SpanNames, withSpan } from '@sozai/otel'
+import { withSpan } from '@sozai/otel'
 
 import { CODECS, getDID, normalizeDID } from './did.js'
 import { decryptToken } from './jwe.js'
@@ -87,8 +88,13 @@ export function createSigningIdentity(privateKey: Uint8Array): SigningIdentity {
   ): Promise<SignedToken<Payload>> {
     return withSpan(
       tracer,
-      SpanNames.TOKEN_SIGN,
-      { attributes: { [AttributeKeys.AUTH_DID]: id, [AttributeKeys.AUTH_ALGORITHM]: 'EdDSA' } },
+      KokuinSpanNames.TOKEN_SIGN,
+      {
+        attributes: {
+          [KokuinAttributeKeys.AUTH_DID]: id,
+          [KokuinAttributeKeys.AUTH_ALGORITHM]: 'EdDSA',
+        },
+      },
       async () => {
         if (payload.iss != null && payload.iss !== id) {
           throw new Error('Invalid payload: issuer does not match signer')

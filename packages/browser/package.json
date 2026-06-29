@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/browser",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
   "description": "Key store for browser",
   "keywords": [
@@ -35,11 +35,12 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@kokuin/otel": "workspace:^",
+    "@kokuin/token": "workspace:^",
     "@noble/curves": "catalog:",
     "@sozai/async": "catalog:",
     "@sozai/codec": "catalog:",
     "@sozai/log": "catalog:",
-    "@sozai/otel": "catalog:",
-    "@kokuin/token": "workspace:^"
+    "@sozai/otel": "catalog:"
   }
 }

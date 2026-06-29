@@ -1,5 +1,6 @@
+import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import { b64uFromJSON, b64uToJSON, canonicalStringify, fromB64U, fromUTF } from '@sozai/codec'
-import { AttributeKeys, createTracer, SpanNames, withSpan } from '@sozai/otel'
+import { withSpan } from '@sozai/otel'
 import { assertType, isType } from '@sozai/schema'
 
 import type { DIDCache, DIDResolver } from './cache.js'
@@ -245,14 +246,14 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
 export async function verifyToken<
   Payload extends Record<string, unknown> = Record<string, unknown>,
 >(token: Token<Payload> | string, options: VerifyTokenOptions = {}): Promise<Token<Payload>> {
-  return withSpan(tokenTracer, SpanNames.TOKEN_VERIFY, {}, async (span) => {
+  return withSpan(tokenTracer, KokuinSpanNames.TOKEN_VERIFY, {}, async (span) => {
     const result = await verifyTokenInner(token, options)
     if (isSignedToken(result)) {
       span.setAttribute(
-        AttributeKeys.AUTH_DID,
+        KokuinAttributeKeys.AUTH_DID,
         (result.payload as Record<string, unknown>).iss as string,
       )
-      span.setAttribute(AttributeKeys.AUTH_ALGORITHM, result.header.alg)
+      span.setAttribute(KokuinAttributeKeys.AUTH_ALGORITHM, result.header.alg)
     }
     return result
   })

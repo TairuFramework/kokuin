@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/node",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "description": "Key store for Node",
   "keywords": [
@@ -35,10 +35,11 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@kokuin/otel": "workspace:^",
+    "@kokuin/token": "workspace:^",
     "@sozai/codec": "catalog:",
     "@sozai/log": "catalog:",
     "@sozai/otel": "catalog:",
-    "@kokuin/token": "workspace:^",
     "@napi-rs/keyring": "catalog:"
   }
 }

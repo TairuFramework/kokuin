@@ -1,8 +1,9 @@
+import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import type { KeyStore } from '@kokuin/token'
 import { createFullIdentity, type FullIdentity, type IdentityProvider } from '@kokuin/token'
 import { mnemonicToSeedSync } from '@scure/bip39'
 import { getLogger } from '@sozai/log'
-import { AttributeKeys, createTracer, SpanNames, withSpan } from '@sozai/otel'
+import { withSpan } from '@sozai/otel'
 
 import { resolveDerivationPath } from './derivation.js'
 import { HDKeyEntry } from './entry.js'
@@ -46,13 +47,13 @@ export class HDKeyStore
   async provideIdentity(keyID: string): Promise<FullIdentity> {
     return withSpan(
       tracer,
-      SpanNames.KEYSTORE_GET_OR_CREATE,
-      { attributes: { [AttributeKeys.KEYSTORE_STORE_TYPE]: 'hd' } },
+      KokuinSpanNames.KEYSTORE_GET_OR_CREATE,
+      { attributes: { [KokuinAttributeKeys.KEYSTORE_STORE_TYPE]: 'hd' } },
       async (span) => {
         const entry = this.entry(keyID)
         const privateKey = await entry.provideAsync()
         const identity = createFullIdentity(privateKey)
-        span.setAttribute(AttributeKeys.AUTH_DID, identity.id)
+        span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         logger.info('HD identity derived: {did}', { did: identity.id })
         return identity
       },

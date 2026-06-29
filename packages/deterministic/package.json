@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/deterministic",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "description": "Deterministic HD keystore",
   "keywords": [
@@ -36,10 +36,11 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@sozai/log": "catalog:",
-    "@sozai/otel": "catalog:",
+    "@kokuin/otel": "workspace:^",
     "@kokuin/token": "workspace:^",
     "@scure/bip39": "catalog:",
+    "@sozai/log": "catalog:",
+    "@sozai/otel": "catalog:",
     "micro-key-producer": "catalog:"
   }
 }

@@ -1,3 +1,4 @@
+import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import {
   CODECS,
   type FullIdentity,
@@ -9,7 +10,7 @@ import {
 } from '@kokuin/token'
 import { b64uFromJSON, fromUTF, toB64U } from '@sozai/codec'
 import { getLogger } from '@sozai/log'
-import { AttributeKeys, createTracer, SpanNames, withSpan } from '@sozai/otel'
+import { withSpan } from '@sozai/otel'
 
 import {
   CLA,
@@ -70,15 +71,15 @@ export function createLedgerIdentityProvider(
 
     return withSpan(
       tracer,
-      SpanNames.KEYSTORE_GET_OR_CREATE,
-      { attributes: { [AttributeKeys.KEYSTORE_STORE_TYPE]: 'ledger' } },
+      KokuinSpanNames.KEYSTORE_GET_OR_CREATE,
+      { attributes: { [KokuinAttributeKeys.KEYSTORE_STORE_TYPE]: 'ledger' } },
       async (span) => {
         const pathBytes = encodeDerivationPath(path)
         const rawKey = await sendAPDU(transport, INS.GET_PUBLIC_KEY, 0x00, 0x00, pathBytes)
         const publicKey = parsePublicKeyResponse(rawKey)
         const id = getDID(CODECS.EdDSA, publicKey)
 
-        span.setAttribute(AttributeKeys.AUTH_DID, id)
+        span.setAttribute(KokuinAttributeKeys.AUTH_DID, id)
         logger.info('Ledger identity resolved: {did}', { did: id })
 
         async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
@@ -87,11 +88,11 @@ export function createLedgerIdentityProvider(
         ): Promise<SignedToken<Payload>> {
           return withSpan(
             tracer,
-            SpanNames.TOKEN_SIGN,
+            KokuinSpanNames.TOKEN_SIGN,
             {
               attributes: {
-                [AttributeKeys.AUTH_DID]: id,
-                [AttributeKeys.AUTH_ALGORITHM]: 'EdDSA',
+                [KokuinAttributeKeys.AUTH_DID]: id,
+                [KokuinAttributeKeys.AUTH_ALGORITHM]: 'EdDSA',
               },
             },
             async () => {
