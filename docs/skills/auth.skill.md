@@ -347,4 +347,4 @@ console.log(payload)       // { hello: 'world' }
 - Require hardware-backed keys that never leave the device
 - Building high-security signing flows (WebHID browser or Node-HID desktop)
 
-→ Reference: docs/capabilities/auth.md
+→ Reference: docs/reference/auth.md

@@ -15,10 +15,10 @@
     "@kokuin/expo": "workspace:^",
     "@kokuin/token": "workspace:^",
     "@sozai/runtime-expo": "catalog:",
-    "expo": "56.0.12",
-    "expo-status-bar": "~56.0.4",
-    "react": "19.2.3",
-    "react-native": "0.85.3"
+    "expo": "catalog:",
+    "expo-status-bar": "catalog:",
+    "react": "catalog:",
+    "react-native": "catalog:"
   },
   "devDependencies": {
     "@types/react": "catalog:",

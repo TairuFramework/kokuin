@@ -165,4 +165,4 @@ await checkCapability(requested, consumerPayload, {
 - Long-lived capabilities need early invalidation without key rotation
 - Building audit logs of revoked tokens
 
-→ Reference: docs/capabilities/capability.md
+→ Reference: docs/reference/capability.md
