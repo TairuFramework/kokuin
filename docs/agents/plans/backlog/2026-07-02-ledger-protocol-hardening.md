@@ -1,0 +1,34 @@
+# Ledger protocol hardening
+
+**Status:** backlog
+**Origin:** `completed/2026-07-02-audit.complete.md` (Medium: protocol version, path encoding)
+
+## Context
+
+Host↔firmware APDU protocol has no version gate and encodes malformed derivation paths as a
+valid-looking key. Lower priority than the consent bug but should land before the Ledger
+keystore is widely used. The APDU protocol versions in lockstep with `@kokuin/ledger-device`.
+
+## Work
+
+### Host never checks protocol version
+
+`GET_APP_VERSION` is defined (`packages/ledger-device/src/apdu.ts:6`) but never called; no
+compat gate before signing. Firmware version is duplicated in `apps/ledger/Makefile:13` and
+`apps/ledger/src/constants.h:46` with nothing tying them (0.1.0 vs package 0.1.1). Call the
+version APDU and gate; single-source the firmware version.
+
+### `encodeDerivationPath` encodes garbage as `0'`
+
+`packages/ledger-device/src/apdu.ts:38` — `parseInt("abc'")` → NaN → `0x80000000`, deriving
+a wrong key silently. No `index < 2^31` range check. Add validation.
+
+### Deterministic HD path validation late/partial
+
+`packages/deterministic/src/derivation.ts:6` validates similarly late/partially. Validate the
+path up front, consistent with the ledger-device fix.
+
+## Out of scope
+
+- Firmware consent UX and `req_type` reset — see
+  `next/2026-07-02-firmware-consent-and-signing-safety.md`.
