@@ -187,14 +187,14 @@ export async function createCapability<
   header?: Record<string, unknown>,
   options?: CreateCapabilityOptions,
 ): Promise<CapabilityToken<Payload & { iss: string }, SignedHeader>> {
-  const signerId = signer.id
+  const signerID = signer.id
 
   // Validate act/res patterns
   assertValidPattern(payload.act)
   assertValidPattern(payload.res)
 
   // If signer is the subject, no parent validation needed (root capability)
-  if (normalizeDID(payload.sub) === normalizeDID(signerId)) {
+  if (normalizeDID(payload.sub) === normalizeDID(signerID)) {
     return await signer.signToken(payload, { header })
   }
 
@@ -209,7 +209,7 @@ export async function createCapability<
   const parent = await verifyToken<CapabilityPayload>(options.parentCapability)
   assertCapabilityToken(parent)
 
-  if (normalizeDID(parent.payload.aud) !== normalizeDID(signerId)) {
+  if (normalizeDID(parent.payload.aud) !== normalizeDID(signerID)) {
     throw new Error('Invalid capability: signer must be the audience of parent capability')
   }
 
@@ -241,19 +241,31 @@ export function isMatch(expected: string, actual: string): boolean {
   return expected === actual || actual === '*'
 }
 
+// `expected` is the requested permission, `actual` the granted one. A grant authorizes a
+// request only when the grant's segments match the request's segment-for-segment at the same
+// depth, with a `*` grant segment matching the remainder. A grant more specific than the
+// request (e.g. `foo/bar/baz` vs requested `foo/bar`) does NOT authorize it — that broadening
+// was the privilege-escalation bug. There is no implicit descent either: `foo/bar` does not
+// cover `foo/bar/baz`; use `foo/bar/*` for that.
 export function hasPartsMatch(expected: string, actual: string): boolean {
   const expectedParts = expected.split('/')
   const actualParts = actual.split('/')
-  for (let i = 0; i < expectedParts.length; i++) {
-    const part = actualParts[i]
-    if (part === '*') {
-      break
+  for (let i = 0; i < actualParts.length; i++) {
+    const grantPart = actualParts[i]
+    if (grantPart === '*') {
+      return true
     }
-    if (expectedParts[i] !== part) {
+    // Grant has a segment the request does not: the grant is more specific than the
+    // request, so it must not authorize the broader request.
+    if (i >= expectedParts.length) {
+      return false
+    }
+    if (grantPart !== expectedParts[i]) {
       return false
     }
   }
-  return true
+  // All grant segments matched; authorize only when the request is no deeper than the grant.
+  return expectedParts.length === actualParts.length
 }
 
 export function hasPermission(expected: Permission, granted: Permission): boolean {

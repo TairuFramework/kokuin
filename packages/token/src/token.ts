@@ -28,6 +28,39 @@ export type VerifyTokenOptions = TimeValidationOptions & {
   verifiers?: Verifiers
   resolver?: DIDResolver
   cache?: DIDCache
+  /**
+   * Expected audience(s) for the token. When set, verification rejects a token whose `aud`
+   * claim is not among the given value(s), and rejects unsigned / `alg:none` tokens outright
+   * (they carry no proof of their claims). Intended for the invocation/leaf token directed at
+   * a service — it must NOT be forwarded into capability-chain verification, where a
+   * capability's `aud` is the delegation next-hop rather than a service audience. An empty
+   * array accepts no audience (every token is rejected).
+   */
+  audience?: string | Array<string>
+}
+
+function assertAudienceValid(
+  payload: Record<string, unknown>,
+  audience?: string | Array<string>,
+): void {
+  if (audience == null) {
+    return
+  }
+  const aud = payload.aud
+  const allowed = Array.isArray(audience) ? audience : [audience]
+  if (typeof aud !== 'string' || !allowed.includes(aud)) {
+    throw new Error(
+      `Invalid token: audience ${typeof aud === 'string' ? `"${aud}"` : 'missing'} not accepted`,
+    )
+  }
+}
+
+// An unsigned / `alg:none` token carries no proof of its claims, so it cannot satisfy an
+// audience requirement. Reject it rather than silently skipping the check.
+function assertSignedForAudience(audience?: string | Array<string>): void {
+  if (audience != null) {
+    throw new Error('Invalid token: audience validation requires a signed token')
+  }
 }
 
 export type VerifySignedPayloadInput<
@@ -166,13 +199,15 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
   token: Token<Payload> | string,
   options: VerifyTokenOptions = {},
 ): Promise<Token<Payload>> {
-  const { verifiers, resolver, cache, ...timeOptions } = options
+  const { verifiers, resolver, cache, audience, ...timeOptions } = options
   if (typeof token !== 'string') {
     if (isUnsignedToken(token)) {
+      assertSignedForAudience(audience)
       return token
     }
     if (isVerifiedToken(token)) {
       assertTimeClaimsValid(token.payload as Record<string, unknown>, timeOptions)
+      assertAudienceValid(token.payload as Record<string, unknown>, audience)
       return token
     }
     if (isSignedToken(token)) {
@@ -187,6 +222,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
         cache,
       })
       assertTimeClaimsValid(token.payload as Record<string, unknown>, timeOptions)
+      assertAudienceValid(token.payload as Record<string, unknown>, audience)
       const result = { ...token, data, verifiedPublicKey } as Token<Payload>
       verifiedTokens.add(result)
       return result
@@ -205,6 +241,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
     throw new Error('Invalid token header type')
   }
   if (header.alg === 'none') {
+    assertSignedForAudience(audience)
     return { header, payload: b64uToJSON<Payload>(encodedPayload) } as UnsignedToken<Payload>
   }
 
@@ -225,6 +262,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
       cache,
     })
     assertTimeClaimsValid(payload as Record<string, unknown>, timeOptions)
+    assertAudienceValid(payload as Record<string, unknown>, audience)
     const result = {
       data,
       header,

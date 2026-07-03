@@ -1,7 +1,7 @@
 import { randomIdentity, stringifyToken } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
-import { checkDelegationChain, createCapability, now } from '../src/index.js'
+import { checkDelegationChain, createCapability } from '../src/index.js'
 import {
   createMemoryRevocationBackend,
   createRevocationChecker,
@@ -9,14 +9,25 @@ import {
 } from '../src/revocation.js'
 
 describe('revocation', () => {
-  test('createMemoryRevocationBackend tracks revocations', async () => {
+  test('createMemoryRevocationBackend stores signed records by jti', async () => {
+    const signer = randomIdentity()
     const backend = createMemoryRevocationBackend()
-    expect(await backend.isRevoked('some-jti')).toBe(false)
-    await backend.add({ jti: 'some-jti', iss: 'did:key:alice', rev: true, iat: now() })
-    expect(await backend.isRevoked('some-jti')).toBe(true)
+    expect(await backend.get('some-jti')).toBeUndefined()
+    const record = await createRevocationRecord(signer, 'some-jti')
+    await backend.add(record)
+    expect(await backend.get('some-jti')).toBeDefined()
   })
 
-  test('createRevocationChecker returns a VerifyTokenHook', async () => {
+  test('add rejects a record with a forged signature', async () => {
+    const signer = randomIdentity()
+    const backend = createMemoryRevocationBackend()
+    const record = await createRevocationRecord(signer, 'cap-1')
+    const forged = { ...record, signature: 'AAAA' }
+    await expect(backend.add(forged)).rejects.toThrow()
+    expect(await backend.get('cap-1')).toBeUndefined()
+  })
+
+  test('createRevocationChecker returns a VerifyTokenHook', () => {
     const backend = createMemoryRevocationBackend()
     const checker = createRevocationChecker(backend)
     expect(typeof checker).toBe('function')
@@ -39,7 +50,7 @@ describe('revocation', () => {
     await checker(capability, stringifyToken(capability))
   })
 
-  test('checker rejects revoked token', async () => {
+  test('checker rejects a token revoked by its own issuer', async () => {
     const backend = createMemoryRevocationBackend()
     const checker = createRevocationChecker(backend)
 
@@ -52,9 +63,56 @@ describe('revocation', () => {
       jti: 'cap-revoked',
     })
 
-    await backend.add({ jti: 'cap-revoked', iss: signer.id, rev: true, iat: now() })
+    await backend.add(await createRevocationRecord(signer, 'cap-revoked'))
 
     await expect(checker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
+  })
+
+  test('a revocation signed by a different issuer does not revoke the token', async () => {
+    const backend = createMemoryRevocationBackend()
+    const checker = createRevocationChecker(backend)
+
+    const issuer = randomIdentity()
+    const attacker = randomIdentity()
+    const capability = await createCapability(issuer, {
+      sub: issuer.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-target',
+    })
+
+    // The attacker signs a revocation for the victim's jti — a valid signature, but wrong issuer.
+    await backend.add(await createRevocationRecord(attacker, 'cap-target'))
+
+    // Must NOT revoke: only the token's own issuer may revoke it.
+    await checker(capability, stringifyToken(capability))
+  })
+
+  test('checker re-verifies and ignores a forged record from an untrusting backend', async () => {
+    const issuer = randomIdentity()
+    const capability = await createCapability(issuer, {
+      sub: issuer.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-forged',
+    })
+
+    // A valid record signed by the real issuer, then tampered — a backend that stores without
+    // verifying would return it. The checker must not trust it.
+    const genuine = await createRevocationRecord(issuer, 'cap-forged')
+    const forged = { ...genuine, signature: 'AAAA' }
+    const untrustingBackend = {
+      async add() {},
+      async get() {
+        return forged
+      },
+    }
+    const checker = createRevocationChecker(untrustingBackend)
+
+    // Must NOT revoke: the signature is invalid.
+    await checker(capability, stringifyToken(capability))
   })
 
   test('checker integrates with checkDelegationChain', async () => {
@@ -90,8 +148,8 @@ describe('revocation', () => {
       verifyToken: checker,
     })
 
-    // Revoke root delegation
-    await backend.add({ jti: 'delegation-1', iss: root.id, rev: true, iat: now() })
+    // Revoke root delegation (signed by root, the delegation's issuer)
+    await backend.add(await createRevocationRecord(root, 'delegation-1'))
 
     // Should fail after revocation
     await expect(
@@ -104,9 +162,10 @@ describe('revocation', () => {
   test('createRevocationRecord produces a signed revocation', async () => {
     const signer = randomIdentity()
     const record = await createRevocationRecord(signer, 'cap-to-revoke')
-    expect(record.jti).toBe('cap-to-revoke')
-    expect(record.iss).toBe(signer.id)
-    expect(record.rev).toBe(true)
-    expect(typeof record.iat).toBe('number')
+    expect(record.payload.jti).toBe('cap-to-revoke')
+    expect(record.payload.iss).toBe(signer.id)
+    expect(record.payload.rev).toBe(true)
+    expect(typeof record.payload.iat).toBe('number')
+    expect(typeof record.signature).toBe('string')
   })
 })
