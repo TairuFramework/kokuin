@@ -11,7 +11,7 @@ Sequenced per the audit's suggested order — security correctness first, then m
 actually gate, then the contract + tests that prevent regressions.
 
 1. **Security correctness fixes** — small, verified, each independently shippable:
-   - `next/2026-07-02-capability-authorization-fixes.md` — prefix escalation (#1), kid/aud, revocation
+   - ✅ `completed/2026-07-03-capability-authorization-fixes.complete.md` — prefix escalation (#1), kid/aud, signed revocation
    - `next/2026-07-02-token-verification-hardening.md` — `alg:none` (#3), nullish guards, peer4 DoS
    - `next/2026-07-02-keystore-correctness-fixes.md` — electron clobber (#4), commit-timing, races
    - `next/2026-07-02-firmware-consent-and-signing-safety.md` — consent UX (#2), `req_type` reset
