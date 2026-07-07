@@ -9,17 +9,22 @@ type StoreValues = { keys: Record<string, string> }
 export class ElectronKeyStore implements KeyStore<string, ElectronKeyEntry> {
   static #byName: Record<string, ElectronKeyStore> = {}
 
-  static open(name = 'keystore'): ElectronKeyStore {
+  static open(name = 'keystore', options?: { allowInsecureStorage?: boolean }): ElectronKeyStore {
     if (ElectronKeyStore.#byName[name] == null) {
-      ElectronKeyStore.#byName[name] = new ElectronKeyStore(name)
+      ElectronKeyStore.#byName[name] = new ElectronKeyStore(
+        name,
+        options?.allowInsecureStorage ?? false,
+      )
     }
     return ElectronKeyStore.#byName[name]
   }
 
   #entries: Record<string, ElectronKeyEntry> = {}
   #storage: KeyStorage
+  #allowInsecureStorage: boolean
 
-  constructor(name: string) {
+  constructor(name: string, allowInsecureStorage = false) {
+    this.#allowInsecureStorage = allowInsecureStorage
     const store = new Store<StoreValues>({
       name,
       schema: {
@@ -41,7 +46,12 @@ export class ElectronKeyStore implements KeyStore<string, ElectronKeyEntry> {
   }
 
   entry(keyID: string): ElectronKeyEntry {
-    this.#entries[keyID] ??= new ElectronKeyEntry(this.#storage, keyID)
+    this.#entries[keyID] ??= new ElectronKeyEntry(
+      this.#storage,
+      keyID,
+      undefined,
+      this.#allowInsecureStorage,
+    )
     return this.#entries[keyID]
   }
 }

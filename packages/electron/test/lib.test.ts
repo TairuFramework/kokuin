@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 // Mock electron safeStorage — identity transform for testing
+let encryptionAvailable = true
 vi.mock('electron', () => ({
   safeStorage: {
     encryptString: vi.fn((str: string) => Buffer.from(str)),
     decryptString: vi.fn((buf: Buffer) => buf.toString()),
+    isEncryptionAvailable: vi.fn(() => encryptionAvailable),
   },
 }))
 
@@ -39,6 +41,7 @@ import {
 
 beforeEach(() => {
   storeData = {}
+  encryptionAvailable = true
 })
 
 describe('ElectronKeyEntry', () => {
@@ -148,6 +151,28 @@ describe('ElectronKeyStore', () => {
   test('entry() returns cached entry for same keyID', () => {
     const store = ElectronKeyStore.open('cache-test')
     expect(store.entry('x')).toBe(store.entry('x'))
+  })
+})
+
+describe('ElectronKeyEntry encryption gate', () => {
+  test('set() throws when encryption is unavailable', () => {
+    encryptionAvailable = false
+    const entry = ElectronKeyStore.open('gate-1').entry('k')
+    expect(() => entry.set('secret')).toThrow(/encryption/i)
+  })
+
+  test('allowInsecureStorage bypasses the throw', () => {
+    encryptionAvailable = false
+    const entry = ElectronKeyStore.open('gate-2', { allowInsecureStorage: true }).entry('k')
+    expect(() => entry.set('secret')).not.toThrow()
+    expect(entry.get()).toBe('secret')
+  })
+
+  test('reads still work when encryption is unavailable', () => {
+    const entry = ElectronKeyStore.open('gate-3').entry('k')
+    entry.set('secret')
+    encryptionAvailable = false
+    expect(entry.get()).toBe('secret')
   })
 })
 
