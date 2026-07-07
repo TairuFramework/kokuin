@@ -147,6 +147,16 @@ describe('BrowserKeyEntry', () => {
     expect(data.has('k4')).toBe(true)
   })
 
+  test('provideAsync returns the pre-existing key and does not overwrite it', async () => {
+    const { getStore, data } = createMockGetStore()
+    const seeded = await randomKeyPair()
+    data.set('k', seeded)
+    const entry = new BrowserKeyEntry('k', getStore)
+    const result = await entry.provideAsync()
+    expect(result).toBe(seeded)
+    expect(data.get('k')).toBe(seeded)
+  })
+
   test('removeAsync() deletes key from store', async () => {
     const keyPair = await randomKeyPair()
     const entry = new BrowserKeyEntry('k5', getStore)

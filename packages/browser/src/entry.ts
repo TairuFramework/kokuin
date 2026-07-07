@@ -37,14 +37,28 @@ export class BrowserKeyEntry implements KeyEntry<CryptoKeyPair> {
     })
   }
 
-  async provideAsync(): Promise<CryptoKeyPair> {
-    const existing = await this.getAsync()
-    if (existing != null) {
-      return existing
-    }
-    const keyPair = await randomKeyPair()
-    await this.setAsync(keyPair)
-    return keyPair
+  provideAsync(): Promise<CryptoKeyPair> {
+    return randomKeyPair().then(
+      (generated) =>
+        new Promise<CryptoKeyPair>((resolve, reject) => {
+          const store = this.#getStore('readwrite')
+          const getRequest = store.get(this.#keyID)
+          let result: CryptoKeyPair = generated
+          getRequest.onerror = () => reject(getRequest.error)
+          getRequest.onsuccess = () => {
+            const existing = getRequest.result as CryptoKeyPair | undefined
+            if (existing != null) {
+              result = existing
+            } else {
+              store.put(generated, this.#keyID)
+            }
+          }
+          const tx = store.transaction
+          tx.oncomplete = () => resolve(result)
+          tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'))
+          tx.onerror = () => reject(tx.error ?? new Error('Transaction failed'))
+        }),
+    )
   }
 
   removeAsync(): Promise<void> {
