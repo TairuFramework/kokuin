@@ -55,7 +55,9 @@ export class ElectronKeyEntry implements KeyEntry<string> {
 
   set(key: string): void {
     const encrypted = encryptKey(key)
-    this.#storage.setKeys({ [this.#keyID]: encrypted })
+    const keys = this.#storage.getKeys()
+    keys[this.#keyID] = encrypted
+    this.#storage.setKeys(keys)
     this.#key = key
   }
 

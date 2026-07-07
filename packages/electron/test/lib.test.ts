@@ -90,6 +90,16 @@ describe('ElectronKeyEntry', () => {
     expect(fresh.get()).toBeNull()
   })
 
+  test('set() preserves other keys in the same store', () => {
+    const store = ElectronKeyStore.open('multi-key')
+    const a = store.entry('key-a')
+    const b = store.entry('key-b')
+    a.set('secret-a')
+    b.set('secret-b')
+    expect(a.get()).toBe('secret-a')
+    expect(b.get()).toBe('secret-b')
+  })
+
   // Async variants (wrappers around sync)
   test('getAsync() returns null when key does not exist', async () => {
     expect(await createEntry('ak1').getAsync()).toBeNull()
