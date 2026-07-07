@@ -92,12 +92,12 @@ describe('ElectronKeyEntry', () => {
 
   test('set() preserves other keys in the same store', () => {
     const store = ElectronKeyStore.open('multi-key')
-    const a = store.entry('key-a')
-    const b = store.entry('key-b')
-    a.set('secret-a')
-    b.set('secret-b')
-    expect(a.get()).toBe('secret-a')
-    expect(b.get()).toBe('secret-b')
+    store.entry('key-a').set('secret-a')
+    store.entry('key-b').set('secret-b')
+    // Read back via a fresh store instance to bypass the entry #key cache
+    const fresh = new ElectronKeyStore('multi-key')
+    expect(fresh.entry('key-a').get()).toBe('secret-a')
+    expect(fresh.entry('key-b').get()).toBe('secret-b')
   })
 
   // Async variants (wrappers around sync)
