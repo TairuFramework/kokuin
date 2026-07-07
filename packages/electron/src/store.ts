@@ -10,10 +10,20 @@ export class ElectronKeyStore implements KeyStore<string, ElectronKeyEntry> {
   static #byName: Record<string, ElectronKeyStore> = Object.create(null)
 
   static open(name = 'keystore', options?: { allowInsecureStorage?: boolean }): ElectronKeyStore {
-    if (ElectronKeyStore.#byName[name] == null) {
+    const cached = ElectronKeyStore.#byName[name]
+    if (cached == null) {
       ElectronKeyStore.#byName[name] = new ElectronKeyStore(
         name,
         options?.allowInsecureStorage ?? false,
+      )
+    } else if (
+      options?.allowInsecureStorage != null &&
+      options.allowInsecureStorage !== cached.allowInsecureStorage
+    ) {
+      throw new Error(
+        `ElectronKeyStore.open('${name}') was already opened with allowInsecureStorage: ` +
+          `${cached.allowInsecureStorage}; cannot reopen with conflicting allowInsecureStorage: ` +
+          `${options.allowInsecureStorage}.`,
       )
     }
     return ElectronKeyStore.#byName[name]
@@ -43,6 +53,10 @@ export class ElectronKeyStore implements KeyStore<string, ElectronKeyEntry> {
       getKeys: () => store.get('keys', {}),
       setKeys: (keys) => store.set('keys', keys),
     }
+  }
+
+  get allowInsecureStorage(): boolean {
+    return this.#allowInsecureStorage
   }
 
   entry(keyID: string): ElectronKeyEntry {
