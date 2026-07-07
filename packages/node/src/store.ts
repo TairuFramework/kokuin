@@ -1,6 +1,5 @@
 import type { KeyStore } from '@kokuin/token'
 import { type Credential, findCredentials, findCredentialsAsync } from '@napi-rs/keyring'
-import { fromB64 } from '@sozai/codec'
 
 import { NodeKeyEntry } from './entry.js'
 
@@ -25,7 +24,7 @@ export class NodeKeyStore implements KeyStore<Uint8Array, NodeKeyEntry> {
     this.#entries[credential.account] ??= new NodeKeyEntry(
       this.#service,
       credential.account,
-      fromB64(credential.password),
+      credential.password,
     )
     return this.#entries[credential.account]
   }

@@ -5,6 +5,7 @@ import { fromB64, toB64 } from '@sozai/codec'
 
 export class NodeKeyEntry implements KeyEntry<Uint8Array> {
   #async?: AsyncEntry
+  #encoded?: string
   #keyID: string
   #key?: Uint8Array
   #service: string
@@ -14,10 +15,10 @@ export class NodeKeyEntry implements KeyEntry<Uint8Array> {
   // processes can still both observe null and generate. Not solvable here.
   #provideLock: Promise<unknown> = Promise.resolve()
 
-  constructor(service: string, keyID: string, key?: Uint8Array) {
+  constructor(service: string, keyID: string, encoded?: string) {
     this.#service = service
     this.#keyID = keyID
-    this.#key = key
+    this.#encoded = encoded
   }
 
   get keyID(): string {
@@ -38,6 +39,11 @@ export class NodeKeyEntry implements KeyEntry<Uint8Array> {
     if (this.#key != null) {
       return this.#key
     }
+    if (this.#encoded != null) {
+      this.#key = fromB64(this.#encoded)
+      this.#encoded = undefined
+      return this.#key
+    }
     const encoded = this.#syncEntry.getPassword()
     if (encoded == null) {
       return null
@@ -48,6 +54,11 @@ export class NodeKeyEntry implements KeyEntry<Uint8Array> {
 
   async getAsync(): Promise<Uint8Array | null> {
     if (this.#key != null) {
+      return this.#key
+    }
+    if (this.#encoded != null) {
+      this.#key = fromB64(this.#encoded)
+      this.#encoded = undefined
       return this.#key
     }
     const encoded = await this.#asyncEntry.getPassword()
