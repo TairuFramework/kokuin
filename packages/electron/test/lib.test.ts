@@ -152,6 +152,12 @@ describe('ElectronKeyStore', () => {
     const store = ElectronKeyStore.open('cache-test')
     expect(store.entry('x')).toBe(store.entry('x'))
   })
+
+  test('entry("constructor") returns a real entry, not a prototype member', () => {
+    const store = ElectronKeyStore.open('proto-electron')
+    const entry = store.entry('constructor')
+    expect(entry.keyID).toBe('constructor')
+  })
 })
 
 describe('ElectronKeyEntry encryption gate', () => {

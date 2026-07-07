@@ -202,4 +202,15 @@ describe('BrowserKeyStore', () => {
     const store = new BrowserKeyStore(mockDB)
     expect(store.entry('x')).toBe(store.entry('x'))
   })
+
+  test('entry("constructor") returns a real entry, not a prototype member', async () => {
+    const { BrowserKeyStore } = await import('../src/store.js')
+    const mockDB = {
+      transaction: () => ({ objectStore: () => createMockGetStore().getStore() }),
+    } as unknown as IDBDatabase
+    const store = new BrowserKeyStore(mockDB)
+    const entry = store.entry('constructor')
+    expect(entry).toBeInstanceOf(BrowserKeyEntry)
+    expect(entry.keyID).toBe('constructor')
+  })
 })

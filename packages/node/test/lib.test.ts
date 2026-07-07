@@ -184,6 +184,13 @@ describe('NodeKeyStore', () => {
     expect(store.entry('x')).toBe(store.entry('x'))
   })
 
+  test('entry("constructor") returns a real entry, not a prototype member', () => {
+    const store = NodeKeyStore.open('proto-svc')
+    const entry = store.entry('constructor')
+    expect(entry).toBeInstanceOf(NodeKeyEntry)
+    expect(entry.keyID).toBe('constructor')
+  })
+
   test('list() returns entries from keyring', () => {
     const store = new NodeKeyStore('list-test')
     store.entry('la').set(new Uint8Array([1]))

@@ -7,7 +7,7 @@ import type { KeyStorage } from './types.js'
 type StoreValues = { keys: Record<string, string> }
 
 export class ElectronKeyStore implements KeyStore<string, ElectronKeyEntry> {
-  static #byName: Record<string, ElectronKeyStore> = {}
+  static #byName: Record<string, ElectronKeyStore> = Object.create(null)
 
   static open(name = 'keystore', options?: { allowInsecureStorage?: boolean }): ElectronKeyStore {
     if (ElectronKeyStore.#byName[name] == null) {
@@ -19,7 +19,7 @@ export class ElectronKeyStore implements KeyStore<string, ElectronKeyEntry> {
     return ElectronKeyStore.#byName[name]
   }
 
-  #entries: Record<string, ElectronKeyEntry> = {}
+  #entries: Record<string, ElectronKeyEntry> = Object.create(null)
   #storage: KeyStorage
   #allowInsecureStorage: boolean
 

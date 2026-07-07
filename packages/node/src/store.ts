@@ -4,7 +4,7 @@ import { type Credential, findCredentials, findCredentialsAsync } from '@napi-rs
 import { NodeKeyEntry } from './entry.js'
 
 export class NodeKeyStore implements KeyStore<Uint8Array, NodeKeyEntry> {
-  static #byService: Record<string, NodeKeyStore> = {}
+  static #byService: Record<string, NodeKeyStore> = Object.create(null)
 
   static open(service: string): NodeKeyStore {
     if (NodeKeyStore.#byService[service] == null) {
@@ -13,7 +13,7 @@ export class NodeKeyStore implements KeyStore<Uint8Array, NodeKeyEntry> {
     return NodeKeyStore.#byService[service]
   }
 
-  #entries: Record<string, NodeKeyEntry> = {}
+  #entries: Record<string, NodeKeyEntry> = Object.create(null)
   #service: string
 
   constructor(service: string) {
