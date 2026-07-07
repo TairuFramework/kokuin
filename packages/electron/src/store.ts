@@ -18,11 +18,11 @@ export class ElectronKeyStore implements KeyStore<string, ElectronKeyEntry> {
       )
     } else if (
       options?.allowInsecureStorage != null &&
-      options.allowInsecureStorage !== cached.allowInsecureStorage
+      options.allowInsecureStorage !== cached.#allowInsecureStorage
     ) {
       throw new Error(
         `ElectronKeyStore.open('${name}') was already opened with allowInsecureStorage: ` +
-          `${cached.allowInsecureStorage}; cannot reopen with conflicting allowInsecureStorage: ` +
+          `${cached.#allowInsecureStorage}; cannot reopen with conflicting allowInsecureStorage: ` +
           `${options.allowInsecureStorage}.`,
       )
     }
@@ -53,10 +53,6 @@ export class ElectronKeyStore implements KeyStore<string, ElectronKeyEntry> {
       getKeys: () => store.get('keys', {}),
       setKeys: (keys) => store.set('keys', keys),
     }
-  }
-
-  get allowInsecureStorage(): boolean {
-    return this.#allowInsecureStorage
   }
 
   entry(keyID: string): ElectronKeyEntry {
