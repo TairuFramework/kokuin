@@ -9,6 +9,10 @@ export class NodeKeyEntry implements KeyEntry<Uint8Array> {
   #key?: Uint8Array
   #service: string
   #sync?: Entry
+  // Serializes provideAsync within THIS process. A cross-process race on the OS
+  // keyring remains possible: @napi-rs/keyring exposes no compare-and-set, so two
+  // processes can still both observe null and generate. Not solvable here.
+  #provideLock: Promise<unknown> = Promise.resolve()
 
   constructor(service: string, keyID: string, key?: Uint8Array) {
     this.#service = service
@@ -74,14 +78,19 @@ export class NodeKeyEntry implements KeyEntry<Uint8Array> {
     return privateKey
   }
 
-  async provideAsync(): Promise<Uint8Array> {
-    const existing = await this.getAsync()
-    if (existing != null) {
-      return existing
-    }
-    const privateKey = randomPrivateKey()
-    await this.setAsync(privateKey)
-    return privateKey
+  provideAsync(): Promise<Uint8Array> {
+    const run = this.#provideLock.then(async () => {
+      const existing = await this.getAsync()
+      if (existing != null) {
+        return existing
+      }
+      const privateKey = randomPrivateKey()
+      await this.setAsync(privateKey)
+      return privateKey
+    })
+    // Keep the chain alive even if this call rejects, so a failure does not wedge the lock.
+    this.#provideLock = run.catch(() => undefined)
+    return run
   }
 
   remove(): void {

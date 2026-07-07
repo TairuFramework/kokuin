@@ -138,6 +138,17 @@ describe('NodeKeyEntry', () => {
     expect(provided.length).toBeGreaterThan(0)
   })
 
+  test('concurrent provideAsync calls resolve to the same key', async () => {
+    const entry = new NodeKeyEntry('svc', 'race')
+    const [a, b, c] = await Promise.all([
+      entry.provideAsync(),
+      entry.provideAsync(),
+      entry.provideAsync(),
+    ])
+    expect(a).toEqual(b)
+    expect(b).toEqual(c)
+  })
+
   test('removeAsync() clears key', async () => {
     const entry = new NodeKeyEntry('svc', 'ak4')
     await entry.setAsync(new Uint8Array([33]))
