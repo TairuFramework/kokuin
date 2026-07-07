@@ -80,6 +80,36 @@ describe('resolveIssuer', () => {
     )
   })
 
+  it('rejects a kid that is only an assertionMethod, not authentication', async () => {
+    const authPriv = ed25519.utils.randomSecretKey()
+    const assertPriv = ed25519.utils.randomSecretKey()
+    const ed25519Codec = new Uint8Array([0xed, 0x01])
+    const multibaseFor = (priv: Uint8Array) => {
+      const pub = ed25519.getPublicKey(priv)
+      const taggedPub = new Uint8Array(ed25519Codec.length + pub.length)
+      taggedPub.set(ed25519Codec, 0)
+      taggedPub.set(pub, ed25519Codec.length)
+      return encodeMultibase(taggedPub)
+    }
+    const { shortForm, doc } = encodePeer4({
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [
+        { id: '#key-0', type: 'Multikey', publicKeyMultibase: multibaseFor(authPriv) },
+        { id: '#key-1', type: 'Multikey', publicKeyMultibase: multibaseFor(assertPriv) },
+      ],
+      authentication: ['#key-0'],
+      assertionMethod: ['#key-1'],
+    })
+    const resolver = (did: string) => (did === shortForm ? doc : undefined)
+    // The assertion-only key must not be usable to sign/verify a token.
+    await expect(resolveIssuer(shortForm, { kid: '#key-1' }, resolver)).rejects.toThrow(
+      /not an authentication method/,
+    )
+    // The authentication key still resolves.
+    const [alg] = await resolveIssuer(shortForm, { kid: '#key-0' }, resolver)
+    expect(alg).toBe('EdDSA')
+  })
+
   it('decodes a did:peer:4 long-form issuer inline without calling the resolver', async () => {
     const priv = ed25519.utils.randomSecretKey()
     const pub = ed25519.getPublicKey(priv)

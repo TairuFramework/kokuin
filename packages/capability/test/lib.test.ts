@@ -199,6 +199,41 @@ describe('hasPermission()', () => {
       ),
     ).toBe(false)
   })
+
+  test('does not grant ancestor resources or actions (prefix escalation)', () => {
+    // A grant more specific than the request must NOT authorize the broader request.
+    expect(
+      hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: 'test/read', res: 'foo/bar/baz' }),
+    ).toBe(false)
+    expect(
+      hasPermission({ act: 'test/read', res: 'foo' }, { act: 'test/read', res: 'foo/bar/baz' }),
+    ).toBe(false)
+    expect(
+      hasPermission({ act: 'test', res: 'foo/bar' }, { act: 'test/read', res: 'foo/bar' }),
+    ).toBe(false)
+
+    // No implicit descent: a shorter grant does not cover a deeper request without `*`.
+    expect(
+      hasPermission({ act: 'test/read', res: 'foo/bar/baz' }, { act: 'test/read', res: 'foo/bar' }),
+    ).toBe(false)
+    expect(
+      hasPermission(
+        { act: 'test/read/extra', res: 'foo/bar' },
+        { act: 'test/read', res: 'foo/bar' },
+      ),
+    ).toBe(false)
+
+    // Explicit trailing `*` is still required to authorize deeper requests.
+    expect(
+      hasPermission({ act: 'test/read', res: 'foo/bar/baz' }, { act: 'test/read', res: 'foo/*' }),
+    ).toBe(true)
+    expect(
+      hasPermission(
+        { act: 'test/read', res: 'foo/bar/baz' },
+        { act: 'test/read', res: 'foo/bar/*' },
+      ),
+    ).toBe(true)
+  })
 })
 
 describe('assertNonExpired()', () => {

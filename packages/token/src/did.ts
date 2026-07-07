@@ -139,6 +139,17 @@ function resolveKidOrAuth(doc: DIDDoc, kid: string | undefined): [SignatureAlgor
     }
     return resolveKidFromDoc(doc, auth[0])
   }
+  // A kid must reference a method the subject authorized for `authentication`. Without this
+  // check a key listed only under `assertionMethod` (or any other relationship) could sign
+  // tokens. `KidNotFound` still takes precedence so a genuinely absent kid is reported as such.
+  const method = (doc.verificationMethod as Array<VerificationMethod>).find((m) => m.id === kid)
+  if (method == null) {
+    throw new Error(`KidNotFound: ${kid}`)
+  }
+  const auth = doc.authentication
+  if (auth == null || !auth.includes(kid)) {
+    throw new Error(`resolveIssuer: kid ${kid} is not an authentication method`)
+  }
   return resolveKidFromDoc(doc, kid)
 }
 

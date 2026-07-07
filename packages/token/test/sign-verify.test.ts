@@ -34,6 +34,47 @@ describe('sign and verify', () => {
     expect((verified.payload as Record<string, unknown>).iss).toBe(identity.id)
   })
 
+  test('audience validation', async () => {
+    const identity = randomIdentity()
+    const token = await identity.signToken({ aud: 'did:key:service-a' })
+
+    // Matching audience passes.
+    await expect(verifyToken(token, { audience: 'did:key:service-a' })).resolves.toBeDefined()
+    // Membership in an array of accepted audiences passes.
+    await expect(
+      verifyToken(token, { audience: ['did:key:other', 'did:key:service-a'] }),
+    ).resolves.toBeDefined()
+    // Unset audience skips the check (backward compatible).
+    await expect(verifyToken(token)).resolves.toBeDefined()
+    // Mismatched audience is rejected (a token for A must not verify against B).
+    await expect(verifyToken(token, { audience: 'did:key:service-b' })).rejects.toThrow(/audience/)
+
+    // A token with no aud claim is rejected when an audience is expected.
+    const noAud = await identity.signToken({ test: true })
+    await expect(verifyToken(noAud, { audience: 'did:key:service-a' })).rejects.toThrow(/audience/)
+
+    // An empty accept-list rejects every token.
+    await expect(verifyToken(token, { audience: [] })).rejects.toThrow(/audience/)
+  })
+
+  test('audience validation rejects unsigned and alg:none tokens', async () => {
+    // Object form: an unsigned token cannot satisfy an audience requirement.
+    const unsigned = { header: { typ: 'JWT', alg: 'none' }, payload: { aud: 'did:key:service-a' } }
+    await expect(verifyToken(unsigned as never, { audience: 'did:key:service-a' })).rejects.toThrow(
+      /requires a signed token/,
+    )
+
+    // String form with alg:none header is likewise rejected when an audience is expected.
+    const header = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'none' })).toString('base64url')
+    const payload = Buffer.from(JSON.stringify({ aud: 'did:key:service-a' })).toString('base64url')
+    await expect(
+      verifyToken(`${header}.${payload}.`, { audience: 'did:key:service-a' }),
+    ).rejects.toThrow(/requires a signed token/)
+
+    // Without an audience option, unsigned tokens still verify (unchanged behavior).
+    await expect(verifyToken(unsigned as never)).resolves.toBeDefined()
+  })
+
   test('EdDSA low-level signature', async () => {
     const privateKey = ed25519.utils.randomSecretKey()
     const publicKey = ed25519.getPublicKey(privateKey)

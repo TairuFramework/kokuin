@@ -8,6 +8,15 @@ export default defineConfig({
     DEV: process.env.NODE_ENV === 'development' ? 'true' : 'false',
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV),
   },
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [{ name: 'vendor', test: /node_modules/ }],
+        },
+      },
+    },
+  },
   optimizeDeps: {
     rolldownOptions: {
       resolve: {
