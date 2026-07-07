@@ -61,8 +61,8 @@ export class ElectronKeyEntry implements KeyEntry<string> {
     return this.#key
   }
 
-  setAsync(key: string): Promise<void> {
-    return Promise.resolve(this.set(key))
+  async setAsync(key: string): Promise<void> {
+    return this.set(key)
   }
 
   set(key: string): void {
@@ -74,8 +74,8 @@ export class ElectronKeyEntry implements KeyEntry<string> {
     this.#key = key
   }
 
-  provideAsync(): Promise<string> {
-    return Promise.resolve(this.provide())
+  async provideAsync(): Promise<string> {
+    return this.provide()
   }
 
   provide(): string {

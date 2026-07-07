@@ -158,6 +158,19 @@ describe('ElectronKeyStore', () => {
     const entry = store.entry('constructor')
     expect(entry.keyID).toBe('constructor')
   })
+
+  test('open() throws on conflicting allowInsecureStorage flag for a cached name', () => {
+    ElectronKeyStore.open('flag-conflict', { allowInsecureStorage: false })
+    expect(() => ElectronKeyStore.open('flag-conflict', { allowInsecureStorage: true })).toThrow(
+      /allowInsecureStorage/i,
+    )
+  })
+
+  test('open() reuses cached instance when flag matches or is omitted', () => {
+    const a = ElectronKeyStore.open('flag-same', { allowInsecureStorage: true })
+    expect(ElectronKeyStore.open('flag-same', { allowInsecureStorage: true })).toBe(a)
+    expect(ElectronKeyStore.open('flag-same')).toBe(a)
+  })
 })
 
 describe('ElectronKeyEntry encryption gate', () => {
@@ -179,6 +192,18 @@ describe('ElectronKeyEntry encryption gate', () => {
     entry.set('secret')
     encryptionAvailable = false
     expect(entry.get()).toBe('secret')
+  })
+
+  test('setAsync rejects (not throws synchronously) when encryption unavailable', async () => {
+    encryptionAvailable = false
+    const entry = ElectronKeyStore.open('gate-async-1').entry('k')
+    await expect(entry.setAsync('secret')).rejects.toThrow(/encryption/i)
+  })
+
+  test('provideAsync rejects when encryption unavailable', async () => {
+    encryptionAvailable = false
+    const entry = ElectronKeyStore.open('gate-async-2').entry('k')
+    await expect(entry.provideAsync()).rejects.toThrow(/encryption/i)
   })
 })
 
