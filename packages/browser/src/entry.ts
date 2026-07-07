@@ -27,9 +27,13 @@ export class BrowserKeyEntry implements KeyEntry<CryptoKeyPair> {
 
   setAsync(keyPair: CryptoKeyPair): Promise<void> {
     return new Promise((resolve, reject) => {
-      const request = this.#getStore('readwrite').put(keyPair, this.#keyID)
+      const store = this.#getStore('readwrite')
+      const request = store.put(keyPair, this.#keyID)
       request.onerror = () => reject(request.error)
-      request.onsuccess = () => resolve()
+      const tx = store.transaction
+      tx.oncomplete = () => resolve()
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'))
+      tx.onerror = () => reject(tx.error ?? new Error('Transaction failed'))
     })
   }
 
@@ -45,9 +49,13 @@ export class BrowserKeyEntry implements KeyEntry<CryptoKeyPair> {
 
   removeAsync(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const request = this.#getStore('readwrite').delete(this.#keyID)
+      const store = this.#getStore('readwrite')
+      const request = store.delete(this.#keyID)
       request.onerror = () => reject(request.error)
-      request.onsuccess = () => resolve()
+      const tx = store.transaction
+      tx.oncomplete = () => resolve()
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'))
+      tx.onerror = () => reject(tx.error ?? new Error('Transaction failed'))
     })
   }
 }

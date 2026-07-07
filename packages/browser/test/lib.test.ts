@@ -6,32 +6,53 @@ import { getPublicKey, randomKeyPair } from '../src/utils.js'
 
 // --- Mock IDB helpers ---
 
-function createMockGetStore(): { getStore: GetStore; data: Map<string, unknown> } {
+function createMockGetStore(): {
+  getStore: GetStore
+  data: Map<string, unknown>
+  abortNextWrite: () => void
+} {
   const data = new Map<string, unknown>()
+  let abortNext = false
 
-  const getStore: GetStore = () =>
-    ({
+  const getStore: GetStore = () => {
+    const tx: Record<string, unknown> = {}
+    const finish = (aborted: boolean) => {
+      queueMicrotask(() => {
+        if (aborted) (tx.onabort as (e: Event) => void)?.({} as Event)
+        else (tx.oncomplete as (e: Event) => void)?.({} as Event)
+      })
+    }
+    const store = {
+      transaction: tx,
       get(key: string) {
         const result = data.get(key)
         const request: Record<string, unknown> = { result }
         queueMicrotask(() => (request.onsuccess as (e: Event) => void)?.({} as Event))
+        finish(false)
         return request as unknown as IDBRequest
       },
       put(value: unknown, key: string) {
-        data.set(key, value)
+        const aborted = abortNext
+        abortNext = false
+        if (!aborted) data.set(key, value)
         const request: Record<string, unknown> = {}
         queueMicrotask(() => (request.onsuccess as (e: Event) => void)?.({} as Event))
+        finish(aborted)
         return request as unknown as IDBRequest
       },
       delete(key: string) {
         data.delete(key)
         const request: Record<string, unknown> = {}
         queueMicrotask(() => (request.onsuccess as (e: Event) => void)?.({} as Event))
+        finish(false)
         return request as unknown as IDBRequest
       },
-    }) as unknown as IDBObjectStore
+    }
+    tx.objectStore = () => store
+    return store as unknown as IDBObjectStore
+  }
 
-  return { getStore, data }
+  return { getStore, data, abortNextWrite: () => (abortNext = true) }
 }
 
 // --- Utils tests (real SubtleCrypto) ---
@@ -133,6 +154,15 @@ describe('BrowserKeyEntry', () => {
     expect(data.has('k5')).toBe(true)
     await entry.removeAsync()
     expect(data.has('k5')).toBe(false)
+  })
+
+  test('setAsync rejects when the transaction aborts after the request succeeds', async () => {
+    const { getStore, data, abortNextWrite } = createMockGetStore()
+    const entry = new BrowserKeyEntry('k', getStore)
+    const keyPair = await randomKeyPair()
+    abortNextWrite()
+    await expect(entry.setAsync(keyPair)).rejects.toThrow()
+    expect(data.has('k')).toBe(false)
   })
 })
 
