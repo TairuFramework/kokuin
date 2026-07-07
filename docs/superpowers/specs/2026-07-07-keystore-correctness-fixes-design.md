@@ -131,6 +131,7 @@ a name of `'__proto__'` / `'constructor'` behaves normally.
 
 ## Out of scope
 
-- KeyStore/KeyEntry contract spec and reconciling implementation divergence
+- KeyStore/KeyEntry contract spec and reconciling implementation divergence — a larger
+  API-design task also touching `@kokuin/token` and `@kokuin/deterministic` (HD)
   (`next/2026-07-02-keystore-contract-and-adversarial-tests.md`).
 - Cross-process atomicity on the node OS keyring (no primitive available; documented only).
