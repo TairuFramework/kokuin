@@ -205,3 +205,29 @@ settings must precede the SDK includes that consume them.
 — required so Speculos boots to an idle screen and the post-review status page has a return
 target. New app icon `icons/kokuin_app_14px.gif` is a **placeholder** boilerplate glyph, not
 real branding (revisit). No `req_type` reset here (Q1.3). ECDH untouched (Phase 2).
+
+### Q1.2 — SIGN Reject returns `SW_USER_REJECTED` (0x6985) ✅
+
+**Verified, no code change needed.** Reject was already wired: `review_choice(false)` →
+`sign_rejected()` → `explicit_bzero(message)` + `io_send_sw(SW_USER_REJECTED)`. SIGN driven
+to "Reject message" returns `{"data":"6985"}`, no response data.
+
+### Q1.3 — `req_type` reset so a stale continuation chunk is rejected ✅
+
+**Verified after fix.** Added `G_context.req_type = REQ_NONE` at entry of `sign_approved()`
+and `sign_rejected()` (cover all their exits) and before each aborting
+`io_send_sw(SW_INVALID_DATA)` in `handler_sign_message`. `REQ_NONE = 0` already in `types.h`;
+no enum change. `P1_CONTINUATION` guard and mid-op `SW_OK` returns untouched.
+
+- After Approve (`9000` + 64-byte sig), a data-bearing stale continuation `e00380000141`
+  (`P1=0x80`, `P2=0x00`, `Lc=01`) returns `6a80` (`SW_INVALID_DATA`) — hits the
+  `req_type != REQ_SIGN_MESSAGE` guard. Fresh SIGN + Approve regression still returns
+  `9000` + identical sig.
+
+**Test-design finding (feeds Q3.2):** the stale-chunk test must send a **≥1-byte**
+continuation. A bare `Lc=00` continuation (`e003800000`) is rejected earlier by the
+`dispatcher.c` length guard with `SW_WRONG_DATA_LENGTH` (`6700`) and never reaches the
+`req_type` guard. Assert `6a80` against a 1-byte continuation, not `Lc=00`.
+
+**Phase 1 complete** (Q1.1–Q1.3). Known: 2 pre-existing `signToken` vitest tests now time
+out (SIGN needs approval the auto-transport doesn't yet give) — expected, resolved in Q3.1.

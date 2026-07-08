@@ -13,6 +13,11 @@
 #include "display.h"
 
 void sign_approved(void) {
+    // This concludes the sign operation on every exit below, so clear the
+    // request type up front: a stray continuation chunk that arrives afterwards
+    // must fail the P1_CONTINUATION guard rather than append to stale state.
+    G_context.req_type = REQ_NONE;
+
     cx_ecfp_private_key_t private_key;
 
     if (derive_ed25519_keys(G_context.bip32_path, G_context.bip32_path_len,
@@ -43,6 +48,9 @@ void sign_approved(void) {
 }
 
 void sign_rejected(void) {
+    // Concludes the sign operation: clear the request type so a later stray
+    // continuation chunk fails the P1_CONTINUATION guard instead of reusing it.
+    G_context.req_type = REQ_NONE;
     explicit_bzero(G_context.message, sizeof(G_context.message));
     G_context.message_len = 0;
     io_send_sw(SW_USER_REJECTED);
@@ -58,11 +66,15 @@ int handler_sign_message(buffer_t *cdata, uint8_t p1, uint8_t p2) {
                                          G_context.bip32_path,
                                          &G_context.bip32_path_len);
         if (consumed < 0) {
+            // Aborting this sign: clear the request type so a following
+            // continuation chunk does not append to a half-initialized message.
+            G_context.req_type = REQ_NONE;
             return io_send_sw(SW_INVALID_DATA);
         }
 
         uint16_t msg_len = cdata->size - consumed;
         if (msg_len > MAX_MESSAGE_SIZE) {
+            G_context.req_type = REQ_NONE;
             return io_send_sw(SW_INVALID_DATA);
         }
         if (msg_len > 0) {
@@ -87,6 +99,9 @@ int handler_sign_message(buffer_t *cdata, uint8_t p1, uint8_t p2) {
         }
 
         if (G_context.message_len + cdata->size > MAX_MESSAGE_SIZE) {
+            // Aborting this sign: clear the request type so subsequent
+            // continuation chunks are rejected rather than reusing stale state.
+            G_context.req_type = REQ_NONE;
             return io_send_sw(SW_INVALID_DATA);
         }
 
