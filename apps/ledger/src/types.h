@@ -33,4 +33,7 @@ typedef struct {
 
     // Ephemeral public key for ECDH
     uint8_t ephemeral_pubkey[X25519_SECRET_LEN];
+
+    // SHA-256 digest of the peer's ephemeral key, shown during the ECDH review
+    uint8_t peer_key_digest[32];
 } global_ctx_t;

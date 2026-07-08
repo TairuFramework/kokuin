@@ -231,3 +231,24 @@ continuation. A bare `Lc=00` continuation (`e003800000`) is rejected earlier by 
 
 **Phase 1 complete** (Q1.1–Q1.3). Known: 2 pre-existing `signToken` vitest tests now time
 out (SIGN needs approval the auto-transport doesn't yet give) — expected, resolved in Q3.1.
+
+### Q2.1 — ECDH gates, displays peer-key digest, resets state ✅
+
+**Verified.** SIGN pattern mirrored onto `handler_ecdh_x25519`; SIGN code untouched.
+- `// For now, auto-approve` removed; handler digests the ephemeral pubkey into a new
+  `G_context.peer_key_digest[32]`, calls `ui_display_ecdh()`, returns 0 with no SW.
+- `ui_display_ecdh()` NBGL review (`TYPE_OPERATION`, title "Review key agreement"):
+  Account `44'/876'/0'`, "Peer key" = SHA-256(ephemeral_pubkey), finish "Agree key".
+  Approve → `ecdh_approved()`; Reject → `ecdh_rejected()`.
+- `ecdh_approved`/`ecdh_rejected` un-`static`'d (new `ecdh_x25519.h`), each resets
+  `req_type = REQ_NONE`; both aborting `io_send_sw` error paths reset it too.
+- Speculos round-trip: Approve returns the exact HD-keystore shared secret
+  `7bcd1bb7…a3502` + `0x9000`; Reject → `0x6985` no data. Peer-key digest on screen
+  matches SHA-256 of the ephemeral pubkey.
+
+**Note:** ECDH is single-shot (no P1/P2 chunking), so there is no stale-continuation
+vector for it; the `req_type` resets are defensive on all terminal paths. The old
+`unused function 'ecdh_rejected'` warning is gone.
+
+**Phase 2 complete.** Remaining: Phase 3 (Q3.1 auto-approval harness, Q3.2 reject +
+stale-chunk tests, Q3.3 README) — TypeScript/docs, not firmware.

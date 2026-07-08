@@ -10,11 +10,15 @@
 #include "globals.h"
 #include "menu.h"
 #include "sign_message.h"
+#include "ecdh_x25519.h"
 
 // NBGL reads these strings asynchronously while the review is on screen, so the
-// buffers must outlive ui_display_sign and cannot live on the stack.
+// buffers must outlive ui_display_sign / ui_display_ecdh and cannot live on the
+// stack. A single review runs at a time, so the account and pair buffers are
+// shared across the sign and key-agreement flows.
 static char g_account[60];
 static char g_digest[2 * sizeof(G_context.message_digest) + 1];
+static char g_peer_key[2 * sizeof(G_context.peer_key_digest) + 1];
 
 static nbgl_contentTagValue_t pairs[2];
 static nbgl_contentTagValueList_t pairList;
@@ -64,4 +68,43 @@ void ui_display_sign(void) {
                        NULL,
                        "Sign message",
                        review_choice);
+}
+
+// Invoked once the key-agreement review reaches a decision: run the ECDH on
+// approval, discard the ephemeral key on reject. Either branch answers the
+// pending APDU before returning to the idle screen.
+static void agreement_choice(bool confirm) {
+    if (confirm) {
+        ecdh_approved();
+        nbgl_useCaseReviewStatus(STATUS_TYPE_OPERATION_SIGNED, ui_menu_main);
+    } else {
+        ecdh_rejected();
+        nbgl_useCaseReviewStatus(STATUS_TYPE_OPERATION_REJECTED, ui_menu_main);
+    }
+}
+
+void ui_display_ecdh(void) {
+    if (!bip32_path_format(G_context.bip32_path, G_context.bip32_path_len,
+                           g_account, sizeof(g_account))) {
+        g_account[0] = '\0';
+    }
+    format_hex(G_context.peer_key_digest, sizeof(G_context.peer_key_digest), g_peer_key);
+
+    pairs[0].item = "Account";
+    pairs[0].value = g_account;
+    pairs[1].item = "Peer key";
+    pairs[1].value = g_peer_key;
+
+    pairList.nbMaxLinesForValue = 0;
+    pairList.nbPairs = 2;
+    pairList.pairs = pairs;
+    pairList.wrapping = false;
+
+    nbgl_useCaseReview(TYPE_OPERATION,
+                       &pairList,
+                       &ICON_APP_KOKUIN,
+                       "Review key agreement",
+                       NULL,
+                       "Agree key",
+                       agreement_choice);
 }

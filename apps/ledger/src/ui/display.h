@@ -11,3 +11,13 @@
  * sends the APDU response, so the caller must not send a status word itself.
  */
 void ui_display_sign(void);
+
+/**
+ * Present the key-agreement review flow and defer the ECDH computation to the
+ * user's approval.
+ *
+ * Approving runs the key agreement and returns the shared secret; rejecting
+ * discards the ephemeral key. Either outcome sends the APDU response, so the
+ * caller must not send a status word itself.
+ */
+void ui_display_ecdh(void);

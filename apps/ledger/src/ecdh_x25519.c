@@ -9,8 +9,14 @@
 #include "globals.h"
 #include "crypto.h"
 #include "sw.h"
+#include "ecdh_x25519.h"
+#include "display.h"
 
-static void ecdh_approved(void) {
+void ecdh_approved(void) {
+    // This concludes the key agreement on every exit below, so clear the
+    // request type up front: no stale ECDH state should linger on the context.
+    G_context.req_type = REQ_NONE;
+
     cx_ecfp_private_key_t ed_private;
 
     if (derive_ed25519_keys(G_context.bip32_path, G_context.bip32_path_len,
@@ -56,7 +62,10 @@ static void ecdh_approved(void) {
     explicit_bzero(shared_secret, sizeof(shared_secret));
 }
 
-static void ecdh_rejected(void) {
+void ecdh_rejected(void) {
+    // Concludes the key agreement: clear the request type so no stale ECDH
+    // state lingers on the context.
+    G_context.req_type = REQ_NONE;
     explicit_bzero(G_context.ephemeral_pubkey, sizeof(G_context.ephemeral_pubkey));
     io_send_sw(SW_USER_REJECTED);
 }
@@ -68,17 +77,24 @@ int handler_ecdh_x25519(buffer_t *cdata) {
                                      G_context.bip32_path,
                                      &G_context.bip32_path_len);
     if (consumed < 0) {
+        // Aborting this key agreement: clear the request type so no stale
+        // ECDH state lingers on the context.
+        G_context.req_type = REQ_NONE;
         return io_send_sw(SW_INVALID_DATA);
     }
 
     uint8_t remaining = cdata->size - consumed;
     if (remaining != X25519_SECRET_LEN) {
+        G_context.req_type = REQ_NONE;
         return io_send_sw(SW_INVALID_DATA);
     }
 
     memmove(G_context.ephemeral_pubkey, cdata->ptr + consumed, X25519_SECRET_LEN);
 
-    // For now, auto-approve (UI confirmation would go here)
-    ecdh_approved();
+    // Digest the peer's ephemeral key for the review screen, then defer the
+    // key agreement to the user's approval.
+    digest_sha256(G_context.ephemeral_pubkey, X25519_SECRET_LEN,
+                  G_context.peer_key_digest);
+    ui_display_ecdh();
     return 0;
 }
