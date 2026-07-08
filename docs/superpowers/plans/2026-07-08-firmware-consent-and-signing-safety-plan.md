@@ -252,3 +252,45 @@ vector for it; the `req_type` resets are defensive on all terminal paths. The ol
 
 **Phase 2 complete.** Remaining: Phase 3 (Q3.1 auto-approval harness, Q3.2 reject +
 stale-chunk tests, Q3.3 README) — TypeScript/docs, not firmware.
+
+### Q3.1 — Speculos auto-approval keeps the suite green unattended ✅
+### Q3.2 — reject + stale-chunk tests pass ✅
+
+**Verified — `test-speculos.sh --build`: 15/15 passed** (12 original + 3 new), unattended.
+`biome check tests/ledger` clean; `tsc -p tests/ledger/tsconfig.json --noEmit` clean.
+TypeScript-only; no firmware change.
+
+**Auto-approval mechanism (the integration unknown, now resolved):** a Speculos
+`POST /automation` ruleset matching **on-screen page titles** and firing button presses.
+NBGL on Nano paginates each field to its own page, so the ruleset advances (right-key
+press-release) on every info page then confirms (both-key) on the final page:
+- Button `1`=left, `2`=right; action = `[event, button, pressed]` tuples.
+- Rules use `regexp`, **not** `text`. Critical: the ECDH title wraps into two device
+  events (`"Review key "` / `"agreement"`); a full-string `"Review key agreement"` match
+  matched neither and stalled. Fix: match first line `regexp: "Review key"`. (This was
+  the one empirical dead end.)
+- APPROVE_RULES advance on `Review message|Review key|Account|Digest|Peer key`, both-press
+  on `Sign message|Agree key`. REJECT_RULES also advance past the confirm pages, both-press
+  on `Reject message|Reject operation`. Home/status screens match no rule.
+- A top-level `beforeEach` installs APPROVE_RULES; reject tests override in-body → robust
+  to ordering, self-restoring.
+
+**Negative tests** (`Ledger app: review rejection and guards`) via a non-throwing
+`exchangeAPDU()` returning `{ data, sw }`: SIGN reject → `0x6985`, ECDH reject → `0x6985`,
+stale 1-byte continuation `e00380000141` → `0x6A80`.
+
+**Fragility note:** automation is coupled to firmware screen wording — any change to the
+review page titles/confirm/reject strings requires updating the automation patterns.
+
+---
+
+## Status: Phases 1–3 probes all DONE. Remaining (next session)
+
+- **Commit** the Q3.1+Q3.2 test-harness work (`tests/ledger/test/speculos.test.ts` +
+  the probe report/plan doc). Nothing after `bc97bfa` is committed yet.
+- **Q3.3 (README):** `apps/ledger/README.md` — keep Confirmation = "Yes" (now true), add a
+  short "Approval screens" subsection describing the SIGN + ECDH NBGL review flows and the
+  full-digest field. Doc-only, not yet done.
+- **Wrap-up:** tear down any running Speculos container; open the PR from
+  `firmware-consent-signing-safety`. Placeholder app icon
+  (`icons/kokuin_app_14px.gif`) still wants real branding (tracked, non-blocking).
