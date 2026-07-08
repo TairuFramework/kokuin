@@ -9,8 +9,10 @@
 #include "globals.h"
 #include "crypto.h"
 #include "sw.h"
+#include "sign_message.h"
+#include "display.h"
 
-static void sign_approved(void) {
+void sign_approved(void) {
     cx_ecfp_private_key_t private_key;
 
     if (derive_ed25519_keys(G_context.bip32_path, G_context.bip32_path_len,
@@ -40,7 +42,7 @@ static void sign_approved(void) {
     io_send_response_pointer(signature, ED25519_SIG_LEN, SW_OK);
 }
 
-static void sign_rejected(void) {
+void sign_rejected(void) {
     explicit_bzero(G_context.message, sizeof(G_context.message));
     G_context.message_len = 0;
     io_send_sw(SW_USER_REJECTED);
@@ -68,9 +70,11 @@ int handler_sign_message(buffer_t *cdata, uint8_t p1, uint8_t p2) {
             G_context.message_len = msg_len;
         }
 
-        // If this is the last (or only) chunk, sign now
+        // If this is the last (or only) chunk, ask the user to review and sign
         if (p2 != P2_MORE) {
-            sign_approved();
+            digest_sha256(G_context.message, G_context.message_len,
+                          G_context.message_digest);
+            ui_display_sign();
             return 0;
         }
 
@@ -93,8 +97,10 @@ int handler_sign_message(buffer_t *cdata, uint8_t p1, uint8_t p2) {
             return io_send_sw(SW_OK);
         }
 
-        // Last chunk (p2 == P2_LAST) — sign
-        sign_approved();
+        // Last chunk (p2 == P2_LAST) — ask the user to review and sign
+        digest_sha256(G_context.message, G_context.message_len,
+                      G_context.message_digest);
+        ui_display_sign();
         return 0;
     }
 

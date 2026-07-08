@@ -53,15 +53,23 @@ New control flow per operation:
    (unchanged), then computes the display digest and calls a UI entry point
    (`ui_display_sign()` / `ui_display_ecdh()`), and `return 0` **without sending any
    status word**.
-2. A BAGL `ux_flow` renders the review steps ending in Approve / Reject.
+2. An NBGL `nbgl_use_case` review renders the account path + digest and ends in
+   Approve / Reject.
 3. **Approve** callback → `sign_approved()` / `ecdh_approved()` — unchanged crypto and
    `io_send_response*` — then returns to idle (`ui_menu_main()`).
 4. **Reject** callback → `sign_rejected()` / `ecdh_rejected()` (already exist; send
    `SW_USER_REJECTED`), then idle.
 
 The main loop in `app_main.c` already calls `io_recv_command()` each iteration, which
-pumps UX button events until the next full APDU arrives, so no loop restructuring is
-needed — the reply is sent asynchronously from the button callback.
+pumps UX / seproxyhal events until the next full APDU arrives, so no loop restructuring
+is needed — the reply is sent asynchronously from the NBGL review callback.
+
+**Framework note (Nano = NBGL, not BAGL).** On this SDK (API_LEVEL_26, nanosplus
+`v26.4.0`) BAGL `ux_flow` is retired for Nano: an app that renders any BAGL flow
+segfaults Speculos (signal 11) at the first display element, verified against every
+API_LEVEL_26-capable Speculos (0.26.7 – 0.26.9). LedgerHQ's own app-boilerplate builds
+Nano with `ENABLE_NBGL_FOR_NANO_DEVICES = 1` and NBGL-only UI; that build renders in the
+same Speculos. So this app uses NBGL (`nbgl_use_case.h`) on Nano S+/X.
 
 For multi-chunk SIGN, the gate fires only at the **final** chunk, once the whole
 message is assembled and hashed. There is therefore no first-chunk-only-confirmation
@@ -86,28 +94,33 @@ With `req_type` cleared, a stray `P1_CONTINUATION` chunk hits the existing
 
 ### 3. Display
 
-New UI module (e.g. `src/ui/display.c` + header), guarded for Nano S+/X BAGL.
+New UI module (`src/ui/display.c` + header) using `nbgl_use_case.h`, built with
+`ENABLE_NBGL_FOR_NANO_DEVICES = 1`.
 
 Shared helper: `digest_sha256(const uint8_t *in, size_t len, uint8_t out[32])` wrapping
 the SDK `cx_hash_sha256`. Path formatting uses the standard-app-lib
 `bip32_path_format(path, path_len, char *out, size_t out_len)`.
 
-**SIGN review flow steps:**
+Each flow is an NBGL review presenting a tag/value pair list, ending in an Approve /
+Reject choice. `nbgl_useCaseReview` (or `nbgl_useCaseReviewLight`) drives it; the
+Approve callback runs `sign_approved()` / `ecdh_approved()`, the Reject callback runs
+`sign_rejected()` / `ecdh_rejected()`, both returning to idle via `ui_menu_main()`.
 
-| Step | Content |
-|------|---------|
-| Review | "Review" / "Sign message" |
+**SIGN review — tag/value list:**
+
+| Field | Content |
+|-------|---------|
+| Title | "Review message to sign" |
 | Account | `m/44'/876'/n'` (formatted path) |
-| Digest | 64 hex chars = SHA-256(message), paginated |
-| Approve | triggers `sign_approved()` |
-| Reject | triggers `sign_rejected()` |
+| Digest | 64 hex chars = SHA-256(message) |
+| Confirm | Approve → `sign_approved()`; Reject → `sign_rejected()` |
 
-**ECDH review flow steps:** identical shape, label "Key agreement", digest field
-labelled "Peer key" = SHA-256(ephemeral_pubkey).
+**ECDH review:** identical shape, title "Review key agreement", digest field labelled
+"Peer key" = SHA-256(ephemeral_pubkey).
 
-Design note: the digest is shown **full** (32 bytes / 64 hex, paginated), not
-truncated — a truncated hash is grindable and gives false assurance. BAGL paging steps
-scroll long text across pages on the Nano screen.
+Design note: the digest is shown **full** (32 bytes / 64 hex), not truncated — a
+truncated hash is grindable and gives false assurance. NBGL wraps long values across the
+Nano screen automatically.
 
 ### 4. Tests (`tests/ledger/`)
 
@@ -133,7 +146,8 @@ distinct automation rule) rather than auto-approving.
   compute digest; reset `req_type`.
 - `apps/ledger/src/ecdh_x25519.c` — move `ecdh_approved` call into Approve callback;
   compute digest; reset `req_type`.
-- `apps/ledger/src/ui/display.{c,h}` (new) — BAGL review flows for SIGN and ECDH.
+- `apps/ledger/src/ui/display.{c,h}` (new) — NBGL review flows for SIGN and ECDH.
+- `apps/ledger/Makefile` — `ENABLE_NBGL_FOR_NANO_DEVICES = 1`.
 - `apps/ledger/src/crypto.{c,h}` — `digest_sha256` helper (or inline in display).
 - `apps/ledger/README.md` — approval-screens note.
 - `tests/ledger/test/speculos.test.ts` + harness — auto-approval automation, reject
@@ -141,7 +155,7 @@ distinct automation rule) rather than auto-approving.
 
 ## Verification
 
-- `./tests/ledger/test.sh --build` — builds firmware, runs the full Speculos suite
-  (existing 12 + new reject/stale tests) unattended, all pass.
+- `./tests/ledger/test-speculos.sh --build` — builds firmware, runs the full Speculos
+  suite (existing 12 + new reject/stale tests) unattended, all pass.
 - Manual: on Speculos, a SIGN/ECDH APDU shows the review flow; Reject yields 0x6985;
   no result is emitted without pressing Approve.
