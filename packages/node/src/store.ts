@@ -1,11 +1,10 @@
 import type { KeyStore } from '@kokuin/token'
 import { type Credential, findCredentials, findCredentialsAsync } from '@napi-rs/keyring'
-import { fromB64 } from '@sozai/codec'
 
 import { NodeKeyEntry } from './entry.js'
 
 export class NodeKeyStore implements KeyStore<Uint8Array, NodeKeyEntry> {
-  static #byService: Record<string, NodeKeyStore> = {}
+  static #byService: Record<string, NodeKeyStore> = Object.create(null)
 
   static open(service: string): NodeKeyStore {
     if (NodeKeyStore.#byService[service] == null) {
@@ -14,7 +13,7 @@ export class NodeKeyStore implements KeyStore<Uint8Array, NodeKeyEntry> {
     return NodeKeyStore.#byService[service]
   }
 
-  #entries: Record<string, NodeKeyEntry> = {}
+  #entries: Record<string, NodeKeyEntry> = Object.create(null)
   #service: string
 
   constructor(service: string) {
@@ -25,7 +24,7 @@ export class NodeKeyStore implements KeyStore<Uint8Array, NodeKeyEntry> {
     this.#entries[credential.account] ??= new NodeKeyEntry(
       this.#service,
       credential.account,
-      fromB64(credential.password),
+      credential.password,
     )
     return this.#entries[credential.account]
   }

@@ -1,3 +1,4 @@
+import { toB64 } from '@sozai/codec'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 // In-memory store simulating system keyring
@@ -112,10 +113,10 @@ describe('NodeKeyEntry', () => {
     expect(fresh.get()).toBeNull()
   })
 
-  test('constructor accepts pre-loaded key', () => {
+  test('constructor accepts pre-loaded encoded key and decodes it lazily', () => {
     const key = new Uint8Array([99])
-    const entry = new NodeKeyEntry('svc', 'k6', key)
-    expect(entry.get()).toBe(key)
+    const entry = new NodeKeyEntry('svc', 'k6', toB64(key))
+    expect(entry.get()).toEqual(key)
   })
 
   // Async variants
@@ -136,6 +137,17 @@ describe('NodeKeyEntry', () => {
     const provided = await entry.provideAsync()
     expect(provided).toBeInstanceOf(Uint8Array)
     expect(provided.length).toBeGreaterThan(0)
+  })
+
+  test('concurrent provideAsync calls resolve to the same key', async () => {
+    const entry = new NodeKeyEntry('svc', 'race')
+    const [a, b, c] = await Promise.all([
+      entry.provideAsync(),
+      entry.provideAsync(),
+      entry.provideAsync(),
+    ])
+    expect(a).toEqual(b)
+    expect(b).toEqual(c)
   })
 
   test('removeAsync() clears key', async () => {
@@ -172,6 +184,13 @@ describe('NodeKeyStore', () => {
     expect(store.entry('x')).toBe(store.entry('x'))
   })
 
+  test('entry("constructor") returns a real entry, not a prototype member', () => {
+    const store = NodeKeyStore.open('proto-svc')
+    const entry = store.entry('constructor')
+    expect(entry).toBeInstanceOf(NodeKeyEntry)
+    expect(entry.keyID).toBe('constructor')
+  })
+
   test('list() returns entries from keyring', () => {
     const store = new NodeKeyStore('list-test')
     store.entry('la').set(new Uint8Array([1]))
@@ -190,6 +209,16 @@ describe('NodeKeyStore', () => {
     store.entry('lx').set(new Uint8Array([2]))
     const entries = await store.listAsync()
     expect(entries.length).toBeGreaterThanOrEqual(1)
+  })
+
+  test('list() tolerates a corrupt credential and still returns the good one', () => {
+    mockKeyring['good'] = toB64(new Uint8Array([1, 2, 3]))
+    mockKeyring['corrupt'] = '!!!not-base64!!!'
+    const store = NodeKeyStore.open('svc')
+    const entries = store.list()
+    expect(entries.map((e) => e.keyID).sort()).toEqual(['corrupt', 'good'])
+    const good = entries.find((e) => e.keyID === 'good')
+    expect(good?.get()).toEqual(new Uint8Array([1, 2, 3]))
   })
 })
 

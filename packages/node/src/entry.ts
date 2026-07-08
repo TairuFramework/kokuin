@@ -5,15 +5,20 @@ import { fromB64, toB64 } from '@sozai/codec'
 
 export class NodeKeyEntry implements KeyEntry<Uint8Array> {
   #async?: AsyncEntry
+  #encoded?: string
   #keyID: string
   #key?: Uint8Array
   #service: string
   #sync?: Entry
+  // Serializes provideAsync within THIS process. A cross-process race on the OS
+  // keyring remains possible: @napi-rs/keyring exposes no compare-and-set, so two
+  // processes can still both observe null and generate. Not solvable here.
+  #provideLock: Promise<unknown> = Promise.resolve()
 
-  constructor(service: string, keyID: string, key?: Uint8Array) {
+  constructor(service: string, keyID: string, encoded?: string) {
     this.#service = service
     this.#keyID = keyID
-    this.#key = key
+    this.#encoded = encoded
   }
 
   get keyID(): string {
@@ -34,6 +39,11 @@ export class NodeKeyEntry implements KeyEntry<Uint8Array> {
     if (this.#key != null) {
       return this.#key
     }
+    if (this.#encoded != null) {
+      this.#key = fromB64(this.#encoded)
+      this.#encoded = undefined
+      return this.#key
+    }
     const encoded = this.#syncEntry.getPassword()
     if (encoded == null) {
       return null
@@ -44,6 +54,11 @@ export class NodeKeyEntry implements KeyEntry<Uint8Array> {
 
   async getAsync(): Promise<Uint8Array | null> {
     if (this.#key != null) {
+      return this.#key
+    }
+    if (this.#encoded != null) {
+      this.#key = fromB64(this.#encoded)
+      this.#encoded = undefined
       return this.#key
     }
     const encoded = await this.#asyncEntry.getPassword()
@@ -74,14 +89,19 @@ export class NodeKeyEntry implements KeyEntry<Uint8Array> {
     return privateKey
   }
 
-  async provideAsync(): Promise<Uint8Array> {
-    const existing = await this.getAsync()
-    if (existing != null) {
-      return existing
-    }
-    const privateKey = randomPrivateKey()
-    await this.setAsync(privateKey)
-    return privateKey
+  provideAsync(): Promise<Uint8Array> {
+    const run = this.#provideLock.then(async () => {
+      const existing = await this.getAsync()
+      if (existing != null) {
+        return existing
+      }
+      const privateKey = randomPrivateKey()
+      await this.setAsync(privateKey)
+      return privateKey
+    })
+    // Keep the chain alive even if this call rejects, so a failure does not wedge the lock.
+    this.#provideLock = run.catch(() => undefined)
+    return run
   }
 
   remove(): void {

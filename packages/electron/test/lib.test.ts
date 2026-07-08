@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 // Mock electron safeStorage — identity transform for testing
+let encryptionAvailable = true
 vi.mock('electron', () => ({
   safeStorage: {
     encryptString: vi.fn((str: string) => Buffer.from(str)),
     decryptString: vi.fn((buf: Buffer) => buf.toString()),
+    isEncryptionAvailable: vi.fn(() => encryptionAvailable),
   },
 }))
 
@@ -39,6 +41,7 @@ import {
 
 beforeEach(() => {
   storeData = {}
+  encryptionAvailable = true
 })
 
 describe('ElectronKeyEntry', () => {
@@ -90,6 +93,16 @@ describe('ElectronKeyEntry', () => {
     expect(fresh.get()).toBeNull()
   })
 
+  test('set() preserves other keys in the same store', () => {
+    const store = ElectronKeyStore.open('multi-key')
+    store.entry('key-a').set('secret-a')
+    store.entry('key-b').set('secret-b')
+    // Read back via a fresh store instance to bypass the entry #key cache
+    const fresh = new ElectronKeyStore('multi-key')
+    expect(fresh.entry('key-a').get()).toBe('secret-a')
+    expect(fresh.entry('key-b').get()).toBe('secret-b')
+  })
+
   // Async variants (wrappers around sync)
   test('getAsync() returns null when key does not exist', async () => {
     expect(await createEntry('ak1').getAsync()).toBeNull()
@@ -138,6 +151,59 @@ describe('ElectronKeyStore', () => {
   test('entry() returns cached entry for same keyID', () => {
     const store = ElectronKeyStore.open('cache-test')
     expect(store.entry('x')).toBe(store.entry('x'))
+  })
+
+  test('entry("constructor") returns a real entry, not a prototype member', () => {
+    const store = ElectronKeyStore.open('proto-electron')
+    const entry = store.entry('constructor')
+    expect(entry.keyID).toBe('constructor')
+  })
+
+  test('open() throws on conflicting allowInsecureStorage flag for a cached name', () => {
+    ElectronKeyStore.open('flag-conflict', { allowInsecureStorage: false })
+    expect(() => ElectronKeyStore.open('flag-conflict', { allowInsecureStorage: true })).toThrow(
+      /allowInsecureStorage/i,
+    )
+  })
+
+  test('open() reuses cached instance when flag matches or is omitted', () => {
+    const a = ElectronKeyStore.open('flag-same', { allowInsecureStorage: true })
+    expect(ElectronKeyStore.open('flag-same', { allowInsecureStorage: true })).toBe(a)
+    expect(ElectronKeyStore.open('flag-same')).toBe(a)
+  })
+})
+
+describe('ElectronKeyEntry encryption gate', () => {
+  test('set() throws when encryption is unavailable', () => {
+    encryptionAvailable = false
+    const entry = ElectronKeyStore.open('gate-1').entry('k')
+    expect(() => entry.set('secret')).toThrow(/encryption/i)
+  })
+
+  test('allowInsecureStorage bypasses the throw', () => {
+    encryptionAvailable = false
+    const entry = ElectronKeyStore.open('gate-2', { allowInsecureStorage: true }).entry('k')
+    expect(() => entry.set('secret')).not.toThrow()
+    expect(entry.get()).toBe('secret')
+  })
+
+  test('reads still work when encryption is unavailable', () => {
+    const entry = ElectronKeyStore.open('gate-3').entry('k')
+    entry.set('secret')
+    encryptionAvailable = false
+    expect(entry.get()).toBe('secret')
+  })
+
+  test('setAsync rejects (not throws synchronously) when encryption unavailable', async () => {
+    encryptionAvailable = false
+    const entry = ElectronKeyStore.open('gate-async-1').entry('k')
+    await expect(entry.setAsync('secret')).rejects.toThrow(/encryption/i)
+  })
+
+  test('provideAsync rejects when encryption unavailable', async () => {
+    encryptionAvailable = false
+    const entry = ElectronKeyStore.open('gate-async-2').entry('k')
+    await expect(entry.provideAsync()).rejects.toThrow(/encryption/i)
   })
 })
 

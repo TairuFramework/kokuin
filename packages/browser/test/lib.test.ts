@@ -6,32 +6,53 @@ import { getPublicKey, randomKeyPair } from '../src/utils.js'
 
 // --- Mock IDB helpers ---
 
-function createMockGetStore(): { getStore: GetStore; data: Map<string, unknown> } {
+function createMockGetStore(): {
+  getStore: GetStore
+  data: Map<string, unknown>
+  abortNextWrite: () => void
+} {
   const data = new Map<string, unknown>()
+  let abortNext = false
 
-  const getStore: GetStore = () =>
-    ({
+  const getStore: GetStore = () => {
+    const tx: Record<string, unknown> = {}
+    const finish = (aborted: boolean) => {
+      queueMicrotask(() => {
+        if (aborted) (tx.onabort as (e: Event) => void)?.({} as Event)
+        else (tx.oncomplete as (e: Event) => void)?.({} as Event)
+      })
+    }
+    const store = {
+      transaction: tx,
       get(key: string) {
         const result = data.get(key)
         const request: Record<string, unknown> = { result }
         queueMicrotask(() => (request.onsuccess as (e: Event) => void)?.({} as Event))
+        finish(false)
         return request as unknown as IDBRequest
       },
       put(value: unknown, key: string) {
-        data.set(key, value)
+        const aborted = abortNext
+        abortNext = false
+        if (!aborted) data.set(key, value)
         const request: Record<string, unknown> = {}
         queueMicrotask(() => (request.onsuccess as (e: Event) => void)?.({} as Event))
+        finish(aborted)
         return request as unknown as IDBRequest
       },
       delete(key: string) {
         data.delete(key)
         const request: Record<string, unknown> = {}
         queueMicrotask(() => (request.onsuccess as (e: Event) => void)?.({} as Event))
+        finish(false)
         return request as unknown as IDBRequest
       },
-    }) as unknown as IDBObjectStore
+    }
+    tx.objectStore = () => store
+    return store as unknown as IDBObjectStore
+  }
 
-  return { getStore, data }
+  return { getStore, data, abortNextWrite: () => (abortNext = true) }
 }
 
 // --- Utils tests (real SubtleCrypto) ---
@@ -126,6 +147,16 @@ describe('BrowserKeyEntry', () => {
     expect(data.has('k4')).toBe(true)
   })
 
+  test('provideAsync returns the pre-existing key and does not overwrite it', async () => {
+    const { getStore, data } = createMockGetStore()
+    const seeded = await randomKeyPair()
+    data.set('k', seeded)
+    const entry = new BrowserKeyEntry('k', getStore)
+    const result = await entry.provideAsync()
+    expect(result).toBe(seeded)
+    expect(data.get('k')).toBe(seeded)
+  })
+
   test('removeAsync() deletes key from store', async () => {
     const keyPair = await randomKeyPair()
     const entry = new BrowserKeyEntry('k5', getStore)
@@ -133,6 +164,15 @@ describe('BrowserKeyEntry', () => {
     expect(data.has('k5')).toBe(true)
     await entry.removeAsync()
     expect(data.has('k5')).toBe(false)
+  })
+
+  test('setAsync rejects when the transaction aborts after the request succeeds', async () => {
+    const { getStore, data, abortNextWrite } = createMockGetStore()
+    const entry = new BrowserKeyEntry('k', getStore)
+    const keyPair = await randomKeyPair()
+    abortNextWrite()
+    await expect(entry.setAsync(keyPair)).rejects.toThrow()
+    expect(data.has('k')).toBe(false)
   })
 })
 
@@ -161,5 +201,16 @@ describe('BrowserKeyStore', () => {
     } as unknown as IDBDatabase
     const store = new BrowserKeyStore(mockDB)
     expect(store.entry('x')).toBe(store.entry('x'))
+  })
+
+  test('entry("constructor") returns a real entry, not a prototype member', async () => {
+    const { BrowserKeyStore } = await import('../src/store.js')
+    const mockDB = {
+      transaction: () => ({ objectStore: () => createMockGetStore().getStore() }),
+    } as unknown as IDBDatabase
+    const store = new BrowserKeyStore(mockDB)
+    const entry = store.entry('constructor')
+    expect(entry).toBeInstanceOf(BrowserKeyEntry)
+    expect(entry.keyID).toBe('constructor')
   })
 })

@@ -13,7 +13,7 @@ function createGetStore(db: IDBDatabase): GetStore {
 }
 
 export class BrowserKeyStore implements KeyStore<CryptoKeyPair, BrowserKeyEntry> {
-  static #byName: Record<string, Promise<BrowserKeyStore>> = {}
+  static #byName: Record<string, Promise<BrowserKeyStore>> = Object.create(null)
 
   static open(name = DEFAULT_DB_NAME): Promise<BrowserKeyStore> {
     const existing = BrowserKeyStore.#byName[name]
@@ -42,7 +42,7 @@ export class BrowserKeyStore implements KeyStore<CryptoKeyPair, BrowserKeyEntry>
     return promise
   }
 
-  #entries: Record<string, BrowserKeyEntry> = {}
+  #entries: Record<string, BrowserKeyEntry> = Object.create(null)
   #getStore: GetStore
 
   constructor(db: IDBDatabase) {

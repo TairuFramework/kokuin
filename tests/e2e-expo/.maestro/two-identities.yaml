@@ -1,0 +1,5 @@
+appId: dev.kokuin.e2e
+---
+- launchApp
+- assertVisible: ".*Alpha DID: did:key:z.*"
+- assertVisible: ".*Beta DID: did:key:z.*"
