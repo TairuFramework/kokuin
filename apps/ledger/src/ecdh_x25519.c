@@ -12,7 +12,7 @@
 #include "ecdh_x25519.h"
 #include "display.h"
 
-void ecdh_approved(void) {
+bool ecdh_approved(void) {
     // This concludes the key agreement on every exit below, so clear the
     // request type up front: no stale ECDH state should linger on the context.
     G_context.req_type = REQ_NONE;
@@ -23,7 +23,7 @@ void ecdh_approved(void) {
                             &ed_private, NULL) != 0) {
         explicit_bzero(&ed_private, sizeof(ed_private));
         io_send_sw(SW_INTERNAL_ERROR);
-        return;
+        return false;
     }
 
     // Convert Ed25519 private key to X25519 scalar via SHA-512 + clamp (RFC 7748)
@@ -48,7 +48,7 @@ void ecdh_approved(void) {
     if (error != CX_OK) {
         explicit_bzero(u, sizeof(u));
         io_send_sw(SW_INTERNAL_ERROR);
-        return;
+        return false;
     }
 
     // Reverse output from big-endian (cx_bn_export) to little-endian (X25519 standard)
@@ -60,6 +60,7 @@ void ecdh_approved(void) {
 
     io_send_response_pointer(shared_secret, X25519_SECRET_LEN, SW_OK);
     explicit_bzero(shared_secret, sizeof(shared_secret));
+    return true;
 }
 
 void ecdh_rejected(void) {

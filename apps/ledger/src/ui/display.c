@@ -16,7 +16,7 @@
 // buffers must outlive ui_display_sign / ui_display_ecdh and cannot live on the
 // stack. A single review runs at a time, so the account and pair buffers are
 // shared across the sign and key-agreement flows.
-static char g_account[60];
+static char g_account[64];
 static char g_digest[2 * sizeof(G_context.message_digest) + 1];
 static char g_peer_key[2 * sizeof(G_context.peer_key_digest) + 1];
 
@@ -33,14 +33,16 @@ static void format_hex(const uint8_t *in, size_t in_len, char *out) {
 }
 
 // Invoked once the review reaches a decision: sign on approval, discard on reject.
-// Either branch answers the pending APDU before returning to the idle screen.
+// Every branch answers the pending APDU before returning to the idle screen, and
+// the status screen reports the outcome the host was given.
 static void review_choice(bool confirm) {
-    if (confirm) {
-        sign_approved();
-        nbgl_useCaseReviewStatus(STATUS_TYPE_MESSAGE_SIGNED, ui_menu_main);
-    } else {
+    if (!confirm) {
         sign_rejected();
         nbgl_useCaseReviewStatus(STATUS_TYPE_MESSAGE_REJECTED, ui_menu_main);
+    } else if (sign_approved()) {
+        nbgl_useCaseReviewStatus(STATUS_TYPE_MESSAGE_SIGNED, ui_menu_main);
+    } else {
+        nbgl_useCaseStatus("Signing failed", false, ui_menu_main);
     }
 }
 
@@ -71,15 +73,19 @@ void ui_display_sign(void) {
 }
 
 // Invoked once the key-agreement review reaches a decision: run the ECDH on
-// approval, discard the ephemeral key on reject. Either branch answers the
-// pending APDU before returning to the idle screen.
+// approval, discard the ephemeral key on reject. Every branch answers the
+// pending APDU before returning to the idle screen, and the status screen
+// reports the outcome the host was given. The built-in review statuses only
+// speak of signed transactions, messages and operations, so a key agreement
+// states its own outcome.
 static void agreement_choice(bool confirm) {
-    if (confirm) {
-        ecdh_approved();
-        nbgl_useCaseReviewStatus(STATUS_TYPE_OPERATION_SIGNED, ui_menu_main);
-    } else {
+    if (!confirm) {
         ecdh_rejected();
-        nbgl_useCaseReviewStatus(STATUS_TYPE_OPERATION_REJECTED, ui_menu_main);
+        nbgl_useCaseStatus("Key agreement rejected", false, ui_menu_main);
+    } else if (ecdh_approved()) {
+        nbgl_useCaseStatus("Key agreed", true, ui_menu_main);
+    } else {
+        nbgl_useCaseStatus("Key agreement failed", false, ui_menu_main);
     }
 }
 

@@ -12,7 +12,7 @@
 #include "sign_message.h"
 #include "display.h"
 
-void sign_approved(void) {
+bool sign_approved(void) {
     // This concludes the sign operation on every exit below, so clear the
     // request type up front: a stray continuation chunk that arrives afterwards
     // must fail the P1_CONTINUATION guard rather than append to stale state.
@@ -24,7 +24,7 @@ void sign_approved(void) {
                             &private_key, NULL) != 0) {
         explicit_bzero(&private_key, sizeof(private_key));
         io_send_sw(SW_INTERNAL_ERROR);
-        return;
+        return false;
     }
 
     uint8_t signature[ED25519_SIG_LEN];
@@ -41,10 +41,11 @@ void sign_approved(void) {
 
     if (error != CX_OK) {
         io_send_sw(SW_INTERNAL_ERROR);
-        return;
+        return false;
     }
 
     io_send_response_pointer(signature, ED25519_SIG_LEN, SW_OK);
+    return true;
 }
 
 void sign_rejected(void) {
@@ -119,5 +120,7 @@ int handler_sign_message(buffer_t *cdata, uint8_t p1, uint8_t p2) {
         return 0;
     }
 
+    // Unreachable: the dispatcher rejects any other P1 before dispatching here.
+    G_context.req_type = REQ_NONE;
     return io_send_sw(SW_INVALID_DATA);
 }
