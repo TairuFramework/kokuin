@@ -74,7 +74,7 @@ docker compose run --rm build
 # Build output: bin/app.elf
 ```
 
-The build uses `ghcr.io/ledgerhq/ledger-app-builder` targeting the Nano S+ SDK (API level 25) with SLIP-0010 Ed25519 derivation.
+The build uses `ghcr.io/ledgerhq/ledger-app-builder` targeting the Nano S+ SDK (API level 26) with SLIP-0010 Ed25519 derivation.
 
 ## Test
 

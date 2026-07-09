@@ -110,7 +110,7 @@ Approve callback runs `sign_approved()` / `ecdh_approved()`, the Reject callback
 
 | Field | Content |
 |-------|---------|
-| Title | "Review message to sign" |
+| Title | "Review message" |
 | Account | `m/44'/876'/n'` (formatted path) |
 | Digest | 64 hex chars = SHA-256(message) |
 | Confirm | Approve → `sign_approved()`; Reject → `sign_rejected()` |
