@@ -37,7 +37,7 @@ unsafe.
 ## 1. `verifyToken` rejects `alg:none` by default
 
 `VerifyTokenOptions` gains `allowUnsigned?: boolean`, defaulting to `false`. `verifyToken`
-becomes an overload pair:
+becomes an overload set:
 
 ```ts
 export async function verifyToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
@@ -48,7 +48,18 @@ export async function verifyToken<Payload extends Record<string, unknown> = Reco
   token: Token<Payload> | string,
   options: VerifyTokenOptions & { allowUnsigned: true },
 ): Promise<Token<Payload>>
+export async function verifyToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
+  token: Token<Payload> | string,
+  options: VerifyTokenOptions,
+): Promise<Token<Payload>>
 ```
+
+The third overload exists because `VerifyTokenOptions` itself declares
+`allowUnsigned?: boolean`. A caller passing a *variable* of that type — rather than an
+object literal — matches neither of the first two (`boolean` is not assignable to `false`,
+and the second demands `true`), and would otherwise fail to compile. The fallback returns
+the safe `Token` union. Every call site in this repo and in `@enkaku` passes an object
+literal, so they all bind to the strict first overload.
 
 The narrowed return type of the strict overload is what closes the vulnerability. A
 consumer that forgets to call `isVerifiedToken` can no longer reach an attacker-controlled
@@ -238,18 +249,22 @@ domain error, not `TypeError`.
 
 **`packages/token/test/peer4.test.ts`**:
 
-- An encoded doc longer than `maxEncoded` rejects *before* decoding. Asserted by spying on
-  `decodeMultibase` rather than by timing, so the test is deterministic.
-- An oversized `hashEncoded` segment rejects before `decodeMultibase(hashEncoded)`, same
-  technique.
+- An encoded doc longer than `maxEncoded` rejects *before* decoding.
+- An oversized `hashEncoded` segment rejects before `decodeMultibase(hashEncoded)`.
 - A realistic document with three verification methods still decodes. This is the
   regression guard against the 4 KiB default being too tight.
 - An explicit `maxDocSize` override is honored in both directions.
 
-**`packages/token/test/jwe.test.ts`**:
+Ordering is proven without mocks or timing. The oversized segments are built from `'0'`
+characters, which are not in the base58 alphabet, so if a length check were missing
+`base58.decode` would throw its own error instead. Asserting on our message therefore
+establishes that the bound ran first.
 
-- The `'plain'` envelope round-trip through `wrapEnvelope` / `unwrapEnvelope` still works,
-  proving the internal `allowUnsigned: true` is wired.
+**`packages/token/test/envelope.test.ts`** — `wrapEnvelope` / `unwrapEnvelope` live in
+`src/jwe.ts` but are exercised from `envelope.test.ts`:
+
+- The `'plain'` envelope round-trip still works, proving the internal `allowUnsigned: true`
+  is wired.
 - An expired plain envelope throws, proving time validation reaches it.
 
 ## Release
