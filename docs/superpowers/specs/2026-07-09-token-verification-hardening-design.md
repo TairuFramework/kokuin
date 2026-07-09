@@ -60,9 +60,8 @@ This is sound because every non-throwing branch of the strict path already produ
 verified token: the `isVerifiedToken` early-return at `token.ts:208`, and the two branches
 that call `verifySignedPayload` and then add `verifiedPublicKey` (`:226`, `:266`).
 
-Both `alg:none` sites get the same treatment — gate, then validate what remains. The
-string path at `token.ts:243`, which today reaches `b64uToJSON` with no structural check
-at all:
+Both `alg:none` sites get the same treatment — gate, then validate time claims. The string
+path at `token.ts:243`:
 
 ```ts
 if (header.alg === 'none') {
@@ -70,16 +69,14 @@ if (header.alg === 'none') {
   if (!allowUnsigned) {
     throw new Error('Invalid token: unsigned tokens rejected, pass allowUnsigned to accept')
   }
-  assertType(validateUnsignedHeader, header)
   const payload = b64uToJSON<Payload>(encodedPayload)
   assertTimeClaimsValid(payload as Record<string, unknown>, timeOptions)
   return { header, payload } as UnsignedToken<Payload>
 }
 ```
 
-The object path at `token.ts:204` reaches its early return through
-`isUnsignedToken(token)`, which already validates the unsigned header schema. It therefore
-needs the gate and the time check, but not a second `assertType`:
+The object path at `token.ts:204`, which reaches its early return through
+`isUnsignedToken(token)`:
 
 ```ts
 if (isUnsignedToken(token)) {
@@ -92,19 +89,18 @@ if (isUnsignedToken(token)) {
 }
 ```
 
+Neither path re-validates the unsigned header. The object path already went through
+`isUnsignedToken`, which asserts the schema. On the string path the existing
+`header.typ !== 'JWT'` guard at `token.ts:240` and the `header.alg === 'none'` branch
+condition together imply `validateUnsignedHeader`, so an `assertType` there would be a
+no-op.
+
 `assertSignedForAudience` stays first, so an `audience` requirement rejects an unsigned
 token even when `allowUnsigned` is set — an unsigned token carries no proof of its `aud`.
 
 Validating time claims is a deliberate behavior change beyond the plan item's letter. An
 unsigned token's `exp` is attacker-controlled and proves nothing, but honoring it costs
 nothing and stops an expired plain envelope from being silently accepted.
-
-The `assertType(validateUnsignedHeader, header)` on the string path is defense in depth,
-not a new check with teeth: the existing `header.typ !== 'JWT'` guard at `token.ts:240`
-and the `header.alg === 'none'` branch condition together already imply the schema. It is
-there so the returned value provably matches the declared `UnsignedToken` type at the one
-place the type is asserted by cast, and so a future edit to either ad-hoc check cannot
-silently widen what the unsigned path accepts.
 
 ### Call sites
 
@@ -226,9 +222,8 @@ Tests extend the existing suites rather than adding files.
 - Strict default rejects an `alg:none` token string.
 - Strict default rejects an unsigned token object. (Separate code path; needs its own test.)
 - `allowUnsigned: true` returns the unsigned token, on both paths.
-- `allowUnsigned: true` with a malformed unsigned header (`typ` not `'JWT'`) rejects. Both
-  layers that can catch this — the ad-hoc `typ` guard and `validateUnsignedHeader` — are
-  in play; the test pins the rejection, not which layer produces it.
+- `allowUnsigned: true` with a malformed unsigned header (`typ` not `'JWT'`) rejects,
+  covering the `typ` guard that the removed `assertType` would otherwise have shadowed.
 - `allowUnsigned: true` with `exp` in the past rejects; with `nbf` in the future rejects;
   `clockTolerance` still applies. Proves `assertTimeClaimsValid` runs.
 - `allowUnsigned: true` combined with `audience` rejects.
