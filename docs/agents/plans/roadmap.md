@@ -13,8 +13,8 @@ actually gate, then the contract + tests that prevent regressions.
 1. **Security correctness fixes** — small, verified, each independently shippable:
    - ✅ `completed/2026-07-03-capability-authorization-fixes.complete.md` — prefix escalation (#1), kid/aud, signed revocation
    - `next/2026-07-02-token-verification-hardening.md` — `alg:none` (#3), nullish guards, peer4 DoS
-   - `next/2026-07-02-keystore-correctness-fixes.md` — electron clobber (#4), commit-timing, races
-   - `next/2026-07-02-firmware-consent-and-signing-safety.md` — consent UX (#2), `req_type` reset
+   - ✅ `completed/2026-07-07-keystore-correctness-fixes.complete.md` — electron clobber (#4), commit-timing, races
+   - ✅ `completed/2026-07-09-firmware-consent-and-signing-safety.complete.md` — consent UX (#2), `req_type` reset
 2. **CI + release gating** — `next/2026-07-02-ci-release-gating.md`: fixed changeset group
    (#5), test-depends-on-build, ledger-in-CI, SLIP-0010 vectors, `@main` pinning, LICENSE.
 3. **KeyStore contract + adversarial tests** — `next/2026-07-02-keystore-contract-and-adversarial-tests.md`:
@@ -24,6 +24,7 @@ actually gate, then the contract + tests that prevent regressions.
 ## Later (backlog, no committed timeline)
 
 - `backlog/2026-07-02-ledger-protocol-hardening.md` — protocol version gate, path validation
+- `backlog/2026-07-09-ledger-app-icon.md` — replace the placeholder Ledger app glyph
 - `backlog/2026-07-02-security-model-docs.md` — security-model prose for the auth layer
 - `backlog/2026-07-02-otel-docs-and-release-policy.md` — document otel, wire/drop dead surface
 - `backlog/ledger-root-identity.md` — multi-Ledger support, app-catalog submission (pre-existing)
