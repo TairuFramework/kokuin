@@ -45,5 +45,6 @@ fields; `readonly` appears on type members in `packages/token/src/keystore.ts:2`
 
 ## Out of scope
 
-- The concrete keystore bug fixes — see `next/2026-07-02-keystore-correctness-fixes.md`.
+- The concrete keystore bug fixes — done, see
+  `completed/2026-07-07-keystore-correctness-fixes.complete.md`.
 - Security-model prose documentation — see `backlog/2026-07-02-security-model-docs.md`.

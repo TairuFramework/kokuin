@@ -105,7 +105,7 @@ export function checkStatusWord(sw: number): void {
     case 0x6a82:
       throw new LedgerAppNotOpenError()
     case 0x6a80:
-      throw new LedgerError('Invalid derivation path', sw)
+      throw new LedgerError('Invalid data', sw)
     case 0x6d00:
       throw new LedgerError('Unknown command', sw)
     case 0x6e00:

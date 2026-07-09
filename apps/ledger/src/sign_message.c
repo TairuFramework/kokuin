@@ -9,15 +9,22 @@
 #include "globals.h"
 #include "crypto.h"
 #include "sw.h"
+#include "sign_message.h"
+#include "display.h"
 
-static void sign_approved(void) {
+bool sign_approved(void) {
+    // This concludes the sign operation on every exit below, so clear the
+    // request type up front: a stray continuation chunk that arrives afterwards
+    // must fail the P1_CONTINUATION guard rather than append to stale state.
+    G_context.req_type = REQ_NONE;
+
     cx_ecfp_private_key_t private_key;
 
     if (derive_ed25519_keys(G_context.bip32_path, G_context.bip32_path_len,
                             &private_key, NULL) != 0) {
         explicit_bzero(&private_key, sizeof(private_key));
         io_send_sw(SW_INTERNAL_ERROR);
-        return;
+        return false;
     }
 
     uint8_t signature[ED25519_SIG_LEN];
@@ -34,13 +41,17 @@ static void sign_approved(void) {
 
     if (error != CX_OK) {
         io_send_sw(SW_INTERNAL_ERROR);
-        return;
+        return false;
     }
 
     io_send_response_pointer(signature, ED25519_SIG_LEN, SW_OK);
+    return true;
 }
 
-static void sign_rejected(void) {
+void sign_rejected(void) {
+    // Concludes the sign operation: clear the request type so a later stray
+    // continuation chunk fails the P1_CONTINUATION guard instead of reusing it.
+    G_context.req_type = REQ_NONE;
     explicit_bzero(G_context.message, sizeof(G_context.message));
     G_context.message_len = 0;
     io_send_sw(SW_USER_REJECTED);
@@ -56,11 +67,15 @@ int handler_sign_message(buffer_t *cdata, uint8_t p1, uint8_t p2) {
                                          G_context.bip32_path,
                                          &G_context.bip32_path_len);
         if (consumed < 0) {
+            // Aborting this sign: clear the request type so a following
+            // continuation chunk does not append to a half-initialized message.
+            G_context.req_type = REQ_NONE;
             return io_send_sw(SW_INVALID_DATA);
         }
 
         uint16_t msg_len = cdata->size - consumed;
         if (msg_len > MAX_MESSAGE_SIZE) {
+            G_context.req_type = REQ_NONE;
             return io_send_sw(SW_INVALID_DATA);
         }
         if (msg_len > 0) {
@@ -68,9 +83,11 @@ int handler_sign_message(buffer_t *cdata, uint8_t p1, uint8_t p2) {
             G_context.message_len = msg_len;
         }
 
-        // If this is the last (or only) chunk, sign now
+        // If this is the last (or only) chunk, ask the user to review and sign
         if (p2 != P2_MORE) {
-            sign_approved();
+            digest_sha256(G_context.message, G_context.message_len,
+                          G_context.message_digest);
+            ui_display_sign();
             return 0;
         }
 
@@ -83,6 +100,9 @@ int handler_sign_message(buffer_t *cdata, uint8_t p1, uint8_t p2) {
         }
 
         if (G_context.message_len + cdata->size > MAX_MESSAGE_SIZE) {
+            // Aborting this sign: clear the request type so subsequent
+            // continuation chunks are rejected rather than reusing stale state.
+            G_context.req_type = REQ_NONE;
             return io_send_sw(SW_INVALID_DATA);
         }
 
@@ -93,10 +113,14 @@ int handler_sign_message(buffer_t *cdata, uint8_t p1, uint8_t p2) {
             return io_send_sw(SW_OK);
         }
 
-        // Last chunk (p2 == P2_LAST) — sign
-        sign_approved();
+        // Last chunk (p2 == P2_LAST) — ask the user to review and sign
+        digest_sha256(G_context.message, G_context.message_len,
+                      G_context.message_digest);
+        ui_display_sign();
         return 0;
     }
 
+    // Unreachable: the dispatcher rejects any other P1 before dispatching here.
+    G_context.req_type = REQ_NONE;
     return io_send_sw(SW_INVALID_DATA);
 }

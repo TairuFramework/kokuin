@@ -34,6 +34,10 @@ int parse_bip32_path(const uint8_t *data, uint8_t data_len,
     return (int) required;
 }
 
+void digest_sha256(const uint8_t *in, size_t len, uint8_t out[32]) {
+    cx_hash_sha256(in, len, out, 32);
+}
+
 int derive_ed25519_keys(const uint32_t *path, uint8_t path_len,
                         cx_ecfp_private_key_t *private_key,
                         uint8_t public_key[ED25519_PK_LEN]) {

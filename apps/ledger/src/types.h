@@ -28,6 +28,12 @@ typedef struct {
     uint8_t message[MAX_MESSAGE_SIZE];
     uint16_t message_len;
 
+    // SHA-256 digest of the message, shown to the user during the sign review
+    uint8_t message_digest[32];
+
     // Ephemeral public key for ECDH
     uint8_t ephemeral_pubkey[X25519_SECRET_LEN];
+
+    // SHA-256 digest of the peer's ephemeral key, shown during the ECDH review
+    uint8_t peer_key_digest[32];
 } global_ctx_t;

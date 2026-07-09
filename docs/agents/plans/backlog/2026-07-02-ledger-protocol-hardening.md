@@ -30,5 +30,5 @@ path up front, consistent with the ledger-device fix.
 
 ## Out of scope
 
-- Firmware consent UX and `req_type` reset — see
-  `next/2026-07-02-firmware-consent-and-signing-safety.md`.
+- Firmware consent UX and `req_type` reset — done, see
+  `completed/2026-07-09-firmware-consent-and-signing-safety.complete.md`.
