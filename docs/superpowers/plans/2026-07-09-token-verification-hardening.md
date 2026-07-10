@@ -916,7 +916,7 @@ final review as a possible follow-up.
 - Consumes: `DEFAULT_MAX_DOC_SIZE` semantics from Task 3.
 - Produces: `resolveIssuerWithDoc` rejects an oversized resolver doc before any base58 work.
 
-- [ ] **Step 1: Export a shared doc-size bound from `peer4.ts`**
+- [x] **Step 1: Export a shared doc-size bound from `peer4.ts`**
 
 `peer4.ts` already imports `canonicalStringify` and `fromUTF` from `@sozai/codec` and owns
 `DEFAULT_MAX_DOC_SIZE`. Add an exported helper next to it so the resolver path bounds a doc by
@@ -938,7 +938,7 @@ export function assertDocWithinMaxSize(doc: DIDDoc, maxSize: number = DEFAULT_MA
 `canonicalStringify` is O(n) in output size — safe to run on an oversized doc; only the base58
 step it precedes is O(n^2).
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Append to `packages/token/test/did.test.ts`. `resolveIssuerWithDoc` is exported from
 `packages/token/src/did.ts`; import it and `encodePeer4`/a doc builder as the sibling tests do.
@@ -983,7 +983,7 @@ Use the same minimal-doc construction the existing `peer4`/`did` tests already u
 signing document (one `verificationMethod` with a real `publicKeyMultibase`, listed under
 `authentication`). Do not invent a new shape.
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 ```bash
 cd packages/token && pnpm exec vitest run test/did.test.ts -t 'resolver doc'
@@ -994,7 +994,7 @@ Expected: the oversized test FAILS — it throws `'DIDResolver: short form/doc h
 *hangs*, raise the `'1'.repeat` count down to keep the pre-fix run fast; the point is the wrong
 error message, not a timeout. The legitimate-doc test PASSES already (regression guard).
 
-- [ ] **Step 4: Add the bound in the resolver branch**
+- [x] **Step 4: Add the bound in the resolver branch**
 
 In `did.ts`, add `assertDocWithinMaxSize` to the `peer4.js` import, then call it immediately
 after the null check and before `encodePeer4`:
@@ -1012,7 +1012,7 @@ This bounds `did.ts:117` directly. It also transitively bounds `did.ts:170`: onc
 doc is ≤ 4 KiB, any single `publicKeyMultibase` inside it is ≤ 4 KiB, so the `decodeMultibase`
 there costs the same order as the already-accepted long-form branch.
 
-- [ ] **Step 5: Add a field-level bound in `resolveKidFromDoc` (defense in depth)**
+- [x] **Step 5: Add a field-level bound in `resolveKidFromDoc` (defense in depth)**
 
 Independent of how the doc arrived, bound the field before decoding it. A `publicKeyMultibase`
 for a supported signing key (EdDSA 32 B, ES256 33 B) is at most 48 base58 characters, so reuse
@@ -1029,7 +1029,7 @@ the same 64-char ceiling as `did:key`/the hash segment. Add to `resolveKidFromDo
 `MAX_DID_KEY_ENCODED` (64) already exists from Task 4. This also tightens the long-form branch,
 whose per-request `publicKeyMultibase` decode was ~30-80 ms worst case; it drops to ~1 ms.
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 ```bash
 cd packages/token && pnpm exec vitest run test/did.test.ts
@@ -1037,7 +1037,7 @@ cd packages/token && pnpm exec vitest run test/did.test.ts
 
 Expected: PASS. The oversized-resolver test now throws `'did:peer:4 resolver doc too large'`.
 
-- [ ] **Step 7: Confirm the reachable path is closed end to end**
+- [x] **Step 7: Confirm the reachable path is closed end to end**
 
 Reason about `verifyToken({ resolver })`: `resolveIssuerWithDoc` now bounds the doc before
 `encodePeer4` and before the signature check, so an oversized resolver doc rejects in
@@ -1049,7 +1049,7 @@ cd packages/token && pnpm exec vitest run
 
 Expected: PASS, whole suite.
 
-- [ ] **Step 8: Typecheck, rebuild, and run the capability suite**
+- [x] **Step 8: Typecheck, rebuild, and run the capability suite**
 
 ```bash
 cd packages/token && pnpm exec tsc --noEmit --skipLibCheck -p tsconfig.test.json
@@ -1061,7 +1061,7 @@ Expected: exit 0 throughout. The token rebuild is mandatory — capability consu
 `lib/`. If the capability suite passes a resolver doc that trips the new bound, the default is
 too tight; report it rather than raising it silently.
 
-- [ ] **Step 9: Lint**
+- [x] **Step 9: Lint**
 
 ```bash
 cd /Users/paul/dev/yulsi/kokuin && ./node_modules/.bin/biome check packages/token/src/did.ts packages/token/src/peer4.ts packages/token/test/did.test.ts
@@ -1070,7 +1070,7 @@ cd /Users/paul/dev/yulsi/kokuin && ./node_modules/.bin/biome check packages/toke
 Invoke the binary directly — `pnpm exec biome` is intermittently intercepted by the environment
 shim and exits 1 despite "No issues found" (observed in Task 4).
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add packages/token/src/did.ts packages/token/src/peer4.ts packages/token/test/did.test.ts
