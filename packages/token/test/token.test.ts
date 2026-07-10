@@ -316,3 +316,21 @@ describe('verifyToken with cache', () => {
     expect(resolverHits).toBe(1)
   })
 })
+
+describe('type guards are total', () => {
+  const nonTokens = [null, undefined, '', 0, false, [], 'string', {}]
+
+  for (const value of nonTokens) {
+    it(`isSignedToken returns false for ${JSON.stringify(value) ?? 'undefined'}`, () => {
+      expect(isSignedToken(value)).toBe(false)
+    })
+
+    it(`isUnsignedToken returns false for ${JSON.stringify(value) ?? 'undefined'}`, () => {
+      expect(isUnsignedToken(value)).toBe(false)
+    })
+
+    it(`isVerifiedToken returns false for ${JSON.stringify(value) ?? 'undefined'}`, () => {
+      expect(isVerifiedToken(value)).toBe(false)
+    })
+  }
+})

@@ -114,6 +114,9 @@ export async function verifySignedPayload<
 export function isSignedToken<Payload extends SignedPayload = SignedPayload>(
   token: unknown,
 ): token is SignedToken<Payload> {
+  if (typeof token !== 'object' || token === null) {
+    return false
+  }
   const t = token as SignedToken<Payload>
   return (
     isType(validateSignedHeader, t.header) &&
@@ -126,9 +129,12 @@ export function isSignedToken<Payload extends SignedPayload = SignedPayload>(
  * Check if a token is unsigned.
  */
 export function isUnsignedToken<Payload extends Record<string, unknown>>(
-  token: Token<Payload>,
+  token: unknown,
 ): token is UnsignedToken<Payload> {
-  return isType(validateUnsignedHeader, token.header)
+  if (typeof token !== 'object' || token === null) {
+    return false
+  }
+  return isType(validateUnsignedHeader, (token as UnsignedToken<Payload>).header)
 }
 
 /**
