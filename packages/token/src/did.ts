@@ -18,6 +18,10 @@ const EXPECTED_KEY_SIZES: Record<string, number> = {
 
 const PREFIX = 'did:key:z'
 
+// ES256 is the largest supported did:key payload: a 2-byte codec plus a 33-byte key
+// encodes to 48 base58 characters. Bound before decoding — base58.decode is O(n^2).
+const MAX_DID_KEY_ENCODED = 64
+
 function isCodecMatch(codec: Uint8Array, bytes: Uint8Array): boolean {
   if (bytes.length < codec.length) return false
   for (let i = 0; i < codec.length; i++) {
@@ -56,7 +60,12 @@ export function getSignatureInfo(did: string): [SignatureAlgorithm, Uint8Array] 
     throw new Error('Invalid DID format')
   }
 
-  const bytes = base58.decode(did.slice(PREFIX.length))
+  const encoded = did.slice(PREFIX.length)
+  if (encoded.length > MAX_DID_KEY_ENCODED) {
+    throw new Error('Invalid DID format: key too large')
+  }
+
+  const bytes = base58.decode(encoded)
   const info = getAlgorithmAndPublicKey(bytes)
   if (info == null) {
     throw new Error('Unsupported DID signature codec')

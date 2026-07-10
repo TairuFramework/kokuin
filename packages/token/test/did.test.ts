@@ -78,6 +78,19 @@ describe('getSignatureInfo()', () => {
     expect(alg).toBe('ES256')
     expect(extractedKey.length).toBe(33)
   })
+
+  test('rejects an over-long did:key before decoding', () => {
+    const did = `did:key:z${'0'.repeat(5_000_000)}`
+    expect(() => getSignatureInfo(did)).toThrow('Invalid DID format: key too large')
+  })
+
+  test('accepts a maximum-size legitimate did:key', () => {
+    // ES256 is the largest supported: 2-byte codec + 33-byte key = 48 base58 chars.
+    const publicKey = new Uint8Array(33).fill(0xff)
+    const did = getDID(CODECS.ES256, publicKey)
+    expect(did.length - 'did:key:z'.length).toBe(48)
+    expect(() => getSignatureInfo(did)).not.toThrow()
+  })
 })
 
 describe('getDID()', () => {
