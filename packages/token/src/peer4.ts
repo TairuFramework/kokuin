@@ -64,6 +64,17 @@ export type DecodePeer4Options = {
 }
 
 /**
+ * Throw if a DID document's canonical serialization exceeds `maxSize` bytes.
+ * Used to bound a resolver-returned doc before it reaches the O(n^2) base58 encode.
+ */
+export function assertDocWithinMaxSize(doc: DIDDoc, maxSize: number = DEFAULT_MAX_DOC_SIZE): void {
+  const size = fromUTF(canonicalStringify(doc)).length
+  if (size > maxSize) {
+    throw new Error(`did:peer:4 resolver doc too large: ${size} > ${maxSize}`)
+  }
+}
+
+/**
  * Check whether a value is a did:peer:4 identifier (either form).
  */
 export function isPeer4(value: unknown): value is string {

@@ -2,7 +2,13 @@ import { base58 } from '@scure/base'
 import type { DIDResolver } from './cache.js'
 import { decodeMultibase } from './multibase.js'
 import type { DIDDoc, VerificationMethod } from './peer4.js'
-import { decodePeer4, encodePeer4, getPeer4ShortForm, isPeer4 } from './peer4.js'
+import {
+  assertDocWithinMaxSize,
+  decodePeer4,
+  encodePeer4,
+  getPeer4ShortForm,
+  isPeer4,
+} from './peer4.js'
 import type { SignatureAlgorithm } from './schemas.js'
 
 /** @internal */
@@ -114,6 +120,7 @@ export async function resolveIssuerWithDoc(
     if (doc == null) {
       throw new Error(`Unknown DID: ${shortForm}`)
     }
+    assertDocWithinMaxSize(doc)
     const expected = encodePeer4(doc).shortForm
     if (expected !== shortForm) {
       throw new Error('DIDResolver: short form/doc hash mismatch')
@@ -166,6 +173,9 @@ function resolveKidFromDoc(doc: DIDDoc, kid: string): [SignatureAlgorithm, Uint8
   const method = (doc.verificationMethod as Array<VerificationMethod>).find((m) => m.id === kid)
   if (method == null) {
     throw new Error(`KidNotFound: ${kid}`)
+  }
+  if (method.publicKeyMultibase.length > MAX_DID_KEY_ENCODED) {
+    throw new Error('Invalid verification method: key too large')
   }
   const bytes = decodeMultibase(method.publicKeyMultibase)
   const info = getAlgorithmAndPublicKey(bytes)

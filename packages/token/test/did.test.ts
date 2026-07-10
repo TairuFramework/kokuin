@@ -1,6 +1,15 @@
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
-import { CODECS, getAlgorithmAndPublicKey, getDID, getSignatureInfo } from '../src/did.js'
+import {
+  CODECS,
+  getAlgorithmAndPublicKey,
+  getDID,
+  getSignatureInfo,
+  resolveIssuerWithDoc,
+} from '../src/did.js'
+import { encodeMultibase } from '../src/multibase.js'
+import { encodePeer4 } from '../src/peer4.js'
 
 describe('getAlgorithmAndPublicKey()', () => {
   test('returns null for bytes shorter than any codec', () => {
@@ -108,5 +117,44 @@ describe('getDID()', () => {
     const [alg, extractedKey] = getSignatureInfo(did)
     expect(alg).toBe('EdDSA')
     expect(extractedKey).toEqual(publicKey)
+  })
+})
+
+describe('resolveIssuerWithDoc() resolver doc bound', () => {
+  test('rejects an oversized resolver doc before the base58 encode', async () => {
+    // A structurally valid doc whose canonical JSON exceeds the 4 KiB default.
+    const bigDoc = {
+      verificationMethod: [
+        {
+          id: '#key-1',
+          type: 'Multikey',
+          // publicKeyMultibase far larger than any real key.
+          publicKeyMultibase: `z${'1'.repeat(8 * 1024)}`,
+        },
+      ],
+      authentication: ['#key-1'],
+    }
+    const shortForm = 'did:peer:4zQmNotTheMatchingHash'
+    const resolver = async () => bigDoc as never
+    await expect(resolveIssuerWithDoc(shortForm, {}, resolver)).rejects.toThrow(
+      'did:peer:4 resolver doc too large',
+    )
+  })
+
+  test('a legitimate resolver doc still resolves', async () => {
+    const priv = ed25519.utils.randomSecretKey()
+    const pub = ed25519.getPublicKey(priv)
+    const ed25519Codec = new Uint8Array([0xed, 0x01])
+    const taggedPub = new Uint8Array(ed25519Codec.length + pub.length)
+    taggedPub.set(ed25519Codec, 0)
+    taggedPub.set(pub, ed25519Codec.length)
+    const publicKeyMultibase = encodeMultibase(taggedPub)
+    const { doc, shortForm } = encodePeer4({
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase }],
+      authentication: ['#key-0'],
+    })
+    const resolver = async () => doc
+    await expect(resolveIssuerWithDoc(shortForm, {}, resolver)).resolves.toBeDefined()
   })
 })
