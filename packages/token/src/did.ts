@@ -2,7 +2,13 @@ import { base58 } from '@scure/base'
 import type { DIDResolver } from './cache.js'
 import { decodeMultibase } from './multibase.js'
 import type { DIDDoc, VerificationMethod } from './peer4.js'
-import { decodePeer4, encodePeer4, getPeer4ShortForm, isPeer4 } from './peer4.js'
+import {
+  assertDocWithinMaxSize,
+  decodePeer4,
+  encodePeer4,
+  getPeer4ShortForm,
+  isPeer4,
+} from './peer4.js'
 import type { SignatureAlgorithm } from './schemas.js'
 
 /** @internal */
@@ -17,6 +23,10 @@ const EXPECTED_KEY_SIZES: Record<string, number> = {
 }
 
 const PREFIX = 'did:key:z'
+
+// ES256 is the largest supported did:key payload: a 2-byte codec plus a 33-byte key
+// encodes to 48 base58 characters. Bound before decoding — base58.decode is O(n^2).
+const MAX_DID_KEY_ENCODED = 64
 
 function isCodecMatch(codec: Uint8Array, bytes: Uint8Array): boolean {
   if (bytes.length < codec.length) return false
@@ -56,7 +66,12 @@ export function getSignatureInfo(did: string): [SignatureAlgorithm, Uint8Array] 
     throw new Error('Invalid DID format')
   }
 
-  const bytes = base58.decode(did.slice(PREFIX.length))
+  const encoded = did.slice(PREFIX.length)
+  if (encoded.length > MAX_DID_KEY_ENCODED) {
+    throw new Error('Invalid DID format: key too large')
+  }
+
+  const bytes = base58.decode(encoded)
   const info = getAlgorithmAndPublicKey(bytes)
   if (info == null) {
     throw new Error('Unsupported DID signature codec')
@@ -105,6 +120,7 @@ export async function resolveIssuerWithDoc(
     if (doc == null) {
       throw new Error(`Unknown DID: ${shortForm}`)
     }
+    assertDocWithinMaxSize(doc)
     const expected = encodePeer4(doc).shortForm
     if (expected !== shortForm) {
       throw new Error('DIDResolver: short form/doc hash mismatch')
@@ -157,6 +173,9 @@ function resolveKidFromDoc(doc: DIDDoc, kid: string): [SignatureAlgorithm, Uint8
   const method = (doc.verificationMethod as Array<VerificationMethod>).find((m) => m.id === kid)
   if (method == null) {
     throw new Error(`KidNotFound: ${kid}`)
+  }
+  if (method.publicKeyMultibase.length > MAX_DID_KEY_ENCODED) {
+    throw new Error('Invalid verification method: key too large')
   }
   const bytes = decodeMultibase(method.publicKeyMultibase)
   const info = getAlgorithmAndPublicKey(bytes)

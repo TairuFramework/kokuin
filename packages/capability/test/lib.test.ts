@@ -2,6 +2,7 @@ import { randomIdentity, stringifyToken, verifyToken } from '@kokuin/token'
 import { describe, expect, test, vi } from 'vitest'
 
 import {
+  assertCapabilityToken,
   assertNonExpired,
   assertValidDelegation,
   assertValidIssuedAt,
@@ -1211,5 +1212,12 @@ describe('verifyToken hook', () => {
     })
 
     expect(verifyTokenHook).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('assertCapabilityToken with non-token input', () => {
+  test('throws a domain error, not a TypeError', () => {
+    expect(() => assertCapabilityToken(null)).toThrow('Invalid token: not a capability')
+    expect(() => assertCapabilityToken(undefined)).toThrow('Invalid token: not a capability')
   })
 })

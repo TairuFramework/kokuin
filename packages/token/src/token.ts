@@ -37,6 +37,15 @@ export type VerifyTokenOptions = TimeValidationOptions & {
    * array accepts no audience (every token is rejected).
    */
   audience?: string | Array<string>
+  /**
+   * Accept unsigned (`alg:none`) tokens. Defaults to `false`.
+   *
+   * An unsigned token carries no proof of its claims: its payload is entirely
+   * attacker-chosen. With the default, `verifyToken` rejects them and its return type is
+   * `VerifiedToken`, so a caller cannot reach an unverified payload by accident. Only opt
+   * in when the payload is not used for authorization.
+   */
+  allowUnsigned?: boolean
 }
 
 function assertAudienceValid(
@@ -60,6 +69,12 @@ function assertAudienceValid(
 function assertSignedForAudience(audience?: string | Array<string>): void {
   if (audience != null) {
     throw new Error('Invalid token: audience validation requires a signed token')
+  }
+}
+
+function assertUnsignedAllowed(allowUnsigned: boolean): void {
+  if (!allowUnsigned) {
+    throw new Error('Invalid token: unsigned tokens rejected, pass allowUnsigned to accept')
   }
 }
 
@@ -114,6 +129,9 @@ export async function verifySignedPayload<
 export function isSignedToken<Payload extends SignedPayload = SignedPayload>(
   token: unknown,
 ): token is SignedToken<Payload> {
+  if (typeof token !== 'object' || token === null) {
+    return false
+  }
   const t = token as SignedToken<Payload>
   return (
     isType(validateSignedHeader, t.header) &&
@@ -126,9 +144,12 @@ export function isSignedToken<Payload extends SignedPayload = SignedPayload>(
  * Check if a token is unsigned.
  */
 export function isUnsignedToken<Payload extends Record<string, unknown>>(
-  token: Token<Payload>,
+  token: unknown,
 ): token is UnsignedToken<Payload> {
-  return isType(validateUnsignedHeader, token.header)
+  if (typeof token !== 'object' || token === null) {
+    return false
+  }
+  return isType(validateUnsignedHeader, (token as UnsignedToken<Payload>).header)
 }
 
 /**
@@ -199,10 +220,12 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
   token: Token<Payload> | string,
   options: VerifyTokenOptions = {},
 ): Promise<Token<Payload>> {
-  const { verifiers, resolver, cache, audience, ...timeOptions } = options
+  const { verifiers, resolver, cache, audience, allowUnsigned = false, ...timeOptions } = options
   if (typeof token !== 'string') {
     if (isUnsignedToken(token)) {
       assertSignedForAudience(audience)
+      assertUnsignedAllowed(allowUnsigned)
+      assertTimeClaimsValid(token.payload as Record<string, unknown>, timeOptions)
       return token
     }
     if (isVerifiedToken(token)) {
@@ -242,7 +265,10 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
   }
   if (header.alg === 'none') {
     assertSignedForAudience(audience)
-    return { header, payload: b64uToJSON<Payload>(encodedPayload) } as UnsignedToken<Payload>
+    assertUnsignedAllowed(allowUnsigned)
+    const payload = b64uToJSON<Payload>(encodedPayload)
+    assertTimeClaimsValid(payload as Record<string, unknown>, timeOptions)
+    return { header, payload } as UnsignedToken<Payload>
   }
 
   if (isType(validateAlgorithm, header.alg)) {
@@ -281,6 +307,21 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
  * Verify a token is either unsigned or signed with a valid signature.
  * Also validates time-based claims (exp, nbf) if present.
  */
+export async function verifyToken<
+  Payload extends Record<string, unknown> = Record<string, unknown>,
+>(
+  token: Token<Payload> | string,
+  options?: VerifyTokenOptions & { allowUnsigned?: false },
+): Promise<VerifiedToken<Payload>>
+export async function verifyToken<
+  Payload extends Record<string, unknown> = Record<string, unknown>,
+>(
+  token: Token<Payload> | string,
+  options: VerifyTokenOptions & { allowUnsigned: true },
+): Promise<Token<Payload>>
+export async function verifyToken<
+  Payload extends Record<string, unknown> = Record<string, unknown>,
+>(token: Token<Payload> | string, options: VerifyTokenOptions): Promise<Token<Payload>>
 export async function verifyToken<
   Payload extends Record<string, unknown> = Record<string, unknown>,
 >(token: Token<Payload> | string, options: VerifyTokenOptions = {}): Promise<Token<Payload>> {

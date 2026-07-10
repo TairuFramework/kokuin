@@ -60,7 +60,7 @@ export function createRevocationChecker(backend: RevocationBackend): VerifyToken
     // unverified record. A record with an invalid signature does not revoke anything.
     let verified: RevocationRecord
     try {
-      verified = (await verifyToken<RevocationClaims>(record)) as RevocationRecord
+      verified = await verifyToken<RevocationClaims>(record)
     } catch {
       return
     }

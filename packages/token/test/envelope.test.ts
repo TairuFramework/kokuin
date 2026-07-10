@@ -12,6 +12,11 @@ describe('wrapEnvelope / unwrapEnvelope', () => {
     expect(result.payload.typ).toBe('request')
   })
 
+  test('plain mode rejects an expired envelope', async () => {
+    const wrapped = await wrapEnvelope('plain', { test: true, exp: 1700000000 - 100 }, {})
+    await expect(unwrapEnvelope(wrapped, {})).rejects.toThrow('Token expired')
+  })
+
   test('jws mode round-trip', async () => {
     const identity = randomIdentity()
     const payload = { typ: 'request', prc: 'test', rid: '123', prm: {} }

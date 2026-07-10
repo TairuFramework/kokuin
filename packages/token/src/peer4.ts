@@ -52,11 +52,26 @@ export function validateDIDDoc(value: unknown): value is DIDDoc {
 const PEER4_PREFIX = 'did:peer:4'
 const JSON_MULTICODEC = new Uint8Array([0x80, 0x04])
 
-const DEFAULT_MAX_DOC_SIZE = 64 * 1024
+const DEFAULT_MAX_DOC_SIZE = 4 * 1024
+// base58 expands bytes to characters by log(256) / log(58).
+const BASE58_EXPANSION = 1.3658
+// A SHA-256 multihash is 34 bytes: 47 base58 characters plus the multibase 'z'.
+const MAX_HASH_ENCODED = 64
 
 export type DecodePeer4Options = {
-  /** Maximum allowed size of the canonical doc bytes. Default 64 KB. */
+  /** Maximum allowed size of the canonical doc bytes. Default 4 KiB. */
   maxDocSize?: number
+}
+
+/**
+ * Throw if a DID document's canonical serialization exceeds `maxSize` bytes.
+ * Used to bound a resolver-returned doc before it reaches the O(n^2) base58 encode.
+ */
+export function assertDocWithinMaxSize(doc: DIDDoc, maxSize: number = DEFAULT_MAX_DOC_SIZE): void {
+  const size = fromUTF(canonicalStringify(doc)).length
+  if (size > maxSize) {
+    throw new Error(`did:peer:4 resolver doc too large: ${size} > ${maxSize}`)
+  }
 }
 
 /**
@@ -99,9 +114,15 @@ export function decodePeer4(
   const hashEncoded = longForm.slice(PEER4_PREFIX.length, sep)
   const encodedDoc = longForm.slice(sep + 1)
 
+  // Both segments feed an O(n^2) base58 decode, so bound them before decoding.
+  if (hashEncoded.length > MAX_HASH_ENCODED) {
+    throw new Error('did:peer:4 hash too large')
+  }
+
   const maxSize = options.maxDocSize ?? DEFAULT_MAX_DOC_SIZE
-  if (encodedDoc.length > maxSize * 2) {
-    throw new Error(`did:peer:4 encoded doc too large: ${encodedDoc.length} > ${maxSize * 2}`)
+  const maxEncoded = Math.ceil((maxSize + JSON_MULTICODEC.length) * BASE58_EXPANSION) + 8
+  if (encodedDoc.length > maxEncoded) {
+    throw new Error(`did:peer:4 encoded doc too large: ${encodedDoc.length} > ${maxEncoded}`)
   }
 
   const hashBytes = decodeMultibase(hashEncoded)
