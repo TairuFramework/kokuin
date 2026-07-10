@@ -122,6 +122,51 @@ describe('decodePeer4', () => {
   })
 })
 
+describe('decodePeer4 bounds', () => {
+  // 4 KiB default doc + 2 multicodec bytes, times the base58 expansion ratio, plus slack.
+  const MAX_ENCODED = Math.ceil((4 * 1024 + 2) * 1.3658) + 8
+
+  const validDoc: DIDDoc = {
+    '@context': ['https://www.w3.org/ns/did/v1'],
+    verificationMethod: [
+      { id: '#key-0', type: 'Multikey', publicKeyMultibase: 'z6MkAbc' },
+      { id: '#key-1', type: 'Multikey', publicKeyMultibase: 'z6MkDef' },
+      { id: '#key-2', type: 'Multikey', publicKeyMultibase: 'z6MkGhi' },
+    ],
+    authentication: ['#key-0'],
+    keyAgreement: ['#key-1'],
+    assertionMethod: ['#key-2'],
+  }
+
+  it('rejects an oversized hash segment before decoding it', () => {
+    // '0' is not in the base58 alphabet: without the length check, decodeMultibase throws.
+    const longForm = `did:peer:4z${'0'.repeat(70)}:z6MkAbc`
+    expect(() => decodePeer4(longForm)).toThrow('did:peer:4 hash too large')
+  })
+
+  it('rejects an oversized encoded doc before decoding it', () => {
+    const hash = `z${'1'.repeat(47)}`
+    const encodedDoc = `z${'0'.repeat(MAX_ENCODED)}`
+    const longForm = `did:peer:4${hash}:${encodedDoc}`
+    expect(() => decodePeer4(longForm)).toThrow(/encoded doc too large/)
+  })
+
+  it('decodes a realistic three-key document', () => {
+    const { longForm } = encodePeer4(validDoc)
+    expect(decodePeer4(longForm).doc).toEqual(validDoc)
+  })
+
+  it('honours a smaller maxDocSize override', () => {
+    const { longForm } = encodePeer4(validDoc)
+    expect(() => decodePeer4(longForm, { maxDocSize: 64 })).toThrow(/too large/)
+  })
+
+  it('honours a larger maxDocSize override', () => {
+    const { longForm } = encodePeer4(validDoc)
+    expect(decodePeer4(longForm, { maxDocSize: 8 * 1024 }).doc).toEqual(validDoc)
+  })
+})
+
 describe('isPeer4 / getPeer4ShortForm', () => {
   it('detects peer:4 DIDs', () => {
     expect(isPeer4('did:peer:4zAbc')).toBe(true)
