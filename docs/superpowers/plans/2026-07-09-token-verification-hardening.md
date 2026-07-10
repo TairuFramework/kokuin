@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Stage:** executing
+**Stage:** reviewing
 **Mode:** tasks
 **Spec:** `docs/superpowers/specs/2026-07-09-token-verification-hardening-design.md`
 
@@ -1097,7 +1097,7 @@ before encodePeer4, and bound publicKeyMultibase before decoding it."
 - Consumes: the public-surface changes from Tasks 1-5.
 - Produces: nothing consumed by later tasks.
 
-- [ ] **Step 1: Write the changeset**
+- [x] **Step 1: Write the changeset**
 
 `.changeset/config.json` has `"fixed": []`, so each package is listed explicitly. `@kokuin/token` takes `minor` — under semver-for-0.x both the strict default and the narrowed return type are breaking. `@kokuin/capability` takes `patch`: only the dropped cast changed, and only if Task 2 Step 12 succeeded. If that step was reverted, omit the capability line entirely.
 
@@ -1120,7 +1120,7 @@ Harden token verification against unsigned tokens, nullish input, and decode den
 BREAKING: `verifyToken` rejects `alg:none` tokens by default; pass `allowUnsigned: true` to restore the old behavior. Its return type is now `VerifiedToken<Payload>` rather than `Token<Payload>` unless `allowUnsigned` is set. The default `did:peer:4` document size limit is 4 KiB, down from 64 KiB.
 ```
 
-- [ ] **Step 2: Verify the changeset parses**
+- [x] **Step 2: Verify the changeset parses**
 
 ```bash
 cd /Users/paul/dev/yulsi/kokuin && pnpm exec changeset status
@@ -1128,7 +1128,7 @@ cd /Users/paul/dev/yulsi/kokuin && pnpm exec changeset status
 
 Expected: it lists `@kokuin/token` as `minor` and `@kokuin/capability` as `patch`. A parse error names the offending file.
 
-- [ ] **Step 3: Full verification before handing off**
+- [x] **Step 3: Full verification before handing off**
 
 ```bash
 cd /Users/paul/dev/yulsi/kokuin && pnpm exec turbo run test:types test:unit
@@ -1136,7 +1136,7 @@ cd /Users/paul/dev/yulsi/kokuin && pnpm exec turbo run test:types test:unit
 
 Expected: every package passes. Paste the summary line into the commit or the review, per `superpowers:verification-before-completion` — do not claim green without it.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .changeset/token-verification-hardening.md
