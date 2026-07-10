@@ -209,7 +209,7 @@ property access, and widen isUnsignedToken to accept unknown."
 - Consumes: `isUnsignedToken(token: unknown)` from Task 1.
 - Produces: `VerifyTokenOptions.allowUnsigned?: boolean`; `verifyToken(token, options?)` returning `Promise<VerifiedToken<Payload>>` when `allowUnsigned` is absent or literal `false`, and `Promise<Token<Payload>>` when it is literal `true` or the options argument is a widened `VerifyTokenOptions`.
 
-- [ ] **Step 1: Write the failing tests for the gate**
+- [x] **Step 1: Write the failing tests for the gate**
 
 Append to `packages/token/test/token.test.ts`. Add `type Token` to the existing `../src/types.js` type import if you need it; the tests below do not.
 
@@ -292,7 +292,7 @@ The malformed-header case throws `'Invalid token header type'` from the pre-exis
 
 Every symbol these tests use is already imported at the top of `token.test.ts`: `b64uFromJSON` from `@sozai/codec`, and `createUnsignedToken` / `isUnsignedToken` / `isVerifiedToken` / `verifyToken` / `randomIdentity` / `stringifyToken` from the source modules. No import edits needed.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd packages/token && pnpm exec vitest run test/token.test.ts -t 'verifyToken rejects alg:none by default'
@@ -315,7 +315,7 @@ Expected: exactly four of the ten fail.
 
 The six that pass are regression guards, not drivers. Do not "fix" them by making them fail — if any of the four listed as FAIL comes back green, the test is wrong, not the code.
 
-- [ ] **Step 3: Add the option and the gate helper**
+- [x] **Step 3: Add the option and the gate helper**
 
 In `packages/token/src/token.ts`, add to the `VerifyTokenOptions` type (after the `audience` field, `:39`):
 
@@ -341,7 +341,7 @@ function assertUnsignedAllowed(allowUnsigned: boolean): void {
 }
 ```
 
-- [ ] **Step 4: Gate both `alg:none` paths**
+- [x] **Step 4: Gate both `alg:none` paths**
 
 In `verifyTokenInner`, change the destructure at `token.ts:202` to pull the new option out (so it does not leak into `timeOptions`):
 
@@ -376,7 +376,7 @@ Replace the string path at `token.ts:243-246`:
 
 Neither path re-validates the unsigned header. The object path already passed `isUnsignedToken`, which asserts the schema. On the string path the `header.typ !== 'JWT'` guard at `:240` plus the `header.alg === 'none'` branch condition together imply `validateUnsignedHeader`.
 
-- [ ] **Step 5: Add the `verifyToken` overloads**
+- [x] **Step 5: Add the `verifyToken` overloads**
 
 Replace the `verifyToken` declaration at `token.ts:284-286` with three overload signatures followed by the unchanged implementation signature and body:
 
@@ -419,7 +419,7 @@ The third overload is load-bearing and not obvious. `VerifyTokenOptions` declare
 
 The implementation signature returns `Promise<Token<Payload>>` while the first overload promises `Promise<VerifiedToken<Payload>>`. TypeScript permits this: overload implementations are checked loosely against their signatures. The soundness argument is that every non-throwing branch of the strict path produces a verified token — the `isVerifiedToken` early return at `:208`, and the two branches that call `verifySignedPayload` and then attach `verifiedPublicKey` (`:226`, `:266`).
 
-- [ ] **Step 6: Run the token tests**
+- [x] **Step 6: Run the token tests**
 
 ```bash
 cd packages/token && pnpm exec vitest run test/token.test.ts -t 'verifyToken rejects alg:none by default'
@@ -427,7 +427,7 @@ cd packages/token && pnpm exec vitest run test/token.test.ts -t 'verifyToken rej
 
 Expected: PASS, all ten tests.
 
-- [ ] **Step 7: Run the whole token suite to find the breakage**
+- [x] **Step 7: Run the whole token suite to find the breakage**
 
 ```bash
 cd packages/token && pnpm exec vitest run
@@ -438,7 +438,7 @@ Expected: FAIL in two places, both intended.
 1. `test/sign-verify.test.ts` — the last assertion of `'audience validation rejects unsigned and alg:none tokens'`.
 2. `test/envelope.test.ts` — `'plain mode round-trip'`, because `unwrapEnvelope` does not yet opt in.
 
-- [ ] **Step 8: Invert the stale assertion in `sign-verify.test.ts`**
+- [x] **Step 8: Invert the stale assertion in `sign-verify.test.ts`**
 
 At `packages/token/test/sign-verify.test.ts:74`, this assertion encodes the old, vulnerable behavior:
 
@@ -457,7 +457,7 @@ Replace it with:
     await expect(verifyToken(unsigned as never, { allowUnsigned: true })).resolves.toBeDefined()
 ```
 
-- [ ] **Step 9: Opt `unwrapEnvelope` into unsigned tokens**
+- [x] **Step 9: Opt `unwrapEnvelope` into unsigned tokens**
 
 `unwrapEnvelope`'s 3-part branch handles `'plain'`, `'jws'` and `'jwe-in-jws'`, so it must accept unsigned tokens. At `packages/token/src/jwe.ts:310`:
 
@@ -472,7 +472,7 @@ Leave `jwe.ts:305` (the `jws-in-jwe` branch) alone — it requires a signed toke
 
 `unwrapEnvelope` stays permissive toward `'plain'` by design: it returns `mode` in its result, so a caller that must not accept plain envelopes checks that. See "Rejected alternatives" in the spec.
 
-- [ ] **Step 10: Write the failing envelope test for expired plain**
+- [x] **Step 10: Write the failing envelope test for expired plain**
 
 Append to the `describe` block containing `'plain mode round-trip'` in `packages/token/test/envelope.test.ts`:
 
@@ -485,7 +485,7 @@ Append to the `describe` block containing `'plain mode round-trip'` in `packages
 
 This uses a literal past `exp`, so it does not depend on the current wall clock. `unwrapEnvelope` does not forward `atTime`, so the token must be expired against real `now()` — an `exp` of `1699999900` (November 2023) always is.
 
-- [ ] **Step 11: Run the full token suite**
+- [x] **Step 11: Run the full token suite**
 
 ```bash
 cd packages/token && pnpm exec vitest run
@@ -493,7 +493,7 @@ cd packages/token && pnpm exec vitest run
 
 Expected: PASS, including `test/envelope.test.ts` plain round-trip and the new expired-plain test.
 
-- [ ] **Step 12: Drop the now-redundant cast in capability**
+- [x] **Step 12: Drop the now-redundant cast in capability**
 
 `verifyToken` now returns `VerifiedToken<RevocationClaims>`, which extends `SignedToken<RevocationClaims>` — the definition of `RevocationRecord`. The cast at `packages/capability/src/revocation.ts:63` is redundant:
 
@@ -505,7 +505,7 @@ Leave `revocation.ts:37` alone — it has no cast to remove.
 
 If `tsc` rejects this because `RevocationRecord` is not structurally satisfied by `VerifiedToken`, restore the cast and move on. The cast removal is a tidiness win, not a requirement of the fix.
 
-- [ ] **Step 13: Typecheck and test both packages**
+- [x] **Step 13: Typecheck and test both packages**
 
 ```bash
 cd packages/token && pnpm exec tsc --noEmit --skipLibCheck -p tsconfig.test.json && pnpm exec vitest run
@@ -515,7 +515,7 @@ cd ../capability && pnpm exec tsc --noEmit --skipLibCheck -p tsconfig.test.json 
 
 Expected: exit 0, all tests pass. The token rebuild is required before the capability suite — capability consumes the compiled `lib/`, and this task changes `verifyToken`'s runtime behavior, so a stale `lib/` would mask a real break. The capability suite exercises `verifyToken` through `checkCapability` and `checkDelegationChain`; those call sites pass object literals without `allowUnsigned`, so they bind to the strict overload and their return values narrow to `VerifiedToken`.
 
-- [ ] **Step 14: Verify no downstream regression in the workspace**
+- [x] **Step 14: Verify no downstream regression in the workspace**
 
 ```bash
 cd /Users/paul/dev/yulsi/kokuin && pnpm exec turbo run test:types test:unit
@@ -523,13 +523,13 @@ cd /Users/paul/dev/yulsi/kokuin && pnpm exec turbo run test:types test:unit
 
 Expected: all packages pass. `@kokuin/browser`, `@kokuin/deterministic` and `@kokuin/ledger-device` each call `verifyToken` on a signed token string in their tests; those bind to the strict overload and are unaffected.
 
-- [ ] **Step 15: Lint**
+- [x] **Step 15: Lint**
 
 ```bash
 pnpm exec biome check --write ./packages
 ```
 
-- [ ] **Step 16: Commit**
+- [x] **Step 16: Commit**
 
 ```bash
 git add packages/token/src/token.ts packages/token/src/jwe.ts packages/token/test/token.test.ts packages/token/test/sign-verify.test.ts packages/token/test/envelope.test.ts packages/capability/src/revocation.ts
