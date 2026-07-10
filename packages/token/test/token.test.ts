@@ -353,6 +353,20 @@ describe('verifyToken rejects alg:none by default', () => {
     await expect(verifyToken(unsigned)).rejects.toThrow(/unsigned tokens rejected/)
   })
 
+  it('rejects an unsigned object carrying a forged signature and verifiedPublicKey', async () => {
+    // The literal alg:none smuggle: an attacker hand-builds an object with a signed-looking
+    // shape (signature + verifiedPublicKey) but an alg:none header. The gate keys off the
+    // header schema and the verifiedTokens WeakSet (identity, not a spoofable field), so this
+    // is rejected as unsigned rather than trusted.
+    const forged = {
+      header: { typ: 'JWT', alg: 'none' },
+      payload: { admin: true },
+      signature: 'Zm9yZ2Vk',
+      verifiedPublicKey: new Uint8Array(32),
+    }
+    await expect(verifyToken(forged as never)).rejects.toThrow(/unsigned tokens rejected/)
+  })
+
   it('accepts an alg:none token string with allowUnsigned', async () => {
     const token = await verifyToken(unsignedString({ test: true }), { allowUnsigned: true })
     expect(isUnsignedToken(token)).toBe(true)
