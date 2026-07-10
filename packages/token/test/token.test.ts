@@ -334,3 +334,76 @@ describe('type guards are total', () => {
     })
   }
 })
+
+describe('verifyToken rejects alg:none by default', () => {
+  const fixedTime = 1700000000
+
+  function unsignedString(payload: Record<string, unknown>, header = { typ: 'JWT', alg: 'none' }) {
+    return `${b64uFromJSON(header)}.${b64uFromJSON(payload)}.`
+  }
+
+  it('rejects an alg:none token string', async () => {
+    await expect(verifyToken(unsignedString({ test: true }))).rejects.toThrow(
+      /unsigned tokens rejected/,
+    )
+  })
+
+  it('rejects an unsigned token object', async () => {
+    const unsigned = createUnsignedToken({ test: true })
+    await expect(verifyToken(unsigned)).rejects.toThrow(/unsigned tokens rejected/)
+  })
+
+  it('accepts an alg:none token string with allowUnsigned', async () => {
+    const token = await verifyToken(unsignedString({ test: true }), { allowUnsigned: true })
+    expect(isUnsignedToken(token)).toBe(true)
+    expect(token.payload).toEqual({ test: true })
+  })
+
+  it('accepts an unsigned token object with allowUnsigned', async () => {
+    const unsigned = createUnsignedToken({ test: true })
+    const token = await verifyToken(unsigned, { allowUnsigned: true })
+    expect(token).toBe(unsigned)
+  })
+
+  it('rejects a malformed unsigned header even with allowUnsigned', async () => {
+    const bad = unsignedString({ test: true }, { typ: 'NOTJWT', alg: 'none' })
+    await expect(verifyToken(bad, { allowUnsigned: true })).rejects.toThrow(
+      'Invalid token header type',
+    )
+  })
+
+  it('rejects an expired unsigned token with allowUnsigned', async () => {
+    const token = unsignedString({ test: true, exp: fixedTime - 100 })
+    await expect(
+      verifyToken(token, { allowUnsigned: true, atTime: fixedTime }),
+    ).rejects.toThrow('Token expired')
+  })
+
+  it('rejects a not-yet-valid unsigned token with allowUnsigned', async () => {
+    const token = unsignedString({ test: true, nbf: fixedTime + 100 })
+    await expect(
+      verifyToken(token, { allowUnsigned: true, atTime: fixedTime }),
+    ).rejects.toThrow('Token not yet valid')
+  })
+
+  it('honours clockTolerance for an expired unsigned token', async () => {
+    const token = unsignedString({ test: true, exp: fixedTime - 100 })
+    await expect(
+      verifyToken(token, { allowUnsigned: true, atTime: fixedTime, clockTolerance: 200 }),
+    ).resolves.toBeDefined()
+  })
+
+  it('rejects an unsigned token when an audience is expected, even with allowUnsigned', async () => {
+    const token = unsignedString({ test: true, aud: 'did:key:service-a' })
+    await expect(
+      verifyToken(token, { allowUnsigned: true, audience: 'did:key:service-a' }),
+    ).rejects.toThrow(/requires a signed token/)
+  })
+
+  it('still verifies a signed token with no options', async () => {
+    const identity = randomIdentity()
+    const signed = await identity.signToken({ test: true })
+    const verified = await verifyToken(stringifyToken(signed))
+    expect(isVerifiedToken(verified)).toBe(true)
+  })
+})

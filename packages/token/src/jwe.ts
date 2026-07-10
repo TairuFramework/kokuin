@@ -307,7 +307,10 @@ export async function unwrapEnvelope(
   }
   if (parts.length === 3) {
     // JWT: could be plain, jws, or jwe-in-jws
-    const token = await verifyToken(message, { verifiers: options.verifiers })
+    const token = await verifyToken(message, {
+      verifiers: options.verifiers,
+      allowUnsigned: true,
+    })
     if (isUnsignedToken(token)) {
       return { payload: token.payload as Record<string, unknown>, mode: 'plain' }
     }

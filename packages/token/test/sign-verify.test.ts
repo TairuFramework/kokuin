@@ -71,8 +71,11 @@ describe('sign and verify', () => {
       verifyToken(`${header}.${payload}.`, { audience: 'did:key:service-a' }),
     ).rejects.toThrow(/requires a signed token/)
 
-    // Without an audience option, unsigned tokens still verify (unchanged behavior).
-    await expect(verifyToken(unsigned as never)).resolves.toBeDefined()
+    // Without an audience option, unsigned tokens are still rejected by default.
+    await expect(verifyToken(unsigned as never)).rejects.toThrow(/unsigned tokens rejected/)
+
+    // They verify only when the caller explicitly opts in.
+    await expect(verifyToken(unsigned as never, { allowUnsigned: true })).resolves.toBeDefined()
   })
 
   test('EdDSA low-level signature', async () => {
