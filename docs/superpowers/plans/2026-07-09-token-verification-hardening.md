@@ -23,6 +23,11 @@ Copied from `AGENTS.md` and the repo conventions — every task's requirements i
 - ES `#fields`, never `private` / `readonly`.
 - Never edit generated files under `lib/`.
 - Cross-repo deps (`@sozai/*`) stay published `^` ranges, never `workspace:`.
+- **`@kokuin/capability` resolves `@kokuin/token` to its compiled `lib/`, not `src/`** —
+  there is no vitest alias. After editing token source, run
+  `cd packages/token && rtk proxy pnpm run build` before running the capability suite,
+  or it will silently pass against stale code. `lib/` is gitignored; the rebuild is not
+  committed. (Discovered during Task 1.)
 
 ## File Structure
 
@@ -54,7 +59,7 @@ Make `isSignedToken`, `isUnsignedToken` and `isVerifiedToken` return `false` for
 - Consumes: nothing.
 - Produces: `isSignedToken(token: unknown): token is SignedToken<Payload>`, `isUnsignedToken(token: unknown): token is UnsignedToken<Payload>`, `isVerifiedToken(token: unknown): token is VerifiedToken<Payload>` — all total, none throw.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `packages/token/test/token.test.ts`. `isVerifiedToken` and `isSignedToken` are already imported at the top of that file; `isUnsignedToken` too.
 
@@ -80,7 +85,7 @@ describe('type guards are total', () => {
 
 Note the `as never` on `isUnsignedToken` — it is needed only until Step 3 widens the parameter to `unknown`. Step 5 removes it.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd packages/token && pnpm exec vitest run test/token.test.ts -t 'type guards are total'
@@ -88,7 +93,7 @@ cd packages/token && pnpm exec vitest run test/token.test.ts -t 'type guards are
 
 Expected: FAIL. The `null` and `undefined` cases throw `TypeError: Cannot read properties of null (reading 'header')`. The `0`, `false`, `''` and `'string'` cases already pass (property access on a primitive yields `undefined` rather than throwing), so only the nullish ones go red — that is the bug, and it is enough to drive the fix.
 
-- [ ] **Step 3: Widen and guard `isSignedToken`**
+- [x] **Step 3: Widen and guard `isSignedToken`**
 
 Replace `packages/token/src/token.ts:114-123` with:
 
@@ -108,7 +113,7 @@ export function isSignedToken<Payload extends SignedPayload = SignedPayload>(
 }
 ```
 
-- [ ] **Step 4: Widen and guard `isUnsignedToken`**
+- [x] **Step 4: Widen and guard `isUnsignedToken`**
 
 Replace `packages/token/src/token.ts:128-132` with:
 
@@ -127,11 +132,11 @@ export function isUnsignedToken<Payload extends Record<string, unknown>>(
 
 Widening the parameter to `unknown` does not lose negative narrowing at `jwe.ts:311`. TypeScript narrows the false branch from the *variable's* declared type (`Token<Payload>`), not from the predicate's parameter type, so the `else` path still narrows to `SignedToken | VerifiedToken`.
 
-- [ ] **Step 5: Drop the `as never` from the test**
+- [x] **Step 5: Drop the `as never` from the test**
 
 In the test written in Step 1, change `isUnsignedToken(value as never)` to `isUnsignedToken(value)`. It now typechecks, and the cast would hide a regression if the parameter were ever narrowed back.
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 ```bash
 cd packages/token && pnpm exec vitest run test/token.test.ts
@@ -139,7 +144,7 @@ cd packages/token && pnpm exec vitest run test/token.test.ts
 
 Expected: PASS, all tests in the file including the pre-existing ones.
 
-- [ ] **Step 7: Typecheck the token package**
+- [x] **Step 7: Typecheck the token package**
 
 ```bash
 cd packages/token && pnpm exec tsc --noEmit --skipLibCheck -p tsconfig.test.json
@@ -147,7 +152,7 @@ cd packages/token && pnpm exec tsc --noEmit --skipLibCheck -p tsconfig.test.json
 
 Expected: no output, exit 0.
 
-- [ ] **Step 8: Write the failing capability test**
+- [x] **Step 8: Write the failing capability test**
 
 The audit's cited downstream symptom is `assertCapabilityToken(null)` raising `TypeError`. Verify it now raises the domain error. `assertCapabilityToken` is exported from `packages/capability/src/index.ts:172`; check the existing import block at the top of `packages/capability/test/lib.test.ts` and add it there if absent.
 
@@ -160,15 +165,16 @@ describe('assertCapabilityToken with non-token input', () => {
 })
 ```
 
-- [ ] **Step 9: Run the capability tests**
+- [x] **Step 9: Run the capability tests**
 
 ```bash
-cd packages/capability && pnpm exec vitest run test/lib.test.ts -t 'assertCapabilityToken with non-token input'
+cd packages/token && rtk proxy pnpm run build
+cd ../capability && pnpm exec vitest run test/lib.test.ts -t 'assertCapabilityToken with non-token input'
 ```
 
-Expected: PASS. This test passes because of the Task 1 source change — `@kokuin/capability` resolves `@kokuin/token` through the workspace, so no rebuild is needed. If it fails with `TypeError`, the Step 3 edit did not land.
+Expected: PASS. The rebuild is required — `@kokuin/capability` resolves `@kokuin/token` to its compiled `lib/`, so without it the suite runs against the pre-fix code and still throws `TypeError`. If it fails with `TypeError` *after* a successful rebuild, the Step 3 edit did not land.
 
-- [ ] **Step 10: Lint**
+- [x] **Step 10: Lint**
 
 ```bash
 pnpm exec biome check --write ./packages
@@ -176,7 +182,7 @@ pnpm exec biome check --write ./packages
 
 Expected: no errors. Review any file it rewrites.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add packages/token/src/token.ts packages/token/test/token.test.ts packages/capability/test/lib.test.ts
@@ -503,10 +509,11 @@ If `tsc` rejects this because `RevocationRecord` is not structurally satisfied b
 
 ```bash
 cd packages/token && pnpm exec tsc --noEmit --skipLibCheck -p tsconfig.test.json && pnpm exec vitest run
+cd packages/token && rtk proxy pnpm run build
 cd ../capability && pnpm exec tsc --noEmit --skipLibCheck -p tsconfig.test.json && pnpm exec vitest run
 ```
 
-Expected: exit 0, all tests pass. The capability suite exercises `verifyToken` through `checkCapability` and `checkDelegationChain`; those call sites pass object literals without `allowUnsigned`, so they bind to the strict overload and their return values narrow to `VerifiedToken`.
+Expected: exit 0, all tests pass. The token rebuild is required before the capability suite — capability consumes the compiled `lib/`, and this task changes `verifyToken`'s runtime behavior, so a stale `lib/` would mask a real break. The capability suite exercises `verifyToken` through `checkCapability` and `checkDelegationChain`; those call sites pass object literals without `allowUnsigned`, so they bind to the strict overload and their return values narrow to `VerifiedToken`.
 
 - [ ] **Step 14: Verify no downstream regression in the workspace**
 
@@ -683,10 +690,11 @@ Expected: PASS, all tests in the file including the pre-existing round-trip test
 
 ```bash
 cd packages/token && pnpm exec vitest run
+cd packages/token && rtk proxy pnpm run build
 cd ../capability && pnpm exec vitest run
 ```
 
-Expected: PASS. The capability suite mints `did:peer:4` identities; if any test doc exceeds 4 KiB the new default is too tight and the constant needs raising to `8 * 1024` (the spec's stated fallback). Report this rather than silently changing it.
+Expected: PASS. The token rebuild is required first — capability consumes the compiled `lib/`, so without it the suite would exercise the old unbounded `decodePeer4` and the new bound would go untested. The capability suite mints `did:peer:4` identities; if any test doc exceeds 4 KiB the new default is too tight and the constant needs raising to `8 * 1024` (the spec's stated fallback). Report this rather than silently changing it.
 
 - [ ] **Step 7: Typecheck and lint**
 
