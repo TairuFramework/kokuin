@@ -374,16 +374,16 @@ describe('verifyToken rejects alg:none by default', () => {
 
   it('rejects an expired unsigned token with allowUnsigned', async () => {
     const token = unsignedString({ test: true, exp: fixedTime - 100 })
-    await expect(
-      verifyToken(token, { allowUnsigned: true, atTime: fixedTime }),
-    ).rejects.toThrow('Token expired')
+    await expect(verifyToken(token, { allowUnsigned: true, atTime: fixedTime })).rejects.toThrow(
+      'Token expired',
+    )
   })
 
   it('rejects a not-yet-valid unsigned token with allowUnsigned', async () => {
     const token = unsignedString({ test: true, nbf: fixedTime + 100 })
-    await expect(
-      verifyToken(token, { allowUnsigned: true, atTime: fixedTime }),
-    ).rejects.toThrow('Token not yet valid')
+    await expect(verifyToken(token, { allowUnsigned: true, atTime: fixedTime })).rejects.toThrow(
+      'Token not yet valid',
+    )
   })
 
   it('honours clockTolerance for an expired unsigned token', async () => {
