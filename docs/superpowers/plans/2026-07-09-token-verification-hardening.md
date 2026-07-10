@@ -36,11 +36,13 @@ Copied from `AGENTS.md` and the repo conventions — every task's requirements i
 | `packages/token/src/token.ts` | `verifyToken` overloads + `allowUnsigned` gate; total type guards | 1, 2 |
 | `packages/token/src/jwe.ts` | `unwrapEnvelope` opts into `allowUnsigned` for `'plain'` | 2 |
 | `packages/token/src/peer4.ts` | hash-segment bound; tightened encoded-doc bound | 3 |
+| `packages/token/src/did.ts` | bound the `did:key` payload before base58 decode | 4 |
 | `packages/capability/src/revocation.ts` | drop a now-redundant cast | 2 |
 | `packages/token/test/token.test.ts` | guard totality; `alg:none` gate | 1, 2 |
 | `packages/token/test/sign-verify.test.ts` | **invert** the existing "unsigned still verifies" assertion | 2 |
 | `packages/token/test/envelope.test.ts` | plain round-trip still works; expired plain rejects | 2 |
 | `packages/token/test/peer4.test.ts` | both decode bounds, and that they run before decoding | 3 |
+| `packages/token/test/did.test.ts` | `did:key` bound, and that it runs before decoding | 4 |
 | `packages/capability/test/lib.test.ts` | `assertCapabilityToken(null)` throws a domain error | 1 |
 | `.changeset/token-verification-hardening.md` | release notes | 4 |
 
@@ -562,7 +564,7 @@ narrows to VerifiedToken."
 - Consumes: nothing from earlier tasks.
 - Produces: no signature change. `DecodePeer4Options.maxDocSize` keeps its meaning; only the default and the pre-check arithmetic move.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `packages/token/test/peer4.test.ts`. `decodePeer4` and `encodePeer4` are already imported there.
 
@@ -617,7 +619,7 @@ describe('decodePeer4 bounds', () => {
 
 `DIDDoc` is already imported as a type at the top of `peer4.test.ts`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd packages/token && pnpm exec vitest run test/peer4.test.ts -t 'decodePeer4 bounds'
@@ -630,7 +632,7 @@ Expected: FAIL on the two rejection tests, for two different reasons — check t
 
 The other three tests are already green. If `'decodes a realistic three-key document'` fails now, the test document is malformed — fix it before proceeding, because Steps 5 and 6 rely on it as the regression guard against a too-tight default.
 
-- [ ] **Step 3: Replace the constants**
+- [x] **Step 3: Replace the constants**
 
 At `packages/token/src/peer4.ts:55`, replace `const DEFAULT_MAX_DOC_SIZE = 64 * 1024` with:
 
@@ -648,7 +650,7 @@ Update the JSDoc on `DecodePeer4Options.maxDocSize` at `:58` — it says "Defaul
   /** Maximum allowed size of the canonical doc bytes. Default 4 KiB. */
 ```
 
-- [ ] **Step 4: Add both bounds**
+- [x] **Step 4: Add both bounds**
 
 In `decodePeer4`, replace `packages/token/src/peer4.ts:102-105`:
 
@@ -678,7 +680,7 @@ Both checks must precede `decodeMultibase(hashEncoded)` at the following line. `
 
 The post-decode `docBytes.length > maxSize` check further down (`:117`) stays. It is the exact bound; `maxEncoded` is the cheap pre-filter.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 ```bash
 cd packages/token && pnpm exec vitest run test/peer4.test.ts
@@ -686,7 +688,7 @@ cd packages/token && pnpm exec vitest run test/peer4.test.ts
 
 Expected: PASS, all tests in the file including the pre-existing round-trip tests.
 
-- [ ] **Step 6: Run the token and capability suites**
+- [x] **Step 6: Run the token and capability suites**
 
 ```bash
 cd packages/token && pnpm exec vitest run
@@ -696,14 +698,14 @@ cd ../capability && pnpm exec vitest run
 
 Expected: PASS. The token rebuild is required first — capability consumes the compiled `lib/`, so without it the suite would exercise the old unbounded `decodePeer4` and the new bound would go untested. The capability suite mints `did:peer:4` identities; if any test doc exceeds 4 KiB the new default is too tight and the constant needs raising to `8 * 1024` (the spec's stated fallback). Report this rather than silently changing it.
 
-- [ ] **Step 7: Typecheck and lint**
+- [x] **Step 7: Typecheck and lint**
 
 ```bash
 cd packages/token && pnpm exec tsc --noEmit --skipLibCheck -p tsconfig.test.json
 cd /Users/paul/dev/yulsi/kokuin && pnpm exec biome check --write ./packages
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add packages/token/src/peer4.ts packages/token/test/peer4.test.ts
@@ -721,18 +723,177 @@ segment at 64 characters. Both checks run before any decode."
 
 ---
 
-### Task 4: Changeset
+### Task 4: Bound the `did:key` base58 decode
+
+Added after the Task 3 review found the same O(n^2) `@scure/base` defect on a sibling path.
+`getSignatureInfo` (`packages/token/src/did.ts:54`) calls `base58.decode` on the whole
+`did:key` payload with no length bound; the only size check (`did.ts:66`, on the decoded
+public key) runs *after* the decode and so cannot prevent the DoS.
+
+This path is **more** reachable than the `did:peer:4` one Task 3 fixed. Traced:
+
+```
+verifyToken(untrusted token string)
+  -> verifySignedPayload            (token.ts:100)
+  -> resolveIssuerWithDoc(payload.iss)  (token.ts:109)
+  -> non-peer4 branch               (did.ts:115)
+  -> getSignatureInfo(iss)          (did.ts:54)  -> unbounded base58.decode
+```
+
+Every step runs **before** the signature check at `token.ts:116`, on the fully
+attacker-controlled `iss` claim. `jwe.ts:140` reaches it too, via `recipient`.
+
+**Files:**
+- Modify: `packages/token/src/did.ts:54-59`
+- Test: `packages/token/test/did.test.ts` (create if absent; check first)
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: `getSignatureInfo` throws before decoding when the payload is over-long.
+
+- [ ] **Step 1: Write the failing tests**
+
+`PREFIX` is `'did:key:z'` — it already includes the multibase `z`, so `did.slice(PREFIX.length)`
+is pure base58. Build the oversized payload from `'0'`, which is **not** in the base58
+alphabet: if the length check is missing or runs after the decode, the test sees
+`@scure/base`'s "invalid character" error rather than the intended bound error. That is the
+mock-free ordering proof, the same technique Task 3 used.
+
+```ts
+test('rejects an over-long did:key before decoding', () => {
+  const did = `did:key:z${'0'.repeat(5_000_000)}`
+  expect(() => getSignatureInfo(did)).toThrow('Invalid DID format: key too large')
+})
+
+test('accepts a maximum-size legitimate did:key', () => {
+  // ES256 is the largest supported: 2-byte codec + 33-byte key = 48 base58 chars.
+  const publicKey = new Uint8Array(33).fill(0xff)
+  const did = getDID(CODECS.ES256, publicKey)
+  expect(did.length - 'did:key:z'.length).toBe(48)
+  expect(() => getSignatureInfo(did)).not.toThrow()
+})
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+```bash
+cd packages/token && pnpm exec vitest run test/did.test.ts
+```
+
+Expected: the first test FAILS. It either hangs for a long time then errors, or throws
+`@scure/base`'s invalid-character error — **not** `'Invalid DID format: key too large'`.
+The second test PASSES already; it is a regression guard against an over-tight bound.
+If the first test errors instantly with the alphabet message, that still counts as a
+correct FAIL for this step: the bound does not exist yet.
+
+- [ ] **Step 3: Add the bound**
+
+Only two algorithms are supported (`CODECS`, `did.ts:9`): EdDSA is `2 + 32 = 34` bytes and
+ES256 is `2 + 33 = 35` bytes, encoding to 47 and 48 base58 characters respectively
+(measured, not estimated). 64 leaves slack for a future codec without admitting a payload
+large enough to matter, and matches `MAX_HASH_ENCODED` in `peer4.ts`.
+
+Add near the other constants at the top of `did.ts`:
+
+```ts
+// ES256 is the largest supported did:key payload: a 2-byte codec plus a 33-byte key
+// encodes to 48 base58 characters. Bound before decoding — base58.decode is O(n^2).
+const MAX_DID_KEY_ENCODED = 64
+```
+
+Then in `getSignatureInfo`, bound the slice before it reaches `base58.decode`:
+
+```ts
+export function getSignatureInfo(did: string): [SignatureAlgorithm, Uint8Array] {
+  if (!did.startsWith(PREFIX)) {
+    throw new Error('Invalid DID format')
+  }
+
+  const encoded = did.slice(PREFIX.length)
+  if (encoded.length > MAX_DID_KEY_ENCODED) {
+    throw new Error('Invalid DID format: key too large')
+  }
+
+  const bytes = base58.decode(encoded)
+  // ...rest unchanged
+```
+
+Leave the existing post-decode `publicKey.length !== expectedSize` check at `did.ts:66`
+alone — it validates a different property (exact key size per algorithm) and is still needed.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+```bash
+cd packages/token && pnpm exec vitest run test/did.test.ts
+```
+
+Expected: PASS. The first test must throw `'Invalid DID format: key too large'` — if it
+throws `@scure/base`'s alphabet error instead, the check is in the wrong place. Do not
+loosen the assertion to accommodate it.
+
+- [ ] **Step 5: Confirm the DoS is actually closed end to end**
+
+The unit test bounds `getSignatureInfo`. Confirm the *reachable* path is closed too, since
+that is the finding: a token whose `iss` is an over-long `did:key` must reject fast rather
+than hang.
+
+```bash
+cd packages/token && pnpm exec vitest run
+```
+
+Expected: PASS, whole suite. Then reason about `verifyToken`: the bound sits upstream of
+the signature check, so an over-long `iss` is now rejected before any expensive work.
+
+- [ ] **Step 6: Typecheck, rebuild, and run both suites**
+
+```bash
+cd packages/token && pnpm exec tsc --noEmit --skipLibCheck -p tsconfig.test.json
+cd packages/token && rtk proxy pnpm run build
+cd ../capability && pnpm exec vitest run
+```
+
+Expected: exit 0 throughout. The token rebuild is mandatory — capability consumes the
+compiled `lib/`. The capability suite mints real `did:key` issuers; if any legitimate DID
+now trips the bound, the constant is too tight. Report that rather than raising it silently.
+
+- [ ] **Step 7: Lint**
+
+```bash
+cd /Users/paul/dev/yulsi/kokuin && pnpm exec biome check packages/token/src/did.ts packages/token/test/did.test.ts
+```
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add packages/token/src/did.ts packages/token/test/did.test.ts
+git commit -m "fix(token): bound the did:key base58 decode
+
+getSignatureInfo decoded the entire did:key payload with @scure/base's
+O(n^2) base58 before checking any size, and the only length check ran
+against the already-decoded key. resolveIssuerWithDoc reaches it from
+verifyToken with the attacker-controlled iss claim, before the signature
+is checked, so an over-long did:key hung the verifier pre-auth.
+
+Bound the encoded payload at 64 characters before decoding. The largest
+supported key, ES256, encodes to 48."
+```
+
+---
+
+### Task 5: Changeset
 
 **Files:**
 - Create: `.changeset/token-verification-hardening.md`
 
 **Interfaces:**
-- Consumes: the public-surface changes from Tasks 1-3.
+- Consumes: the public-surface changes from Tasks 1-4.
 - Produces: nothing consumed by later tasks.
 
 - [ ] **Step 1: Write the changeset**
 
 `.changeset/config.json` has `"fixed": []`, so each package is listed explicitly. `@kokuin/token` takes `minor` — under semver-for-0.x both the strict default and the narrowed return type are breaking. `@kokuin/capability` takes `patch`: only the dropped cast changed, and only if Task 2 Step 12 succeeded. If that step was reverted, omit the capability line entirely.
+
+The changeset must describe **four** fixes, not three: the `alg:none` default (Task 2), the total type guards (Task 1), and the bounded base58 decode on **both** the `did:peer:4` path (Task 3) and the `did:key` path (Task 4). Do not write a blanket "bounded the base58 DoS" line that silently rests on Task 4 having landed — if Task 4 was skipped, say explicitly that `did:key` remains unbounded.
 
 Follow the style of the existing `.changeset/capability-authorization-fixes.md`.
 
