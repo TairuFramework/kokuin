@@ -36,13 +36,14 @@ Copied from `AGENTS.md` and the repo conventions — every task's requirements i
 | `packages/token/src/token.ts` | `verifyToken` overloads + `allowUnsigned` gate; total type guards | 1, 2 |
 | `packages/token/src/jwe.ts` | `unwrapEnvelope` opts into `allowUnsigned` for `'plain'` | 2 |
 | `packages/token/src/peer4.ts` | hash-segment bound; tightened encoded-doc bound | 3 |
-| `packages/token/src/did.ts` | bound the `did:key` payload before base58 decode | 4 |
+| `packages/token/src/did.ts` | bound the `did:key` payload before base58 decode; bound the resolver doc + `publicKeyMultibase` | 4, 5 |
 | `packages/capability/src/revocation.ts` | drop a now-redundant cast | 2 |
 | `packages/token/test/token.test.ts` | guard totality; `alg:none` gate | 1, 2 |
 | `packages/token/test/sign-verify.test.ts` | **invert** the existing "unsigned still verifies" assertion | 2 |
 | `packages/token/test/envelope.test.ts` | plain round-trip still works; expired plain rejects | 2 |
 | `packages/token/test/peer4.test.ts` | both decode bounds, and that they run before decoding | 3 |
-| `packages/token/test/did.test.ts` | `did:key` bound, and that it runs before decoding | 4 |
+| `packages/token/test/did.test.ts` | `did:key` bound; resolver-doc bound runs before the encode | 4, 5 |
+| `packages/token/src/peer4.ts` | export a shared doc-size bound helper | 5 |
 | `packages/capability/test/lib.test.ts` | `assertCapabilityToken(null)` throws a domain error | 1 |
 | `.changeset/token-verification-hardening.md` | release notes | 4 |
 
@@ -751,7 +752,7 @@ attacker-controlled `iss` claim. `jwe.ts:140` reaches it too, via `recipient`.
 - Consumes: nothing.
 - Produces: `getSignatureInfo` throws before decoding when the payload is over-long.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `PREFIX` is `'did:key:z'` — it already includes the multibase `z`, so `did.slice(PREFIX.length)`
 is pure base58. Build the oversized payload from `'0'`, which is **not** in the base58
@@ -774,7 +775,7 @@ test('accepts a maximum-size legitimate did:key', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd packages/token && pnpm exec vitest run test/did.test.ts
@@ -786,7 +787,7 @@ The second test PASSES already; it is a regression guard against an over-tight b
 If the first test errors instantly with the alphabet message, that still counts as a
 correct FAIL for this step: the bound does not exist yet.
 
-- [ ] **Step 3: Add the bound**
+- [x] **Step 3: Add the bound**
 
 Only two algorithms are supported (`CODECS`, `did.ts:9`): EdDSA is `2 + 32 = 34` bytes and
 ES256 is `2 + 33 = 35` bytes, encoding to 47 and 48 base58 characters respectively
@@ -821,7 +822,7 @@ export function getSignatureInfo(did: string): [SignatureAlgorithm, Uint8Array] 
 Leave the existing post-decode `publicKey.length !== expectedSize` check at `did.ts:66`
 alone — it validates a different property (exact key size per algorithm) and is still needed.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```bash
 cd packages/token && pnpm exec vitest run test/did.test.ts
@@ -831,7 +832,7 @@ Expected: PASS. The first test must throw `'Invalid DID format: key too large'` 
 throws `@scure/base`'s alphabet error instead, the check is in the wrong place. Do not
 loosen the assertion to accommodate it.
 
-- [ ] **Step 5: Confirm the DoS is actually closed end to end**
+- [x] **Step 5: Confirm the DoS is actually closed end to end**
 
 The unit test bounds `getSignatureInfo`. Confirm the *reachable* path is closed too, since
 that is the finding: a token whose `iss` is an over-long `did:key` must reject fast rather
@@ -844,7 +845,7 @@ cd packages/token && pnpm exec vitest run
 Expected: PASS, whole suite. Then reason about `verifyToken`: the bound sits upstream of
 the signature check, so an over-long `iss` is now rejected before any expensive work.
 
-- [ ] **Step 6: Typecheck, rebuild, and run both suites**
+- [x] **Step 6: Typecheck, rebuild, and run both suites**
 
 ```bash
 cd packages/token && pnpm exec tsc --noEmit --skipLibCheck -p tsconfig.test.json
@@ -856,13 +857,13 @@ Expected: exit 0 throughout. The token rebuild is mandatory — capability consu
 compiled `lib/`. The capability suite mints real `did:key` issuers; if any legitimate DID
 now trips the bound, the constant is too tight. Report that rather than raising it silently.
 
-- [ ] **Step 7: Lint**
+- [x] **Step 7: Lint**
 
 ```bash
 cd /Users/paul/dev/yulsi/kokuin && pnpm exec biome check packages/token/src/did.ts packages/token/test/did.test.ts
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add packages/token/src/did.ts packages/token/test/did.test.ts
@@ -880,20 +881,227 @@ supported key, ES256, encodes to 48."
 
 ---
 
-### Task 5: Changeset
+### Task 5: Bound the `did:peer:4` resolver-doc base58
+
+Added after the Task 4 review ran a full decode-site inventory. The short-form-plus-resolver
+branch of `resolveIssuerWithDoc` (`packages/token/src/did.ts:112-122`) runs two O(n^2)
+`@scure/base` operations on the **resolver-returned doc** with no size bound, both **before**
+the signature check at `token.ts:114-119`:
+
+- `did.ts:117` `encodePeer4(doc).shortForm` — a base58 **encode** of the whole doc. It runs
+  unconditionally; the `expected !== shortForm` hash-match comparison happens *after* the
+  encode has already completed, so the mismatch check cannot prevent the cost.
+- `did.ts:170` `decodeMultibase(method.publicKeyMultibase)` reached via `resolveKidOrAuth`.
+
+Neither goes through `decodePeer4`'s `maxDocSize` bound (the resolver hands back an already-
+parsed `DIDDoc`, so `decodePeer4` is never called on this branch). An attacker crafts a large
+doc, hashes it to a short form, and submits that as `iss`; a network- or storage-backed
+resolver returns the attacker's doc, and because the attacker computed the hash it *matches* —
+nothing short-circuits. Measured in review: 72.5s for a 100 KB `publicKeyMultibase` field, no
+ceiling. This is only reachable when the caller passes a `resolver` (a documented first-class
+`verifyToken` option), but that is the intended way to use short forms.
+
+The long-form branch (`did.ts:104-108`) is already safe: it goes through `decodePeer4`, which
+Task 3 bounded. `did:key` is safe after Task 4. This is the last unbounded pre-auth site in
+the inventory; the only other unbounded call, `cache.ts:53`, is reached solely *after*
+signature verification succeeds (`token.ts:120-122`) and is out of scope here — note it for the
+final review as a possible follow-up.
+
+**Files:**
+- Modify: `packages/token/src/peer4.ts` (export a shared doc-size bound helper)
+- Modify: `packages/token/src/did.ts` (call it in the resolver branch; add a field bound in `resolveKidFromDoc`)
+- Test: `packages/token/test/did.test.ts`
+
+**Interfaces:**
+- Consumes: `DEFAULT_MAX_DOC_SIZE` semantics from Task 3.
+- Produces: `resolveIssuerWithDoc` rejects an oversized resolver doc before any base58 work.
+
+- [ ] **Step 1: Export a shared doc-size bound from `peer4.ts`**
+
+`peer4.ts` already imports `canonicalStringify` and `fromUTF` from `@sozai/codec` and owns
+`DEFAULT_MAX_DOC_SIZE`. Add an exported helper next to it so the resolver path bounds a doc by
+the *same* rule `decodePeer4` uses (canonical byte length against the 4 KiB default):
+
+```ts
+/**
+ * Throw if a DID document's canonical serialization exceeds `maxSize` bytes.
+ * Used to bound a resolver-returned doc before it reaches the O(n^2) base58 encode.
+ */
+export function assertDocWithinMaxSize(doc: DIDDoc, maxSize: number = DEFAULT_MAX_DOC_SIZE): void {
+  const size = fromUTF(canonicalStringify(doc)).length
+  if (size > maxSize) {
+    throw new Error(`did:peer:4 resolver doc too large: ${size} > ${maxSize}`)
+  }
+}
+```
+
+`canonicalStringify` is O(n) in output size — safe to run on an oversized doc; only the base58
+step it precedes is O(n^2).
+
+- [ ] **Step 2: Write the failing tests**
+
+Append to `packages/token/test/did.test.ts`. `resolveIssuerWithDoc` is exported from
+`packages/token/src/did.ts`; import it and `encodePeer4`/a doc builder as the sibling tests do.
+Check the existing imports in that file first.
+
+The ordering proof: a resolver doc that is oversized **but whose short form the test does not
+pre-match**. Without the bound, `encodePeer4(doc)` runs and then the `expected !== shortForm`
+check throws `'DIDResolver: short form/doc hash mismatch'`. With the bound, it throws
+`'did:peer:4 resolver doc too large'` *first*. The two distinct messages prove the check runs
+before the encode — no mocking of `@scure/base` needed.
+
+```ts
+test('rejects an oversized resolver doc before the base58 encode', async () => {
+  // A structurally valid doc whose canonical JSON exceeds the 4 KiB default.
+  const bigDoc = {
+    verificationMethod: [
+      {
+        id: '#key-1',
+        type: 'Multikey',
+        // publicKeyMultibase far larger than any real key.
+        publicKeyMultibase: `z${'1'.repeat(8 * 1024)}`,
+      },
+    ],
+    authentication: ['#key-1'],
+  }
+  const shortForm = 'did:peer:4zQmNotTheMatchingHash'
+  const resolver = async () => bigDoc as never
+  await expect(resolveIssuerWithDoc(shortForm, {}, resolver)).rejects.toThrow(
+    'did:peer:4 resolver doc too large',
+  )
+})
+
+test('a legitimate resolver doc still resolves', async () => {
+  // Build a real short form + doc via encodePeer4 so the hash matches.
+  const { doc, shortForm } = encodePeer4(<a minimal valid signing doc, as the sibling tests build>)
+  const resolver = async () => doc
+  await expect(resolveIssuerWithDoc(shortForm, {}, resolver)).resolves.toBeDefined()
+})
+```
+
+Use the same minimal-doc construction the existing `peer4`/`did` tests already use for a valid
+signing document (one `verificationMethod` with a real `publicKeyMultibase`, listed under
+`authentication`). Do not invent a new shape.
+
+- [ ] **Step 3: Run the tests to verify they fail**
+
+```bash
+cd packages/token && pnpm exec vitest run test/did.test.ts -t 'resolver doc'
+```
+
+Expected: the oversized test FAILS — it throws `'DIDResolver: short form/doc hash mismatch'`
+(the encode ran, then the hash didn't match) instead of the too-large message. If instead it
+*hangs*, raise the `'1'.repeat` count down to keep the pre-fix run fast; the point is the wrong
+error message, not a timeout. The legitimate-doc test PASSES already (regression guard).
+
+- [ ] **Step 4: Add the bound in the resolver branch**
+
+In `did.ts`, add `assertDocWithinMaxSize` to the `peer4.js` import, then call it immediately
+after the null check and before `encodePeer4`:
+
+```ts
+    const doc = await resolver(shortForm)
+    if (doc == null) {
+      throw new Error(`Unknown DID: ${shortForm}`)
+    }
+    assertDocWithinMaxSize(doc)
+    const expected = encodePeer4(doc).shortForm
+```
+
+This bounds `did.ts:117` directly. It also transitively bounds `did.ts:170`: once the whole
+doc is ≤ 4 KiB, any single `publicKeyMultibase` inside it is ≤ 4 KiB, so the `decodeMultibase`
+there costs the same order as the already-accepted long-form branch.
+
+- [ ] **Step 5: Add a field-level bound in `resolveKidFromDoc` (defense in depth)**
+
+Independent of how the doc arrived, bound the field before decoding it. A `publicKeyMultibase`
+for a supported signing key (EdDSA 32 B, ES256 33 B) is at most 48 base58 characters, so reuse
+the same 64-char ceiling as `did:key`/the hash segment. Add to `resolveKidFromDoc`, before
+`decodeMultibase(method.publicKeyMultibase)`:
+
+```ts
+  if (method.publicKeyMultibase.length > MAX_DID_KEY_ENCODED) {
+    throw new Error('Invalid verification method: key too large')
+  }
+  const bytes = decodeMultibase(method.publicKeyMultibase)
+```
+
+`MAX_DID_KEY_ENCODED` (64) already exists from Task 4. This also tightens the long-form branch,
+whose per-request `publicKeyMultibase` decode was ~30-80 ms worst case; it drops to ~1 ms.
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+```bash
+cd packages/token && pnpm exec vitest run test/did.test.ts
+```
+
+Expected: PASS. The oversized-resolver test now throws `'did:peer:4 resolver doc too large'`.
+
+- [ ] **Step 7: Confirm the reachable path is closed end to end**
+
+Reason about `verifyToken({ resolver })`: `resolveIssuerWithDoc` now bounds the doc before
+`encodePeer4` and before the signature check, so an oversized resolver doc rejects in
+milliseconds. Run the whole token suite:
+
+```bash
+cd packages/token && pnpm exec vitest run
+```
+
+Expected: PASS, whole suite.
+
+- [ ] **Step 8: Typecheck, rebuild, and run the capability suite**
+
+```bash
+cd packages/token && pnpm exec tsc --noEmit --skipLibCheck -p tsconfig.test.json
+cd packages/token && rtk proxy pnpm run build
+cd ../capability && pnpm exec vitest run
+```
+
+Expected: exit 0 throughout. The token rebuild is mandatory — capability consumes the compiled
+`lib/`. If the capability suite passes a resolver doc that trips the new bound, the default is
+too tight; report it rather than raising it silently.
+
+- [ ] **Step 9: Lint**
+
+```bash
+cd /Users/paul/dev/yulsi/kokuin && ./node_modules/.bin/biome check packages/token/src/did.ts packages/token/src/peer4.ts packages/token/test/did.test.ts
+```
+
+Invoke the binary directly — `pnpm exec biome` is intermittently intercepted by the environment
+shim and exits 1 despite "No issues found" (observed in Task 4).
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add packages/token/src/did.ts packages/token/src/peer4.ts packages/token/test/did.test.ts
+git commit -m "fix(token): bound the did:peer:4 resolver doc base58
+
+resolveIssuerWithDoc's short-form + resolver branch ran encodePeer4 (an
+O(n^2) base58 encode) and decodeMultibase on the resolver-returned doc
+with no size bound, before the signature check. verifyToken({resolver})
+reaches it with an attacker-chosen short form, so a resolver returning an
+oversized doc hung the verifier pre-auth — with no ceiling.
+
+Bound the doc's canonical size (reusing the did:peer:4 4 KiB default)
+before encodePeer4, and bound publicKeyMultibase before decoding it."
+```
+
+---
+
+### Task 6: Changeset
 
 **Files:**
 - Create: `.changeset/token-verification-hardening.md`
 
 **Interfaces:**
-- Consumes: the public-surface changes from Tasks 1-4.
+- Consumes: the public-surface changes from Tasks 1-5.
 - Produces: nothing consumed by later tasks.
 
 - [ ] **Step 1: Write the changeset**
 
 `.changeset/config.json` has `"fixed": []`, so each package is listed explicitly. `@kokuin/token` takes `minor` — under semver-for-0.x both the strict default and the narrowed return type are breaking. `@kokuin/capability` takes `patch`: only the dropped cast changed, and only if Task 2 Step 12 succeeded. If that step was reverted, omit the capability line entirely.
 
-The changeset must describe **four** fixes, not three: the `alg:none` default (Task 2), the total type guards (Task 1), and the bounded base58 decode on **both** the `did:peer:4` path (Task 3) and the `did:key` path (Task 4). Do not write a blanket "bounded the base58 DoS" line that silently rests on Task 4 having landed — if Task 4 was skipped, say explicitly that `did:key` remains unbounded.
+The changeset must describe the base58 DoS as bounded across **all three** decode paths — `did:peer:4` long form (Task 3), `did:key` (Task 4), and the `did:peer:4` resolver doc (Task 5) — alongside the `alg:none` default (Task 2) and the total type guards (Task 1). Do not write a blanket "bounded the base58 DoS" line that silently rests on Tasks 4 and 5 having landed — if either was skipped, name the path that remains unbounded. The `cache.ts` encode is post-auth and out of scope; do not claim it here.
 
 Follow the style of the existing `.changeset/capability-authorization-fixes.md`.
 
