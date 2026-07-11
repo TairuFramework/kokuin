@@ -212,8 +212,8 @@ describe('NodeKeyStore', () => {
   })
 
   test('list() tolerates a corrupt credential and still returns the good one', () => {
-    mockKeyring['good'] = toB64(new Uint8Array([1, 2, 3]))
-    mockKeyring['corrupt'] = '!!!not-base64!!!'
+    mockKeyring.good = toB64(new Uint8Array([1, 2, 3]))
+    mockKeyring.corrupt = '!!!not-base64!!!'
     const store = NodeKeyStore.open('svc')
     const entries = store.list()
     expect(entries.map((e) => e.keyID).sort()).toEqual(['corrupt', 'good'])
