@@ -326,6 +326,11 @@ function signWith(key: ResolvedKey, data: Uint8Array): Uint8Array {
  */
 function pickAgreementSecret(keys: Array<ResolvedKey>, isPeer: boolean, kid?: string): Uint8Array {
   if (kid != null) {
+    // No birational fallback here, unlike the no-kid branch below: a kid names one specific
+    // key, so falling back to a *different*, derived key would silently agree with the wrong
+    // secret. This means a did:key identity's agreeKey(epk, '#key-0') throws where
+    // agreeKey(epk) succeeds — a known asymmetry, currently unreachable: decryptToken (jwe.ts)
+    // never passes a kid, and DecryptingIdentity#agreeKey has no kid parameter at all.
     const found = keys.find((key) => key.fragment === kid)
     if (found == null) throw new Error(`KidNotFound: ${kid}`)
     if (found.purpose !== 'kem' || found.alg !== 'X25519') {

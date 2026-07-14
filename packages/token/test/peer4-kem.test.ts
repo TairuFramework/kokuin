@@ -1,9 +1,12 @@
-import { ed25519 } from '@noble/curves/ed25519.js'
+import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
+import { getAgreementKey } from '../src/did.js'
 import { createIdentity } from '../src/identity.js'
 import { createTokenEncrypter, encryptToken } from '../src/jwe.js'
-import { isPeer4 } from '../src/peer4.js'
+import { encodeMultibase } from '../src/multibase.js'
+import type { DIDDoc } from '../src/peer4.js'
+import { encodePeer4, isPeer4 } from '../src/peer4.js'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -79,5 +82,87 @@ describe('did:key EdDSA identities are decryptable', () => {
     // A sender knows only the DID, from which it montgomery-derives the agreement key.
     const jwe = await encryptToken(createTokenEncrypter(identity.id), encoder.encode('hello'))
     expect(decoder.decode(await identity.decrypt(jwe))).toBe('hello')
+  })
+})
+
+describe('getAgreementKey() bounds and skips bad entries', () => {
+  function x25519Multibase() {
+    const codec = new Uint8Array([0xec, 0x01])
+    const priv = x25519.utils.randomSecretKey()
+    const pub = x25519.getPublicKey(priv)
+    const tagged = new Uint8Array(codec.length + pub.length)
+    tagged.set(codec, 0)
+    tagged.set(pub, codec.length)
+    return encodeMultibase(tagged)
+  }
+
+  test('an oversized publicKeyMultibase is rejected fast, not decoded', () => {
+    // base58.decode is O(n^2): if this were decoded rather than length-checked away, a string
+    // this size would burn tens to hundreds of milliseconds of synchronous CPU (measured ~79ms
+    // for a 3.8 KiB key). Bounded, resolving it costs nothing.
+    const doc: DIDDoc = {
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [
+        { id: '#key-0', type: 'Multikey', publicKeyMultibase: `z${'1'.repeat(100_000)}` },
+      ],
+      keyAgreement: ['#key-0'],
+    }
+
+    const start = performance.now()
+    const result = getAgreementKey(doc)
+    const elapsed = performance.now() - start
+
+    expect(result).toBeNull()
+    expect(elapsed).toBeLessThan(20)
+  })
+
+  test('an undecodable keyAgreement entry before a good one still resolves the good one', () => {
+    const doc: DIDDoc = {
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [
+        // 'm' is a legal DID Core multibase prefix (base64) that this codebase doesn't support.
+        { id: '#key-bad', type: 'Multikey', publicKeyMultibase: 'mAAAA' },
+        { id: '#key-good', type: 'Multikey', publicKeyMultibase: x25519Multibase() },
+      ],
+      keyAgreement: ['#key-bad', '#key-good'],
+    }
+
+    expect(getAgreementKey(doc)).not.toBeNull()
+  })
+
+  test('a wrong-length X25519 key is skipped, not returned or thrown', () => {
+    const codec = new Uint8Array([0xec, 0x01])
+    const shortKey = new Uint8Array(16) // half the expected 32 bytes
+    const tagged = new Uint8Array(codec.length + shortKey.length)
+    tagged.set(codec, 0)
+    tagged.set(shortKey, codec.length)
+
+    const doc: DIDDoc = {
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [
+        { id: '#key-0', type: 'Multikey', publicKeyMultibase: encodeMultibase(tagged) },
+      ],
+      keyAgreement: ['#key-0'],
+    }
+
+    expect(getAgreementKey(doc)).toBeNull()
+  })
+
+  test('createTokenEncrypter surfaces the wrong-length case as "no keyAgreement key", not a noble RangeError', () => {
+    const codec = new Uint8Array([0xec, 0x01])
+    const shortKey = new Uint8Array(16) // half the expected 32 bytes
+    const tagged = new Uint8Array(codec.length + shortKey.length)
+    tagged.set(codec, 0)
+    tagged.set(shortKey, codec.length)
+
+    const { longForm } = encodePeer4({
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [
+        { id: '#key-0', type: 'Multikey', publicKeyMultibase: encodeMultibase(tagged) },
+      ],
+      keyAgreement: ['#key-0'],
+    })
+
+    expect(() => createTokenEncrypter(longForm)).toThrow(/no X25519 keyAgreement key/)
   })
 })

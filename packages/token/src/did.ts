@@ -217,10 +217,28 @@ export function getAgreementKey(doc: DIDDoc): Uint8Array | null {
     if (method == null) {
       continue
     }
-    const bytes = decodeMultibase(method.publicKeyMultibase)
-    if (isCodecMatch(CODEC_X25519_PUB, bytes)) {
-      return bytes.slice(CODEC_X25519_PUB.length)
+    // Bound before decoding — base58.decode is O(n^2) — same as resolveKidFromDoc().
+    if (method.publicKeyMultibase.length > MAX_DID_KEY_ENCODED) {
+      continue
     }
+    let bytes: Uint8Array
+    try {
+      bytes = decodeMultibase(method.publicKeyMultibase)
+    } catch {
+      // A legal-but-unsupported multibase prefix (e.g. base64) shouldn't abort the scan of an
+      // otherwise-good keyAgreement list — skip it, consistent with a missing method above.
+      continue
+    }
+    if (!isCodecMatch(CODEC_X25519_PUB, bytes)) {
+      continue
+    }
+    const publicKey = bytes.slice(CODEC_X25519_PUB.length)
+    if (publicKey.length !== 32) {
+      // Wrong-length key: treat like any other unusable entry so the caller gets the clear
+      // "no agreement key" error instead of a RangeError from noble later.
+      continue
+    }
+    return publicKey
   }
   return null
 }
