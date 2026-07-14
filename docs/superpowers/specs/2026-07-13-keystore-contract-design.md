@@ -3,8 +3,12 @@
 **Date:** 2026-07-13
 **Origin:** `docs/agents/plans/next/2026-07-02-keystore-contract-and-adversarial-tests.md`
 (itself from `completed/2026-07-02-audit.complete.md`, cross-cutting themes 1 & 2)
-**Prerequisite:** `@sozai/lock` must be published — see
-`../../../../sozai/docs/agents/plans/next/lock-package.md`
+**Prerequisite:** met — `@sozai/lock@0.1.0` is published. Its public API is
+`withFileLock(lockPath, fn, options?)` / `acquireFileLock(lockPath, options?)`, throwing
+`TimeoutInterruption` when acquisition times out (default 10s), which is what the
+"Cross-process lock" section below assumes. Same-process callers on one path queue FIFO
+(`enterQueue`), so the coarse one-lockfile-per-store design does not deadlock across
+concurrent keyIDs; only *nested* acquisition would, and `provideAsync` never nests.
 
 ## Problem
 
