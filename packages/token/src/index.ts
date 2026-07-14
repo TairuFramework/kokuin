@@ -17,6 +17,13 @@ export {
   type DIDResolver,
 } from './cache.js'
 export {
+  type ConformanceCase,
+  type KeyStoreConformanceHarness,
+  keyStoreConformanceCases,
+  type MutableKeyStoreConformanceHarness,
+  mutableKeyStoreConformanceCases,
+} from './conformance.js'
+export {
   CODECS,
   getAlgorithmAndPublicKey,
   getDID,
@@ -69,7 +76,7 @@ export {
   unwrapEnvelope,
   wrapEnvelope,
 } from './jwe.js'
-export type { KeyEntry, KeyStore } from './keystore.js'
+export type { KeyEntry, KeyStore, MutableKeyEntry } from './keystore.js'
 export {
   decodeMultibase,
   encodeMultibase,
