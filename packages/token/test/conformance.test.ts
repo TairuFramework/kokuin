@@ -73,11 +73,67 @@ class WrongKeyIDStore extends MemoryKeyStore {
   }
 }
 
-/** Every keyID shares one key — the electron "two keys in one store" bug, inverted. */
-class SharedKeyStore implements KeyStore<Uint8Array, MemoryKeyEntry> {
+/**
+ * Reports the correct keyID and caches entries correctly, but every entry reads and
+ * writes the same underlying slot — the electron "two keys in one store" bug.
+ */
+class CollidingKeyEntry implements MutableKeyEntry<Uint8Array> {
+  #keyID: string
+  #keys: Map<string, Uint8Array>
+  #slot: string
+  #provideLock: Promise<unknown> = Promise.resolve()
+
+  constructor(keyID: string, keys: Map<string, Uint8Array>, slot: string) {
+    this.#keyID = keyID
+    this.#keys = keys
+    this.#slot = slot
+  }
+
+  get keyID(): string {
+    return this.#keyID
+  }
+
+  async getAsync(): Promise<Uint8Array | null> {
+    return this.#keys.get(this.#slot) ?? null
+  }
+
+  async setAsync(privateKey: Uint8Array): Promise<void> {
+    this.#keys.set(this.#slot, privateKey)
+  }
+
+  provideAsync(): Promise<Uint8Array> {
+    const run = this.#provideLock.then(async () => {
+      const existing = await this.getAsync()
+      if (existing != null) {
+        return existing
+      }
+      const privateKey = crypto.getRandomValues(new Uint8Array(32))
+      await this.setAsync(privateKey)
+      return privateKey
+    })
+    this.#provideLock = run.catch(() => undefined)
+    return run
+  }
+
+  async removeAsync(): Promise<void> {
+    this.#keys.delete(this.#slot)
+  }
+}
+
+class CollidingKeyStore implements KeyStore<Uint8Array, CollidingKeyEntry> {
+  #entries: Record<string, CollidingKeyEntry> = Object.create(null)
+  #keys = new Map<string, Uint8Array>()
+  entry(keyID: string): CollidingKeyEntry {
+    this.#entries[keyID] ??= new CollidingKeyEntry(keyID, this.#keys, 'shared-slot')
+    return this.#entries[keyID]
+  }
+}
+
+/** Fresh entry object on every call — per-entry concurrency state (the provide lock) cannot survive. */
+class UncachedEntryStore implements KeyStore<Uint8Array, MemoryKeyEntry> {
   #keys = new Map<string, Uint8Array>()
   entry(keyID: string): MemoryKeyEntry {
-    return new MemoryKeyEntry(keyID, this.#keys) // no cache AND one shared slot
+    return new MemoryKeyEntry(keyID, this.#keys)
   }
 }
 
@@ -140,10 +196,18 @@ describe('conformance suite', () => {
 
   test('rejects a store where distinct keyIDs collide on one key', async () => {
     const cases = keyStoreConformanceCases({
-      createStore: () => new SharedKeyStore(),
+      createStore: () => new CollidingKeyStore(),
       isSameKey: sameBytes,
     })
-    await expect(runAll(cases)).rejects.toThrow()
+    await expect(runAll(cases)).rejects.toThrow(/same key|vanished/)
+  })
+
+  test('rejects a store whose entry() is not cached', async () => {
+    const cases = keyStoreConformanceCases({
+      createStore: () => new UncachedEntryStore(),
+      isSameKey: sameBytes,
+    })
+    await expect(runAll(cases)).rejects.toThrow(/cached|different object/)
   })
 
   test('rejects a store whose provideAsync races', async () => {

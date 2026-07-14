@@ -24,6 +24,7 @@ export type MutableKeyStoreConformanceHarness<PrivateKeyType> = Omit<
   KeyStoreConformanceHarness<PrivateKeyType>,
   'createStore'
 > & {
+  /** A store with no keys in it. Called once per case, so cases cannot leak into each other. */
   createStore():
     | KeyStore<PrivateKeyType, MutableKeyEntry<PrivateKeyType>>
     | Promise<KeyStore<PrivateKeyType, MutableKeyEntry<PrivateKeyType>>>
