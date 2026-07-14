@@ -92,10 +92,25 @@ describe('createIdentity', () => {
     expect(new TextDecoder().decode(decrypted)).toBe('hello world')
   })
 
-  it('throws when decrypting without a KEM key', async () => {
+  it('decrypts via the birational map when no explicit KEM key is present (did:key)', async () => {
     const identity = await createIdentity({
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],
     })
+    const plaintext = new TextEncoder().encode('hello world')
+    const encrypter = createTokenEncrypter(identity.id)
+    const jwe = await encryptToken(encrypter, plaintext)
+    const decrypted = await identity.decrypt(jwe)
+    expect(new TextDecoder().decode(decrypted)).toBe('hello world')
+  })
+
+  it('throws when decrypting without any agreement key (did:peer:4, no kem key)', async () => {
+    const identity = await createIdentity({
+      keys: [
+        { purpose: 'sig', alg: 'EdDSA' },
+        { purpose: 'sig', alg: 'EdDSA' },
+      ],
+    })
+    expect(isPeer4(identity.id)).toBe(true)
     await expect(identity.decrypt('fake.jwe')).rejects.toThrow(/no KEM key|no kem key/i)
   })
 })

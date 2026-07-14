@@ -4,8 +4,9 @@ import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { b64uFromJSON, b64uToJSON, fromB64U, toB64U } from '@sozai/codec'
 
-import { getSignatureInfo } from './did.js'
+import { getAgreementKey, getSignatureInfo } from './did.js'
 import type { DecryptingIdentity, SigningIdentity } from './identity.js'
+import { decodePeer4, getPeer4ShortForm, isPeer4 } from './peer4.js'
 import { createUnsignedToken, isUnsignedToken, verifyToken } from './token.js'
 import { stringifyToken } from './utils.js'
 import type { Verifiers } from './verifier.js'
@@ -135,6 +136,23 @@ function encryptWithX25519(recipientPublicKey: Uint8Array, plaintext: Uint8Array
 function resolveX25519Key(recipient: Uint8Array | string): { key: Uint8Array; id?: string } {
   if (typeof recipient !== 'string') {
     return { key: recipient }
+  }
+
+  if (isPeer4(recipient)) {
+    const shortForm = getPeer4ShortForm(recipient)
+    if (recipient === shortForm) {
+      // The doc lives in the long form. Resolving a short form needs a DIDResolver, which
+      // this sync constructor cannot await — so say so, rather than failing as a bad DID.
+      throw new Error(
+        `Cannot encrypt to a did:peer:4 short form: ${shortForm}. Pass the long form, which carries the document.`,
+      )
+    }
+    const { doc } = decodePeer4(recipient)
+    const key = getAgreementKey(doc)
+    if (key == null) {
+      throw new Error(`Recipient publishes no X25519 keyAgreement key: ${shortForm}`)
+    }
+    return { key, id: shortForm }
   }
 
   const [algorithm, publicKey] = getSignatureInfo(recipient)

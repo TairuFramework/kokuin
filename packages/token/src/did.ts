@@ -193,3 +193,34 @@ function resolveKidFromDoc(doc: DIDDoc, kid: string): [SignatureAlgorithm, Uint8
 export function normalizeDID(did: string): string {
   return isPeer4(did) ? getPeer4ShortForm(did) : did
 }
+
+/** Multicodec prefix for an X25519 public key, as published in a peer:4 doc. */
+const CODEC_X25519_PUB = new Uint8Array([0xec, 0x01])
+
+/**
+ * The X25519 public key a DID document publishes for key agreement, or `null` when it
+ * publishes none.
+ *
+ * Unlike a `did:key` EdDSA identity — whose agreement key is *derived* from its signing key
+ * via the birational map — a peer:4 identity carries an independent agreement key in its doc.
+ * A sender MUST use the published key: the derived one is a different key and will not decrypt.
+ */
+export function getAgreementKey(doc: DIDDoc): Uint8Array | null {
+  const fragments = doc.keyAgreement
+  if (fragments == null) {
+    return null
+  }
+  for (const fragment of fragments) {
+    const method = doc.verificationMethod.find(
+      (verificationMethod: VerificationMethod) => verificationMethod.id === fragment,
+    )
+    if (method == null) {
+      continue
+    }
+    const bytes = decodeMultibase(method.publicKeyMultibase)
+    if (isCodecMatch(CODEC_X25519_PUB, bytes)) {
+      return bytes.slice(CODEC_X25519_PUB.length)
+    }
+  }
+  return null
+}

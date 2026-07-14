@@ -1,20 +1,14 @@
-import { ed25519, x25519 } from '@noble/curves/ed25519.js'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
 import { createIdentity } from '../src/identity.js'
 import { createTokenEncrypter, encryptToken } from '../src/jwe.js'
 import { isPeer4 } from '../src/peer4.js'
 
-/**
- * Pins the peer:4 KEM gap found while planning the keystore contract work.
- *
- * `createIdentity` publishes an X25519 `keyAgreement` key in the peer:4 doc, and
- * `MultiKeyIdentity.agreeKey`/`decrypt` use its private half. But `jwe.ts`'s
- * `resolveX25519Key` never reads a published agreement key: for a DID string it calls
- * `getSignatureInfo`, which parses `did:key` only, and montgomery-derives the agreement
- * key from the SIGNING key. So the published KEM key is unreachable by any sender.
- */
-describe('peer:4 keyAgreement is unreachable from jwe', () => {
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
+describe('did:peer:4 keyAgreement', () => {
   async function createPeer4Identity() {
     return await createIdentity({
       keys: [
@@ -30,51 +24,60 @@ describe('peer:4 keyAgreement is unreachable from jwe', () => {
     expect(identity.doc.keyAgreement).toEqual(['#key-1'])
   })
 
-  test('createTokenEncrypter cannot encrypt to a peer:4 DID — short or long form', async () => {
+  test('encrypting to the long form uses the published keyAgreement key', async () => {
     const identity = await createPeer4Identity()
-    expect(() => createTokenEncrypter(identity.id)).toThrow('Invalid DID format')
-    expect(() => createTokenEncrypter(identity.longForm)).toThrow('Invalid DID format')
+    const encrypter = createTokenEncrypter(identity.longForm)
+    expect(encrypter.recipientID).toBe(identity.id)
+
+    const jwe = await encryptToken(encrypter, encoder.encode('hello'))
+    expect(decoder.decode(await identity.decrypt(jwe))).toBe('hello')
   })
 
-  test('the KEM key itself works — it is only the DID path that is missing', async () => {
+  test('the published key is used, NOT the montgomery-derived signing key', async () => {
     const identity = await createPeer4Identity()
-    const kem = identity.keys.find((k) => k.purpose === 'kem')
-    if (kem == null) throw new Error('expected a KEM key')
+    const sig = identity.keys.find((key) => key.purpose === 'sig')
+    const kem = identity.keys.find((key) => key.purpose === 'kem')
+    if (sig == null || kem == null) throw new Error('expected a sig and a kem key')
 
-    // Encrypting to the raw published X25519 public key round-trips.
-    const encrypter = createTokenEncrypter(kem.publicKey, { algorithm: 'X25519' })
-    const jwe = await encryptToken(encrypter, new TextEncoder().encode('hello'))
-    const decrypted = await identity.decrypt(jwe)
-    expect(new TextDecoder().decode(decrypted)).toBe('hello')
-  })
-
-  test('montgomery-deriving from the signing key — what jwe does for did:key — does NOT decrypt', async () => {
-    const identity = await createPeer4Identity()
-    const sig = identity.keys.find((k) => k.purpose === 'sig')
-    if (sig == null) throw new Error('expected a signing key')
-
-    // This is the key a sender WOULD use if resolveX25519Key could parse peer:4:
-    // toMontgomery(signing public key). It is not the published keyAgreement key.
+    // The two candidate keys are genuinely different, so this test can distinguish them.
     const derived = ed25519.utils.toMontgomery(sig.publicKey)
-    const kem = identity.keys.find((k) => k.purpose === 'kem')
-    if (kem == null) throw new Error('expected a KEM key')
     expect(derived).not.toEqual(kem.publicKey)
 
-    const encrypter = createTokenEncrypter(derived, { algorithm: 'X25519' })
-    const jwe = await encryptToken(encrypter, new TextEncoder().encode('hello'))
-    await expect(identity.decrypt(jwe)).rejects.toThrow()
+    // A JWE built from the published key decrypts; one built from the derived key does not.
+    const good = await encryptToken(createTokenEncrypter(identity.longForm), encoder.encode('ok'))
+    expect(decoder.decode(await identity.decrypt(good))).toBe('ok')
+
+    const bad = await encryptToken(
+      createTokenEncrypter(derived, { algorithm: 'X25519' }),
+      encoder.encode('ok'),
+    )
+    await expect(identity.decrypt(bad)).rejects.toThrow()
   })
 
-  test('a single-key EdDSA did:key identity has no KEM key at all', async () => {
+  test('a short form throws — it carries no document to read the key from', async () => {
+    const identity = await createPeer4Identity()
+    expect(() => createTokenEncrypter(identity.id)).toThrow(/short form/)
+  })
+
+  test('a peer:4 identity with no keyAgreement key throws a specific error', async () => {
+    const identity = await createIdentity({
+      keys: [
+        { purpose: 'sig', alg: 'EdDSA' },
+        { purpose: 'sig', alg: 'EdDSA' },
+      ],
+    })
+    expect(isPeer4(identity.id)).toBe(true)
+    expect(() => createTokenEncrypter(identity.longForm)).toThrow(/no X25519 keyAgreement key/)
+  })
+})
+
+describe('did:key EdDSA identities are decryptable', () => {
+  test('createIdentity did:key can agree and decrypt via the birational map', async () => {
     const identity = await createIdentity({ keys: [{ purpose: 'sig', alg: 'EdDSA' }] })
     expect(isPeer4(identity.id)).toBe(false)
-    // did:key senders montgomery-derive, so this DID IS encryptable to...
-    const [, publicKey] = [null, identity.publicKey] as const
-    const derived = ed25519.utils.toMontgomery(publicKey)
-    expect(x25519.getPublicKey(ed25519.utils.toMontgomerySecret(identity.privateKey))).toEqual(
-      derived,
-    )
-    // ...but createIdentity's agreeKey looks for a `kem` key and finds none.
-    await expect(identity.agreeKey(derived)).rejects.toThrow('No KEM key in identity')
+
+    // A sender knows only the DID, from which it montgomery-derives the agreement key.
+    const jwe = await encryptToken(createTokenEncrypter(identity.id), encoder.encode('hello'))
+    expect(decoder.decode(await identity.decrypt(jwe))).toBe('hello')
   })
 })

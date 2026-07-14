@@ -25,6 +25,7 @@ export {
 } from './conformance.js'
 export {
   CODECS,
+  getAgreementKey,
   getAlgorithmAndPublicKey,
   getDID,
   getSignatureInfo,
