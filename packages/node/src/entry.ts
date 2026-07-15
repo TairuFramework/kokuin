@@ -13,8 +13,12 @@ export class NodeKeyEntry implements MutableKeyEntry<Uint8Array> {
   #service: string
   #sync?: Entry
   // Serializes provideAsync within THIS process. Cross-process exclusion is opt-in via
-  // `lockPath` (@napi-rs/keyring's write is an unconditional upsert with no compare-and-set,
-  // so nothing here can be atomic across processes without a file mutex).
+  // `lockPath`: without it, a concurrent create is unsafe, but how it fails is platform-
+  // dependent. On backends that upsert unconditionally with no compare-and-set (e.g. Linux/
+  // libsecret via @napi-rs/keyring), the loser silently overwrites, and its in-memory key is
+  // no longer what the keyring holds. On macOS Keychain, the loser's create instead throws a
+  // duplicate-item error. Either way, nothing here can be atomic across processes without a
+  // file mutex.
   #provideLock: Promise<unknown> = Promise.resolve()
 
   constructor(service: string, keyID: string, encoded?: string, lockPath?: string) {

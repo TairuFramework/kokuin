@@ -40,8 +40,21 @@ async function race(
   ]
   // Both are now spinning on the start file. Release them at once.
   await writeFile(startFile, '')
-  const results = await Promise.all(processes)
-  return results.map((result) => JSON.parse(result.stdout))
+  const settled = await Promise.all(
+    processes.map((proc) =>
+      proc.then(
+        (result) => JSON.parse(result.stdout) as { did?: string; error?: string },
+        // execFile rejects on a non-zero exit, but the CLI wrote its {error} JSON to stdout
+        // before exit(1). Recover it from the rejection rather than letting Promise.all throw.
+        (error: { stdout?: string }) =>
+          (error.stdout != null ? JSON.parse(error.stdout) : { error: String(error) }) as {
+            did?: string
+            error?: string
+          },
+      ),
+    ),
+  )
+  return settled
 }
 
 /** The DID that actually survived in the OS keyring — the one any later process will load. */
@@ -51,31 +64,43 @@ function storedDID(keyID: string): string | null {
 }
 
 describe('cross-process provideAsync', () => {
-  // This test asserts the BUG. @napi-rs/keyring's write is an unconditional upsert with no
-  // compare-and-set, so without a lock both processes observe null, both generate, both
-  // write — and the loser holds a key that is no longer in the keychain. If this ever stops
-  // failing this way, the race closed for some other reason and we want to know why.
-  test('WITHOUT lockPath, the two processes can disagree — silent key loss', async () => {
-    // Racing is nondeterministic; run several rounds and look for a single divergence.
-    let diverged = false
-    for (let round = 0; round < 12 && !diverged; round++) {
+  // This test asserts the BUG: without a lock, the concurrent create is unsafe. How that
+  // manifests is platform-dependent. On Linux/gnome-keyring, @napi-rs/keyring's write is an
+  // unconditional upsert with no compare-and-set, so both processes observe null, both
+  // generate, both write — and the loser holds a key that is no longer in the keychain
+  // ("divergence"). On macOS Keychain, the loser's create instead throws
+  // errSecDuplicateItem, so one process succeeds and the other errors. Both are the same
+  // underlying bug — an unguarded race on create — so either manifestation counts.
+  test('WITHOUT lockPath, the unguarded concurrent create is unsafe', async () => {
+    // Racing is nondeterministic; run several rounds and look for a single manifestation.
+    let manifested = false
+    for (let round = 0; round < 12 && !manifested; round++) {
       const keyID = `unlocked-${round}`
       await writeFile(startFile, '').catch(() => undefined)
       await rm(startFile, { force: true })
       const [first, second] = await race(keyID)
-      expect(first.error).toBeUndefined()
-      expect(second.error).toBeUndefined()
-      if (first.did !== second.did) {
-        diverged = true
-        // The loser signed with a key that is NOT what the keychain now holds.
-        const survivor = storedDID(keyID)
-        expect(survivor).not.toBeNull()
+
+      const bothSucceeded = first.did != null && second.did != null
+      const diverged = bothSucceeded && first.did !== second.did
+
+      const duplicateErrors = [first, second].filter((result) =>
+        /already exists|errSecDuplicate|duplicate item/i.test(result.error ?? ''),
+      )
+      const oneThrewDuplicate =
+        duplicateErrors.length === 1 && (first.did != null || second.did != null)
+
+      if (diverged || oneThrewDuplicate) {
+        manifested = true
+        // Whichever way it raced, a key survived in the OS keyring.
+        expect(storedDID(keyID)).not.toBeNull()
       }
     }
     expect(
-      diverged,
-      'expected at least one divergence across 12 unlocked rounds — if this fails, the race ' +
-        'may have closed some other way, or the barrier is not releasing both processes together',
+      manifested,
+      'expected the unguarded race to manifest within 12 rounds — as diverging DIDs ' +
+        '(Linux/gnome-keyring silent upsert) or as one racer throwing errSecDuplicateItem ' +
+        '(macOS Keychain). If neither occurred, the barrier may not be releasing both ' +
+        'processes together, or the platform serializes creates.',
     ).toBe(true)
   }, 60_000)
 
