@@ -74,7 +74,10 @@ describe('ElectronKeyEntry', () => {
     const entry = createEntry('k4')
     const existing = bytes('existing')
     entry.set(existing)
-    expect(entry.provide()).toBe(existing)
+    // Not `.toBe`: provide() re-reads via #provideUnlocked, which drops the in-memory cache so
+    // the locked cross-process path sees a peer's write rather than a stale local read. That
+    // makes a fresh Uint8Array with the same bytes, not the same reference.
+    expect(entry.provide()).toEqual(existing)
   })
 
   test('provide() generates and stores new key when none exists', () => {

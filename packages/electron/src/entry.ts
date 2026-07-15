@@ -1,6 +1,7 @@
 import type { MutableKeyEntry } from '@kokuin/token'
 import { randomPrivateKey } from '@kokuin/token'
 import { fromB64, toB64 } from '@sozai/codec'
+import { withFileLock } from '@sozai/lock'
 import { safeStorage } from 'electron'
 
 import type { KeyStorage } from './types.js'
@@ -19,13 +20,21 @@ export class ElectronKeyEntry implements MutableKeyEntry<Uint8Array> {
   #key?: Uint8Array
   #storage: KeyStorage
   #allowInsecureStorage: boolean
+  #lockPath?: string
   #provideLock: Promise<unknown> = Promise.resolve()
 
-  constructor(storage: KeyStorage, keyID: string, key?: Uint8Array, allowInsecureStorage = false) {
+  constructor(
+    storage: KeyStorage,
+    keyID: string,
+    key?: Uint8Array,
+    allowInsecureStorage = false,
+    lockPath?: string,
+  ) {
     this.#keyID = keyID
     this.#key = key
     this.#storage = storage
     this.#allowInsecureStorage = allowInsecureStorage
+    this.#lockPath = lockPath
   }
 
   #assertEncryptionAvailable(): void {
@@ -70,7 +79,37 @@ export class ElectronKeyEntry implements MutableKeyEntry<Uint8Array> {
     this.set(privateKey)
   }
 
+  /**
+   * The stored key, generating one if absent. Synchronous, and therefore **not** cross-process
+   * safe. Throws when a `lockPath` is set rather than silently dropping the guarantee.
+   */
   provide(): Uint8Array {
+    if (this.#lockPath != null) {
+      throw new Error(
+        'ElectronKeyEntry.provide() cannot hold a cross-process lock: a file lock cannot be ' +
+          'acquired synchronously. This store was opened with a lockPath — use provideAsync().',
+      )
+    }
+    return this.#provideUnlocked()
+  }
+
+  provideAsync(): Promise<Uint8Array> {
+    const run = this.#provideLock.then(async () => {
+      const lockPath = this.#lockPath
+      if (lockPath == null) {
+        return this.#provideUnlocked()
+      }
+      return await withFileLock(lockPath, async () => this.#provideUnlocked())
+    })
+    this.#provideLock = run.catch(() => undefined)
+    return run
+  }
+
+  /** Read-if-absent, generate, write. The caller owns exclusion. */
+  #provideUnlocked(): Uint8Array {
+    // Drop the in-memory cache: inside the lock we must see a peer's write, not our own
+    // stale read. Without this the winner clobbers the peer's key.
+    this.#key = undefined
     const existing = this.get()
     if (existing != null) {
       return existing
@@ -78,12 +117,6 @@ export class ElectronKeyEntry implements MutableKeyEntry<Uint8Array> {
     const privateKey = randomPrivateKey()
     this.set(privateKey)
     return privateKey
-  }
-
-  provideAsync(): Promise<Uint8Array> {
-    const run = this.#provideLock.then(async () => this.provide())
-    this.#provideLock = run.catch(() => undefined)
-    return run
   }
 
   remove(): void {

@@ -19,6 +19,20 @@ const logger = getLogger(['kokuin', 'electron'])
 
 export type ElectronKeyStoreOptions = {
   allowInsecureStorage?: boolean
+  /**
+   * Path to a lockfile enabling **cross-process** exclusion on `provideAsync`.
+   *
+   * Absent, nothing touches the filesystem and only the in-process lock applies — two
+   * processes can still both generate a key for a fresh keyID, and the loser's key is lost.
+   *
+   * A **file**, not a directory: one coarse lock per store, not one per keyID. A per-keyID
+   * lockfile would derive its name from an attacker-influenced keyID (`entry('../../etc/x')`),
+   * and `provideAsync` runs once per identity, so serializing across keyIDs costs nothing real.
+   *
+   * Must be on a local filesystem (`link()` is not atomic on NFS). Acquisition is bounded and
+   * throws `TimeoutInterruption` on expiry — it never proceeds unlocked.
+   */
+  lockPath?: string
 }
 
 export class ElectronKeyStore
@@ -42,15 +56,23 @@ export class ElectronKeyStore
           `${options.allowInsecureStorage}.`,
       )
     }
+    if (options?.lockPath != null && options.lockPath !== cached.#lockPath) {
+      throw new Error(
+        `ElectronKeyStore.open('${name}') was already opened with lockPath: ` +
+          `${String(cached.#lockPath)}; cannot reopen with conflicting lockPath: ${options.lockPath}.`,
+      )
+    }
     return cached
   }
 
   #entries: Record<string, ElectronKeyEntry> = Object.create(null)
   #storage: KeyStorage
   #allowInsecureStorage: boolean
+  #lockPath?: string
 
   constructor(name: string, options?: ElectronKeyStoreOptions) {
     this.#allowInsecureStorage = options?.allowInsecureStorage ?? false
+    this.#lockPath = options?.lockPath
     const store = new Store<StoreValues>({
       name,
       schema: {
@@ -79,6 +101,7 @@ export class ElectronKeyStore
       keyID,
       undefined,
       this.#allowInsecureStorage,
+      this.#lockPath,
     )
     return this.#entries[keyID]
   }
