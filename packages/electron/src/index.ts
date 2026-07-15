@@ -11,5 +11,5 @@
  */
 
 export { ElectronKeyEntry } from './entry.js'
-export { provideFullIdentity, provideFullIdentityAsync } from './identity.js'
-export { ElectronKeyStore } from './store.js'
+export { ElectronKeyStore, type ElectronKeyStoreOptions } from './store.js'
+export type { KeyStorage } from './types.js'

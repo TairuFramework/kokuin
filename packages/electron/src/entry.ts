@@ -1,26 +1,27 @@
-import type { KeyEntry } from '@kokuin/token'
+import type { MutableKeyEntry } from '@kokuin/token'
 import { randomPrivateKey } from '@kokuin/token'
 import { fromB64, toB64 } from '@sozai/codec'
 import { safeStorage } from 'electron'
 
 import type { KeyStorage } from './types.js'
 
-function encryptKey(encoded: string): string {
-  return toB64(safeStorage.encryptString(encoded))
+/** Encrypt raw key bytes for storage: base64(safeStorage(base64(key))). */
+function encryptKey(privateKey: Uint8Array): string {
+  return toB64(safeStorage.encryptString(toB64(privateKey)))
 }
 
-function decryptKey(encrypted: string): string {
-  return safeStorage.decryptString(Buffer.from(fromB64(encrypted)))
+function decryptKey(encrypted: string): Uint8Array {
+  return fromB64(safeStorage.decryptString(Buffer.from(fromB64(encrypted))))
 }
 
-// Stored as base64
-export class ElectronKeyEntry implements KeyEntry<string> {
+export class ElectronKeyEntry implements MutableKeyEntry<Uint8Array> {
   #keyID: string
-  #key?: string
+  #key?: Uint8Array
   #storage: KeyStorage
   #allowInsecureStorage: boolean
+  #provideLock: Promise<unknown> = Promise.resolve()
 
-  constructor(storage: KeyStorage, keyID: string, key?: string, allowInsecureStorage = false) {
+  constructor(storage: KeyStorage, keyID: string, key?: Uint8Array, allowInsecureStorage = false) {
     this.#keyID = keyID
     this.#key = key
     this.#storage = storage
@@ -41,11 +42,7 @@ export class ElectronKeyEntry implements KeyEntry<string> {
     return this.#keyID
   }
 
-  getAsync(): Promise<string | null> {
-    return Promise.resolve(this.get())
-  }
-
-  get(): string | null {
+  get(): Uint8Array | null {
     if (this.#key != null) {
       return this.#key
     }
@@ -53,48 +50,50 @@ export class ElectronKeyEntry implements KeyEntry<string> {
     if (encrypted == null) {
       return null
     }
-    const key = decryptKey(encrypted)
-    if (key == null) {
-      return null
-    }
-    this.#key = key
+    this.#key = decryptKey(encrypted)
     return this.#key
   }
 
-  async setAsync(key: string): Promise<void> {
-    return this.set(key)
+  async getAsync(): Promise<Uint8Array | null> {
+    return this.get()
   }
 
-  set(key: string): void {
+  set(privateKey: Uint8Array): void {
     this.#assertEncryptionAvailable()
-    const encrypted = encryptKey(key)
     const keys = this.#storage.getKeys()
-    keys[this.#keyID] = encrypted
+    keys[this.#keyID] = encryptKey(privateKey)
     this.#storage.setKeys(keys)
-    this.#key = key
+    this.#key = privateKey
   }
 
-  async provideAsync(): Promise<string> {
-    return this.provide()
+  async setAsync(privateKey: Uint8Array): Promise<void> {
+    this.set(privateKey)
   }
 
-  provide(): string {
+  provide(): Uint8Array {
     const existing = this.get()
     if (existing != null) {
       return existing
     }
-    const privateKey = toB64(randomPrivateKey())
+    const privateKey = randomPrivateKey()
     this.set(privateKey)
     return privateKey
   }
 
-  removeAsync(): Promise<void> {
-    return Promise.resolve(this.remove())
+  provideAsync(): Promise<Uint8Array> {
+    const run = this.#provideLock.then(async () => this.provide())
+    this.#provideLock = run.catch(() => undefined)
+    return run
   }
 
   remove(): void {
-    const { [this.#keyID]: _, ...keys } = this.#storage.getKeys()
+    const keys = this.#storage.getKeys()
+    delete keys[this.#keyID]
     this.#storage.setKeys(keys)
     this.#key = undefined
+  }
+
+  async removeAsync(): Promise<void> {
+    this.remove()
   }
 }
