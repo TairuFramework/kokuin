@@ -57,6 +57,21 @@ export type LedgerIdentityProviderOptions = {
   basePath?: string
 }
 
+/**
+ * An {@link IdentityProvider} backed by a Ledger device.
+ *
+ * Implements `IdentityProvider` and **deliberately neither `KeyStore` nor `KeyEntry`**. The
+ * private key is generated on-device from the seed and never leaves it: there is nothing to
+ * `getAsync`, nothing to `setAsync`, and `removeAsync` would be meaningless. Signing and ECDH
+ * happen on the device, behind on-device user consent.
+ *
+ * This is the storage contract working as designed, not a gap in this package — a backend that
+ * cannot expose key material implements the identity contract and skips the storage one. See
+ * `KeyEntry` in `@kokuin/token` for the invariants the storage-backed keystores hold instead.
+ *
+ * Identities are cached per resolved derivation path, so repeated `provideIdentity` calls for
+ * one keyID hit the device once.
+ */
 export function createLedgerIdentityProvider(
   transport: LedgerTransport,
   options?: LedgerIdentityProviderOptions,
