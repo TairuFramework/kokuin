@@ -20,6 +20,21 @@ describe('resolveDerivationPath()', () => {
   test('throws for invalid keyID', () => {
     expect(() => resolveDerivationPath('abc', DEFAULT_BASE_PATH)).toThrow()
   })
+
+  test('rejects a non-hardened segment — SLIP-0010 ed25519 has no public derivation', () => {
+    expect(() => resolveDerivationPath("m/44'/876/0'")).toThrow(/hardened/)
+    expect(() => resolveDerivationPath("m/44'/876'/0")).toThrow(/hardened/)
+    expect(() => resolveDerivationPath('m/0')).toThrow(/hardened/)
+  })
+
+  test('accepts hardened segments with either notation', () => {
+    expect(resolveDerivationPath("m/44'/876'/0'")).toBe("m/44'/876'/0'")
+    expect(resolveDerivationPath('m/44h/876h/0h')).toBe('m/44h/876h/0h')
+  })
+
+  test('accepts the bare master path', () => {
+    expect(resolveDerivationPath('m')).toBe('m')
+  })
 })
 
 describe('derivePrivateKey()', () => {
