@@ -15,6 +15,6 @@ fallback would mint a different DID for the same keyID.
 
 Key records minted before this requirement (ES256) keep working, but only for signing —
 WebCrypto will not let an ECDSA key do `deriveBits`, so a legacy record cannot decrypt. Use
-`provideSigningIdentity(keyID)` for one; `provideIdentity(keyID)` throws on it, since it
-promises decryption. Legacy records are never silently re-keyed, since that would change the
-identity's DID.
+`store.provideSigningIdentity(keyID)` for one; `store.provideIdentity(keyID)` throws on it,
+since it promises decryption. Legacy records are never silently re-keyed, since that would
+change the identity's DID.

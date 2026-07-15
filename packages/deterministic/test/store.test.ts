@@ -69,4 +69,15 @@ describe('HDKeyStore', () => {
     const b = store.entry('0')
     expect(a).toBe(b)
   })
+
+  test('index and full-path aliases of the same derivation are distinct entries with own keyID', async () => {
+    const store = HDKeyStore.fromSeed(SEED)
+    const byIndex = store.entry('0')
+    const byPath = store.entry("m/44'/876'/0'")
+    expect(byIndex).not.toBe(byPath)
+    expect(byIndex.keyID).toBe('0')
+    expect(byPath.keyID).toBe("m/44'/876'/0'")
+    expect(byIndex.path).toBe(byPath.path)
+    expect(await byIndex.provideAsync()).toEqual(await byPath.provideAsync())
+  })
 })

@@ -126,7 +126,12 @@ export class NodeKeyEntry implements MutableKeyEntry<Uint8Array> {
   async #provideUnlocked(): Promise<Uint8Array> {
     // Re-read INSIDE the lock: a peer may have written the credential while we waited. Without
     // this the winner clobbers the peer's key, which is the loss the lock exists to prevent.
+    // Both the decoded key cache AND the encoded-ciphertext snapshot must be invalidated here —
+    // an entry obtained via list()/listAsync() carries a pre-set #encoded (from credential.password
+    // at list time), and getAsync() rehydrates from it in preference to a fresh keyring read. Leaving
+    // it set would make this re-read return the stale list-time value instead of the peer's write.
     this.#key = undefined
+    this.#encoded = undefined
     const existing = await this.getAsync()
     if (existing != null) {
       return existing

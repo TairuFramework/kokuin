@@ -53,6 +53,7 @@ vi.mock('@napi-rs/keyring', () => {
 
 const { toB64 } = await import('@sozai/codec')
 const { NodeKeyStore } = await import('../src/store.js')
+const { NodeKeyEntry } = await import('../src/entry.js')
 
 let dir: string
 let lockPath: string
@@ -106,6 +107,22 @@ describe('NodeKeyStore lockPath', () => {
     expect(keys[1]).toEqual(keys[0])
     expect(keys[2]).toEqual(keys[0])
     expect(Object.keys(mockKeyring)).toEqual(['user'])
+  })
+
+  test('re-reads inside the lock even when #encoded carries a stale list()-time snapshot', async () => {
+    // Mirrors what NodeKeyStore#toEntry does: an entry obtained via list()/listAsync() is
+    // constructed with `encoded` already set from `credential.password` at list time. If the
+    // locked re-read only cleared #key and not #encoded, get()/getAsync() would rehydrate from
+    // this stale snapshot instead of observing a peer's write inside the lock.
+    const staleKey = crypto.getRandomValues(new Uint8Array(32))
+    const peerKey = crypto.getRandomValues(new Uint8Array(32))
+    mockKeyring.user = toB64(peerKey)
+
+    const entry = new NodeKeyEntry('lock-encoded', 'user', toB64(staleKey), lockPath)
+    const key = await entry.provideAsync()
+
+    expect(key).toEqual(peerKey)
+    expect(key).not.toEqual(staleKey)
   })
 
   test('a lockPath does not leak a lockfile after the call', async () => {
