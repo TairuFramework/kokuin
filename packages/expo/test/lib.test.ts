@@ -1,3 +1,4 @@
+import * as SecureStore from 'expo-secure-store'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 // Mock expo-secure-store
@@ -104,6 +105,20 @@ describe('ExpoKeyEntry', () => {
     await entry.setAsync(new Uint8Array([33]))
     await entry.removeAsync()
     expect(await new ExpoKeyEntry('ak4').getAsync()).toBeNull()
+  })
+
+  test('remove() triggers the delete', () => {
+    const store = new ExpoKeyStore()
+    store.entry('user').remove()
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('user', undefined)
+  })
+
+  test('remove() does not produce an unhandled rejection when the delete fails', async () => {
+    vi.mocked(SecureStore.deleteItemAsync).mockRejectedValueOnce(new Error('boom'))
+    const entry = new ExpoKeyEntry('ak5')
+    const result = entry.remove()
+    expect(result).toBeUndefined()
+    await new Promise((resolve) => setTimeout(resolve, 0))
   })
 })
 

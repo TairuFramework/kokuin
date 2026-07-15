@@ -1,8 +1,11 @@
 import type { MutableKeyEntry } from '@kokuin/token'
 import { fromB64, toB64 } from '@sozai/codec'
+import { getLogger } from '@sozai/log'
 import * as SecureStore from 'expo-secure-store'
 
 import { randomPrivateKey, randomPrivateKeyAsync } from './utils.js'
+
+const logger = getLogger(['kokuin', 'expo'])
 
 export type StoreEntryOptions = SecureStore.SecureStoreOptions
 
@@ -69,7 +72,9 @@ export class ExpoKeyEntry implements MutableKeyEntry<Uint8Array> {
    * and returns immediately — use {@link removeAsync} when you need to know it completed.
    */
   remove(): void {
-    SecureStore.deleteItemAsync(this.#keyID, this.#options)
+    SecureStore.deleteItemAsync(this.#keyID, this.#options).catch((error: unknown) => {
+      logger.warn('Failed to remove key {keyID}: {error}', { keyID: this.#keyID, error })
+    })
   }
 
   async removeAsync(): Promise<void> {
