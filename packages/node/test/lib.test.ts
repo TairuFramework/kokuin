@@ -49,12 +49,7 @@ vi.mock('@napi-rs/keyring', () => {
   }
 })
 
-import {
-  NodeKeyEntry,
-  NodeKeyStore,
-  provideFullIdentity,
-  provideFullIdentityAsync,
-} from '../src/index.js'
+import { NodeKeyEntry, NodeKeyStore } from '../src/index.js'
 
 beforeEach(() => {
   mockKeyring = {}
@@ -222,28 +217,28 @@ describe('NodeKeyStore', () => {
   })
 })
 
-describe('provideFullIdentity()', () => {
+describe('NodeKeyStore#provideIdentity()', () => {
   test('creates identity from store instance', () => {
     const store = NodeKeyStore.open('id-test-1')
-    const identity = provideFullIdentity(store, 'k1')
+    const identity = store.provideIdentitySync('k1')
     expect(identity.id).toMatch(/^did:key:z/)
     expect(identity.signToken).toBeInstanceOf(Function)
   })
 
   test('creates identity from service name string', () => {
-    const identity = provideFullIdentity('id-test-2', 'k1')
+    const identity = NodeKeyStore.open('id-test-2').provideIdentitySync('k1')
     expect(identity.id).toMatch(/^did:key:z/)
   })
 
   test('async variant works', async () => {
-    const identity = await provideFullIdentityAsync('id-test-3', 'k1')
+    const identity = await NodeKeyStore.open('id-test-3').provideIdentity('k1')
     expect(identity.id).toMatch(/^did:key:z/)
   })
 
   test('same key produces same identity', () => {
     const store = NodeKeyStore.open('id-test-4')
-    const a = provideFullIdentity(store, 'same')
-    const b = provideFullIdentity(store, 'same')
+    const a = store.provideIdentitySync('same')
+    const b = store.provideIdentitySync('same')
     expect(a.id).toBe(b.id)
   })
 })

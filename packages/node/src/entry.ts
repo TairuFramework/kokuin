@@ -1,9 +1,9 @@
-import type { KeyEntry } from '@kokuin/token'
+import type { MutableKeyEntry } from '@kokuin/token'
 import { randomPrivateKey } from '@kokuin/token'
 import { AsyncEntry, Entry } from '@napi-rs/keyring'
 import { fromB64, toB64 } from '@sozai/codec'
 
-export class NodeKeyEntry implements KeyEntry<Uint8Array> {
+export class NodeKeyEntry implements MutableKeyEntry<Uint8Array> {
   #async?: AsyncEntry
   #encoded?: string
   #keyID: string

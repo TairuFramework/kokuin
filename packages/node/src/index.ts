@@ -11,5 +11,4 @@
  */
 
 export { NodeKeyEntry } from './entry.js'
-export { provideFullIdentity, provideFullIdentityAsync } from './identity.js'
 export { NodeKeyStore } from './store.js'
