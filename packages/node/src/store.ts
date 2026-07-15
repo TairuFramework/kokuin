@@ -14,21 +14,50 @@ import { NodeKeyEntry } from './entry.js'
 const tracer = createTracer('keystore.node')
 const logger = getLogger(['kokuin', 'node'])
 
+export type NodeKeyStoreOptions = {
+  /**
+   * Path to a lockfile enabling **cross-process** exclusion on `provideAsync`.
+   *
+   * Absent, nothing touches the filesystem and only the in-process lock applies — two
+   * processes can still both generate a key for a fresh keyID, and the loser's key is lost.
+   *
+   * A **file**, not a directory: one coarse lock per store, not one per keyID. A per-keyID
+   * lockfile would derive its name from an attacker-influenced keyID (`entry('../../etc/x')`),
+   * and `provideAsync` runs once per identity, so serializing across keyIDs costs nothing real.
+   *
+   * Must be on a local filesystem (`link()` is not atomic on NFS). Acquisition is bounded and
+   * throws `TimeoutInterruption` on expiry — it never proceeds unlocked.
+   */
+  lockPath?: string
+}
+
 export class NodeKeyStore
   implements KeyStore<Uint8Array, NodeKeyEntry>, IdentityProvider<FullIdentity>
 {
   static #byService: Record<string, NodeKeyStore> = Object.create(null)
 
-  static open(service: string): NodeKeyStore {
-    NodeKeyStore.#byService[service] ??= new NodeKeyStore(service)
-    return NodeKeyStore.#byService[service]
+  static open(service: string, options?: NodeKeyStoreOptions): NodeKeyStore {
+    const cached = NodeKeyStore.#byService[service]
+    if (cached == null) {
+      NodeKeyStore.#byService[service] = new NodeKeyStore(service, options)
+      return NodeKeyStore.#byService[service]
+    }
+    if (options?.lockPath != null && options.lockPath !== cached.#lockPath) {
+      throw new Error(
+        `NodeKeyStore.open('${service}') was already opened with lockPath: ` +
+          `${String(cached.#lockPath)}; cannot reopen with conflicting lockPath: ${options.lockPath}.`,
+      )
+    }
+    return cached
   }
 
   #entries: Record<string, NodeKeyEntry> = Object.create(null)
+  #lockPath?: string
   #service: string
 
-  constructor(service: string) {
+  constructor(service: string, options?: NodeKeyStoreOptions) {
     this.#service = service
+    this.#lockPath = options?.lockPath
   }
 
   #toEntry(credential: Credential): NodeKeyEntry {
@@ -36,6 +65,7 @@ export class NodeKeyStore
       this.#service,
       credential.account,
       credential.password,
+      this.#lockPath,
     )
     return this.#entries[credential.account]
   }
@@ -50,7 +80,7 @@ export class NodeKeyStore
   }
 
   entry(keyID: string): NodeKeyEntry {
-    this.#entries[keyID] ??= new NodeKeyEntry(this.#service, keyID)
+    this.#entries[keyID] ??= new NodeKeyEntry(this.#service, keyID, undefined, this.#lockPath)
     return this.#entries[keyID]
   }
 
