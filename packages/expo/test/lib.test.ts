@@ -26,8 +26,6 @@ vi.mock('expo-crypto', () => ({
 import {
   ExpoKeyEntry,
   ExpoKeyStore,
-  provideFullIdentity,
-  provideFullIdentityAsync,
   randomPrivateKey,
   randomPrivateKeyAsync,
 } from '../src/index.js'
@@ -111,27 +109,28 @@ describe('ExpoKeyEntry', () => {
 
 describe('ExpoKeyStore', () => {
   test('entry() creates ExpoKeyEntry with given keyID', () => {
-    const entry = ExpoKeyStore.entry('my-key')
+    const entry = new ExpoKeyStore().entry('my-key')
     expect(entry).toBeInstanceOf(ExpoKeyEntry)
     expect(entry.keyID).toBe('my-key')
   })
 
-  test('entry() creates new instance each call (no caching)', () => {
-    const a = ExpoKeyStore.entry('same')
-    const b = ExpoKeyStore.entry('same')
-    expect(a).not.toBe(b)
+  test('entry() is cached (same instance each call)', () => {
+    const store = new ExpoKeyStore()
+    const a = store.entry('same')
+    const b = store.entry('same')
+    expect(a).toBe(b)
   })
 })
 
-describe('provideFullIdentity()', () => {
+describe('provideIdentity()', () => {
   test('creates identity with valid DID', () => {
-    const identity = provideFullIdentity('k1')
+    const identity = new ExpoKeyStore().provideIdentitySync('k1')
     expect(identity.id).toMatch(/^did:key:z/)
     expect(identity.signToken).toBeInstanceOf(Function)
   })
 
   test('async variant works', async () => {
-    const identity = await provideFullIdentityAsync('k1')
+    const identity = await new ExpoKeyStore().provideIdentity('k1')
     expect(identity.id).toMatch(/^did:key:z/)
   })
 })
