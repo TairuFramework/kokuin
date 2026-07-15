@@ -43,5 +43,8 @@
     "@sozai/otel": "catalog:",
     "expo-crypto": "catalog:",
     "expo-secure-store": "catalog:"
+  },
+  "devDependencies": {
+    "@kokuin/keystore-conformance": "workspace:^"
   }
 }

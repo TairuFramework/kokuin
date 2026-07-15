@@ -44,6 +44,7 @@
     "electron-store": "catalog:"
   },
   "devDependencies": {
+    "@kokuin/keystore-conformance": "workspace:^",
     "electron": "catalog:"
   }
 }

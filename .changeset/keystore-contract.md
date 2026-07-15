@@ -16,11 +16,12 @@ throwing and no-op'ing. The free `provideFullIdentity`/`provideFullIdentityAsync
 replaced by a `provideIdentity(keyID)` method on each store (the `IdentityProvider` contract),
 with a `provideIdentitySync` twin where the substrate allows it.
 
-- **token**: adds `MutableKeyEntry` and a framework-agnostic conformance suite
-  (`keyStoreConformanceCases`) that every backend runs. Fixes `did:peer:4` identities being
-  unencryptable-to (`createTokenEncrypter` threw `Invalid DID format` for every peer:4
-  recipient, so the `keyAgreement` key published in the doc was unreachable), and `did:key`
-  identities from `createIdentity` being unable to decrypt.
+- **token**: adds the `MutableKeyEntry` / `KeyStore` / `IdentityProvider` contract. The
+  framework-agnostic conformance suite every backend runs lives in the private
+  `@kokuin/keystore-conformance` package (not published — it is test-only). Fixes `did:peer:4`
+  identities being unencryptable-to (`createTokenEncrypter` threw `Invalid DID format` for every
+  peer:4 recipient, so the `keyAgreement` key published in the doc was unreachable), and
+  `did:key` identities from `createIdentity` being unable to decrypt.
 - **browser**: no longer mints ES256. Holds a non-extractable Ed25519 signing key plus the
   X25519 agreement key derived from it, yielding a `FullIdentity` with a `did:key` EdDSA DID.
   Existing ES256 records keep working, signing-only, via `provideSigningIdentity`; they are

@@ -1,4 +1,4 @@
-import { mutableKeyStoreConformanceCases } from '@kokuin/token'
+import { mutableKeyStoreConformanceCases } from '@kokuin/keystore-conformance'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 let secureStore: Record<string, string>

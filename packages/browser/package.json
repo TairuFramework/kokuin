@@ -42,5 +42,8 @@
     "@sozai/codec": "catalog:",
     "@sozai/log": "catalog:",
     "@sozai/otel": "catalog:"
+  },
+  "devDependencies": {
+    "@kokuin/keystore-conformance": "workspace:^"
   }
 }

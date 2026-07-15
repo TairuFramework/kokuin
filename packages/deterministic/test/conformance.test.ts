@@ -1,4 +1,4 @@
-import { keyStoreConformanceCases } from '@kokuin/token'
+import { keyStoreConformanceCases } from '@kokuin/keystore-conformance'
 import { describe, expect, test } from 'vitest'
 
 import { HDKeyStore } from '../src/store.js'

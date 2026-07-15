@@ -158,6 +158,10 @@ importers:
       '@sozai/otel':
         specifier: 'catalog:'
         version: 0.2.0
+    devDependencies:
+      '@kokuin/keystore-conformance':
+        specifier: workspace:^
+        version: link:../keystore-conformance
 
   packages/capability:
     dependencies:
@@ -185,6 +189,10 @@ importers:
       micro-key-producer:
         specifier: 'catalog:'
         version: 0.9.0
+    devDependencies:
+      '@kokuin/keystore-conformance':
+        specifier: workspace:^
+        version: link:../keystore-conformance
 
   packages/electron:
     dependencies:
@@ -210,6 +218,9 @@ importers:
         specifier: 'catalog:'
         version: 11.0.2
     devDependencies:
+      '@kokuin/keystore-conformance':
+        specifier: workspace:^
+        version: link:../keystore-conformance
       electron:
         specifier: 'catalog:'
         version: 43.1.0
@@ -237,6 +248,16 @@ importers:
       expo-secure-store:
         specifier: 'catalog:'
         version: 57.0.0(expo@57.0.4)
+    devDependencies:
+      '@kokuin/keystore-conformance':
+        specifier: workspace:^
+        version: link:../keystore-conformance
+
+  packages/keystore-conformance:
+    dependencies:
+      '@kokuin/token':
+        specifier: workspace:^
+        version: link:../token
 
   packages/ledger-device:
     dependencies:
@@ -289,6 +310,10 @@ importers:
       '@sozai/otel':
         specifier: 'catalog:'
         version: 0.2.0
+    devDependencies:
+      '@kokuin/keystore-conformance':
+        specifier: workspace:^
+        version: link:../keystore-conformance
 
   packages/otel:
     dependencies:

@@ -42,5 +42,8 @@
     "@sozai/log": "catalog:",
     "@sozai/otel": "catalog:",
     "micro-key-producer": "catalog:"
+  },
+  "devDependencies": {
+    "@kokuin/keystore-conformance": "workspace:^"
   }
 }

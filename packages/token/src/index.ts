@@ -17,13 +17,6 @@ export {
   type DIDResolver,
 } from './cache.js'
 export {
-  type ConformanceCase,
-  type KeyStoreConformanceHarness,
-  keyStoreConformanceCases,
-  type MutableKeyStoreConformanceHarness,
-  mutableKeyStoreConformanceCases,
-} from './conformance.js'
-export {
   CODECS,
   getAgreementKey,
   getAlgorithmAndPublicKey,

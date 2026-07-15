@@ -1,4 +1,4 @@
-import type { KeyStore, MutableKeyEntry } from './keystore.js'
+import type { KeyStore, MutableKeyEntry } from '@kokuin/token'
 
 /** A single conformance check. `run` throws on violation; resolving means the store conforms. */
 export type ConformanceCase = {

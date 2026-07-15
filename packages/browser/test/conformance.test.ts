@@ -1,4 +1,4 @@
-import { mutableKeyStoreConformanceCases } from '@kokuin/token'
+import { mutableKeyStoreConformanceCases } from '@kokuin/keystore-conformance'
 import { describe, expect, test } from 'vitest'
 
 import type { GetStore } from '../src/entry.js'

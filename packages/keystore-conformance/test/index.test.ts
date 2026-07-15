@@ -1,11 +1,11 @@
+import type { KeyStore, MutableKeyEntry } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
 import {
   type ConformanceCase,
   keyStoreConformanceCases,
   mutableKeyStoreConformanceCases,
-} from '../src/conformance.js'
-import type { KeyStore, MutableKeyEntry } from '../src/keystore.js'
+} from '../src/index.js'
 
 // --- A correct reference implementation ---
 
