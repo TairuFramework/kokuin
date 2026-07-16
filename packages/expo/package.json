@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/expo",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "license": "MIT",
   "description": "Key store for React Native",
   "keywords": [
