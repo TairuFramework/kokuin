@@ -269,13 +269,16 @@ Keystores persist private keys using each platform's secure storage mechanism. T
 Uses `@napi-rs/keyring`: macOS Keychain, Windows Credential Manager, Linux Secret Service.
 
 ```typescript
-import { NodeKeyStore, provideFullIdentityAsync } from '@kokuin/node'
+import { NodeKeyStore } from '@kokuin/node'
 
 const store = NodeKeyStore.open({ service: 'my-app' })
 
 // Get or create a key; return a FullIdentity
-const identity = await provideFullIdentityAsync(store, 'main-key')
+const identity = await store.provideIdentity('main-key')
 console.log('DID:', identity.id)
+
+// The same, synchronously
+const identitySync = store.provideIdentitySync('main-key')
 
 // Manual entry operations
 const entry = store.entry('main-key')
@@ -287,6 +290,10 @@ await entry.removeAsync()
 // List all stored entries
 const entries = await store.listAsync()
 ```
+
+> `provideIdentitySync` is beyond the `IdentityProvider` contract and is **not** cross-process
+> safe: a file lock cannot be acquired synchronously, so it throws when the store was opened
+> with a `lockPath`.
 
 Storage locations:
 - macOS: `~/Library/Keychains/login.keychain-db`
@@ -326,14 +333,16 @@ Storage: per-origin IndexedDB; survives page reload and browser restart; not syn
 Uses Expo SecureStore: iOS Keychain (`kSecAttrAccessibleAfterFirstUnlock`) / Android Keystore.
 
 ```typescript
-import { ExpoKeyStore, provideFullIdentityAsync } from '@kokuin/expo'
+import { ExpoKeyStore } from '@kokuin/expo'
+
+const store = ExpoKeyStore.open()
 
 // Get or create a device identity
-const identity = await provideFullIdentityAsync('device-identity')
+const identity = await store.provideIdentity('device-identity')
 console.log('DID:', identity.id)
 
-// Manual entry via the static store reference
-const entry = ExpoKeyStore.entry('device-identity')
+// Manual entry operations
+const entry = store.entry('device-identity')
 const key = await entry.getAsync()     // Uint8Array | null
 await entry.removeAsync()
 ```
@@ -345,13 +354,13 @@ Keys survive app restarts. On logout, call `entry.removeAsync()` to delete the s
 Uses Electron `safeStorage` for encryption and `electron-store` for persistence. **Main process only** — `safeStorage` is not available in renderer processes.
 
 ```typescript
-import { ElectronKeyStore, provideFullIdentityAsync } from '@kokuin/electron'
+import { ElectronKeyStore } from '@kokuin/electron'
 import { createUnsignedToken, signToken } from '@kokuin/token'
 
 const store = ElectronKeyStore.open({ name: 'my-app-keystore' })
 
 // Get or create identity
-const identity = await provideFullIdentityAsync(store, 'main-process-key')
+const identity = await store.provideIdentity('main-process-key')
 console.log('DID:', identity.id)
 
 // Sign a token (e.g. for IPC verification)
@@ -367,25 +376,25 @@ Storage: `electron-store` default location (`~/Library/Application Support/<app>
 
 Derives Ed25519 private keys from a root seed using [SLIP-0010](https://github.com/satoshilabs/slips/blob/master/slip-0010.md) hierarchical deterministic (HD) derivation. The same seed + path always yields the same key pair — identities are reproducible without persistent storage.
 
-**There is no `provide*` helper.** Build identities manually with `createFullIdentity` from `@kokuin/token`.
+`HDKeyStore` implements `IdentityProvider<FullIdentity>` — call `store.provideIdentity(keyID)`.
+Derivation is async-only; there is no sync twin. `derivePrivateKey` remains available for
+standalone derivation without a store.
 
 ```typescript
 import { HDKeyStore, derivePrivateKey, resolveDerivationPath } from '@kokuin/deterministic'
 import { createFullIdentity } from '@kokuin/token'
 
-// Standalone derivation (no store required)
-const path = resolveDerivationPath('0')           // numeric keyID → "m/44'/876'/0'"
-const privateKey = derivePrivateKey(masterSeed, path)  // Uint8Array
-const identity = createFullIdentity(privateKey)
-console.log('DID:', identity.id)
-
-// Or use the keystore for managed entries (each entry derives on demand)
+// Managed entries — the store derives on demand
 const store = HDKeyStore.fromMnemonic('abandon abandon … art')
 // or: HDKeyStore.fromSeed(masterSeed)
 
-const entry = store.entry('0')       // HDKeyEntry
-const key = await entry.provideAsync()  // Uint8Array (derived private key)
-const identity2 = createFullIdentity(key)
+const identity = await store.provideIdentity('0')
+console.log('DID:', identity.id)
+
+// Standalone derivation (no store required)
+const path = resolveDerivationPath('0')                // numeric keyID → "m/44'/876'/0'"
+const privateKey = derivePrivateKey(masterSeed, path)  // Uint8Array
+const identity2 = createFullIdentity(privateKey)
 ```
 
 The HD name map: `resolveDerivationPath('0')` → `"m/44'/876'/0'"` (default base path `44'/876'`). Pass a full `m/…` path directly to skip resolution.
@@ -396,12 +405,12 @@ Provides an `IdentityProvider` backed by a Ledger hardware device over USB/WebHI
 
 ```typescript
 import { createLedgerIdentityProvider } from '@kokuin/ledger-device'
-import type { IdentityProvider } from '@kokuin/token'
+import type { FullIdentity, IdentityProvider } from '@kokuin/token'
 
 // `transport` is a WebHID or Node-HID Ledger transport instance
 const provider = createLedgerIdentityProvider(transport)
 
-// Call provideIdentity with a keyID string to obtain a signing identity from the device
+// Call provideIdentity with a keyID string to obtain a FullIdentity from the device
 const identity = await provider.provideIdentity('0')
 console.log('Hardware DID:', identity.id)
 ```
