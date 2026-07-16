@@ -440,13 +440,16 @@ Error types exported from `@kokuin/ledger-device`:
 `KeyEntry` and `KeyStore` are the generic types that all keystores implement. They live in `@kokuin/token` (`src/keystore.ts`) — not in any individual keystore package.
 
 ```typescript
-import type { KeyEntry, KeyStore } from '@kokuin/token'
+import type { KeyEntry, KeyStore, MutableKeyEntry } from '@kokuin/token'
 
 type KeyEntry<PrivateKeyType> = {
   readonly keyID: string
   getAsync(): Promise<PrivateKeyType | null>
-  setAsync(privateKey: PrivateKeyType): Promise<void>
   provideAsync(): Promise<PrivateKeyType>   // get-or-create
+}
+
+type MutableKeyEntry<PrivateKeyType> = KeyEntry<PrivateKeyType> & {
+  setAsync(privateKey: PrivateKeyType): Promise<void>
   removeAsync(): Promise<void>
 }
 
@@ -458,10 +461,23 @@ type KeyStore<
 }
 ```
 
+`KeyEntry` is the **read/provide** facet — the floor every backend can honor, including ones
+that derive keys rather than store them (HD) or never expose key material at all (ledger).
+`MutableKeyEntry` adds writing and deletion.
+
+HD and ledger deliberately do **not** implement `MutableKeyEntry`: an HD key is derived (there
+is nothing to set, and removing it does not stop it being derivable), and a ledger key never
+leaves the device. The type says what the substrate can do, so there is nothing to throw from.
+
+`provideAsync` is idempotent under concurrency — racing callers on one keyID converge on a
+single key. Backends sharing storage across processes need a cross-process lock to hold this
+(see `lockPath` on `NodeKeyStore` / `ElectronKeyStore`); an in-process promise chain is not
+enough. `entry()` must be cached: `store.entry(x) === store.entry(x)`, since entries carry the
+per-entry `provideAsync` lock.
+
 Platform key types:
-- `@kokuin/node`, `@kokuin/expo`: `Uint8Array` (raw Ed25519 private key)
-- `@kokuin/electron`: `string` (base64-encoded Ed25519 private key, decoded by the `provide*` helpers)
-- `@kokuin/browser`: `CryptoKeyPair` (non-exportable Web Crypto ES256 key pair)
+- `@kokuin/node`, `@kokuin/expo`, `@kokuin/electron`: `Uint8Array` (raw Ed25519 private key)
+- `@kokuin/browser`: `StoredKeyRecord` (a non-extractable Web Crypto key record)
 - `@kokuin/deterministic`: keys derived on demand; `HDKeyStore.entry(keyID)` returns an `HDKeyEntry` whose `provideAsync()` calls `derivePrivateKey` internally.
 
 `IdentityProvider` (from `@kokuin/token`) decouples identity creation from its backing store:
