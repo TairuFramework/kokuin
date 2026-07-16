@@ -55,11 +55,11 @@ catalogs:
       specifier: ^0.1.0
       version: 0.1.0
     '@sozai/log':
-      specifier: ^0.1.1
-      version: 0.1.1
-    '@sozai/otel':
       specifier: ^0.2.0
       version: 0.2.0
+    '@sozai/otel':
+      specifier: ^0.3.0
+      version: 0.3.0
     '@sozai/runtime-expo':
       specifier: ^0.2.1
       version: 0.2.1
@@ -154,10 +154,10 @@ importers:
         version: 0.2.0
       '@sozai/log':
         specifier: 'catalog:'
-        version: 0.1.1
+        version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
     devDependencies:
       '@kokuin/keystore-conformance':
         specifier: workspace:^
@@ -182,10 +182,10 @@ importers:
         version: 2.2.0
       '@sozai/log':
         specifier: 'catalog:'
-        version: 0.1.1
+        version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
       micro-key-producer:
         specifier: 'catalog:'
         version: 0.9.0
@@ -210,10 +210,10 @@ importers:
         version: 0.1.0
       '@sozai/log':
         specifier: 'catalog:'
-        version: 0.1.1
+        version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
       electron-store:
         specifier: 'catalog:'
         version: 11.0.2
@@ -238,10 +238,10 @@ importers:
         version: 0.2.0
       '@sozai/log':
         specifier: 'catalog:'
-        version: 0.1.1
+        version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
       expo-crypto:
         specifier: 'catalog:'
         version: 57.0.0(expo@57.0.4)
@@ -272,10 +272,10 @@ importers:
         version: 0.2.0
       '@sozai/log':
         specifier: 'catalog:'
-        version: 0.1.1
+        version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
     devDependencies:
       '@kokuin/deterministic':
         specifier: workspace:^
@@ -306,10 +306,10 @@ importers:
         version: 0.1.0
       '@sozai/log':
         specifier: 'catalog:'
-        version: 0.1.1
+        version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
     devDependencies:
       '@kokuin/keystore-conformance':
         specifier: workspace:^
@@ -322,7 +322,7 @@ importers:
         version: 1.9.1
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
 
   packages/token:
     dependencies:
@@ -346,7 +346,7 @@ importers:
         version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
       '@sozai/schema':
         specifier: 'catalog:'
         version: 0.1.1
@@ -1771,8 +1771,8 @@ packages:
     engines: {node: ^12.13.0 || ^14.15.0 || >=16.0.0}
     deprecated: This functionality has been moved to @npmcli/fs
 
-  '@opentelemetry/api-logs@0.219.0':
-    resolution: {integrity: sha512-FFx7YnaYJlIjqWW/AG/yAZ0L/NEY724PipXXXQLdtZPbLwBGbUMTGL1i/esI56TWfTUXxhLfpgrnWJCG8aUJyg==}
+  '@opentelemetry/api-logs@0.220.0':
+    resolution: {integrity: sha512-CmVa4ImJ+ynfrPMNaAXHET6Bhb44SwzmfyVJFq9ni2jgXJR/l7C6gfVFddNmHP+ZOkP9cf4f9DBe68qVLTHc9w==}
     engines: {node: '>=8.0.0'}
 
   '@opentelemetry/api@1.9.1':
@@ -2028,11 +2028,11 @@ packages:
   '@sozai/lock@0.1.0':
     resolution: {integrity: sha512-A9Gkw7DlG7kj0wDlK9RuUMd+PIZoIFlRAI19TCTmPW/G7wvx/c1/OQ8b66d4rFQZVkpeb6G/GAyOglx8rC84BA==}
 
-  '@sozai/log@0.1.1':
-    resolution: {integrity: sha512-LoKzEz6qWWAV4KeAsyn35YD7ooCoFPyEgrCWwpSaKk3xuvEP2b1ejwFz90GvA/y8cCnfZqtXK4FnPz/VnfmlwQ==}
+  '@sozai/log@0.2.0':
+    resolution: {integrity: sha512-QxBBFSSC9be7Es/r2KYPs/yMWu/zGl+oV4QJE8ycaN47KP1CtoOXd7M6dPsHhHJfHYNFTOmXW4DJ9ALq3f8cyg==}
 
-  '@sozai/otel@0.2.0':
-    resolution: {integrity: sha512-QA6VNAabL9D36nALM92fTtvTO2V9wI3P72rvQFFj9dRNZyZ9s4l9PK5RXKEMNN1KFgYUKus+7KBMiqRo6kYrTw==}
+  '@sozai/otel@0.3.0':
+    resolution: {integrity: sha512-NDS0yyuGid/LMDaLTiFCohEQWjet7hSvf/iznHofe2HDbEc0CoyeJrPjsXLVm6zJYyUwQLj4P06wdL5m9Wm2zQ==}
 
   '@sozai/runtime-expo@0.2.1':
     resolution: {integrity: sha512-QXu8lpewhRS/jOS64wZaxdpR75Rr1Ds33lmrrC/DEDl9gv1uQHrPYs/F86ALmQ6IIOdyG9gdo/1v9qFUE5pbnA==}
@@ -7654,7 +7654,7 @@ snapshots:
       mkdirp: 1.0.4
       rimraf: 3.0.2
 
-  '@opentelemetry/api-logs@0.219.0':
+  '@opentelemetry/api-logs@0.220.0':
     dependencies:
       '@opentelemetry/api': 1.9.1
 
@@ -7876,15 +7876,15 @@ snapshots:
     dependencies:
       '@sozai/async': 0.2.1
 
-  '@sozai/log@0.1.1':
+  '@sozai/log@0.2.0':
     dependencies:
       '@logtape/logtape': 2.2.4
 
-  '@sozai/otel@0.2.0':
+  '@sozai/otel@0.3.0':
     dependencies:
       '@opentelemetry/api': 1.9.1
-      '@opentelemetry/api-logs': 0.219.0
-      '@sozai/log': 0.1.1
+      '@opentelemetry/api-logs': 0.220.0
+      '@sozai/log': 0.2.0
 
   '@sozai/runtime-expo@0.2.1(expo@57.0.4)':
     dependencies:
