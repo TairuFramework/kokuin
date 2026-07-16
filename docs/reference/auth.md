@@ -302,21 +302,35 @@ Storage locations:
 
 ### `@kokuin/browser` — Browser (IndexedDB + Web Crypto)
 
-Uses IndexedDB for persistence and Web Crypto (ES256 / P-256) for key generation. Returns a **`SigningIdentity`** only — browsers use non-exportable `CryptoKeyPair` objects, so decryption is not supported.
+Uses IndexedDB for persistence and Web Crypto for key generation. Holds a non-extractable
+Ed25519 signing key plus the X25519 agreement key derived from it, so a current record both
+signs and decrypts — `provideIdentity` returns a `FullIdentity`.
+
+Requires `SubtleCrypto` support for both algorithms: Chrome 137+, Firefox 130+, or Safari 17+.
+On an older browser it hard-errors rather than falling back to ES256 — a fallback would mint a
+different DID for the same keyID.
+
+Records minted before this requirement (ES256) keep working, but only for signing: WebCrypto
+will not let an ECDSA key do `deriveBits`, so a legacy record cannot decrypt. Use
+`store.provideSigningIdentity(keyID)` for one — `store.provideIdentity(keyID)` throws on it,
+since it promises decryption. Legacy records are never silently re-keyed, since that would
+change the identity's DID.
 
 ```typescript
-import { BrowserKeyStore, provideSigningIdentity } from '@kokuin/browser'
+import { BrowserKeyStore } from '@kokuin/browser'
+import { createUnsignedToken, signToken, stringifyToken } from '@kokuin/token'
 
-// Get or create a signing identity (auto-opens the default store)
-const identity = await provideSigningIdentity('user-session')
+// `open()` is memoized per database name — repeated calls resolve the same store
+const store = await BrowserKeyStore.open({ name: 'my-app-keys' })
+
+// A FullIdentity — signing and decryption. Throws on a legacy ES256 record.
+const identity = await store.provideIdentity('user-session')
 console.log('DID:', identity.id)
 
-// Or open the store explicitly
-const store = await BrowserKeyStore.open({ name: 'my-app-keys' })
-const identity2 = await provideSigningIdentity('user-session', store)
+// Signing-only, accepting both the current and legacy suites
+const signingIdentity = await store.provideSigningIdentity('user-session')
 
 // Sign a token
-import { createUnsignedToken, signToken, stringifyToken } from '@kokuin/token'
 const token = await signToken(identity, createUnsignedToken({
   sub: 'resource:7',
   exp: Math.floor(Date.now() / 1000) + 3600,
@@ -325,8 +339,6 @@ const tokenString = stringifyToken(token)
 ```
 
 Storage: per-origin IndexedDB; survives page reload and browser restart; not synced across devices.
-
-> **Note**: `@kokuin/browser` exports `provideSigningIdentity` only. There is no `provideFullIdentity` — use `@kokuin/node`, `@kokuin/expo`, or `@kokuin/electron` when a `FullIdentity` (signing + decryption) is required.
 
 ### `@kokuin/expo` — React Native (Expo SecureStore)
 
