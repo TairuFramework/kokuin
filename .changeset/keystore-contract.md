@@ -16,6 +16,12 @@ throwing and no-op'ing. The free `provideFullIdentity`/`provideFullIdentityAsync
 replaced by a `provideIdentity(keyID)` method on each store (the `IdentityProvider` contract),
 with a `provideIdentitySync` twin where the substrate allows it.
 
+Every store's `open()` / constructor and every `KeyEntry` constructor now takes a **single
+params object** rather than positional arguments — `NodeKeyStore.open({ service, lockPath })`,
+`ElectronKeyStore.open({ name, allowInsecureStorage, lockPath })`,
+`BrowserKeyStore.open({ name })` — matching the shape `deterministic` already used
+(`HDKeyStore.fromSeed`/`fromMnemonic` keep their name-paired positional primary).
+
 - **token**: adds the `MutableKeyEntry` / `KeyStore` / `IdentityProvider` contract. The
   framework-agnostic conformance suite every backend runs lives in the private
   `@kokuin/keystore-conformance` package (not published — it is test-only). Fixes `did:peer:4`

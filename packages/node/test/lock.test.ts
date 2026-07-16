@@ -75,14 +75,14 @@ afterEach(async () => {
 
 describe('NodeKeyStore lockPath', () => {
   test('provideAsync works with a lockPath set', async () => {
-    const store = new NodeKeyStore('lock-basic', { lockPath })
+    const store = new NodeKeyStore({ service: 'lock-basic', lockPath })
     const key = await store.entry('user').provideAsync()
     expect(key).toHaveLength(32)
     expect(mockKeyring.user).toBe(toB64(key))
   })
 
   test('re-reads inside the lock and returns a peer’s key rather than clobbering it', async () => {
-    const store = new NodeKeyStore('lock-reread', { lockPath })
+    const store = new NodeKeyStore({ service: 'lock-reread', lockPath })
     const peerKey = crypto.getRandomValues(new Uint8Array(32))
 
     // The peer writes the credential while we are waiting for the lock. The re-read inside
@@ -97,7 +97,7 @@ describe('NodeKeyStore lockPath', () => {
   })
 
   test('concurrent provideAsync calls converge on one key', async () => {
-    const store = new NodeKeyStore('lock-concurrent', { lockPath })
+    const store = new NodeKeyStore({ service: 'lock-concurrent', lockPath })
     const entry = store.entry('user')
     const keys = await Promise.all([
       entry.provideAsync(),
@@ -118,7 +118,12 @@ describe('NodeKeyStore lockPath', () => {
     const peerKey = crypto.getRandomValues(new Uint8Array(32))
     mockKeyring.user = toB64(peerKey)
 
-    const entry = new NodeKeyEntry('lock-encoded', 'user', toB64(staleKey), lockPath)
+    const entry = new NodeKeyEntry({
+      service: 'lock-encoded',
+      keyID: 'user',
+      encoded: toB64(staleKey),
+      lockPath,
+    })
     const key = await entry.provideAsync()
 
     expect(key).toEqual(peerKey)
@@ -126,25 +131,27 @@ describe('NodeKeyStore lockPath', () => {
   })
 
   test('a lockPath does not leak a lockfile after the call', async () => {
-    const store = new NodeKeyStore('lock-cleanup', { lockPath })
+    const store = new NodeKeyStore({ service: 'lock-cleanup', lockPath })
     await store.entry('user').provideAsync()
     const { existsSync } = await import('node:fs')
     expect(existsSync(lockPath)).toBe(false)
   })
 
   test('the sync provide() refuses to run under a lockPath', () => {
-    const store = new NodeKeyStore('lock-sync', { lockPath })
+    const store = new NodeKeyStore({ service: 'lock-sync', lockPath })
     expect(() => store.entry('user').provide()).toThrow(/lockPath/)
     expect(() => store.provideIdentitySync('user')).toThrow(/lockPath/)
   })
 
   test('re-opening a service with a conflicting lockPath throws', () => {
-    NodeKeyStore.open('conflict', { lockPath })
-    expect(() => NodeKeyStore.open('conflict', { lockPath: `${lockPath}.other` })).toThrow(
+    NodeKeyStore.open({ service: 'conflict', lockPath })
+    expect(() => NodeKeyStore.open({ service: 'conflict', lockPath: `${lockPath}.other` })).toThrow(
       /lockPath/,
     )
     // Re-opening with the same lockPath, or with none, is fine.
-    expect(NodeKeyStore.open('conflict', { lockPath })).toBe(NodeKeyStore.open('conflict'))
+    expect(NodeKeyStore.open({ service: 'conflict', lockPath })).toBe(
+      NodeKeyStore.open({ service: 'conflict' }),
+    )
   })
 })
 
@@ -159,7 +166,7 @@ describe('adversarial keyIDs', () => {
     'nested/../../escape',
   ])('the path-traversal keyID %j touches nothing outside the lockPath', async (keyID) => {
     const { readdirSync } = await import('node:fs')
-    const store = new NodeKeyStore('traversal', { lockPath })
+    const store = new NodeKeyStore({ service: 'traversal', lockPath })
 
     const entry = store.entry(keyID)
     expect(entry.keyID).toBe(keyID)
@@ -177,7 +184,7 @@ describe('adversarial keyIDs', () => {
     'constructor',
     'prototype',
   ])('the prototype-pollution keyID %j behaves as an ordinary key', async (keyID) => {
-    const store = new NodeKeyStore(`pollution-${keyID}`)
+    const store = new NodeKeyStore({ service: `pollution-${keyID}` })
     const entry = store.entry(keyID)
     expect(entry.keyID).toBe(keyID)
     expect(await entry.getAsync()).toBeNull()
@@ -188,13 +195,13 @@ describe('adversarial keyIDs', () => {
 
 describe('corrupt credentials', () => {
   test('a non-base64 stored credential throws rather than yielding a bad key', async () => {
-    const store = new NodeKeyStore('corrupt')
+    const store = new NodeKeyStore({ service: 'corrupt' })
     mockKeyring.user = 'not!valid!base64!'
     await expect(store.entry('user').getAsync()).rejects.toThrow()
   })
 
   test('a truncated key throws rather than signing with the wrong length', async () => {
-    const store = new NodeKeyStore('truncated')
+    const store = new NodeKeyStore({ service: 'truncated' })
     mockKeyring.user = toB64(new Uint8Array(8)) // not 32 bytes
     // Either getAsync rejects, or createFullIdentity does — but it must never silently
     // produce an identity from an 8-byte "key".

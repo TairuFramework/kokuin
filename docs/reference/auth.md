@@ -271,7 +271,7 @@ Uses `@napi-rs/keyring`: macOS Keychain, Windows Credential Manager, Linux Secre
 ```typescript
 import { NodeKeyStore, provideFullIdentityAsync } from '@kokuin/node'
 
-const store = NodeKeyStore.open('my-app')
+const store = NodeKeyStore.open({ service: 'my-app' })
 
 // Get or create a key; return a FullIdentity
 const identity = await provideFullIdentityAsync(store, 'main-key')
@@ -305,7 +305,7 @@ const identity = await provideSigningIdentity('user-session')
 console.log('DID:', identity.id)
 
 // Or open the store explicitly
-const store = await BrowserKeyStore.open('my-app-keys')
+const store = await BrowserKeyStore.open({ name: 'my-app-keys' })
 const identity2 = await provideSigningIdentity('user-session', store)
 
 // Sign a token
@@ -348,7 +348,7 @@ Uses Electron `safeStorage` for encryption and `electron-store` for persistence.
 import { ElectronKeyStore, provideFullIdentityAsync } from '@kokuin/electron'
 import { createUnsignedToken, signToken } from '@kokuin/token'
 
-const store = ElectronKeyStore.open('my-app-keystore')
+const store = ElectronKeyStore.open({ name: 'my-app-keystore' })
 
 // Get or create identity
 const identity = await provideFullIdentityAsync(store, 'main-process-key')

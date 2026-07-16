@@ -8,7 +8,7 @@ npm install @kokuin/electron
 
 ## Cross-process locking
 
-`ElectronKeyStore.open(name, { lockPath })` is opt-in. Without it, two processes racing to
+`ElectronKeyStore.open({ name, lockPath })` is opt-in. Without it, two processes racing to
 generate a key for a fresh keyID both create one, and only the in-process lock applies — the
 result is unsafe: silent key loss on backends that upsert unconditionally (e.g. Linux/
 libsecret), or a thrown duplicate-item error on macOS Keychain. With `lockPath` set,

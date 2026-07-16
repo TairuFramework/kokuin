@@ -45,7 +45,7 @@ beforeEach(() => {
 describe('ElectronKeyStore conformance', () => {
   let counter = 0
   const cases = mutableKeyStoreConformanceCases({
-    createStore: () => new ElectronKeyStore(`conformance-${counter++}`),
+    createStore: () => new ElectronKeyStore({ name: `conformance-${counter++}` }),
     isSameKey: sameBytes,
     createKey: () => crypto.getRandomValues(new Uint8Array(32)),
   })
@@ -58,7 +58,7 @@ describe('ElectronKeyStore conformance', () => {
 describe('ElectronKeyStore adversarial input', () => {
   // The audit's Critical #4, never tested here until now.
   test('two keyIDs in one store get two distinct keys, and neither overwrites the other', async () => {
-    const store = new ElectronKeyStore('two-keys')
+    const store = new ElectronKeyStore({ name: 'two-keys' })
     const alice = await store.entry('alice').provideAsync()
     const bob = await store.entry('bob').provideAsync()
     expect(alice).not.toEqual(bob)
@@ -72,7 +72,7 @@ describe('ElectronKeyStore adversarial input', () => {
     'prototype',
     'toString',
   ])('the prototype-pollution keyID %j behaves as an ordinary key', async (keyID) => {
-    const store = new ElectronKeyStore(`pollution-${keyID}`)
+    const store = new ElectronKeyStore({ name: `pollution-${keyID}` })
     const entry = store.entry(keyID)
     expect(entry.keyID).toBe(keyID)
     // Absent before it is provided — NOT a function inherited from Object.prototype.
@@ -88,18 +88,18 @@ describe('ElectronKeyStore adversarial input', () => {
   })
 
   test('a corrupt stored credential throws rather than yielding a bad key', async () => {
-    const store = new ElectronKeyStore('corrupt')
+    const store = new ElectronKeyStore({ name: 'corrupt' })
     await store.entry('user').provideAsync()
     // Replace the ciphertext with something that is not valid base64.
     storeData.corrupt.keys = JSON.stringify({ user: 'not!valid!base64!' })
-    const fresh = new ElectronKeyStore('corrupt')
+    const fresh = new ElectronKeyStore({ name: 'corrupt' })
     await expect(fresh.entry('user').getAsync()).rejects.toThrow()
   })
 })
 
 describe('ElectronKeyStore.provideIdentity', () => {
   test('returns a stable FullIdentity', async () => {
-    const store = new ElectronKeyStore('identity')
+    const store = new ElectronKeyStore({ name: 'identity' })
     const first = await store.provideIdentity('user')
     expect(first.id).toMatch(/^did:key:z/)
     expect((await store.provideIdentity('user')).id).toBe(first.id)

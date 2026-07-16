@@ -9,6 +9,11 @@ const logger = getLogger(['kokuin', 'expo'])
 
 export type StoreEntryOptions = SecureStore.SecureStoreOptions
 
+export type ExpoKeyEntryParams = {
+  keyID: string
+  options?: StoreEntryOptions
+}
+
 export class ExpoKeyEntry implements MutableKeyEntry<Uint8Array> {
   #keyID: string
   #options?: StoreEntryOptions
@@ -16,9 +21,9 @@ export class ExpoKeyEntry implements MutableKeyEntry<Uint8Array> {
   // no cross-process race to guard — unlike node and electron.
   #provideLock: Promise<unknown> = Promise.resolve()
 
-  constructor(keyID: string, options?: StoreEntryOptions) {
-    this.#keyID = keyID
-    this.#options = options
+  constructor(params: ExpoKeyEntryParams) {
+    this.#keyID = params.keyID
+    this.#options = params.options
   }
 
   get keyID(): string {

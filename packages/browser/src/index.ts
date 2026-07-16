@@ -10,8 +10,8 @@
  * @module browser-keystore
  */
 
-export { BrowserKeyEntry, type GetStore } from './entry.js'
-export { BrowserKeyStore } from './store.js'
+export { BrowserKeyEntry, type BrowserKeyEntryParams, type GetStore } from './entry.js'
+export { BrowserKeyStore, type BrowserKeyStoreParams } from './store.js'
 export {
   assertEd25519Available,
   type BrowserKeyRecord,

@@ -14,7 +14,8 @@ import { NodeKeyEntry } from './entry.js'
 const tracer = createTracer('keystore.node')
 const logger = getLogger(['kokuin', 'node'])
 
-export type NodeKeyStoreOptions = {
+export type NodeKeyStoreParams = {
+  service: string
   /**
    * Path to a lockfile enabling **cross-process** exclusion on `provideAsync`.
    *
@@ -36,16 +37,17 @@ export class NodeKeyStore
 {
   static #byService: Record<string, NodeKeyStore> = Object.create(null)
 
-  static open(service: string, options?: NodeKeyStoreOptions): NodeKeyStore {
+  static open(params: NodeKeyStoreParams): NodeKeyStore {
+    const { service, lockPath } = params
     const cached = NodeKeyStore.#byService[service]
     if (cached == null) {
-      NodeKeyStore.#byService[service] = new NodeKeyStore(service, options)
+      NodeKeyStore.#byService[service] = new NodeKeyStore(params)
       return NodeKeyStore.#byService[service]
     }
-    if (options?.lockPath != null && options.lockPath !== cached.#lockPath) {
+    if (lockPath != null && lockPath !== cached.#lockPath) {
       throw new Error(
         `NodeKeyStore.open('${service}') was already opened with lockPath: ` +
-          `${String(cached.#lockPath)}; cannot reopen with conflicting lockPath: ${options.lockPath}.`,
+          `${String(cached.#lockPath)}; cannot reopen with conflicting lockPath: ${lockPath}.`,
       )
     }
     return cached
@@ -55,18 +57,18 @@ export class NodeKeyStore
   #lockPath?: string
   #service: string
 
-  constructor(service: string, options?: NodeKeyStoreOptions) {
-    this.#service = service
-    this.#lockPath = options?.lockPath
+  constructor(params: NodeKeyStoreParams) {
+    this.#service = params.service
+    this.#lockPath = params.lockPath
   }
 
   #toEntry(credential: Credential): NodeKeyEntry {
-    this.#entries[credential.account] ??= new NodeKeyEntry(
-      this.#service,
-      credential.account,
-      credential.password,
-      this.#lockPath,
-    )
+    this.#entries[credential.account] ??= new NodeKeyEntry({
+      service: this.#service,
+      keyID: credential.account,
+      encoded: credential.password,
+      lockPath: this.#lockPath,
+    })
     return this.#entries[credential.account]
   }
 
@@ -80,7 +82,11 @@ export class NodeKeyStore
   }
 
   entry(keyID: string): NodeKeyEntry {
-    this.#entries[keyID] ??= new NodeKeyEntry(this.#service, keyID, undefined, this.#lockPath)
+    this.#entries[keyID] ??= new NodeKeyEntry({
+      service: this.#service,
+      keyID,
+      lockPath: this.#lockPath,
+    })
     return this.#entries[keyID]
   }
 

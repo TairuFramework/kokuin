@@ -4,6 +4,14 @@ import { AsyncEntry, Entry } from '@napi-rs/keyring'
 import { fromB64, toB64 } from '@sozai/codec'
 import { withFileLock } from '@sozai/lock'
 
+export type NodeKeyEntryParams = {
+  service: string
+  keyID: string
+  /** The base64-encoded key snapshot from a `list()` credential, if any. */
+  encoded?: string
+  lockPath?: string
+}
+
 export class NodeKeyEntry implements MutableKeyEntry<Uint8Array> {
   #async?: AsyncEntry
   #encoded?: string
@@ -21,11 +29,11 @@ export class NodeKeyEntry implements MutableKeyEntry<Uint8Array> {
   // file mutex.
   #provideLock: Promise<unknown> = Promise.resolve()
 
-  constructor(service: string, keyID: string, encoded?: string, lockPath?: string) {
-    this.#service = service
-    this.#keyID = keyID
-    this.#encoded = encoded
-    this.#lockPath = lockPath
+  constructor(params: NodeKeyEntryParams) {
+    this.#service = params.service
+    this.#keyID = params.keyID
+    this.#encoded = params.encoded
+    this.#lockPath = params.lockPath
   }
 
   get keyID(): string {

@@ -64,7 +64,7 @@ import { NodeKeyStore, provideFullIdentityAsync } from '@kokuin/node'
 import { createUnsignedToken, signToken, stringifyToken } from '@kokuin/token'
 
 // Open a keystore (uses OS-level credential storage)
-const store = NodeKeyStore.open('my-app')
+const store = NodeKeyStore.open({ service: 'my-app' })
 
 // Convenience: get or create a FullIdentity from a named key
 const identity = await provideFullIdentityAsync(store, 'user-auth-key')
@@ -109,7 +109,7 @@ import { createUnsignedToken, signToken, stringifyToken } from '@kokuin/token'
 const identity = await provideSigningIdentity('session-key')
 
 // Or open the store explicitly first
-const store = await BrowserKeyStore.open('my-app-keys')
+const store = await BrowserKeyStore.open({ name: 'my-app-keys' })
 const identity2 = await provideSigningIdentity('session-key', store)
 
 // Sign a token with the browser identity
@@ -171,7 +171,7 @@ import { ElectronKeyStore, provideFullIdentityAsync } from '@kokuin/electron'
 import { createUnsignedToken, signToken } from '@kokuin/token'
 
 // Open keystore (uses electron-store with safeStorage)
-const store = ElectronKeyStore.open('app-keystore')
+const store = ElectronKeyStore.open({ name: 'app-keystore' })
 
 // Get or create identity
 const identity = await provideFullIdentityAsync(store, 'main-process-key')

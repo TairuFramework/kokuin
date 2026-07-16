@@ -39,7 +39,7 @@ export class ExpoKeyStore
    * `KeyStore` type does not have. Options now belong to the store.
    */
   entry(keyID: string): ExpoKeyEntry {
-    this.#entries[keyID] ??= new ExpoKeyEntry(keyID, this.#options)
+    this.#entries[keyID] ??= new ExpoKeyEntry({ keyID, options: this.#options })
     return this.#entries[keyID]
   }
 

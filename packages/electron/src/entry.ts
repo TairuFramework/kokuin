@@ -15,6 +15,14 @@ function decryptKey(encrypted: string): Uint8Array {
   return fromB64(safeStorage.decryptString(Buffer.from(fromB64(encrypted))))
 }
 
+export type ElectronKeyEntryParams = {
+  storage: KeyStorage
+  keyID: string
+  key?: Uint8Array
+  allowInsecureStorage?: boolean
+  lockPath?: string
+}
+
 export class ElectronKeyEntry implements MutableKeyEntry<Uint8Array> {
   #keyID: string
   #key?: Uint8Array
@@ -23,18 +31,12 @@ export class ElectronKeyEntry implements MutableKeyEntry<Uint8Array> {
   #lockPath?: string
   #provideLock: Promise<unknown> = Promise.resolve()
 
-  constructor(
-    storage: KeyStorage,
-    keyID: string,
-    key?: Uint8Array,
-    allowInsecureStorage = false,
-    lockPath?: string,
-  ) {
-    this.#keyID = keyID
-    this.#key = key
-    this.#storage = storage
-    this.#allowInsecureStorage = allowInsecureStorage
-    this.#lockPath = lockPath
+  constructor(params: ElectronKeyEntryParams) {
+    this.#keyID = params.keyID
+    this.#key = params.key
+    this.#storage = params.storage
+    this.#allowInsecureStorage = params.allowInsecureStorage ?? false
+    this.#lockPath = params.lockPath
   }
 
   #assertEncryptionAvailable(): void {

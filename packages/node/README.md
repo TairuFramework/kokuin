@@ -8,7 +8,7 @@ npm install @kokuin/node
 
 ## Cross-process locking
 
-`NodeKeyStore.open(service, { lockPath })` is opt-in. Without it, two processes racing to
+`NodeKeyStore.open({ service, lockPath })` is opt-in. Without it, two processes racing to
 generate a key for a fresh keyID both create one, and only the in-process lock applies — the
 result is unsafe: silent key loss on backends that upsert unconditionally (e.g. Linux/
 libsecret via `@napi-rs/keyring`), or a thrown duplicate-item error on macOS Keychain. With

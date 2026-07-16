@@ -10,6 +10,6 @@
  * @module expo-keystore
  */
 
-export { ExpoKeyEntry, type StoreEntryOptions } from './entry.js'
+export { ExpoKeyEntry, type ExpoKeyEntryParams, type StoreEntryOptions } from './entry.js'
 export { ExpoKeyStore } from './store.js'
 export { randomPrivateKey, randomPrivateKeyAsync } from './utils.js'

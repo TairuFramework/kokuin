@@ -51,30 +51,30 @@ describe('randomPrivateKey()', () => {
 
 describe('ExpoKeyEntry', () => {
   test('keyID returns the key ID', () => {
-    const entry = new ExpoKeyEntry('k1')
+    const entry = new ExpoKeyEntry({ keyID: 'k1' })
     expect(entry.keyID).toBe('k1')
   })
 
   test('get() returns null when key does not exist', () => {
-    expect(new ExpoKeyEntry('missing').get()).toBeNull()
+    expect(new ExpoKeyEntry({ keyID: 'missing' }).get()).toBeNull()
   })
 
   test('set() stores key and get() retrieves it', () => {
-    const entry = new ExpoKeyEntry('k2')
+    const entry = new ExpoKeyEntry({ keyID: 'k2' })
     const key = new Uint8Array([1, 2, 3])
     entry.set(key)
     expect(entry.get()).toEqual(key)
   })
 
   test('provide() returns existing key', () => {
-    const entry = new ExpoKeyEntry('k3')
+    const entry = new ExpoKeyEntry({ keyID: 'k3' })
     const key = new Uint8Array([4, 5])
     entry.set(key)
     expect(entry.provide()).toEqual(key)
   })
 
   test('provide() generates and stores new key when none exists', () => {
-    const entry = new ExpoKeyEntry('k4')
+    const entry = new ExpoKeyEntry({ keyID: 'k4' })
     const provided = entry.provide()
     expect(provided).toBeInstanceOf(Uint8Array)
     expect(provided.length).toBe(32)
@@ -83,28 +83,28 @@ describe('ExpoKeyEntry', () => {
 
   // Async variants
   test('getAsync() returns null when key does not exist', async () => {
-    expect(await new ExpoKeyEntry('ak1').getAsync()).toBeNull()
+    expect(await new ExpoKeyEntry({ keyID: 'ak1' }).getAsync()).toBeNull()
   })
 
   test('setAsync() stores key and getAsync() retrieves it', async () => {
-    const entry = new ExpoKeyEntry('ak2')
+    const entry = new ExpoKeyEntry({ keyID: 'ak2' })
     const key = new Uint8Array([11, 22])
     await entry.setAsync(key)
     expect(await entry.getAsync()).toEqual(key)
   })
 
   test('provideAsync() generates key when none exists', async () => {
-    const entry = new ExpoKeyEntry('ak3')
+    const entry = new ExpoKeyEntry({ keyID: 'ak3' })
     const provided = await entry.provideAsync()
     expect(provided).toBeInstanceOf(Uint8Array)
     expect(provided.length).toBe(32)
   })
 
   test('removeAsync() deletes key', async () => {
-    const entry = new ExpoKeyEntry('ak4')
+    const entry = new ExpoKeyEntry({ keyID: 'ak4' })
     await entry.setAsync(new Uint8Array([33]))
     await entry.removeAsync()
-    expect(await new ExpoKeyEntry('ak4').getAsync()).toBeNull()
+    expect(await new ExpoKeyEntry({ keyID: 'ak4' }).getAsync()).toBeNull()
   })
 
   test('remove() triggers the delete', () => {
@@ -115,7 +115,7 @@ describe('ExpoKeyEntry', () => {
 
   test('remove() does not produce an unhandled rejection when the delete fails', async () => {
     vi.mocked(SecureStore.deleteItemAsync).mockRejectedValueOnce(new Error('boom'))
-    const entry = new ExpoKeyEntry('ak5')
+    const entry = new ExpoKeyEntry({ keyID: 'ak5' })
     const result = entry.remove()
     expect(result).toBeUndefined()
     await new Promise((resolve) => setTimeout(resolve, 0))

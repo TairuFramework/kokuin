@@ -68,20 +68,23 @@ export async function generateKeyRecord(): Promise<BrowserKeyRecord> {
   const agreementPublic = x25519.getPublicKey(agreementSecret)
 
   try {
-    const signing = await globalThis.crypto.subtle.importKey(
-      'jwk',
-      { kty: 'OKP', crv: 'Ed25519', d: toB64U(seed), x: toB64U(publicKey) },
-      { name: 'Ed25519' },
-      false,
-      ['sign'],
-    )
-    const agreement = await globalThis.crypto.subtle.importKey(
-      'jwk',
-      { kty: 'OKP', crv: 'X25519', d: toB64U(agreementSecret), x: toB64U(agreementPublic) },
-      { name: 'X25519' },
-      false,
-      ['deriveBits'],
-    )
+    // The two imports are independent — run them concurrently.
+    const [signing, agreement] = await Promise.all([
+      globalThis.crypto.subtle.importKey(
+        'jwk',
+        { kty: 'OKP', crv: 'Ed25519', d: toB64U(seed), x: toB64U(publicKey) },
+        { name: 'Ed25519' },
+        false,
+        ['sign'],
+      ),
+      globalThis.crypto.subtle.importKey(
+        'jwk',
+        { kty: 'OKP', crv: 'X25519', d: toB64U(agreementSecret), x: toB64U(agreementPublic) },
+        { name: 'X25519' },
+        false,
+        ['deriveBits'],
+      ),
+    ])
     return { suite: 'Ed25519', signing, agreement, publicKey }
   } finally {
     seed.fill(0)

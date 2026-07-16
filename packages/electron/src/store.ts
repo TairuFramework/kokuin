@@ -17,7 +17,9 @@ type StoreValues = { keys: Record<string, string> }
 const tracer = createTracer('keystore.electron')
 const logger = getLogger(['kokuin', 'electron'])
 
-export type ElectronKeyStoreOptions = {
+export type ElectronKeyStoreParams = {
+  /** The electron-store file name. Defaults to `'keystore'`. */
+  name?: string
   allowInsecureStorage?: boolean
   /**
    * Path to a lockfile enabling **cross-process** exclusion on `provideAsync`.
@@ -40,26 +42,27 @@ export class ElectronKeyStore
 {
   static #byName: Record<string, ElectronKeyStore> = Object.create(null)
 
-  static open(name = 'keystore', options?: ElectronKeyStoreOptions): ElectronKeyStore {
+  static open(params?: ElectronKeyStoreParams): ElectronKeyStore {
+    const name = params?.name ?? 'keystore'
     const cached = ElectronKeyStore.#byName[name]
     if (cached == null) {
-      ElectronKeyStore.#byName[name] = new ElectronKeyStore(name, options)
+      ElectronKeyStore.#byName[name] = new ElectronKeyStore(params)
       return ElectronKeyStore.#byName[name]
     }
     if (
-      options?.allowInsecureStorage != null &&
-      options.allowInsecureStorage !== cached.#allowInsecureStorage
+      params?.allowInsecureStorage != null &&
+      params.allowInsecureStorage !== cached.#allowInsecureStorage
     ) {
       throw new Error(
         `ElectronKeyStore.open('${name}') was already opened with allowInsecureStorage: ` +
           `${cached.#allowInsecureStorage}; cannot reopen with conflicting allowInsecureStorage: ` +
-          `${options.allowInsecureStorage}.`,
+          `${params.allowInsecureStorage}.`,
       )
     }
-    if (options?.lockPath != null && options.lockPath !== cached.#lockPath) {
+    if (params?.lockPath != null && params.lockPath !== cached.#lockPath) {
       throw new Error(
         `ElectronKeyStore.open('${name}') was already opened with lockPath: ` +
-          `${String(cached.#lockPath)}; cannot reopen with conflicting lockPath: ${options.lockPath}.`,
+          `${String(cached.#lockPath)}; cannot reopen with conflicting lockPath: ${params.lockPath}.`,
       )
     }
     return cached
@@ -70,11 +73,11 @@ export class ElectronKeyStore
   #allowInsecureStorage: boolean
   #lockPath?: string
 
-  constructor(name: string, options?: ElectronKeyStoreOptions) {
-    this.#allowInsecureStorage = options?.allowInsecureStorage ?? false
-    this.#lockPath = options?.lockPath
+  constructor(params?: ElectronKeyStoreParams) {
+    this.#allowInsecureStorage = params?.allowInsecureStorage ?? false
+    this.#lockPath = params?.lockPath
     const store = new Store<StoreValues>({
-      name,
+      name: params?.name ?? 'keystore',
       schema: {
         keys: {
           type: 'object',
@@ -96,13 +99,12 @@ export class ElectronKeyStore
   }
 
   entry(keyID: string): ElectronKeyEntry {
-    this.#entries[keyID] ??= new ElectronKeyEntry(
-      this.#storage,
+    this.#entries[keyID] ??= new ElectronKeyEntry({
+      storage: this.#storage,
       keyID,
-      undefined,
-      this.#allowInsecureStorage,
-      this.#lockPath,
-    )
+      allowInsecureStorage: this.#allowInsecureStorage,
+      lockPath: this.#lockPath,
+    })
     return this.#entries[keyID]
   }
 

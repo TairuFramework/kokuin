@@ -50,34 +50,34 @@ afterEach(async () => {
 
 describe('ElectronKeyStore lockPath', () => {
   test('provideAsync works with a lockPath set', async () => {
-    const store = new ElectronKeyStore('lock-basic', { lockPath })
+    const store = new ElectronKeyStore({ name: 'lock-basic', lockPath })
     expect(await store.entry('user').provideAsync()).toHaveLength(32)
   })
 
   test('concurrent provideAsync calls converge on one key', async () => {
-    const store = new ElectronKeyStore('lock-concurrent', { lockPath })
+    const store = new ElectronKeyStore({ name: 'lock-concurrent', lockPath })
     const entry = store.entry('user')
     const keys = await Promise.all([entry.provideAsync(), entry.provideAsync()])
     expect(keys[1]).toEqual(keys[0])
   })
 
   test('the sync provide() refuses to run under a lockPath', () => {
-    const store = new ElectronKeyStore('lock-sync', { lockPath })
+    const store = new ElectronKeyStore({ name: 'lock-sync', lockPath })
     expect(() => store.entry('user').provide()).toThrow(/lockPath/)
     expect(() => store.provideIdentitySync('user')).toThrow(/lockPath/)
   })
 
   test('no lockfile is left behind', async () => {
-    const store = new ElectronKeyStore('lock-cleanup', { lockPath })
+    const store = new ElectronKeyStore({ name: 'lock-cleanup', lockPath })
     await store.entry('user').provideAsync()
     const { existsSync } = await import('node:fs')
     expect(existsSync(lockPath)).toBe(false)
   })
 
   test('re-opening with a conflicting lockPath throws', () => {
-    ElectronKeyStore.open('conflict', { lockPath })
-    expect(() => ElectronKeyStore.open('conflict', { lockPath: `${lockPath}.other` })).toThrow(
-      /lockPath/,
-    )
+    ElectronKeyStore.open({ name: 'conflict', lockPath })
+    expect(() =>
+      ElectronKeyStore.open({ name: 'conflict', lockPath: `${lockPath}.other` }),
+    ).toThrow(/lockPath/)
   })
 })

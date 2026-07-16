@@ -10,6 +10,11 @@ import { isLegacyES256Record, type StoredKeyRecord } from './utils.js'
 
 const DEFAULT_DB_NAME = 'kokuin:key-store'
 const STORE_NAME = 'keys'
+
+export type BrowserKeyStoreParams = {
+  /** The IndexedDB database name. Defaults to `'kokuin:key-store'`. */
+  name?: string
+}
 const tracer = createTracer('keystore.browser')
 const logger = getLogger(['kokuin', 'browser'])
 
@@ -24,7 +29,8 @@ export class BrowserKeyStore
 {
   static #byName: Record<string, Promise<BrowserKeyStore>> = Object.create(null)
 
-  static open(name = DEFAULT_DB_NAME): Promise<BrowserKeyStore> {
+  static open(params?: BrowserKeyStoreParams): Promise<BrowserKeyStore> {
+    const name = params?.name ?? DEFAULT_DB_NAME
     const existing = BrowserKeyStore.#byName[name]
     if (existing != null) {
       return existing
@@ -59,7 +65,7 @@ export class BrowserKeyStore
   }
 
   entry(keyID: string): BrowserKeyEntry {
-    this.#entries[keyID] ??= new BrowserKeyEntry(keyID, this.#getStore)
+    this.#entries[keyID] ??= new BrowserKeyEntry({ keyID, getStore: this.#getStore })
     return this.#entries[keyID]
   }
 

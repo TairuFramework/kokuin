@@ -117,18 +117,18 @@ describe('BrowserKeyEntry', () => {
   })
 
   test('keyID returns the key ID', () => {
-    const entry = new BrowserKeyEntry('k1', getStore)
+    const entry = new BrowserKeyEntry({ keyID: 'k1', getStore })
     expect(entry.keyID).toBe('k1')
   })
 
   test('getAsync() returns null when key does not exist', async () => {
-    const entry = new BrowserKeyEntry('missing', getStore)
+    const entry = new BrowserKeyEntry({ keyID: 'missing', getStore })
     expect(await entry.getAsync()).toBeNull()
   })
 
   test('setAsync() stores key and getAsync() retrieves it', async () => {
     const record = await generateKeyRecord()
-    const entry = new BrowserKeyEntry('k2', getStore)
+    const entry = new BrowserKeyEntry({ keyID: 'k2', getStore })
     await entry.setAsync(record)
     const retrieved = await entry.getAsync()
     expect(retrieved).toBe(record)
@@ -136,14 +136,14 @@ describe('BrowserKeyEntry', () => {
 
   test('provideAsync() returns existing key without generating new one', async () => {
     const record = await generateKeyRecord()
-    const entry = new BrowserKeyEntry('k3', getStore)
+    const entry = new BrowserKeyEntry({ keyID: 'k3', getStore })
     await entry.setAsync(record)
     const provided = await entry.provideAsync()
     expect(provided).toBe(record)
   })
 
   test('provideAsync() generates and stores new key when none exists', async () => {
-    const entry = new BrowserKeyEntry('k4', getStore)
+    const entry = new BrowserKeyEntry({ keyID: 'k4', getStore })
     const provided = (await entry.provideAsync()) as StoredKeyRecord & { suite?: string }
     expect(provided.suite).toBe('Ed25519')
     // Stored in mock IDB
@@ -154,7 +154,7 @@ describe('BrowserKeyEntry', () => {
     const { getStore, data } = createMockGetStore()
     const seeded = await generateKeyRecord()
     data.set('k', seeded)
-    const entry = new BrowserKeyEntry('k', getStore)
+    const entry = new BrowserKeyEntry({ keyID: 'k', getStore })
     const result = await entry.provideAsync()
     expect(result).toBe(seeded)
     expect(data.get('k')).toBe(seeded)
@@ -162,7 +162,7 @@ describe('BrowserKeyEntry', () => {
 
   test('removeAsync() deletes key from store', async () => {
     const record = await generateKeyRecord()
-    const entry = new BrowserKeyEntry('k5', getStore)
+    const entry = new BrowserKeyEntry({ keyID: 'k5', getStore })
     await entry.setAsync(record)
     expect(data.has('k5')).toBe(true)
     await entry.removeAsync()
@@ -171,7 +171,7 @@ describe('BrowserKeyEntry', () => {
 
   test('setAsync rejects when the transaction aborts after the request succeeds', async () => {
     const { getStore, data, abortNextWrite } = createMockGetStore()
-    const entry = new BrowserKeyEntry('k', getStore)
+    const entry = new BrowserKeyEntry({ keyID: 'k', getStore })
     const record = await generateKeyRecord()
     abortNextWrite()
     await expect(entry.setAsync(record)).rejects.toThrow()

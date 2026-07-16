@@ -56,7 +56,7 @@ describe('NodeKeyStore conformance', () => {
   let counter = 0
   const cases = mutableKeyStoreConformanceCases({
     // A fresh service per case, so the module-level store cache cannot leak between them.
-    createStore: () => new NodeKeyStore(`conformance-${counter++}`),
+    createStore: () => new NodeKeyStore({ service: `conformance-${counter++}` }),
     isSameKey: sameBytes,
     createKey: () => crypto.getRandomValues(new Uint8Array(32)),
   })
@@ -68,7 +68,7 @@ describe('NodeKeyStore conformance', () => {
 
 describe('NodeKeyStore.provideIdentity', () => {
   test('returns a FullIdentity and is stable across calls', async () => {
-    const store = new NodeKeyStore('identity-test')
+    const store = new NodeKeyStore({ service: 'identity-test' })
     const first = await store.provideIdentity('user')
     const second = await store.provideIdentity('user')
     expect(first.id).toMatch(/^did:key:z/)
@@ -79,7 +79,7 @@ describe('NodeKeyStore.provideIdentity', () => {
   })
 
   test('the sync twin agrees with the async one', async () => {
-    const store = new NodeKeyStore('identity-sync-test')
+    const store = new NodeKeyStore({ service: 'identity-sync-test' })
     const asyncIdentity = await store.provideIdentity('user')
     expect(store.provideIdentitySync('user').id).toBe(asyncIdentity.id)
   })

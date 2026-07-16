@@ -4,13 +4,18 @@ import { generateKeyRecord, type StoredKeyRecord } from './utils.js'
 
 export type GetStore = (mode?: IDBTransactionMode) => IDBObjectStore
 
+export type BrowserKeyEntryParams = {
+  keyID: string
+  getStore: GetStore
+}
+
 export class BrowserKeyEntry implements MutableKeyEntry<StoredKeyRecord> {
   #getStore: GetStore
   #keyID: string
 
-  constructor(keyID: string, getStore: GetStore) {
-    this.#getStore = getStore
-    this.#keyID = keyID
+  constructor(params: BrowserKeyEntryParams) {
+    this.#getStore = params.getStore
+    this.#keyID = params.keyID
   }
 
   get keyID(): string {
