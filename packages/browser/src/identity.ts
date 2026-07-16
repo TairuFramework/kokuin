@@ -8,6 +8,7 @@ import {
   type SigningIdentity,
   type SignTokenOptions,
 } from '@kokuin/token'
+import { x25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
 import { b64uFromJSON, fromUTF, toB64U } from '@sozai/codec'
 
@@ -21,6 +22,22 @@ import { type BrowserKeyRecord, getES256PublicKey, type LegacyES256Record } from
 export async function createBrowserIdentity(record: BrowserKeyRecord): Promise<FullIdentity> {
   const publicKey = record.publicKey
   const id = getDID(CODECS.EdDSA, publicKey)
+
+  // The agreement key is stored as raw bytes (WebKit cannot persist an X25519 CryptoKey; see
+  // BrowserKeyRecord). Re-import it here, non-extractable, for ECDH.
+  const agreementPublic = x25519.getPublicKey(record.agreementSecret)
+  const agreement = await globalThis.crypto.subtle.importKey(
+    'jwk',
+    {
+      kty: 'OKP',
+      crv: 'X25519',
+      d: toB64U(record.agreementSecret),
+      x: toB64U(agreementPublic),
+    },
+    { name: 'X25519' },
+    false,
+    ['deriveBits'],
+  )
 
   async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
     payload: Payload,
@@ -63,7 +80,7 @@ export async function createBrowserIdentity(record: BrowserKeyRecord): Promise<F
     )
     const shared = await globalThis.crypto.subtle.deriveBits(
       { name: 'X25519', public: ephemeral },
-      record.agreement,
+      agreement,
       256,
     )
     return new Uint8Array(shared)

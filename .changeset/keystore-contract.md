@@ -33,6 +33,10 @@ params object** rather than positional arguments — `NodeKeyStore.open({ servic
   Existing ES256 records keep working, signing-only, via `provideSigningIdentity`; they are
   never silently re-keyed. Requires Chrome 137+, Firefox 130+, or Safari 17+ — it hard-errors
   rather than falling back, because a fallback would mint a different DID for the same keyID.
+  The X25519 agreement key is stored as raw bytes rather than a non-extractable `CryptoKey`,
+  because WebKit cannot persist an X25519 `CryptoKey` in IndexedDB
+  (https://bugs.webkit.org/show_bug.cgi?id=312279) — without this, Safari minted a new identity
+  on every reload. The signing key stays non-extractable. This is a tracked interim workaround.
 - **node**, **electron**: `PrivateKeyType` is `Uint8Array` in both (electron was base64
   `string`). Both gain an opt-in `lockPath` that closes the cross-process race on a fresh
   keyID: two processes both generate a key, and without the lock the result is unsafe — silent

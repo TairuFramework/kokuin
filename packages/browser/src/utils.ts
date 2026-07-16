@@ -1,9 +1,22 @@
-import { ed25519, x25519 } from '@noble/curves/ed25519.js'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { toB64U } from '@sozai/codec'
 
 /**
- * A key record minted by this version: non-extractable Ed25519 signing key plus the X25519
- * agreement key derived from it, and the Ed25519 public key the DID is built from.
+ * A key record minted by this version: a non-extractable Ed25519 signing key, the raw X25519
+ * agreement *secret* derived from the same seed, and the Ed25519 public key the DID is built
+ * from.
+ *
+ * The agreement key is stored as raw bytes, not as a non-extractable `CryptoKey`, because
+ * WebKit cannot persist an X25519 `CryptoKey` in IndexedDB — `put()` reports success but the
+ * subsequent `get()` returns `null` (https://bugs.webkit.org/show_bug.cgi?id=312279). A
+ * non-extractable Ed25519 `CryptoKey` persists fine, so only the agreement key degrades to
+ * bytes. See the backlog item tracking that bug; revert `agreementSecret` to a non-extractable
+ * `CryptoKey` once it is fixed.
+ *
+ * Security cost of the workaround: `agreementSecret` is the Ed25519 private scalar
+ * (`toMontgomerySecret`), so an attacker who can read IndexedDB (e.g. via XSS) can both decrypt
+ * to this identity and forge its signatures. The signing key itself stays non-extractable, but
+ * the scalar in `agreementSecret` is sufficient on its own — treat a stored record as secret.
  *
  * `suite` is what distinguishes it from a legacy record. An **untagged** record is ES256 by
  * definition — that is all a pre-migration record can be.
@@ -11,7 +24,7 @@ import { toB64U } from '@sozai/codec'
 export type BrowserKeyRecord = {
   suite: 'Ed25519'
   signing: CryptoKey
-  agreement: CryptoKey
+  agreementSecret: Uint8Array
   publicKey: Uint8Array
 }
 
@@ -47,17 +60,17 @@ export async function assertEd25519Available(): Promise<void> {
 /**
  * Mint a new key record.
  *
- * The seed is generated **here**, not by `subtle.generateKey`, and both keys are then imported
- * as non-extractable. This is forced, not stylistic: `jwe.ts` derives a recipient's agreement
- * key from its Ed25519 signing key (`toMontgomery`), so the agreement key MUST be the
- * birational image of the signing key. A `generateKey`'d X25519 keypair is independent, and
- * therefore unreachable by any sender — nothing addressed to the DID could ever be decrypted.
- * Deriving the montgomery secret needs the Ed25519 private scalar, which a non-extractable
- * `generateKey` result never yields.
+ * The seed is generated **here**, not by `subtle.generateKey`, and the signing key is imported
+ * non-extractable. This is forced, not stylistic: `jwe.ts` derives a recipient's agreement key
+ * from its Ed25519 signing key (`toMontgomery`), so the agreement key MUST be the birational
+ * image of the signing key. A `generateKey`'d X25519 keypair is independent, and therefore
+ * unreachable by any sender — nothing addressed to the DID could ever be decrypted. Deriving
+ * the montgomery secret needs the Ed25519 private scalar, which a non-extractable `generateKey`
+ * result never yields.
  *
- * The cost is that the seed exists in the JS heap for the duration of this function. It is
- * zeroed on the way out, and IndexedDB only ever holds the non-extractable `CryptoKey`s — so
- * XSS at any point after provisioning still cannot exfiltrate the key.
+ * The seed is zeroed on the way out. The X25519 `agreementSecret` is **not** — it is the stored
+ * agreement key (WebKit cannot persist an X25519 `CryptoKey`; see {@link BrowserKeyRecord}). It
+ * equals the Ed25519 private scalar, so the returned record is sensitive.
  */
 export async function generateKeyRecord(): Promise<BrowserKeyRecord> {
   await assertEd25519Available()
@@ -65,30 +78,18 @@ export async function generateKeyRecord(): Promise<BrowserKeyRecord> {
   const seed = ed25519.utils.randomSecretKey()
   const publicKey = ed25519.getPublicKey(seed)
   const agreementSecret = ed25519.utils.toMontgomerySecret(seed)
-  const agreementPublic = x25519.getPublicKey(agreementSecret)
 
   try {
-    // The two imports are independent — run them concurrently.
-    const [signing, agreement] = await Promise.all([
-      globalThis.crypto.subtle.importKey(
-        'jwk',
-        { kty: 'OKP', crv: 'Ed25519', d: toB64U(seed), x: toB64U(publicKey) },
-        { name: 'Ed25519' },
-        false,
-        ['sign'],
-      ),
-      globalThis.crypto.subtle.importKey(
-        'jwk',
-        { kty: 'OKP', crv: 'X25519', d: toB64U(agreementSecret), x: toB64U(agreementPublic) },
-        { name: 'X25519' },
-        false,
-        ['deriveBits'],
-      ),
-    ])
-    return { suite: 'Ed25519', signing, agreement, publicKey }
+    const signing = await globalThis.crypto.subtle.importKey(
+      'jwk',
+      { kty: 'OKP', crv: 'Ed25519', d: toB64U(seed), x: toB64U(publicKey) },
+      { name: 'Ed25519' },
+      false,
+      ['sign'],
+    )
+    return { suite: 'Ed25519', signing, agreementSecret, publicKey }
   } finally {
     seed.fill(0)
-    agreementSecret.fill(0)
   }
 }
 

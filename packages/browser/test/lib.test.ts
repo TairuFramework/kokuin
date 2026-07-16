@@ -62,7 +62,7 @@ describe('generateKeyRecord()', () => {
     const record = await generateKeyRecord()
     expect(record.suite).toBe('Ed25519')
     expect(record.signing).toBeDefined()
-    expect(record.agreement).toBeDefined()
+    expect(record.agreementSecret).toHaveLength(32)
   })
 
   test('signing key is non-extractable', async () => {
