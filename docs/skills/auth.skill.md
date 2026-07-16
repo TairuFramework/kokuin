@@ -102,15 +102,17 @@ for (const e of allEntries) {
 ### Pattern 3: Browser Keystore with IndexedDB
 
 ```typescript
-import { BrowserKeyStore, provideSigningIdentity } from '@kokuin/browser'
+import { BrowserKeyStore } from '@kokuin/browser'
 import { createUnsignedToken, signToken, stringifyToken } from '@kokuin/token'
 
-// Get or create a signing identity (auto-opens the default store)
-const identity = await provideSigningIdentity('session-key')
-
-// Or open the store explicitly first
+// `open()` is memoized per database name — repeated calls resolve the same store
 const store = await BrowserKeyStore.open({ name: 'my-app-keys' })
-const identity2 = await provideSigningIdentity('session-key', store)
+
+// A FullIdentity — signing and decryption. Throws on a legacy ES256 record.
+const identity = await store.provideIdentity('session-key')
+
+// Signing-only, accepting both the current and legacy suites
+const signingIdentity = await store.provideSigningIdentity('session-key')
 
 // Sign a token with the browser identity
 const token = await signToken(identity, createUnsignedToken({
@@ -128,10 +130,11 @@ await entry.removeAsync()
 
 **Key points**:
 - Uses IndexedDB for persistent storage across page reloads
-- Keys are `CryptoKeyPair` objects (non-exportable — Web Crypto ES256 / P-256)
+- Holds a non-extractable Ed25519 signing key plus the X25519 agreement key derived from it — a current record both signs and decrypts
+- Requires `SubtleCrypto` support for both algorithms: Chrome 137+, Firefox 130+, Safari 17+. Older browsers hard-error rather than falling back to ES256, since a fallback would mint a different DID for the same keyID
+- Legacy ES256 records sign but cannot decrypt (WebCrypto will not let an ECDSA key do `deriveBits`). `store.provideIdentity(keyID)` throws on one; use `store.provideSigningIdentity(keyID)`. They are never silently re-keyed — that would change the DID
 - All operations are async (IndexedDB requirement)
-- `@kokuin/browser` exports `provideSigningIdentity` only — there is no `provideFullIdentity`. Use `@kokuin/node`, `@kokuin/expo`, or `@kokuin/electron` when a `FullIdentity` (signing + decryption) is required
-- Keys survive browser restart but are domain-specific (per-origin)
+- Keys survive browser restart but are per-origin
 
 ### Pattern 4: Multi-Platform Mobile with Expo Keystore
 
