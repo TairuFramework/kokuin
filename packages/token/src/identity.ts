@@ -317,18 +317,38 @@ function signWith(key: ResolvedKey, data: Uint8Array): Uint8Array {
   }
 }
 
-function pickKemKey(keys: Array<ResolvedKey>, kid?: string): ResolvedKey {
+/**
+ * The X25519 private scalar this identity agrees with, for `kid` or by default.
+ *
+ * A peer:4 identity uses its published `keyAgreement` key. A `did:key` EdDSA identity has no
+ * published agreement key — a sender derives one from its signing key via the birational map —
+ * so it must derive the matching secret the same way, exactly as `createDecryptingIdentity` does.
+ */
+function pickAgreementSecret(keys: Array<ResolvedKey>, isPeer: boolean, kid?: string): Uint8Array {
   if (kid != null) {
-    const found = keys.find((k) => k.fragment === kid)
+    // No birational fallback here, unlike the no-kid branch below: a kid names one specific
+    // key, so falling back to a *different*, derived key would silently agree with the wrong
+    // secret. This means a did:key identity's agreeKey(epk, '#key-0') throws where
+    // agreeKey(epk) succeeds — a known asymmetry, currently unreachable: decryptToken (jwe.ts)
+    // never passes a kid, and DecryptingIdentity#agreeKey has no kid parameter at all.
+    const found = keys.find((key) => key.fragment === kid)
     if (found == null) throw new Error(`KidNotFound: ${kid}`)
     if (found.purpose !== 'kem' || found.alg !== 'X25519') {
       throw new Error(`Kid is not a KEM X25519 key: ${kid}`)
     }
-    return found
+    return found.privateKey
   }
-  const first = keys.find((k) => k.purpose === 'kem' && k.alg === 'X25519')
-  if (first == null) throw new Error('No KEM key in identity')
-  return first
+  const kem = keys.find((key) => key.purpose === 'kem' && key.alg === 'X25519')
+  if (kem != null) {
+    return kem.privateKey
+  }
+  if (!isPeer) {
+    const sig = keys.find((key) => key.purpose === 'sig' && key.alg === 'EdDSA')
+    if (sig != null) {
+      return ed25519.utils.toMontgomerySecret(sig.privateKey)
+    }
+  }
+  throw new Error('No KEM key in identity')
 }
 
 function buildIdentity(
@@ -380,12 +400,11 @@ function buildIdentity(
   }
 
   async function agreeKey(ephemeralPublicKey: Uint8Array, kid?: string): Promise<Uint8Array> {
-    const key = pickKemKey(keys, kid)
-    return x25519.getSharedSecret(key.privateKey, ephemeralPublicKey)
+    return x25519.getSharedSecret(pickAgreementSecret(keys, isPeer, kid), ephemeralPublicKey)
   }
 
   async function decrypt(jwe: string): Promise<Uint8Array> {
-    pickKemKey(keys)
+    pickAgreementSecret(keys, isPeer) // fail fast when this identity cannot agree at all
     return decryptToken({ id, decrypt, agreeKey }, jwe)
   }
 

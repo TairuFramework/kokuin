@@ -10,6 +10,5 @@
  * @module node-keystore
  */
 
-export { NodeKeyEntry } from './entry.js'
-export { provideFullIdentity, provideFullIdentityAsync } from './identity.js'
-export { NodeKeyStore } from './store.js'
+export { NodeKeyEntry, type NodeKeyEntryParams } from './entry.js'
+export { NodeKeyStore, type NodeKeyStoreParams } from './store.js'

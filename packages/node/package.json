@@ -38,8 +38,12 @@
     "@kokuin/otel": "workspace:^",
     "@kokuin/token": "workspace:^",
     "@sozai/codec": "catalog:",
+    "@sozai/lock": "catalog:",
     "@sozai/log": "catalog:",
     "@sozai/otel": "catalog:",
     "@napi-rs/keyring": "catalog:"
+  },
+  "devDependencies": {
+    "@kokuin/keystore-conformance": "workspace:^"
   }
 }

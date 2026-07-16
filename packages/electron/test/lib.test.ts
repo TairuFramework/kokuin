@@ -32,21 +32,20 @@ vi.mock('electron-store', () => {
   return { default: MockStore }
 })
 
-import {
-  type ElectronKeyEntry,
-  ElectronKeyStore,
-  provideFullIdentity,
-  provideFullIdentityAsync,
-} from '../src/index.js'
+import { type ElectronKeyEntry, ElectronKeyStore } from '../src/index.js'
 
 beforeEach(() => {
   storeData = {}
   encryptionAvailable = true
 })
 
+function bytes(value: string): Uint8Array {
+  return new TextEncoder().encode(value)
+}
+
 describe('ElectronKeyEntry', () => {
   function createEntry(keyID: string): ElectronKeyEntry {
-    return new ElectronKeyStore(`test-${keyID}`).entry(keyID)
+    return new ElectronKeyStore({ name: `test-${keyID}` }).entry(keyID)
   }
 
   test('keyID returns the key ID', () => {
@@ -59,13 +58,13 @@ describe('ElectronKeyEntry', () => {
 
   test('set() stores key and get() retrieves it', () => {
     const entry = createEntry('k2')
-    entry.set('my-private-key')
-    expect(entry.get()).toBe('my-private-key')
+    entry.set(bytes('my-private-key'))
+    expect(entry.get()).toEqual(bytes('my-private-key'))
   })
 
   test('get() caches decrypted key', () => {
     const entry = createEntry('k3')
-    entry.set('cached-key')
+    entry.set(bytes('cached-key'))
     const first = entry.get()
     const second = entry.get()
     expect(first).toBe(second)
@@ -73,34 +72,38 @@ describe('ElectronKeyEntry', () => {
 
   test('provide() returns existing key', () => {
     const entry = createEntry('k4')
-    entry.set('existing')
-    expect(entry.provide()).toBe('existing')
+    const existing = bytes('existing')
+    entry.set(existing)
+    // Not `.toBe`: provide() re-reads via #provideUnlocked, which drops the in-memory cache so
+    // the locked cross-process path sees a peer's write rather than a stale local read. That
+    // makes a fresh Uint8Array with the same bytes, not the same reference.
+    expect(entry.provide()).toEqual(existing)
   })
 
   test('provide() generates and stores new key when none exists', () => {
     const entry = createEntry('k5')
     const provided = entry.provide()
-    expect(typeof provided).toBe('string')
-    expect(provided.length).toBeGreaterThan(0)
-    expect(entry.get()).toBe(provided)
+    expect(provided).toBeInstanceOf(Uint8Array)
+    expect(provided).toHaveLength(32)
+    expect(entry.get()).toEqual(provided)
   })
 
   test('remove() clears key from storage', () => {
     const entry = createEntry('k6')
-    entry.set('to-remove')
+    entry.set(bytes('to-remove'))
     entry.remove()
-    const fresh = new ElectronKeyStore('test-k6').entry('k6')
+    const fresh = new ElectronKeyStore({ name: 'test-k6' }).entry('k6')
     expect(fresh.get()).toBeNull()
   })
 
   test('set() preserves other keys in the same store', () => {
-    const store = ElectronKeyStore.open('multi-key')
-    store.entry('key-a').set('secret-a')
-    store.entry('key-b').set('secret-b')
+    const store = ElectronKeyStore.open({ name: 'multi-key' })
+    store.entry('key-a').set(bytes('secret-a'))
+    store.entry('key-b').set(bytes('secret-b'))
     // Read back via a fresh store instance to bypass the entry #key cache
-    const fresh = new ElectronKeyStore('multi-key')
-    expect(fresh.entry('key-a').get()).toBe('secret-a')
-    expect(fresh.entry('key-b').get()).toBe('secret-b')
+    const fresh = new ElectronKeyStore({ name: 'multi-key' })
+    expect(fresh.entry('key-a').get()).toEqual(bytes('secret-a'))
+    expect(fresh.entry('key-b').get()).toEqual(bytes('secret-b'))
   })
 
   // Async variants (wrappers around sync)
@@ -110,118 +113,120 @@ describe('ElectronKeyEntry', () => {
 
   test('setAsync() stores key', async () => {
     const entry = createEntry('ak2')
-    await entry.setAsync('async-key')
-    expect(await entry.getAsync()).toBe('async-key')
+    await entry.setAsync(bytes('async-key'))
+    expect(await entry.getAsync()).toEqual(bytes('async-key'))
   })
 
   test('provideAsync() generates key when none exists', async () => {
     const provided = await createEntry('ak3').provideAsync()
-    expect(typeof provided).toBe('string')
-    expect(provided.length).toBeGreaterThan(0)
+    expect(provided).toBeInstanceOf(Uint8Array)
+    expect(provided).toHaveLength(32)
   })
 
   test('removeAsync() clears key', async () => {
     const entry = createEntry('ak4')
-    await entry.setAsync('temp')
+    await entry.setAsync(bytes('temp'))
     await entry.removeAsync()
-    const fresh = new ElectronKeyStore('test-ak4').entry('ak4')
+    const fresh = new ElectronKeyStore({ name: 'test-ak4' }).entry('ak4')
     expect(await fresh.getAsync()).toBeNull()
   })
 })
 
 describe('ElectronKeyStore', () => {
   test('open() returns singleton for same name', () => {
-    const a = ElectronKeyStore.open('singleton-a')
-    const b = ElectronKeyStore.open('singleton-a')
+    const a = ElectronKeyStore.open({ name: 'singleton-a' })
+    const b = ElectronKeyStore.open({ name: 'singleton-a' })
     expect(a).toBe(b)
   })
 
   test('open() returns different instances for different names', () => {
-    const a = ElectronKeyStore.open('store-x')
-    const b = ElectronKeyStore.open('store-y')
+    const a = ElectronKeyStore.open({ name: 'store-x' })
+    const b = ElectronKeyStore.open({ name: 'store-y' })
     expect(a).not.toBe(b)
   })
 
   test('open() defaults to "keystore" name', () => {
     const a = ElectronKeyStore.open()
-    const b = ElectronKeyStore.open('keystore')
+    const b = ElectronKeyStore.open({ name: 'keystore' })
     expect(a).toBe(b)
   })
 
   test('entry() returns cached entry for same keyID', () => {
-    const store = ElectronKeyStore.open('cache-test')
+    const store = ElectronKeyStore.open({ name: 'cache-test' })
     expect(store.entry('x')).toBe(store.entry('x'))
   })
 
   test('entry("constructor") returns a real entry, not a prototype member', () => {
-    const store = ElectronKeyStore.open('proto-electron')
+    const store = ElectronKeyStore.open({ name: 'proto-electron' })
     const entry = store.entry('constructor')
     expect(entry.keyID).toBe('constructor')
   })
 
   test('open() throws on conflicting allowInsecureStorage flag for a cached name', () => {
-    ElectronKeyStore.open('flag-conflict', { allowInsecureStorage: false })
-    expect(() => ElectronKeyStore.open('flag-conflict', { allowInsecureStorage: true })).toThrow(
-      /allowInsecureStorage/i,
-    )
+    ElectronKeyStore.open({ name: 'flag-conflict', allowInsecureStorage: false })
+    expect(() =>
+      ElectronKeyStore.open({ name: 'flag-conflict', allowInsecureStorage: true }),
+    ).toThrow(/allowInsecureStorage/i)
   })
 
   test('open() reuses cached instance when flag matches or is omitted', () => {
-    const a = ElectronKeyStore.open('flag-same', { allowInsecureStorage: true })
-    expect(ElectronKeyStore.open('flag-same', { allowInsecureStorage: true })).toBe(a)
-    expect(ElectronKeyStore.open('flag-same')).toBe(a)
+    const a = ElectronKeyStore.open({ name: 'flag-same', allowInsecureStorage: true })
+    expect(ElectronKeyStore.open({ name: 'flag-same', allowInsecureStorage: true })).toBe(a)
+    expect(ElectronKeyStore.open({ name: 'flag-same' })).toBe(a)
   })
 })
 
 describe('ElectronKeyEntry encryption gate', () => {
   test('set() throws when encryption is unavailable', () => {
     encryptionAvailable = false
-    const entry = ElectronKeyStore.open('gate-1').entry('k')
-    expect(() => entry.set('secret')).toThrow(/encryption/i)
+    const entry = ElectronKeyStore.open({ name: 'gate-1' }).entry('k')
+    expect(() => entry.set(bytes('secret'))).toThrow(/encryption/i)
   })
 
   test('allowInsecureStorage bypasses the throw', () => {
     encryptionAvailable = false
-    const entry = ElectronKeyStore.open('gate-2', { allowInsecureStorage: true }).entry('k')
-    expect(() => entry.set('secret')).not.toThrow()
-    expect(entry.get()).toBe('secret')
+    const entry = ElectronKeyStore.open({ name: 'gate-2', allowInsecureStorage: true }).entry('k')
+    expect(() => entry.set(bytes('secret'))).not.toThrow()
+    expect(entry.get()).toEqual(bytes('secret'))
   })
 
   test('reads still work when encryption is unavailable', () => {
-    const entry = ElectronKeyStore.open('gate-3').entry('k')
-    entry.set('secret')
+    const entry = ElectronKeyStore.open({ name: 'gate-3' }).entry('k')
+    entry.set(bytes('secret'))
     encryptionAvailable = false
-    expect(entry.get()).toBe('secret')
+    expect(entry.get()).toEqual(bytes('secret'))
   })
 
   test('setAsync rejects (not throws synchronously) when encryption unavailable', async () => {
     encryptionAvailable = false
-    const entry = ElectronKeyStore.open('gate-async-1').entry('k')
-    await expect(entry.setAsync('secret')).rejects.toThrow(/encryption/i)
+    const entry = ElectronKeyStore.open({ name: 'gate-async-1' }).entry('k')
+    await expect(entry.setAsync(bytes('secret'))).rejects.toThrow(/encryption/i)
   })
 
   test('provideAsync rejects when encryption unavailable', async () => {
     encryptionAvailable = false
-    const entry = ElectronKeyStore.open('gate-async-2').entry('k')
+    const entry = ElectronKeyStore.open({ name: 'gate-async-2' }).entry('k')
     await expect(entry.provideAsync()).rejects.toThrow(/encryption/i)
   })
 })
 
-describe('provideFullIdentity()', () => {
-  test('creates identity from store instance', () => {
-    const store = ElectronKeyStore.open('eid-1')
-    const identity = provideFullIdentity(store, 'k1')
+describe('ElectronKeyStore#provideIdentitySync / #provideIdentity', () => {
+  test('provideIdentitySync creates identity from store instance', () => {
+    const store = ElectronKeyStore.open({ name: 'eid-1' })
+    const identity = store.provideIdentitySync('k1')
     expect(identity.id).toMatch(/^did:key:z/)
     expect(identity.signToken).toBeInstanceOf(Function)
   })
 
-  test('creates identity from name string', () => {
-    const identity = provideFullIdentity('eid-2', 'k1')
+  test('provideIdentitySync creates identity from a store opened by name', () => {
+    const store = ElectronKeyStore.open({ name: 'eid-2' })
+    const identity = store.provideIdentitySync('k1')
     expect(identity.id).toMatch(/^did:key:z/)
   })
 
-  test('async variant works', async () => {
-    const identity = await provideFullIdentityAsync('eid-3', 'k1')
+  test('provideIdentity (async) works', async () => {
+    const store = ElectronKeyStore.open({ name: 'eid-3' })
+    const identity = await store.provideIdentity('k1')
     expect(identity.id).toMatch(/^did:key:z/)
   })
 })

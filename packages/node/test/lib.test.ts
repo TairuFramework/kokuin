@@ -49,12 +49,7 @@ vi.mock('@napi-rs/keyring', () => {
   }
 })
 
-import {
-  NodeKeyEntry,
-  NodeKeyStore,
-  provideFullIdentity,
-  provideFullIdentityAsync,
-} from '../src/index.js'
+import { NodeKeyEntry, NodeKeyStore } from '../src/index.js'
 
 beforeEach(() => {
   mockKeyring = {}
@@ -62,17 +57,17 @@ beforeEach(() => {
 
 describe('NodeKeyEntry', () => {
   test('keyID returns the key ID', () => {
-    const entry = new NodeKeyEntry('svc', 'k1')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'k1' })
     expect(entry.keyID).toBe('k1')
   })
 
   test('get() returns null when key does not exist', () => {
-    const entry = new NodeKeyEntry('svc', 'missing')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'missing' })
     expect(entry.get()).toBeNull()
   })
 
   test('set() stores key and get() retrieves it', () => {
-    const entry = new NodeKeyEntry('svc', 'k1')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'k1' })
     const key = new Uint8Array([1, 2, 3])
     entry.set(key)
     const result = entry.get()
@@ -81,7 +76,7 @@ describe('NodeKeyEntry', () => {
   })
 
   test('get() returns cached key on subsequent calls', () => {
-    const entry = new NodeKeyEntry('svc', 'k2')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'k2' })
     entry.set(new Uint8Array([10, 20]))
     const first = entry.get()
     const second = entry.get()
@@ -89,14 +84,14 @@ describe('NodeKeyEntry', () => {
   })
 
   test('provide() returns existing key', () => {
-    const entry = new NodeKeyEntry('svc', 'k3')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'k3' })
     const key = new Uint8Array([5, 6])
     entry.set(key)
     expect(entry.provide()).toEqual(key)
   })
 
   test('provide() generates and stores new key when none exists', () => {
-    const entry = new NodeKeyEntry('svc', 'k4')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'k4' })
     const provided = entry.provide()
     expect(provided).toBeInstanceOf(Uint8Array)
     expect(provided.length).toBeGreaterThan(0)
@@ -105,42 +100,42 @@ describe('NodeKeyEntry', () => {
   })
 
   test('remove() clears key from keyring', () => {
-    const entry = new NodeKeyEntry('svc', 'k5')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'k5' })
     entry.set(new Uint8Array([7, 8]))
     entry.remove()
     // Fresh entry (no cache) should return null
-    const fresh = new NodeKeyEntry('svc', 'k5')
+    const fresh = new NodeKeyEntry({ service: 'svc', keyID: 'k5' })
     expect(fresh.get()).toBeNull()
   })
 
   test('constructor accepts pre-loaded encoded key and decodes it lazily', () => {
     const key = new Uint8Array([99])
-    const entry = new NodeKeyEntry('svc', 'k6', toB64(key))
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'k6', encoded: toB64(key) })
     expect(entry.get()).toEqual(key)
   })
 
   // Async variants
   test('getAsync() returns null when key does not exist', async () => {
-    const entry = new NodeKeyEntry('svc', 'ak1')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'ak1' })
     expect(await entry.getAsync()).toBeNull()
   })
 
   test('setAsync() stores key and getAsync() retrieves it', async () => {
-    const entry = new NodeKeyEntry('svc', 'ak2')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'ak2' })
     const key = new Uint8Array([11, 22])
     await entry.setAsync(key)
     expect(await entry.getAsync()).toEqual(key)
   })
 
   test('provideAsync() generates key when none exists', async () => {
-    const entry = new NodeKeyEntry('svc', 'ak3')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'ak3' })
     const provided = await entry.provideAsync()
     expect(provided).toBeInstanceOf(Uint8Array)
     expect(provided.length).toBeGreaterThan(0)
   })
 
   test('concurrent provideAsync calls resolve to the same key', async () => {
-    const entry = new NodeKeyEntry('svc', 'race')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'race' })
     const [a, b, c] = await Promise.all([
       entry.provideAsync(),
       entry.provideAsync(),
@@ -151,48 +146,48 @@ describe('NodeKeyEntry', () => {
   })
 
   test('removeAsync() clears key', async () => {
-    const entry = new NodeKeyEntry('svc', 'ak4')
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: 'ak4' })
     await entry.setAsync(new Uint8Array([33]))
     await entry.removeAsync()
-    const fresh = new NodeKeyEntry('svc', 'ak4')
+    const fresh = new NodeKeyEntry({ service: 'svc', keyID: 'ak4' })
     expect(await fresh.getAsync()).toBeNull()
   })
 })
 
 describe('NodeKeyStore', () => {
   test('open() returns singleton for same service', () => {
-    const a = NodeKeyStore.open('singleton-1')
-    const b = NodeKeyStore.open('singleton-1')
+    const a = NodeKeyStore.open({ service: 'singleton-1' })
+    const b = NodeKeyStore.open({ service: 'singleton-1' })
     expect(a).toBe(b)
   })
 
   test('open() returns different instances for different services', () => {
-    const a = NodeKeyStore.open('svc-a')
-    const b = NodeKeyStore.open('svc-b')
+    const a = NodeKeyStore.open({ service: 'svc-a' })
+    const b = NodeKeyStore.open({ service: 'svc-b' })
     expect(a).not.toBe(b)
   })
 
   test('entry() returns NodeKeyEntry with correct keyID', () => {
-    const store = NodeKeyStore.open('entry-test')
+    const store = NodeKeyStore.open({ service: 'entry-test' })
     const entry = store.entry('my-key')
     expect(entry).toBeInstanceOf(NodeKeyEntry)
     expect(entry.keyID).toBe('my-key')
   })
 
   test('entry() returns cached entry for same keyID', () => {
-    const store = NodeKeyStore.open('cache-test')
+    const store = NodeKeyStore.open({ service: 'cache-test' })
     expect(store.entry('x')).toBe(store.entry('x'))
   })
 
   test('entry("constructor") returns a real entry, not a prototype member', () => {
-    const store = NodeKeyStore.open('proto-svc')
+    const store = NodeKeyStore.open({ service: 'proto-svc' })
     const entry = store.entry('constructor')
     expect(entry).toBeInstanceOf(NodeKeyEntry)
     expect(entry.keyID).toBe('constructor')
   })
 
   test('list() returns entries from keyring', () => {
-    const store = new NodeKeyStore('list-test')
+    const store = new NodeKeyStore({ service: 'list-test' })
     store.entry('la').set(new Uint8Array([1]))
     const entries = store.list()
     expect(entries.length).toBeGreaterThanOrEqual(1)
@@ -200,12 +195,12 @@ describe('NodeKeyStore', () => {
   })
 
   test('list() returns empty array when no credentials', () => {
-    const store = new NodeKeyStore('empty-list')
+    const store = new NodeKeyStore({ service: 'empty-list' })
     expect(store.list()).toHaveLength(0)
   })
 
   test('listAsync() returns entries', async () => {
-    const store = new NodeKeyStore('list-async')
+    const store = new NodeKeyStore({ service: 'list-async' })
     store.entry('lx').set(new Uint8Array([2]))
     const entries = await store.listAsync()
     expect(entries.length).toBeGreaterThanOrEqual(1)
@@ -214,7 +209,7 @@ describe('NodeKeyStore', () => {
   test('list() tolerates a corrupt credential and still returns the good one', () => {
     mockKeyring.good = toB64(new Uint8Array([1, 2, 3]))
     mockKeyring.corrupt = '!!!not-base64!!!'
-    const store = NodeKeyStore.open('svc')
+    const store = NodeKeyStore.open({ service: 'svc' })
     const entries = store.list()
     expect(entries.map((e) => e.keyID).sort()).toEqual(['corrupt', 'good'])
     const good = entries.find((e) => e.keyID === 'good')
@@ -222,28 +217,28 @@ describe('NodeKeyStore', () => {
   })
 })
 
-describe('provideFullIdentity()', () => {
+describe('NodeKeyStore#provideIdentity()', () => {
   test('creates identity from store instance', () => {
-    const store = NodeKeyStore.open('id-test-1')
-    const identity = provideFullIdentity(store, 'k1')
+    const store = NodeKeyStore.open({ service: 'id-test-1' })
+    const identity = store.provideIdentitySync('k1')
     expect(identity.id).toMatch(/^did:key:z/)
     expect(identity.signToken).toBeInstanceOf(Function)
   })
 
   test('creates identity from service name string', () => {
-    const identity = provideFullIdentity('id-test-2', 'k1')
+    const identity = NodeKeyStore.open({ service: 'id-test-2' }).provideIdentitySync('k1')
     expect(identity.id).toMatch(/^did:key:z/)
   })
 
   test('async variant works', async () => {
-    const identity = await provideFullIdentityAsync('id-test-3', 'k1')
+    const identity = await NodeKeyStore.open({ service: 'id-test-3' }).provideIdentity('k1')
     expect(identity.id).toMatch(/^did:key:z/)
   })
 
   test('same key produces same identity', () => {
-    const store = NodeKeyStore.open('id-test-4')
-    const a = provideFullIdentity(store, 'same')
-    const b = provideFullIdentity(store, 'same')
+    const store = NodeKeyStore.open({ service: 'id-test-4' })
+    const a = store.provideIdentitySync('same')
+    const b = store.provideIdentitySync('same')
     expect(a.id).toBe(b.id)
   })
 })

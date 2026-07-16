@@ -1,15 +1,21 @@
-import { provideFullIdentity } from '@kokuin/expo'
-import { useState } from 'react'
+import { ExpoKeyStore } from '@kokuin/expo'
+import { useEffect, useState } from 'react'
 import { Text } from 'react-native'
 
 export default function TwoIdentities() {
-  const [alpha] = useState(() => provideFullIdentity('alpha'))
-  const [beta] = useState(() => provideFullIdentity('beta'))
+  const [alpha, setAlpha] = useState<string | null>(null)
+  const [beta, setBeta] = useState<string | null>(null)
+
+  useEffect(() => {
+    const store = ExpoKeyStore.open()
+    store.provideIdentity('alpha').then((identity) => setAlpha(identity.id))
+    store.provideIdentity('beta').then((identity) => setBeta(identity.id))
+  }, [])
 
   return (
     <>
-      <Text>Alpha DID: {alpha.id}</Text>
-      <Text>Beta DID: {beta.id}</Text>
+      {alpha ? <Text>Alpha DID: {alpha}</Text> : null}
+      {beta ? <Text>Beta DID: {beta}</Text> : null}
     </>
   )
 }

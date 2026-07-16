@@ -18,6 +18,7 @@ export {
 } from './cache.js'
 export {
   CODECS,
+  getAgreementKey,
   getAlgorithmAndPublicKey,
   getDID,
   getSignatureInfo,
@@ -69,7 +70,7 @@ export {
   unwrapEnvelope,
   wrapEnvelope,
 } from './jwe.js'
-export type { KeyEntry, KeyStore } from './keystore.js'
+export type { KeyEntry, KeyStore, MutableKeyEntry } from './keystore.js'
 export {
   decodeMultibase,
   encodeMultibase,

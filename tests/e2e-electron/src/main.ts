@@ -1,10 +1,11 @@
 import path from 'node:path'
-import { provideFullIdentityAsync } from '@kokuin/electron'
+import { ElectronKeyStore } from '@kokuin/electron'
 import { stringifyToken } from '@kokuin/token'
 import { app, BrowserWindow, ipcMain } from 'electron'
 
 ipcMain.handle('sign', async (_event, payload: Record<string, unknown>, keyID?: string) => {
-  const identity = await provideFullIdentityAsync('KokuinKeystore', keyID ?? 'test')
+  const store = ElectronKeyStore.open({ name: 'KokuinKeystore' })
+  const identity = await store.provideIdentity(keyID ?? 'test')
   const token = await identity.signToken(payload)
   return stringifyToken(token)
 })

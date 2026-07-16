@@ -1,18 +1,29 @@
-import type { KeyEntry } from '@kokuin/token'
+import type { MutableKeyEntry } from '@kokuin/token'
 import { fromB64, toB64 } from '@sozai/codec'
+import { getLogger } from '@sozai/log'
 import * as SecureStore from 'expo-secure-store'
 
 import { randomPrivateKey, randomPrivateKeyAsync } from './utils.js'
 
+const logger = getLogger(['kokuin', 'expo'])
+
 export type StoreEntryOptions = SecureStore.SecureStoreOptions
 
-export class ExpoKeyEntry implements KeyEntry<Uint8Array> {
+export type ExpoKeyEntryParams = {
+  keyID: string
+  options?: StoreEntryOptions
+}
+
+export class ExpoKeyEntry implements MutableKeyEntry<Uint8Array> {
   #keyID: string
   #options?: StoreEntryOptions
+  // Serializes provideAsync within this process. Expo runs a single app process, so there is
+  // no cross-process race to guard — unlike node and electron.
+  #provideLock: Promise<unknown> = Promise.resolve()
 
-  constructor(keyID: string, options?: StoreEntryOptions) {
-    this.#keyID = keyID
-    this.#options = options
+  constructor(params: ExpoKeyEntryParams) {
+    this.#keyID = params.keyID
+    this.#options = params.options
   }
 
   get keyID(): string {
@@ -47,14 +58,28 @@ export class ExpoKeyEntry implements KeyEntry<Uint8Array> {
     return privateKey
   }
 
-  async provideAsync(): Promise<Uint8Array> {
-    const existing = await this.getAsync()
-    if (existing != null) {
-      return existing
-    }
-    const privateKey = await randomPrivateKeyAsync()
-    await this.setAsync(privateKey)
-    return privateKey
+  provideAsync(): Promise<Uint8Array> {
+    const run = this.#provideLock.then(async () => {
+      const existing = await this.getAsync()
+      if (existing != null) {
+        return existing
+      }
+      const privateKey = await randomPrivateKeyAsync()
+      await this.setAsync(privateKey)
+      return privateKey
+    })
+    this.#provideLock = run.catch(() => undefined)
+    return run
+  }
+
+  /**
+   * Delete the key. `expo-secure-store` has no synchronous delete, so this starts the deletion
+   * and returns immediately — use {@link removeAsync} when you need to know it completed.
+   */
+  remove(): void {
+    SecureStore.deleteItemAsync(this.#keyID, this.#options).catch((error: unknown) => {
+      logger.warn('Failed to remove key {keyID}: {error}', { keyID: this.#keyID, error })
+    })
   }
 
   async removeAsync(): Promise<void> {

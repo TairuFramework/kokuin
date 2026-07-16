@@ -1,23 +1,28 @@
-import type { KeyEntry } from '@kokuin/token'
+import type { MutableKeyEntry } from '@kokuin/token'
 
-import { randomKeyPair } from './utils.js'
+import { generateKeyRecord, type StoredKeyRecord } from './utils.js'
 
 export type GetStore = (mode?: IDBTransactionMode) => IDBObjectStore
 
-export class BrowserKeyEntry implements KeyEntry<CryptoKeyPair> {
+export type BrowserKeyEntryParams = {
+  keyID: string
+  getStore: GetStore
+}
+
+export class BrowserKeyEntry implements MutableKeyEntry<StoredKeyRecord> {
   #getStore: GetStore
   #keyID: string
 
-  constructor(keyID: string, getStore: GetStore) {
-    this.#getStore = getStore
-    this.#keyID = keyID
+  constructor(params: BrowserKeyEntryParams) {
+    this.#getStore = params.getStore
+    this.#keyID = params.keyID
   }
 
   get keyID(): string {
     return this.#keyID
   }
 
-  getAsync(): Promise<CryptoKeyPair | null> {
+  getAsync(): Promise<StoredKeyRecord | null> {
     return new Promise((resolve, reject) => {
       const request = this.#getStore().get(this.#keyID)
       request.onerror = () => reject(request.error)
@@ -25,10 +30,10 @@ export class BrowserKeyEntry implements KeyEntry<CryptoKeyPair> {
     })
   }
 
-  setAsync(keyPair: CryptoKeyPair): Promise<void> {
+  setAsync(record: StoredKeyRecord): Promise<void> {
     return new Promise((resolve, reject) => {
       const store = this.#getStore('readwrite')
-      const request = store.put(keyPair, this.#keyID)
+      const request = store.put(record, this.#keyID)
       request.onerror = () => reject(request.error)
       const tx = store.transaction
       tx.oncomplete = () => resolve()
@@ -37,17 +42,19 @@ export class BrowserKeyEntry implements KeyEntry<CryptoKeyPair> {
     })
   }
 
-  provideAsync(): Promise<CryptoKeyPair> {
-    return randomKeyPair().then(
+  provideAsync(): Promise<StoredKeyRecord> {
+    return generateKeyRecord().then(
       (generated) =>
-        new Promise<CryptoKeyPair>((resolve, reject) => {
+        new Promise<StoredKeyRecord>((resolve, reject) => {
           const store = this.#getStore('readwrite')
           const getRequest = store.get(this.#keyID)
-          let result: CryptoKeyPair = generated
+          let result: StoredKeyRecord = generated
           getRequest.onerror = () => reject(getRequest.error)
           getRequest.onsuccess = () => {
-            const existing = getRequest.result as CryptoKeyPair | undefined
+            const existing = getRequest.result as StoredKeyRecord | undefined
             if (existing != null) {
+              // A stored record ALWAYS wins over the freshly generated one — including a
+              // legacy ES256 record. Overwriting it would change the identity's DID.
               result = existing
             } else {
               store.put(generated, this.#keyID)

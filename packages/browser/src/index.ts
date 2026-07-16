@@ -10,7 +10,13 @@
  * @module browser-keystore
  */
 
-export { BrowserKeyEntry } from './entry.js'
-export { provideSigningIdentity } from './identity.js'
-export { BrowserKeyStore } from './store.js'
-export { getPublicKey, randomKeyPair } from './utils.js'
+export { BrowserKeyEntry, type BrowserKeyEntryParams, type GetStore } from './entry.js'
+export { BrowserKeyStore, type BrowserKeyStoreParams } from './store.js'
+export {
+  assertEd25519Available,
+  type BrowserKeyRecord,
+  generateKeyRecord,
+  isLegacyES256Record,
+  type LegacyES256Record,
+  type StoredKeyRecord,
+} from './utils.js'

@@ -22,7 +22,7 @@ export class HDKeyStore
 {
   #seed: Uint8Array
   #basePath: string
-  #entries: Record<string, HDKeyEntry> = {}
+  #entries: Record<string, HDKeyEntry> = Object.create(null)
 
   static fromMnemonic(mnemonic: string, options?: { basePath?: string }): HDKeyStore {
     const seed = mnemonicToSeedSync(mnemonic)
@@ -39,9 +39,12 @@ export class HDKeyStore
   }
 
   entry(keyID: string): HDKeyEntry {
-    const path = resolveDerivationPath(keyID, this.#basePath)
-    this.#entries[path] ??= new HDKeyEntry({ seed: this.#seed, path })
-    return this.#entries[path]
+    this.#entries[keyID] ??= new HDKeyEntry({
+      seed: this.#seed,
+      keyID,
+      path: resolveDerivationPath(keyID, this.#basePath),
+    })
+    return this.#entries[keyID]
   }
 
   async provideIdentity(keyID: string): Promise<FullIdentity> {

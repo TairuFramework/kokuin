@@ -46,17 +46,20 @@ catalogs:
       specifier: ^2.2.0
       version: 2.2.0
     '@sozai/async':
-      specifier: ^0.2.0
-      version: 0.2.0
+      specifier: ^0.2.1
+      version: 0.2.1
     '@sozai/codec':
       specifier: ^0.2.0
       version: 0.2.0
-    '@sozai/log':
+    '@sozai/lock':
       specifier: ^0.1.0
       version: 0.1.0
-    '@sozai/otel':
+    '@sozai/log':
       specifier: ^0.2.0
       version: 0.2.0
+    '@sozai/otel':
+      specifier: ^0.3.0
+      version: 0.3.0
     '@sozai/runtime-expo':
       specifier: ^0.2.1
       version: 0.2.1
@@ -145,16 +148,20 @@ importers:
         version: 2.2.0
       '@sozai/async':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.2.1
       '@sozai/codec':
         specifier: 'catalog:'
         version: 0.2.0
       '@sozai/log':
         specifier: 'catalog:'
-        version: 0.1.0
+        version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
+    devDependencies:
+      '@kokuin/keystore-conformance':
+        specifier: workspace:^
+        version: link:../keystore-conformance
 
   packages/capability:
     dependencies:
@@ -175,13 +182,17 @@ importers:
         version: 2.2.0
       '@sozai/log':
         specifier: 'catalog:'
-        version: 0.1.0
+        version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
       micro-key-producer:
         specifier: 'catalog:'
         version: 0.9.0
+    devDependencies:
+      '@kokuin/keystore-conformance':
+        specifier: workspace:^
+        version: link:../keystore-conformance
 
   packages/electron:
     dependencies:
@@ -194,16 +205,22 @@ importers:
       '@sozai/codec':
         specifier: 'catalog:'
         version: 0.2.0
-      '@sozai/log':
+      '@sozai/lock':
         specifier: 'catalog:'
         version: 0.1.0
-      '@sozai/otel':
+      '@sozai/log':
         specifier: 'catalog:'
         version: 0.2.0
+      '@sozai/otel':
+        specifier: 'catalog:'
+        version: 0.3.0
       electron-store:
         specifier: 'catalog:'
         version: 11.0.2
     devDependencies:
+      '@kokuin/keystore-conformance':
+        specifier: workspace:^
+        version: link:../keystore-conformance
       electron:
         specifier: 'catalog:'
         version: 43.1.0
@@ -221,16 +238,26 @@ importers:
         version: 0.2.0
       '@sozai/log':
         specifier: 'catalog:'
-        version: 0.1.0
+        version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
       expo-crypto:
         specifier: 'catalog:'
         version: 57.0.0(expo@57.0.4)
       expo-secure-store:
         specifier: 'catalog:'
         version: 57.0.0(expo@57.0.4)
+    devDependencies:
+      '@kokuin/keystore-conformance':
+        specifier: workspace:^
+        version: link:../keystore-conformance
+
+  packages/keystore-conformance:
+    dependencies:
+      '@kokuin/token':
+        specifier: workspace:^
+        version: link:../token
 
   packages/ledger-device:
     dependencies:
@@ -245,10 +272,10 @@ importers:
         version: 0.2.0
       '@sozai/log':
         specifier: 'catalog:'
-        version: 0.1.0
+        version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
     devDependencies:
       '@kokuin/deterministic':
         specifier: workspace:^
@@ -274,12 +301,19 @@ importers:
       '@sozai/codec':
         specifier: 'catalog:'
         version: 0.2.0
-      '@sozai/log':
+      '@sozai/lock':
         specifier: 'catalog:'
         version: 0.1.0
-      '@sozai/otel':
+      '@sozai/log':
         specifier: 'catalog:'
         version: 0.2.0
+      '@sozai/otel':
+        specifier: 'catalog:'
+        version: 0.3.0
+    devDependencies:
+      '@kokuin/keystore-conformance':
+        specifier: workspace:^
+        version: link:../keystore-conformance
 
   packages/otel:
     dependencies:
@@ -288,7 +322,7 @@ importers:
         version: 1.9.1
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
 
   packages/token:
     dependencies:
@@ -312,7 +346,7 @@ importers:
         version: 0.2.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.3.0
       '@sozai/schema':
         specifier: 'catalog:'
         version: 0.1.1
@@ -400,6 +434,25 @@ importers:
       '@types/react':
         specifier: 'catalog:'
         version: 19.2.17
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
+  tests/e2e-node:
+    dependencies:
+      '@kokuin/node':
+        specifier: workspace:^
+        version: link:../../packages/node
+      '@kokuin/token':
+        specifier: workspace:^
+        version: link:../../packages/token
+    devDependencies:
+      '@napi-rs/keyring':
+        specifier: 'catalog:'
+        version: 1.3.0
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.1.1
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -1217,17 +1270,11 @@ packages:
   '@expo/code-signing-certificates@0.0.6':
     resolution: {integrity: sha512-iNe0puxwBNEcuua9gmTGzq+SuMDa0iATai1FlFTMHJ/vUmKvN/V//drXoLJkVb5i5H3iE/n/qIJxyoBnXouD0w==}
 
-  '@expo/config-plugins@57.0.2':
-    resolution: {integrity: sha512-85wEk9NKzdT25+UWEaSgF7gp9uR/GmtvrvQtGqZmyhFgVRNL2H3GdJOL4/50vyZh4JK69Hl7fWKGtARTN3B8Ag==}
-
   '@expo/config-plugins@57.0.3':
     resolution: {integrity: sha512-J3P2T7FoOE9P3TuLcJXwt8jISKRxo7UntTzbJ/Qc5F7QXenNntk/4t1XndVkLucYjpnHArPd9xzDXuxxKEHVbQ==}
 
   '@expo/config-types@57.0.1':
     resolution: {integrity: sha512-fo7d/Ym28uwGzdTV2leEvpsb9t+7i8YHjy471m31+cmDt4BRd/l7e94JHyrXAq4SWOBVus16S0JLqm89SRCCdw==}
-
-  '@expo/config@57.0.2':
-    resolution: {integrity: sha512-J/K4fBPs/wGMrK445Mz5fCuFhsOZjSEq+u7F0yCboCwQu+uPlkT/ZCi6/q5pOunFOTICFtLB5wfCKqf9Iz5iKA==}
 
   '@expo/config@57.0.3':
     resolution: {integrity: sha512-IshqjjpGtT7wj86pxgsfMD1/abNMfu1wZ07ubyYO29l+PWa0eAh2TcpyLcyBaqo01IonF6646xWwrCPcdlUl3Q==}
@@ -1478,8 +1525,8 @@ packages:
     peerDependencies:
       '@inquirer/prompts': '>= 3 < 8'
 
-  '@logtape/logtape@2.1.5':
-    resolution: {integrity: sha512-59fyskQ9hR5mYQP9YMznZDtwRS4gIN7VIJkoRe0SLTmU+BQGaSP1s+ve8r+Binj1m6jNpwlF7yu9fz2/asSFLw==}
+  '@logtape/logtape@2.2.4':
+    resolution: {integrity: sha512-2rALzv9m4ibE5FyB8/FMm5MPMMlK7ujgy3ufricVKIxj6e7SZbw4w6J16/fRAsXgdDlOXPUA0aa6XoEQvdlKxw==}
 
   '@malept/cross-spawn-promise@2.0.0':
     resolution: {integrity: sha512-1DpKU0Z5ThltBwjNySMC14g0CkbyhCaz9FkhxqNsZI6uAPJXFS8cMXlBKo26FJ8ZuW6S9GCMcR9IO5k2X5/9Fg==}
@@ -1724,8 +1771,8 @@ packages:
     engines: {node: ^12.13.0 || ^14.15.0 || >=16.0.0}
     deprecated: This functionality has been moved to @npmcli/fs
 
-  '@opentelemetry/api-logs@0.219.0':
-    resolution: {integrity: sha512-FFx7YnaYJlIjqWW/AG/yAZ0L/NEY724PipXXXQLdtZPbLwBGbUMTGL1i/esI56TWfTUXxhLfpgrnWJCG8aUJyg==}
+  '@opentelemetry/api-logs@0.220.0':
+    resolution: {integrity: sha512-CmVa4ImJ+ynfrPMNaAXHET6Bhb44SwzmfyVJFq9ni2jgXJR/l7C6gfVFddNmHP+ZOkP9cf4f9DBe68qVLTHc9w==}
     engines: {node: '>=8.0.0'}
 
   '@opentelemetry/api@1.9.1':
@@ -1972,17 +2019,20 @@ packages:
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
 
-  '@sozai/async@0.2.0':
-    resolution: {integrity: sha512-bwXozVnxD3DNND76+Hg4zmz5/sBsip1DOeuggR+zLY6LXoI99bOwsty7SU1lD57FwVJLx6Hyp1O5Ka7DfMKUcg==}
+  '@sozai/async@0.2.1':
+    resolution: {integrity: sha512-pWJtDAlWSAUpRmqFQluyYKHuoQFOLmdy9/WT0EBWvqWTTe6s/Vy8+e2BxS2YMOK6vwsPuwSSEOlf6PvdF597+A==}
 
   '@sozai/codec@0.2.0':
     resolution: {integrity: sha512-HBbJY76Vso59kGJMxgGAtcnPYugY5TCWR4lhzJsjjtaX1oTs1F8SUWliUmgcRJZfHmnJO4tY03J7C/iy6SqXvw==}
 
-  '@sozai/log@0.1.0':
-    resolution: {integrity: sha512-vhCp3GK9UguYwopntaz6/juJSKFpB9GAAsKC9nxdakdQrD/Ix4r5fmZWIPArNtynbzsaUwdVoFYmDzbu90UNxg==}
+  '@sozai/lock@0.1.0':
+    resolution: {integrity: sha512-A9Gkw7DlG7kj0wDlK9RuUMd+PIZoIFlRAI19TCTmPW/G7wvx/c1/OQ8b66d4rFQZVkpeb6G/GAyOglx8rC84BA==}
 
-  '@sozai/otel@0.2.0':
-    resolution: {integrity: sha512-QA6VNAabL9D36nALM92fTtvTO2V9wI3P72rvQFFj9dRNZyZ9s4l9PK5RXKEMNN1KFgYUKus+7KBMiqRo6kYrTw==}
+  '@sozai/log@0.2.0':
+    resolution: {integrity: sha512-QxBBFSSC9be7Es/r2KYPs/yMWu/zGl+oV4QJE8ycaN47KP1CtoOXd7M6dPsHhHJfHYNFTOmXW4DJ9ALq3f8cyg==}
+
+  '@sozai/otel@0.3.0':
+    resolution: {integrity: sha512-NDS0yyuGid/LMDaLTiFCohEQWjet7hSvf/iznHofe2HDbEc0CoyeJrPjsXLVm6zJYyUwQLj4P06wdL5m9Wm2zQ==}
 
   '@sozai/runtime-expo@0.2.1':
     resolution: {integrity: sha512-QXu8lpewhRS/jOS64wZaxdpR75Rr1Ds33lmrrC/DEDl9gv1uQHrPYs/F86ALmQ6IIOdyG9gdo/1v9qFUE5pbnA==}
@@ -6934,25 +6984,6 @@ snapshots:
     dependencies:
       node-forge: 1.4.0
 
-  '@expo/config-plugins@57.0.2(typescript@6.0.3)':
-    dependencies:
-      '@expo/config-types': 57.0.1
-      '@expo/json-file': 11.0.0
-      '@expo/plist': 0.8.0
-      '@expo/require-utils': 57.0.1(typescript@6.0.3)
-      '@expo/sdk-runtime-versions': 1.0.0
-      chalk: 4.1.2
-      debug: 4.4.3
-      getenv: 2.0.0
-      glob: 13.0.6
-      semver: 7.8.5
-      slugify: 1.6.9
-      xcode: 3.0.1
-      xml2js: 0.6.0
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-
   '@expo/config-plugins@57.0.3(typescript@6.0.3)':
     dependencies:
       '@expo/config-types': 57.0.1
@@ -6973,22 +7004,6 @@ snapshots:
       - typescript
 
   '@expo/config-types@57.0.1': {}
-
-  '@expo/config@57.0.2(typescript@6.0.3)':
-    dependencies:
-      '@expo/config-plugins': 57.0.2(typescript@6.0.3)
-      '@expo/config-types': 57.0.1
-      '@expo/json-file': 11.0.0
-      '@expo/require-utils': 57.0.1(typescript@6.0.3)
-      deepmerge: 4.3.1
-      getenv: 2.0.0
-      glob: 13.0.6
-      resolve-workspace-root: 2.0.1
-      semver: 7.8.5
-      slugify: 1.6.9
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
 
   '@expo/config@57.0.3(typescript@6.0.3)':
     dependencies:
@@ -7092,7 +7107,7 @@ snapshots:
 
   '@expo/local-build-cache-provider@57.0.2(typescript@6.0.3)':
     dependencies:
-      '@expo/config': 57.0.2(typescript@6.0.3)
+      '@expo/config': 57.0.3(typescript@6.0.3)
       chalk: 4.1.2
     transitivePeerDependencies:
       - supports-color
@@ -7121,7 +7136,7 @@ snapshots:
       '@babel/code-frame': 7.29.7
       '@babel/core': 7.29.7
       '@babel/generator': 7.29.7
-      '@expo/config': 57.0.2(typescript@6.0.3)
+      '@expo/config': 57.0.3(typescript@6.0.3)
       '@expo/env': 2.4.1
       '@expo/json-file': 11.0.0
       '@expo/metro': 56.0.0
@@ -7202,7 +7217,7 @@ snapshots:
 
   '@expo/prebuild-config@57.0.5(typescript@6.0.3)':
     dependencies:
-      '@expo/config': 57.0.2(typescript@6.0.3)
+      '@expo/config': 57.0.3(typescript@6.0.3)
       '@expo/config-plugins': 57.0.3(typescript@6.0.3)
       '@expo/config-types': 57.0.1
       '@expo/image-utils': 0.11.1(typescript@6.0.3)
@@ -7392,7 +7407,7 @@ snapshots:
       '@jest/schemas': 29.6.3
       '@types/istanbul-lib-coverage': 2.0.6
       '@types/istanbul-reports': 3.0.4
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
       '@types/yargs': 17.0.35
       chalk: 4.1.2
 
@@ -7457,7 +7472,7 @@ snapshots:
       '@inquirer/prompts': 6.0.1
       '@inquirer/type': 1.5.5
 
-  '@logtape/logtape@2.1.5': {}
+  '@logtape/logtape@2.2.4': {}
 
   '@malept/cross-spawn-promise@2.0.0':
     dependencies:
@@ -7639,7 +7654,7 @@ snapshots:
       mkdirp: 1.0.4
       rimraf: 3.0.2
 
-  '@opentelemetry/api-logs@0.219.0':
+  '@opentelemetry/api-logs@0.220.0':
     dependencies:
       '@opentelemetry/api': 1.9.1
 
@@ -7851,21 +7866,25 @@ snapshots:
 
   '@sindresorhus/merge-streams@4.0.0': {}
 
-  '@sozai/async@0.2.0': {}
+  '@sozai/async@0.2.1': {}
 
   '@sozai/codec@0.2.0':
     dependencies:
       canonicalize: 3.0.0
 
-  '@sozai/log@0.1.0':
+  '@sozai/lock@0.1.0':
     dependencies:
-      '@logtape/logtape': 2.1.5
+      '@sozai/async': 0.2.1
 
-  '@sozai/otel@0.2.0':
+  '@sozai/log@0.2.0':
+    dependencies:
+      '@logtape/logtape': 2.2.4
+
+  '@sozai/otel@0.3.0':
     dependencies:
       '@opentelemetry/api': 1.9.1
-      '@opentelemetry/api-logs': 0.219.0
-      '@sozai/log': 0.1.0
+      '@opentelemetry/api-logs': 0.220.0
+      '@sozai/log': 0.2.0
 
   '@sozai/runtime-expo@0.2.1(expo@57.0.4)':
     dependencies:
@@ -8697,7 +8716,7 @@ snapshots:
 
   chrome-launcher@0.15.2:
     dependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
       escape-string-regexp: 4.0.0
       is-wsl: 2.2.0
       lighthouse-logger: 1.4.2
@@ -8708,7 +8727,7 @@ snapshots:
 
   chromium-edge-launcher@0.3.0:
     dependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
       escape-string-regexp: 4.0.0
       is-wsl: 2.2.0
       lighthouse-logger: 1.4.2
@@ -9889,7 +9908,7 @@ snapshots:
   jest-util@29.7.0:
     dependencies:
       '@jest/types': 29.6.3
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
       chalk: 4.1.2
       ci-info: 3.9.0
       graceful-fs: 4.2.11
@@ -9912,7 +9931,7 @@ snapshots:
 
   jest-worker@29.7.0:
     dependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
       jest-util: 29.7.0
       merge-stream: 2.0.0
       supports-color: 8.1.1
@@ -10238,7 +10257,7 @@ snapshots:
   metro-minify-terser@0.84.4:
     dependencies:
       flow-enums-runtime: 0.0.6
-      terser: 5.48.0
+      terser: 5.49.0
 
   metro-resolver@0.84.4:
     dependencies:
@@ -11480,7 +11499,6 @@ snapshots:
       acorn: 8.17.0
       commander: 2.20.3
       source-map-support: 0.5.21
-    optional: true
 
   text-decoder@1.2.7:
     dependencies:

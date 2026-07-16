@@ -193,3 +193,52 @@ function resolveKidFromDoc(doc: DIDDoc, kid: string): [SignatureAlgorithm, Uint8
 export function normalizeDID(did: string): string {
   return isPeer4(did) ? getPeer4ShortForm(did) : did
 }
+
+/** Multicodec prefix for an X25519 public key, as published in a peer:4 doc. */
+const CODEC_X25519_PUB = new Uint8Array([0xec, 0x01])
+
+/**
+ * The X25519 public key a DID document publishes for key agreement, or `null` when it
+ * publishes none.
+ *
+ * Unlike a `did:key` EdDSA identity — whose agreement key is *derived* from its signing key
+ * via the birational map — a peer:4 identity carries an independent agreement key in its doc.
+ * A sender MUST use the published key: the derived one is a different key and will not decrypt.
+ */
+export function getAgreementKey(doc: DIDDoc): Uint8Array | null {
+  const fragments = doc.keyAgreement
+  if (fragments == null) {
+    return null
+  }
+  for (const fragment of fragments) {
+    const method = doc.verificationMethod.find(
+      (verificationMethod: VerificationMethod) => verificationMethod.id === fragment,
+    )
+    if (method == null) {
+      continue
+    }
+    // Bound before decoding — base58.decode is O(n^2) — same as resolveKidFromDoc().
+    if (method.publicKeyMultibase.length > MAX_DID_KEY_ENCODED) {
+      continue
+    }
+    let bytes: Uint8Array
+    try {
+      bytes = decodeMultibase(method.publicKeyMultibase)
+    } catch {
+      // A legal-but-unsupported multibase prefix (e.g. base64) shouldn't abort the scan of an
+      // otherwise-good keyAgreement list — skip it, consistent with a missing method above.
+      continue
+    }
+    if (!isCodecMatch(CODEC_X25519_PUB, bytes)) {
+      continue
+    }
+    const publicKey = bytes.slice(CODEC_X25519_PUB.length)
+    if (publicKey.length !== 32) {
+      // Wrong-length key: treat like any other unusable entry so the caller gets the clear
+      // "no agreement key" error instead of a RangeError from noble later.
+      continue
+    }
+    return publicKey
+  }
+  return null
+}

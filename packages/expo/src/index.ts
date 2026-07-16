@@ -10,7 +10,6 @@
  * @module expo-keystore
  */
 
-export { ExpoKeyEntry } from './entry.js'
-export { provideFullIdentity, provideFullIdentityAsync } from './identity.js'
+export { ExpoKeyEntry, type ExpoKeyEntryParams, type StoreEntryOptions } from './entry.js'
 export { ExpoKeyStore } from './store.js'
 export { randomPrivateKey, randomPrivateKeyAsync } from './utils.js'

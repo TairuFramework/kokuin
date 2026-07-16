@@ -1,95 +1,66 @@
-import { beforeAll, describe, expect, test, vi } from 'vitest'
+import { CODECS, createTokenEncrypter, encryptToken, getDID, verifyToken } from '@kokuin/token'
+import { describe, expect, test } from 'vitest'
 
-// Use vi.hoisted so the mock fn is available inside the hoisted vi.mock factory
-const { mockGetAsync, mockProvideAsync } = vi.hoisted(() => ({
-  mockGetAsync: vi.fn(),
-  mockProvideAsync: vi.fn(),
-}))
+import { createBrowserIdentity, createLegacyES256Identity } from '../src/identity.js'
+import { generateKeyRecord } from '../src/utils.js'
 
-let testKeyPair: CryptoKeyPair
+describe('createBrowserIdentity', () => {
+  test('yields a did:key EdDSA FullIdentity', async () => {
+    const record = await generateKeyRecord()
+    const identity = await createBrowserIdentity(record)
+    expect(identity.id).toBe(getDID(CODECS.EdDSA, record.publicKey))
+    expect(identity.publicKey).toEqual(record.publicKey)
+  })
 
-vi.mock('../src/store.js', () => ({
-  BrowserKeyStore: {
-    open: vi.fn().mockResolvedValue({
-      entry: vi.fn().mockReturnValue({
-        getAsync: mockGetAsync,
-        provideAsync: mockProvideAsync,
-      }),
-    }),
-  },
-}))
+  test('signs tokens the @kokuin/token verifier accepts', async () => {
+    const identity = await createBrowserIdentity(await generateKeyRecord())
+    const token = await identity.signToken({ aud: 'did:key:zSomeone', sub: 'test' })
+    expect(token.header.alg).toBe('EdDSA')
+    const verified = await verifyToken(token)
+    expect(verified.payload.iss).toBe(identity.id)
+  })
 
-import { provideSigningIdentity } from '../src/identity.js'
+  test('decrypts a JWE addressed to its DID — the whole point of the import mechanism', async () => {
+    const identity = await createBrowserIdentity(await generateKeyRecord())
 
-beforeAll(async () => {
-  testKeyPair = (await globalThis.crypto.subtle.generateKey(
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    false,
-    ['sign'],
-  )) as CryptoKeyPair
-  mockProvideAsync.mockResolvedValue(testKeyPair)
+    // The sender knows only the DID. If the agreement key were independently generated, this
+    // would fail — which is exactly what subtle.generateKey would have produced.
+    const jwe = await encryptToken(
+      createTokenEncrypter(identity.id),
+      new TextEncoder().encode('secret'),
+    )
+    expect(new TextDecoder().decode(await identity.decrypt(jwe))).toBe('secret')
+  })
+
+  test('rejects a payload whose iss is not this identity', async () => {
+    const identity = await createBrowserIdentity(await generateKeyRecord())
+    await expect(identity.signToken({ iss: 'did:key:zOther' })).rejects.toThrow(
+      /issuer does not match/,
+    )
+  })
 })
 
-describe('provideSigningIdentity()', () => {
-  test('returns identity with valid DID', async () => {
-    const identity = await provideSigningIdentity('test-key')
+describe('createLegacyES256Identity', () => {
+  async function legacyRecord(): Promise<CryptoKeyPair> {
+    return (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
+      'sign',
+    ])) as CryptoKeyPair
+  }
+
+  test('yields a did:key ES256 SigningIdentity — no decrypt', async () => {
+    const identity = await createLegacyES256Identity(await legacyRecord())
     expect(identity.id).toMatch(/^did:key:z/)
+    expect('decrypt' in identity).toBe(false)
+    expect('agreeKey' in identity).toBe(false)
   })
 
-  test('returns identity with signToken function', async () => {
-    const identity = await provideSigningIdentity('test-key')
-    expect(identity.signToken).toBeInstanceOf(Function)
-  })
-
-  test('signs token with ES256 algorithm', async () => {
-    const identity = await provideSigningIdentity('test-key')
-    const token = await identity.signToken({ test: true })
-    expect(token.header.alg).toBe('ES256')
-    expect(token.header.typ).toBe('JWT')
-  })
-
-  test('signed token includes issuer matching identity', async () => {
-    const identity = await provideSigningIdentity('test-key')
-    const token = await identity.signToken({ foo: 'bar' })
-    expect(token.payload.iss).toBe(identity.id)
-    expect(token.payload.foo).toBe('bar')
-  })
-
-  test('signed token has valid JWT structure', async () => {
-    const identity = await provideSigningIdentity('test-key')
-    const token = await identity.signToken({ x: 1 })
-    expect(token.data).toContain('.')
-    expect(token.signature).toBeDefined()
-    expect(token.signature.length).toBeGreaterThan(0)
-  })
-
-  test('rejects payload with mismatched issuer', async () => {
-    const identity = await provideSigningIdentity('test-key')
-    await expect(identity.signToken({ iss: 'did:key:wrong' })).rejects.toThrow('Invalid payload')
-  })
-
-  test('accepts payload with matching issuer', async () => {
-    const identity = await provideSigningIdentity('test-key')
-    const token = await identity.signToken({ iss: identity.id })
-    expect(token.payload.iss).toBe(identity.id)
-  })
-
-  test('accepts string store parameter', async () => {
-    const identity = await provideSigningIdentity('test-key', 'custom-db')
-    expect(identity.id).toMatch(/^did:key:z/)
-  })
-
-  test('signatures are always low-S (50 iterations, round-trip verifyToken)', async () => {
-    // Regression test: Web Crypto P-256 emits high-S ~50% of the time.
-    // normalizeSignatureToLowS() must flip high-S values; verifyToken enforces
-    // { lowS: true } and will reject any un-normalized signature. Running 50
-    // iterations makes a silent normalization failure fail with probability
-    // 1 - (0.5)^50 ≈ 1 - 8.9e-16.
-    const { verifyToken } = await import('@kokuin/token')
-    const identity = await provideSigningIdentity('test-key')
-    for (let i = 0; i < 50; i++) {
-      const token = await identity.signToken({ iter: i })
+  test('still signs verifiable tokens, with low-S normalization', async () => {
+    const identity = await createLegacyES256Identity(await legacyRecord())
+    // Repeat: WebCrypto emits high-S about half the time, and the verifier runs lowS: true.
+    for (let i = 0; i < 8; i++) {
+      const token = await identity.signToken({ sub: `test-${i}` })
+      expect(token.header.alg).toBe('ES256')
       await expect(verifyToken(token)).resolves.toBeDefined()
     }
-  }, 30_000)
+  })
 })

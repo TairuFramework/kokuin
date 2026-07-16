@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from 'vitest'
 
 import type { GetStore } from '../src/entry.js'
 import { BrowserKeyEntry } from '../src/entry.js'
-import { getPublicKey, randomKeyPair } from '../src/utils.js'
+import { generateKeyRecord, getES256PublicKey, type StoredKeyRecord } from '../src/utils.js'
 
 // --- Mock IDB helpers ---
 
@@ -57,45 +57,49 @@ function createMockGetStore(): {
 
 // --- Utils tests (real SubtleCrypto) ---
 
-describe('randomKeyPair()', () => {
-  test('generates ECDSA P-256 key pair', async () => {
-    const keyPair = await randomKeyPair()
-    expect(keyPair.publicKey).toBeDefined()
-    expect(keyPair.privateKey).toBeDefined()
-    expect(keyPair.publicKey.algorithm).toEqual(
-      expect.objectContaining({ name: 'ECDSA', namedCurve: 'P-256' }),
-    )
+describe('generateKeyRecord()', () => {
+  test('generates a suite-tagged Ed25519 key record', async () => {
+    const record = await generateKeyRecord()
+    expect(record.suite).toBe('Ed25519')
+    expect(record.signing).toBeDefined()
+    expect(record.agreementSecret).toHaveLength(32)
   })
 
-  test('private key is non-extractable', async () => {
-    const keyPair = await randomKeyPair()
-    expect(keyPair.privateKey.extractable).toBe(false)
+  test('signing key is non-extractable', async () => {
+    const record = await generateKeyRecord()
+    expect(record.signing.extractable).toBe(false)
   })
 
-  test('private key allows signing', async () => {
-    const keyPair = await randomKeyPair()
-    expect(keyPair.privateKey.usages).toContain('sign')
+  test('signing key allows signing', async () => {
+    const record = await generateKeyRecord()
+    expect(record.signing.usages).toContain('sign')
   })
 })
 
-describe('getPublicKey()', () => {
+async function legacyKeyPair(): Promise<CryptoKeyPair> {
+  return (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
+    'sign',
+  ])) as CryptoKeyPair
+}
+
+describe('getES256PublicKey()', () => {
   test('returns 33-byte compressed public key', async () => {
-    const keyPair = await randomKeyPair()
-    const publicKey = await getPublicKey(keyPair)
+    const keyPair = await legacyKeyPair()
+    const publicKey = await getES256PublicKey(keyPair)
     expect(publicKey).toBeInstanceOf(Uint8Array)
     expect(publicKey.length).toBe(33)
   })
 
   test('first byte is 0x02 or 0x03 (EC point compression prefix)', async () => {
-    const keyPair = await randomKeyPair()
-    const publicKey = await getPublicKey(keyPair)
+    const keyPair = await legacyKeyPair()
+    const publicKey = await getES256PublicKey(keyPair)
     expect([0x02, 0x03]).toContain(publicKey[0])
   })
 
   test('same key pair produces same public key', async () => {
-    const keyPair = await randomKeyPair()
-    const pk1 = await getPublicKey(keyPair)
-    const pk2 = await getPublicKey(keyPair)
+    const keyPair = await legacyKeyPair()
+    const pk1 = await getES256PublicKey(keyPair)
+    const pk2 = await getES256PublicKey(keyPair)
     expect(pk1).toEqual(pk2)
   })
 })
@@ -113,54 +117,53 @@ describe('BrowserKeyEntry', () => {
   })
 
   test('keyID returns the key ID', () => {
-    const entry = new BrowserKeyEntry('k1', getStore)
+    const entry = new BrowserKeyEntry({ keyID: 'k1', getStore })
     expect(entry.keyID).toBe('k1')
   })
 
   test('getAsync() returns null when key does not exist', async () => {
-    const entry = new BrowserKeyEntry('missing', getStore)
+    const entry = new BrowserKeyEntry({ keyID: 'missing', getStore })
     expect(await entry.getAsync()).toBeNull()
   })
 
   test('setAsync() stores key and getAsync() retrieves it', async () => {
-    const keyPair = await randomKeyPair()
-    const entry = new BrowserKeyEntry('k2', getStore)
-    await entry.setAsync(keyPair)
+    const record = await generateKeyRecord()
+    const entry = new BrowserKeyEntry({ keyID: 'k2', getStore })
+    await entry.setAsync(record)
     const retrieved = await entry.getAsync()
-    expect(retrieved).toBe(keyPair)
+    expect(retrieved).toBe(record)
   })
 
   test('provideAsync() returns existing key without generating new one', async () => {
-    const keyPair = await randomKeyPair()
-    const entry = new BrowserKeyEntry('k3', getStore)
-    await entry.setAsync(keyPair)
+    const record = await generateKeyRecord()
+    const entry = new BrowserKeyEntry({ keyID: 'k3', getStore })
+    await entry.setAsync(record)
     const provided = await entry.provideAsync()
-    expect(provided).toBe(keyPair)
+    expect(provided).toBe(record)
   })
 
   test('provideAsync() generates and stores new key when none exists', async () => {
-    const entry = new BrowserKeyEntry('k4', getStore)
-    const provided = await entry.provideAsync()
-    expect(provided.publicKey).toBeDefined()
-    expect(provided.privateKey).toBeDefined()
+    const entry = new BrowserKeyEntry({ keyID: 'k4', getStore })
+    const provided = (await entry.provideAsync()) as StoredKeyRecord & { suite?: string }
+    expect(provided.suite).toBe('Ed25519')
     // Stored in mock IDB
     expect(data.has('k4')).toBe(true)
   })
 
   test('provideAsync returns the pre-existing key and does not overwrite it', async () => {
     const { getStore, data } = createMockGetStore()
-    const seeded = await randomKeyPair()
+    const seeded = await generateKeyRecord()
     data.set('k', seeded)
-    const entry = new BrowserKeyEntry('k', getStore)
+    const entry = new BrowserKeyEntry({ keyID: 'k', getStore })
     const result = await entry.provideAsync()
     expect(result).toBe(seeded)
     expect(data.get('k')).toBe(seeded)
   })
 
   test('removeAsync() deletes key from store', async () => {
-    const keyPair = await randomKeyPair()
-    const entry = new BrowserKeyEntry('k5', getStore)
-    await entry.setAsync(keyPair)
+    const record = await generateKeyRecord()
+    const entry = new BrowserKeyEntry({ keyID: 'k5', getStore })
+    await entry.setAsync(record)
     expect(data.has('k5')).toBe(true)
     await entry.removeAsync()
     expect(data.has('k5')).toBe(false)
@@ -168,10 +171,10 @@ describe('BrowserKeyEntry', () => {
 
   test('setAsync rejects when the transaction aborts after the request succeeds', async () => {
     const { getStore, data, abortNextWrite } = createMockGetStore()
-    const entry = new BrowserKeyEntry('k', getStore)
-    const keyPair = await randomKeyPair()
+    const entry = new BrowserKeyEntry({ keyID: 'k', getStore })
+    const record = await generateKeyRecord()
     abortNextWrite()
-    await expect(entry.setAsync(keyPair)).rejects.toThrow()
+    await expect(entry.setAsync(record)).rejects.toThrow()
     expect(data.has('k')).toBe(false)
   })
 })
@@ -181,12 +184,7 @@ describe('BrowserKeyEntry', () => {
 describe('BrowserKeyStore', () => {
   test('entry() returns BrowserKeyEntry with correct keyID', async () => {
     const { BrowserKeyStore } = await import('../src/store.js')
-    const mockDB = {
-      transaction: () => ({
-        objectStore: () => createMockGetStore().getStore(),
-      }),
-    } as unknown as IDBDatabase
-    const store = new BrowserKeyStore(mockDB)
+    const store = new BrowserKeyStore(createMockGetStore().getStore)
     const entry = store.entry('my-key')
     expect(entry).toBeInstanceOf(BrowserKeyEntry)
     expect(entry.keyID).toBe('my-key')
@@ -194,21 +192,13 @@ describe('BrowserKeyStore', () => {
 
   test('entry() returns cached entry for same keyID', async () => {
     const { BrowserKeyStore } = await import('../src/store.js')
-    const mockDB = {
-      transaction: () => ({
-        objectStore: () => createMockGetStore().getStore(),
-      }),
-    } as unknown as IDBDatabase
-    const store = new BrowserKeyStore(mockDB)
+    const store = new BrowserKeyStore(createMockGetStore().getStore)
     expect(store.entry('x')).toBe(store.entry('x'))
   })
 
   test('entry("constructor") returns a real entry, not a prototype member', async () => {
     const { BrowserKeyStore } = await import('../src/store.js')
-    const mockDB = {
-      transaction: () => ({ objectStore: () => createMockGetStore().getStore() }),
-    } as unknown as IDBDatabase
-    const store = new BrowserKeyStore(mockDB)
+    const store = new BrowserKeyStore(createMockGetStore().getStore)
     const entry = store.entry('constructor')
     expect(entry).toBeInstanceOf(BrowserKeyEntry)
     expect(entry.keyID).toBe('constructor')
