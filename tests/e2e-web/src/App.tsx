@@ -1,12 +1,13 @@
-import { provideSigningIdentity } from '@kokuin/browser'
+import { BrowserKeyStore } from '@kokuin/browser'
 import { type Token, verifyToken } from '@kokuin/token'
 import { useEffect, useState } from 'react'
 import { Button, StyleSheet, Text, View } from 'react-native'
 
-const identityPromise = provideSigningIdentity('test')
-const durableIdentityPromise = provideSigningIdentity('durable')
-const alphaIdentityPromise = provideSigningIdentity('alpha')
-const betaIdentityPromise = provideSigningIdentity('beta')
+const storePromise = BrowserKeyStore.open()
+const identityPromise = storePromise.then((store) => store.provideSigningIdentity('test'))
+const durableIdentityPromise = storePromise.then((store) => store.provideSigningIdentity('durable'))
+const alphaIdentityPromise = storePromise.then((store) => store.provideSigningIdentity('alpha'))
+const betaIdentityPromise = storePromise.then((store) => store.provideSigningIdentity('beta'))
 
 type Data = {
   test: string

@@ -1,4 +1,4 @@
-import { provideFullIdentity } from '@kokuin/expo'
+import { ExpoKeyStore } from '@kokuin/expo'
 import { type SignedToken, type Token, verifyToken } from '@kokuin/token'
 import { useState } from 'react'
 import { Button, Text } from 'react-native'
@@ -8,7 +8,7 @@ type Data = {
 }
 
 export default function SignVerify() {
-  const [identity] = useState(() => provideFullIdentity('test'))
+  const [identity] = useState(() => ExpoKeyStore.open().provideIdentitySync('test'))
   const [signedToken, setSignedToken] = useState<SignedToken<Data> | null>(null)
   const [verifiedToken, setVerifiedToken] = useState<Token<Data> | null>(null)
 

@@ -14,7 +14,7 @@ async function waitForStart(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const store = NodeKeyStore.open(service, lockPath ? { lockPath } : undefined)
+  const store = NodeKeyStore.open(lockPath ? { service, lockPath } : { service })
   await waitForStart()
   const identity = await store.provideIdentity(keyID)
   process.stdout.write(JSON.stringify({ did: identity.id }))
