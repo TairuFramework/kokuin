@@ -93,12 +93,29 @@ twin is shown.
 
 ## Verification
 
-Extract every TypeScript snippet from the three docs into a scratch file under the scratchpad
-directory, typecheck against the built `lib/` types, discard. Catches wrong call shapes and
-the `ExpoKeyStore.entry` class of error.
+A throwaway harness extracts every fenced TypeScript block from the three docs and typechecks
+it against the built `lib/` types. Extraction reads the real docs rather than copying them, so
+the gate cannot drift from what it gates.
 
-Snippets needing runtime values (`masterSeed`, Ledger `transport`) get `declare const` stubs
-— typecheck only, nothing executes.
+It lives at an untracked `.docs-snippets/` in the repo root and is deleted once the docs are
+green — **not** under the scratchpad directory. Resolution requires it: there is no root
+`node_modules/@kokuin` symlink (pnpm links workspace packages only into each consumer
+package's own `node_modules`), so the harness tsconfig maps `@kokuin/*` to each package's
+built `lib/index.d.ts` by relative path, which only works from inside the repo. A
+scratchpad-external tsconfig additionally fails to resolve `@types/node`.
+
+Blocks containing a top-level `type ` line are skipped — those are illustrative type
+declarations (the `Identity` hierarchy, `SignedPayload`, the `KeyEntry` contract,
+`IdentityProvider`) that redeclare imported names and are not runnable. Snippets needing
+runtime values (`masterSeed`, Ledger `transport`) get `declare const` stubs. Typecheck only;
+nothing executes.
+
+Verified during planning: against the current docs the harness keeps 23 blocks, skips 4, and
+reports exactly 10 errors — every one of them a defect named in the Problem table, including
+independent confirmation of the `ExpoKeyStore.entry` TypeError.
+
+`docs/skills/discover.skill.md` has no TypeScript blocks, so the harness cannot gate it. Its
+staleness is prose and is verified by reading against the package index files.
 
 No checked-in harness. Permanent doc-snippet gating belongs to
 `docs/agents/plans/next/2026-07-02-ci-release-gating.md`, which already owns pipeline work;
