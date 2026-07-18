@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Stage:** executing
+**Stage:** reviewing
 **Mode:** tasks
 **Spec:** `docs/superpowers/specs/2026-07-16-auth-docs-provide-identity-refresh-design.md`
 **Branch:** `docs/provide-identity-refresh` (already created)
