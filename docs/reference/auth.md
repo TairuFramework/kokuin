@@ -262,7 +262,7 @@ const assertion = await createRotationAssertion(oldIdentity, newIdentity)
 
 ## Keystores
 
-Keystores persist private keys using each platform's secure storage mechanism. They all implement the `KeyStore` / `KeyEntry` contract defined in `@kokuin/token`. Each package exposes a convenience helper that gets or creates a key and returns a ready-to-use identity.
+Keystores persist private keys using each platform's secure storage mechanism. They implement the `KeyStore` / `KeyEntry` contract defined in `@kokuin/token`, and each store exposes `provideIdentity(keyID)`, which gets or creates a key and returns a ready-to-use identity. `@kokuin/ledger-device` is the exception: its key never leaves the device, so it implements `IdentityProvider` alone — no storage contract and no keystore class.
 
 ### `@kokuin/node` — Node.js
 
@@ -417,7 +417,6 @@ Provides an `IdentityProvider` backed by a Ledger hardware device over USB/WebHI
 
 ```typescript
 import { createLedgerIdentityProvider } from '@kokuin/ledger-device'
-import type { FullIdentity, IdentityProvider } from '@kokuin/token'
 
 // `transport` is a WebHID or Node-HID Ledger transport instance
 const provider = createLedgerIdentityProvider(transport)
