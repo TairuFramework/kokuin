@@ -40,31 +40,31 @@ describe('resolveDerivationPath()', () => {
 describe('derivePrivateKey()', () => {
   // SLIP-0010 test vector from https://github.com/satoshilabs/slips/blob/master/slip-0010.md
   // Test Vector 1 for ed25519
-  const Seed = Uint8Array.from(
+  const seed = Uint8Array.from(
     ('000102030405060708090a0b0c0d0e0f'.match(/.{2}/g) ?? []).map((b) => Number.parseInt(b, 16)),
   )
 
   test('derives master key from seed', () => {
-    const key = derivePrivateKey(Seed, 'm')
+    const key = derivePrivateKey(seed, 'm')
     expect(key).toBeInstanceOf(Uint8Array)
     expect(key.length).toBe(32)
   })
 
   test('derives child key at path', () => {
-    const key = derivePrivateKey(Seed, "m/0'")
+    const key = derivePrivateKey(seed, "m/0'")
     expect(key).toBeInstanceOf(Uint8Array)
     expect(key.length).toBe(32)
   })
 
   test('same seed + path produces same key', () => {
-    const a = derivePrivateKey(Seed, "m/44'/876'/0'")
-    const b = derivePrivateKey(Seed, "m/44'/876'/0'")
+    const a = derivePrivateKey(seed, "m/44'/876'/0'")
+    const b = derivePrivateKey(seed, "m/44'/876'/0'")
     expect(a).toEqual(b)
   })
 
   test('different paths produce different keys', () => {
-    const a = derivePrivateKey(Seed, "m/44'/876'/0'")
-    const b = derivePrivateKey(Seed, "m/44'/876'/1'")
+    const a = derivePrivateKey(seed, "m/44'/876'/0'")
+    const b = derivePrivateKey(seed, "m/44'/876'/1'")
     expect(a).not.toEqual(b)
   })
 })

@@ -125,7 +125,7 @@ describe('decodePeer4', () => {
 
 describe('decodePeer4 bounds', () => {
   // 4 KiB default doc + 2 multicodec bytes, times the base58 expansion ratio, plus slack.
-  const MaxEncoded = Math.ceil((4 * 1024 + 2) * 1.3658) + 8
+  const maxEncoded = Math.ceil((4 * 1024 + 2) * 1.3658) + 8
 
   const validDoc: DIDDoc = {
     '@context': ['https://www.w3.org/ns/did/v1'],
@@ -147,7 +147,7 @@ describe('decodePeer4 bounds', () => {
 
   it('rejects an oversized encoded doc before decoding it', () => {
     const hash = `z${'1'.repeat(47)}`
-    const encodedDoc = `z${'0'.repeat(MaxEncoded)}`
+    const encodedDoc = `z${'0'.repeat(maxEncoded)}`
     const longForm = `did:peer:4${hash}:${encodedDoc}`
     expect(() => decodePeer4(longForm)).toThrow(/encoded doc too large/)
   })
