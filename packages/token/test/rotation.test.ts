@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { createInMemoryDIDCache } from '../src/cache.js'
 import { createIdentity } from '../src/identity.js'
 import { createRotationAssertion } from '../src/rotation.js'

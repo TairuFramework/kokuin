@@ -66,26 +66,24 @@ describe('ElectronKeyStore adversarial input', () => {
     expect(await store.entry('bob').getAsync()).toEqual(bob)
   })
 
-  test.each([
-    '__proto__',
-    'constructor',
-    'prototype',
-    'toString',
-  ])('the prototype-pollution keyID %j behaves as an ordinary key', async (keyID) => {
-    const store = new ElectronKeyStore({ name: `pollution-${keyID}` })
-    const entry = store.entry(keyID)
-    expect(entry.keyID).toBe(keyID)
-    // Absent before it is provided — NOT a function inherited from Object.prototype.
-    expect(await entry.getAsync()).toBeNull()
+  test.each(['__proto__', 'constructor', 'prototype', 'toString'])(
+    'the prototype-pollution keyID %j behaves as an ordinary key',
+    async (keyID) => {
+      const store = new ElectronKeyStore({ name: `pollution-${keyID}` })
+      const entry = store.entry(keyID)
+      expect(entry.keyID).toBe(keyID)
+      // Absent before it is provided — NOT a function inherited from Object.prototype.
+      expect(await entry.getAsync()).toBeNull()
 
-    const key = await entry.provideAsync()
-    expect(key).toHaveLength(32)
-    expect(await entry.getAsync()).toEqual(key)
+      const key = await entry.provideAsync()
+      expect(key).toHaveLength(32)
+      expect(await entry.getAsync()).toEqual(key)
 
-    // And it did not corrupt the prototype of anything.
-    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
-    expect(await store.entry('ordinary').getAsync()).toBeNull()
-  })
+      // And it did not corrupt the prototype of anything.
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+      expect(await store.entry('ordinary').getAsync()).toBeNull()
+    },
+  )
 
   test('a corrupt stored credential throws rather than yielding a bad key', async () => {
     const store = new ElectronKeyStore({ name: 'corrupt' })

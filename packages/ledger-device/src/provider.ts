@@ -47,6 +47,7 @@ async function sendAPDU(
     return await transport.send(CLA, ins, p1, p2, data)
   } catch (error) {
     if (error instanceof Error && error.name === 'DisconnectedDevice') {
+      // biome-ignore lint/style/useErrorCause: cause is first argument
       throw new LedgerDisconnectedError(error)
     }
     throw error

@@ -1,13 +1,12 @@
 {
   "name": "e2e-electron",
-  "productName": "e2e-electron",
   "version": "1.0.1",
   "private": true,
   "description": "Kokuin electron keystore e2e",
   "main": ".vite/build/main.js",
   "scripts": {
-    "start": "electron-forge start",
     "package": "electron-forge package",
+    "start": "electron-forge start",
     "test": "playwright test"
   },
   "dependencies": {
@@ -27,5 +26,6 @@
     "electron": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:"
-  }
+  },
+  "productName": "e2e-electron"
 }

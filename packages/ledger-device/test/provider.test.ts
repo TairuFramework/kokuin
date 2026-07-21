@@ -1,7 +1,7 @@
 import { isFullIdentity, verifyToken } from '@kokuin/token'
-
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
+
 import { CLA, INS } from '../src/apdu.js'
 import { createLedgerIdentityProvider } from '../src/provider.js'
 import type { LedgerTransport } from '../src/types.js'

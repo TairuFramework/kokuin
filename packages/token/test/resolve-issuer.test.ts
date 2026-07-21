@@ -1,5 +1,6 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, it } from 'vitest'
+
 import { createInMemoryDIDCache } from '../src/cache.js'
 import { CODECS, getDID, resolveIssuer, resolveIssuerWithDoc } from '../src/did.js'
 import { encodeMultibase } from '../src/multibase.js'

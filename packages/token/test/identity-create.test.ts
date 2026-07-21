@@ -1,5 +1,6 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, it } from 'vitest'
+
 import { createInMemoryDIDCache } from '../src/cache.js'
 import { createIdentity } from '../src/identity.js'
 import { createTokenEncrypter, encryptToken } from '../src/jwe.js'

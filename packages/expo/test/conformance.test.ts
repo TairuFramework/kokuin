@@ -58,18 +58,17 @@ describe('ExpoKeyStore', () => {
     expect(new ExpoKeyStore().entry.length).toBe(1)
   })
 
-  test.each([
-    '__proto__',
-    'constructor',
-    'prototype',
-  ])('the prototype-pollution keyID %j behaves as an ordinary key', async (keyID) => {
-    const store = new ExpoKeyStore()
-    const entry = store.entry(keyID)
-    expect(entry.keyID).toBe(keyID)
-    expect(await entry.getAsync()).toBeNull()
-    const key = await entry.provideAsync()
-    expect(await entry.getAsync()).toEqual(key)
-  })
+  test.each(['__proto__', 'constructor', 'prototype'])(
+    'the prototype-pollution keyID %j behaves as an ordinary key',
+    async (keyID) => {
+      const store = new ExpoKeyStore()
+      const entry = store.entry(keyID)
+      expect(entry.keyID).toBe(keyID)
+      expect(await entry.getAsync()).toBeNull()
+      const key = await entry.provideAsync()
+      expect(await entry.getAsync()).toEqual(key)
+    },
+  )
 
   test('provideIdentity returns a stable FullIdentity', async () => {
     const store = new ExpoKeyStore()

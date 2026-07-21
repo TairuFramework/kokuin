@@ -3,7 +3,6 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-
 import { Entry, findCredentials } from '@napi-rs/keyring'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 

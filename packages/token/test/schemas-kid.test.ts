@@ -1,5 +1,6 @@
 import { isType } from '@sozai/schema'
 import { describe, expect, it } from 'vitest'
+
 import { validateSignedHeader } from '../src/schemas.js'
 
 describe('signedHeaderSchema kid', () => {
