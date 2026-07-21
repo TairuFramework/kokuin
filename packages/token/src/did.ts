@@ -1,4 +1,5 @@
 import { base58 } from '@scure/base'
+
 import type { DIDResolver } from './cache.js'
 import { decodeMultibase } from './multibase.js'
 import type { DIDDoc, VerificationMethod } from './peer4.js'

@@ -4,11 +4,11 @@
   "private": true,
   "main": "index.ts",
   "scripts": {
-    "start": "expo start",
     "android": "expo run:android",
     "android:release": "expo run:android --no-bundler --variant release",
     "ios": "expo run:ios",
     "ios:release": "expo run:ios --no-bundler --configuration Release",
+    "start": "expo start",
     "test": "MAESTRO_CLI_NO_ANALYTICS=true MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true maestro test .maestro/"
   },
   "dependencies": {

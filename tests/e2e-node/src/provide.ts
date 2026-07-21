@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
-
 import { NodeKeyStore } from '@kokuin/node'
 
 const [service, keyID, startFile, lockPath] = process.argv.slice(2)

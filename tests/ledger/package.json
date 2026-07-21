@@ -5,10 +5,10 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "test:types": "tsc --noEmit --skipLibCheck",
-    "test:unit": "vitest run",
     "test": "pnpm run test:types && pnpm run test:unit",
-    "test:speculos": "./test-speculos.sh"
+    "test:speculos": "./test-speculos.sh",
+    "test:types": "tsc --noEmit --skipLibCheck",
+    "test:unit": "vitest run"
   },
   "devDependencies": {
     "@kokuin/deterministic": "workspace:^",

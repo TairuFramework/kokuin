@@ -262,20 +262,23 @@ const assertion = await createRotationAssertion(oldIdentity, newIdentity)
 
 ## Keystores
 
-Keystores persist private keys using each platform's secure storage mechanism. They all implement the `KeyStore` / `KeyEntry` contract defined in `@kokuin/token`. Each package exposes a convenience helper that gets or creates a key and returns a ready-to-use identity.
+Keystores persist private keys using each platform's secure storage mechanism. They implement the `KeyStore` / `KeyEntry` contract defined in `@kokuin/token`, and each store exposes `provideIdentity(keyID)`, which gets or creates a key and returns a ready-to-use identity. `@kokuin/ledger-device` is the exception: its key never leaves the device, so it implements `IdentityProvider` alone — no storage contract and no keystore class.
 
 ### `@kokuin/node` — Node.js
 
 Uses `@napi-rs/keyring`: macOS Keychain, Windows Credential Manager, Linux Secret Service.
 
 ```typescript
-import { NodeKeyStore, provideFullIdentityAsync } from '@kokuin/node'
+import { NodeKeyStore } from '@kokuin/node'
 
 const store = NodeKeyStore.open({ service: 'my-app' })
 
 // Get or create a key; return a FullIdentity
-const identity = await provideFullIdentityAsync(store, 'main-key')
+const identity = await store.provideIdentity('main-key')
 console.log('DID:', identity.id)
+
+// The same, synchronously
+const identitySync = store.provideIdentitySync('main-key')
 
 // Manual entry operations
 const entry = store.entry('main-key')
@@ -288,6 +291,10 @@ await entry.removeAsync()
 const entries = await store.listAsync()
 ```
 
+> `provideIdentitySync` is beyond the `IdentityProvider` contract and is **not** cross-process
+> safe: a file lock cannot be acquired synchronously, so it throws when the store was opened
+> with a `lockPath`.
+
 Storage locations:
 - macOS: `~/Library/Keychains/login.keychain-db`
 - Windows: Credential Manager (DPAPI-encrypted)
@@ -295,21 +302,35 @@ Storage locations:
 
 ### `@kokuin/browser` — Browser (IndexedDB + Web Crypto)
 
-Uses IndexedDB for persistence and Web Crypto (ES256 / P-256) for key generation. Returns a **`SigningIdentity`** only — browsers use non-exportable `CryptoKeyPair` objects, so decryption is not supported.
+Uses IndexedDB for persistence and Web Crypto for key generation. Holds a non-extractable
+Ed25519 signing key plus the X25519 agreement key derived from it, so a current record both
+signs and decrypts — `provideIdentity` returns a `FullIdentity`.
+
+Requires `SubtleCrypto` support for both algorithms: Chrome 137+, Firefox 130+, or Safari 17+.
+On an older browser it hard-errors rather than falling back to ES256 — a fallback would mint a
+different DID for the same keyID.
+
+Records minted before this requirement (ES256) keep working, but only for signing: WebCrypto
+will not let an ECDSA key do `deriveBits`, so a legacy record cannot decrypt. Use
+`store.provideSigningIdentity(keyID)` for one — `store.provideIdentity(keyID)` throws on it,
+since it promises decryption. Legacy records are never silently re-keyed, since that would
+change the identity's DID.
 
 ```typescript
-import { BrowserKeyStore, provideSigningIdentity } from '@kokuin/browser'
+import { BrowserKeyStore } from '@kokuin/browser'
+import { createUnsignedToken, signToken, stringifyToken } from '@kokuin/token'
 
-// Get or create a signing identity (auto-opens the default store)
-const identity = await provideSigningIdentity('user-session')
+// `open()` is memoized per database name — repeated calls resolve the same store
+const store = await BrowserKeyStore.open({ name: 'my-app-keys' })
+
+// A FullIdentity — signing and decryption. Throws on a legacy ES256 record.
+const identity = await store.provideIdentity('user-session')
 console.log('DID:', identity.id)
 
-// Or open the store explicitly
-const store = await BrowserKeyStore.open({ name: 'my-app-keys' })
-const identity2 = await provideSigningIdentity('user-session', store)
+// Signing-only, accepting both the current and legacy suites
+const signingIdentity = await store.provideSigningIdentity('user-session')
 
 // Sign a token
-import { createUnsignedToken, signToken, stringifyToken } from '@kokuin/token'
 const token = await signToken(identity, createUnsignedToken({
   sub: 'resource:7',
   exp: Math.floor(Date.now() / 1000) + 3600,
@@ -319,21 +340,21 @@ const tokenString = stringifyToken(token)
 
 Storage: per-origin IndexedDB; survives page reload and browser restart; not synced across devices.
 
-> **Note**: `@kokuin/browser` exports `provideSigningIdentity` only. There is no `provideFullIdentity` — use `@kokuin/node`, `@kokuin/expo`, or `@kokuin/electron` when a `FullIdentity` (signing + decryption) is required.
-
 ### `@kokuin/expo` — React Native (Expo SecureStore)
 
 Uses Expo SecureStore: iOS Keychain (`kSecAttrAccessibleAfterFirstUnlock`) / Android Keystore.
 
 ```typescript
-import { ExpoKeyStore, provideFullIdentityAsync } from '@kokuin/expo'
+import { ExpoKeyStore } from '@kokuin/expo'
+
+const store = ExpoKeyStore.open()
 
 // Get or create a device identity
-const identity = await provideFullIdentityAsync('device-identity')
+const identity = await store.provideIdentity('device-identity')
 console.log('DID:', identity.id)
 
-// Manual entry via the static store reference
-const entry = ExpoKeyStore.entry('device-identity')
+// Manual entry operations
+const entry = store.entry('device-identity')
 const key = await entry.getAsync()     // Uint8Array | null
 await entry.removeAsync()
 ```
@@ -345,13 +366,13 @@ Keys survive app restarts. On logout, call `entry.removeAsync()` to delete the s
 Uses Electron `safeStorage` for encryption and `electron-store` for persistence. **Main process only** — `safeStorage` is not available in renderer processes.
 
 ```typescript
-import { ElectronKeyStore, provideFullIdentityAsync } from '@kokuin/electron'
+import { ElectronKeyStore } from '@kokuin/electron'
 import { createUnsignedToken, signToken } from '@kokuin/token'
 
 const store = ElectronKeyStore.open({ name: 'my-app-keystore' })
 
 // Get or create identity
-const identity = await provideFullIdentityAsync(store, 'main-process-key')
+const identity = await store.provideIdentity('main-process-key')
 console.log('DID:', identity.id)
 
 // Sign a token (e.g. for IPC verification)
@@ -367,25 +388,25 @@ Storage: `electron-store` default location (`~/Library/Application Support/<app>
 
 Derives Ed25519 private keys from a root seed using [SLIP-0010](https://github.com/satoshilabs/slips/blob/master/slip-0010.md) hierarchical deterministic (HD) derivation. The same seed + path always yields the same key pair — identities are reproducible without persistent storage.
 
-**There is no `provide*` helper.** Build identities manually with `createFullIdentity` from `@kokuin/token`.
+`HDKeyStore` implements `IdentityProvider<FullIdentity>` — call `store.provideIdentity(keyID)`.
+Derivation is async-only; there is no sync twin. `derivePrivateKey` remains available for
+standalone derivation without a store.
 
 ```typescript
 import { HDKeyStore, derivePrivateKey, resolveDerivationPath } from '@kokuin/deterministic'
 import { createFullIdentity } from '@kokuin/token'
 
-// Standalone derivation (no store required)
-const path = resolveDerivationPath('0')           // numeric keyID → "m/44'/876'/0'"
-const privateKey = derivePrivateKey(masterSeed, path)  // Uint8Array
-const identity = createFullIdentity(privateKey)
-console.log('DID:', identity.id)
-
-// Or use the keystore for managed entries (each entry derives on demand)
+// Managed entries — the store derives on demand
 const store = HDKeyStore.fromMnemonic('abandon abandon … art')
 // or: HDKeyStore.fromSeed(masterSeed)
 
-const entry = store.entry('0')       // HDKeyEntry
-const key = await entry.provideAsync()  // Uint8Array (derived private key)
-const identity2 = createFullIdentity(key)
+const identity = await store.provideIdentity('0')
+console.log('DID:', identity.id)
+
+// Standalone derivation (no store required)
+const path = resolveDerivationPath('0')                // numeric keyID → "m/44'/876'/0'"
+const privateKey = derivePrivateKey(masterSeed, path)  // Uint8Array
+const identity2 = createFullIdentity(privateKey)
 ```
 
 The HD name map: `resolveDerivationPath('0')` → `"m/44'/876'/0'"` (default base path `44'/876'`). Pass a full `m/…` path directly to skip resolution.
@@ -396,12 +417,11 @@ Provides an `IdentityProvider` backed by a Ledger hardware device over USB/WebHI
 
 ```typescript
 import { createLedgerIdentityProvider } from '@kokuin/ledger-device'
-import type { IdentityProvider } from '@kokuin/token'
 
 // `transport` is a WebHID or Node-HID Ledger transport instance
 const provider = createLedgerIdentityProvider(transport)
 
-// Call provideIdentity with a keyID string to obtain a signing identity from the device
+// Call provideIdentity with a keyID string to obtain a FullIdentity from the device
 const identity = await provider.provideIdentity('0')
 console.log('Hardware DID:', identity.id)
 ```
@@ -419,13 +439,16 @@ Error types exported from `@kokuin/ledger-device`:
 `KeyEntry` and `KeyStore` are the generic types that all keystores implement. They live in `@kokuin/token` (`src/keystore.ts`) — not in any individual keystore package.
 
 ```typescript
-import type { KeyEntry, KeyStore } from '@kokuin/token'
+import type { KeyEntry, KeyStore, MutableKeyEntry } from '@kokuin/token'
 
 type KeyEntry<PrivateKeyType> = {
   readonly keyID: string
   getAsync(): Promise<PrivateKeyType | null>
-  setAsync(privateKey: PrivateKeyType): Promise<void>
   provideAsync(): Promise<PrivateKeyType>   // get-or-create
+}
+
+type MutableKeyEntry<PrivateKeyType> = KeyEntry<PrivateKeyType> & {
+  setAsync(privateKey: PrivateKeyType): Promise<void>
   removeAsync(): Promise<void>
 }
 
@@ -437,10 +460,23 @@ type KeyStore<
 }
 ```
 
+`KeyEntry` is the **read/provide** facet — the floor every backend can honor, including ones
+that derive keys rather than store them (HD) or never expose key material at all (ledger).
+`MutableKeyEntry` adds writing and deletion.
+
+HD and ledger deliberately do **not** implement `MutableKeyEntry`: an HD key is derived (there
+is nothing to set, and removing it does not stop it being derivable), and a ledger key never
+leaves the device. The type says what the substrate can do, so there is nothing to throw from.
+
+`provideAsync` is idempotent under concurrency — racing callers on one keyID converge on a
+single key. Backends sharing storage across processes need a cross-process lock to hold this
+(see `lockPath` on `NodeKeyStore` / `ElectronKeyStore`); an in-process promise chain is not
+enough. `entry()` must be cached: `store.entry(x) === store.entry(x)`, since entries carry the
+per-entry `provideAsync` lock.
+
 Platform key types:
-- `@kokuin/node`, `@kokuin/expo`: `Uint8Array` (raw Ed25519 private key)
-- `@kokuin/electron`: `string` (base64-encoded Ed25519 private key, decoded by the `provide*` helpers)
-- `@kokuin/browser`: `CryptoKeyPair` (non-exportable Web Crypto ES256 key pair)
+- `@kokuin/node`, `@kokuin/expo`, `@kokuin/electron`: `Uint8Array` (raw Ed25519 private key)
+- `@kokuin/browser`: `StoredKeyRecord` (a non-extractable Web Crypto key record)
 - `@kokuin/deterministic`: keys derived on demand; `HDKeyStore.entry(keyID)` returns an `HDKeyEntry` whose `provideAsync()` calls `derivePrivateKey` internally.
 
 `IdentityProvider` (from `@kokuin/token`) decouples identity creation from its backing store:

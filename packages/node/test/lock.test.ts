@@ -1,7 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 let mockKeyring: Record<string, string>
@@ -179,18 +178,17 @@ describe('adversarial keyIDs', () => {
     expect(readdirSync(dir)).toEqual([])
   })
 
-  test.each([
-    '__proto__',
-    'constructor',
-    'prototype',
-  ])('the prototype-pollution keyID %j behaves as an ordinary key', async (keyID) => {
-    const store = new NodeKeyStore({ service: `pollution-${keyID}` })
-    const entry = store.entry(keyID)
-    expect(entry.keyID).toBe(keyID)
-    expect(await entry.getAsync()).toBeNull()
-    const key = await entry.provideAsync()
-    expect(await entry.getAsync()).toEqual(key)
-  })
+  test.each(['__proto__', 'constructor', 'prototype'])(
+    'the prototype-pollution keyID %j behaves as an ordinary key',
+    async (keyID) => {
+      const store = new NodeKeyStore({ service: `pollution-${keyID}` })
+      const entry = store.entry(keyID)
+      expect(entry.keyID).toBe(keyID)
+      expect(await entry.getAsync()).toBeNull()
+      const key = await entry.provideAsync()
+      expect(await entry.getAsync()).toEqual(key)
+    },
+  )
 })
 
 describe('corrupt credentials', () => {

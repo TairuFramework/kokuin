@@ -1,9 +1,14 @@
 export class LedgerError extends Error {
-  readonly statusCode: number
+  #statusCode: number
+
   constructor(message: string, statusCode: number) {
     super(message)
     this.name = 'LedgerError'
-    this.statusCode = statusCode
+    this.#statusCode = statusCode
+  }
+
+  get statusCode(): number {
+    return this.#statusCode
   }
 }
 

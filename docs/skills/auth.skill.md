@@ -60,14 +60,14 @@ console.log(verified.payload.sub) // 'user-123'
 ### Pattern 2: Using Node.js Keystore for Secure Storage
 
 ```typescript
-import { NodeKeyStore, provideFullIdentityAsync } from '@kokuin/node'
+import { NodeKeyStore } from '@kokuin/node'
 import { createUnsignedToken, signToken, stringifyToken } from '@kokuin/token'
 
 // Open a keystore (uses OS-level credential storage)
 const store = NodeKeyStore.open({ service: 'my-app' })
 
-// Convenience: get or create a FullIdentity from a named key
-const identity = await provideFullIdentityAsync(store, 'user-auth-key')
+// Get or create a FullIdentity from a named key
+const identity = await store.provideIdentity('user-auth-key')
 console.log('DID:', identity.id)
 
 // Sign a token
@@ -97,20 +97,22 @@ for (const e of allEntries) {
 - Automatic key generation on first use via `provideAsync()`
 - Both sync and async APIs available (prefer async in production)
 - Each service can have multiple keys identified by keyID
-- `provideFullIdentityAsync()` helper creates a `FullIdentity` from a keystore entry
+- `store.provideIdentity(keyID)` returns a `FullIdentity`; `store.provideIdentitySync(keyID)` is the sync twin, which throws when the store was opened with a `lockPath` (a file lock cannot be acquired synchronously)
 
 ### Pattern 3: Browser Keystore with IndexedDB
 
 ```typescript
-import { BrowserKeyStore, provideSigningIdentity } from '@kokuin/browser'
+import { BrowserKeyStore } from '@kokuin/browser'
 import { createUnsignedToken, signToken, stringifyToken } from '@kokuin/token'
 
-// Get or create a signing identity (auto-opens the default store)
-const identity = await provideSigningIdentity('session-key')
-
-// Or open the store explicitly first
+// `open()` is memoized per database name — repeated calls resolve the same store
 const store = await BrowserKeyStore.open({ name: 'my-app-keys' })
-const identity2 = await provideSigningIdentity('session-key', store)
+
+// A FullIdentity — signing and decryption. Throws on a legacy ES256 record.
+const identity = await store.provideIdentity('session-key')
+
+// Signing-only, accepting both the current and legacy suites
+const signingIdentity = await store.provideSigningIdentity('session-key')
 
 // Sign a token with the browser identity
 const token = await signToken(identity, createUnsignedToken({
@@ -128,19 +130,23 @@ await entry.removeAsync()
 
 **Key points**:
 - Uses IndexedDB for persistent storage across page reloads
-- Keys are `CryptoKeyPair` objects (non-exportable — Web Crypto ES256 / P-256)
+- Holds a non-extractable Ed25519 signing key plus the X25519 agreement key derived from it — a current record both signs and decrypts
+- Requires `SubtleCrypto` support for both algorithms: Chrome 137+, Firefox 130+, Safari 17+. Older browsers hard-error rather than falling back to ES256, since a fallback would mint a different DID for the same keyID
+- Legacy ES256 records sign but cannot decrypt (WebCrypto will not let an ECDSA key do `deriveBits`). `store.provideIdentity(keyID)` throws on one; use `store.provideSigningIdentity(keyID)`. They are never silently re-keyed — that would change the DID
 - All operations are async (IndexedDB requirement)
-- `@kokuin/browser` exports `provideSigningIdentity` only — there is no `provideFullIdentity`. Use `@kokuin/node`, `@kokuin/expo`, or `@kokuin/electron` when a `FullIdentity` (signing + decryption) is required
-- Keys survive browser restart but are domain-specific (per-origin)
+- Keys survive browser restart but are per-origin
 
 ### Pattern 4: Multi-Platform Mobile with Expo Keystore
 
 ```typescript
-import { ExpoKeyStore, provideFullIdentityAsync } from '@kokuin/expo'
+import { ExpoKeyStore } from '@kokuin/expo'
 import { createUnsignedToken, signToken, stringifyToken } from '@kokuin/token'
 
-// Get or create a device identity (uses Expo SecureStore)
-const identity = await provideFullIdentityAsync('device-identity')
+// The process-wide store (uses Expo SecureStore)
+const store = ExpoKeyStore.open()
+
+// Get or create a device identity
+const identity = await store.provideIdentity('device-identity')
 console.log('DID:', identity.id)
 
 // Sign a token
@@ -151,7 +157,7 @@ const token = await signToken(identity, createUnsignedToken({
 const tokenString = stringifyToken(token)
 
 // Remove key when needed (e.g. app uninstall or logout)
-const entry = ExpoKeyStore.entry('device-identity')
+const entry = store.entry('device-identity')
 await entry.removeAsync()
 ```
 
@@ -167,14 +173,14 @@ await entry.removeAsync()
 ### Pattern 5: Electron App with Encrypted Storage
 
 ```typescript
-import { ElectronKeyStore, provideFullIdentityAsync } from '@kokuin/electron'
+import { ElectronKeyStore } from '@kokuin/electron'
 import { createUnsignedToken, signToken } from '@kokuin/token'
 
 // Open keystore (uses electron-store with safeStorage)
 const store = ElectronKeyStore.open({ name: 'app-keystore' })
 
 // Get or create identity
-const identity = await provideFullIdentityAsync(store, 'main-process-key')
+const identity = await store.provideIdentity('main-process-key')
 console.log('DID:', identity.id)
 
 // Sign a token (e.g. for IPC verification in the renderer)
@@ -203,19 +209,17 @@ await entry.removeAsync()
 import { HDKeyStore, derivePrivateKey, resolveDerivationPath } from '@kokuin/deterministic'
 import { createFullIdentity } from '@kokuin/token'
 
-// Standalone derivation — same seed + path always yields the same key pair
-const path = resolveDerivationPath('0')               // numeric keyID → "m/44'/876'/0'"
-const privateKey = derivePrivateKey(masterSeed, path) // Uint8Array
-const identity = createFullIdentity(privateKey)
-console.log('DID:', identity.id)
-
-// Or use the keystore for managed entries
+// Managed entries — the store derives on demand
 const store = HDKeyStore.fromMnemonic('abandon abandon … art')
 // or: HDKeyStore.fromSeed(masterSeed)
 
-const entry = store.entry('0')         // HDKeyEntry
-const key = await entry.provideAsync() // Uint8Array (derived private key)
-const identity2 = createFullIdentity(key)
+const identity = await store.provideIdentity('0')
+console.log('DID:', identity.id)
+
+// Standalone derivation — same seed + path always yields the same key pair
+const path = resolveDerivationPath('0')               // numeric keyID → "m/44'/876'/0'"
+const privateKey = derivePrivateKey(masterSeed, path) // Uint8Array
+const identity2 = createFullIdentity(privateKey)
 ```
 
 **Use case**: Reproducible identities from a seed phrase — no persistent storage required
@@ -223,7 +227,7 @@ const identity2 = createFullIdentity(key)
 **Key points**:
 - SLIP-0010 hierarchical deterministic (HD) derivation; Ed25519 curve
 - Same seed + path → same identity; identities are fully reproducible
-- **No `provide*` helper** — build identities manually with `createFullIdentity` from `@kokuin/token`
+- `HDKeyStore` implements `IdentityProvider<FullIdentity>` — call `store.provideIdentity(keyID)`. Async-only; there is no sync twin
 - `resolveDerivationPath` maps a numeric keyID to the default base path (`m/44'/876'/<n>'`)
 
 ### Pattern 7: Ledger Hardware Wallet
@@ -236,7 +240,7 @@ import { createUnsignedToken, signToken } from '@kokuin/token'
 // `transport` is a WebHID or Node-HID Ledger transport instance
 const provider = createLedgerIdentityProvider(transport)
 
-// Call provideIdentity with a keyID string to get a signing identity from the device
+// Call provideIdentity with a keyID string to get a FullIdentity from the device
 const identity = await provider.provideIdentity('0')
 console.log('Hardware DID:', identity.id)
 
@@ -250,7 +254,7 @@ const token = await signToken(identity, createUnsignedToken({
 **Use case**: High-security environments where private keys must never leave hardware
 
 **Key points**:
-- `createLedgerIdentityProvider` returns an `IdentityProvider` (not a keystore class)
+- `createLedgerIdentityProvider` returns an `IdentityProvider<FullIdentity>` (not a keystore class); it implements neither `KeyStore` nor `MutableKeyEntry`, since the key never leaves the device
 - Private keys never leave the Ledger device
 - Error types: `LedgerError`, `LedgerDisconnectedError`, `LedgerAppNotOpenError`, `LedgerUserRejectedError`
 
@@ -324,8 +328,8 @@ console.log(payload)       // { hello: 'world' }
 **Use `@kokuin/browser`** when:
 - Building web applications (SPA, PWA)
 - Need persistent browser-based authentication
-- Want Web Crypto API security (ES256, non-exportable keys)
-- Client-side signing required (signing identity only — no decryption)
+- Want Web Crypto security (non-extractable Ed25519 + derived X25519 keys)
+- Client-side signing and decryption required (Chrome 137+, Firefox 130+, Safari 17+)
 
 **Use `@kokuin/expo`** when:
 - Building React Native apps with Expo

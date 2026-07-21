@@ -23,11 +23,11 @@ Scoped permissions, delegation chains, revocation. Covers capability tokens buil
 
 ## Package Overview
 
-- **@kokuin/token** — Core identity and token primitives: `randomIdentity`, `createFullIdentity`, `signToken`, `verifyToken`, `encryptToken`, `decryptToken`, `wrapEnvelope`, `unwrapEnvelope`. The `KeyStore`/`KeyEntry` contract types also live here.
+- **@kokuin/token** — Core identity and token primitives: `randomIdentity`, `createFullIdentity`, `signToken`, `verifyToken`, `encryptToken`, `decryptToken`, `wrapEnvelope`, `unwrapEnvelope`. The contract types also live here: `KeyStore`, `KeyEntry` (read/provide) and `MutableKeyEntry` (adds write/delete), plus `IdentityProvider`.
 - **@kokuin/capability** — Capability-based authorization built on `@kokuin/token`: `createCapability`, `checkCapability`, `checkDelegationChain`, revocation helpers.
-- **@kokuin/node** — Node.js keystore backed by OS credential storage (macOS Keychain, Windows Credential Manager, Linux Secret Service). Exports `NodeKeyStore`, `provideFullIdentityAsync`.
-- **@kokuin/browser** — Browser keystore backed by IndexedDB / Web Crypto (ES256, non-exportable). Exports `BrowserKeyStore`, `provideSigningIdentity` (signing only — no decryption).
-- **@kokuin/expo** — React Native / Expo keystore backed by `expo-secure-store`. Exports `ExpoKeyStore`, `provideFullIdentityAsync`.
-- **@kokuin/electron** — Electron keystore using `safeStorage` + `electron-store`. Exports `ElectronKeyStore`, `provideFullIdentityAsync` (main process only).
-- **@kokuin/deterministic** — SLIP-0010 Ed25519 HD derivation from a seed phrase. Exports `HDKeyStore`, `derivePrivateKey`, `resolveDerivationPath`. No `provide*` helper — build identities from derived private keys via `createFullIdentity` in `@kokuin/token`.
-- **@kokuin/ledger-device** — Ledger hardware wallet integration. Exports `createLedgerIdentityProvider` (an `IdentityProvider` — not a keystore class); private keys never leave the device.
+- **@kokuin/node** — Node.js keystore backed by OS credential storage (macOS Keychain, Windows Credential Manager, Linux Secret Service). Exports `NodeKeyStore`; call `store.provideIdentity(keyID)` for a `FullIdentity`.
+- **@kokuin/browser** — Browser keystore backed by IndexedDB / Web Crypto (non-extractable Ed25519 + derived X25519). Exports `BrowserKeyStore`; `store.provideIdentity(keyID)` returns a `FullIdentity`, `store.provideSigningIdentity(keyID)` accepts legacy ES256 records signing-only.
+- **@kokuin/expo** — React Native / Expo keystore backed by `expo-secure-store`. Exports `ExpoKeyStore`; call `store.provideIdentity(keyID)` for a `FullIdentity`.
+- **@kokuin/electron** — Electron keystore using `safeStorage` + `electron-store` (main process only). Exports `ElectronKeyStore`; call `store.provideIdentity(keyID)` for a `FullIdentity`.
+- **@kokuin/deterministic** — SLIP-0010 Ed25519 HD derivation from a seed phrase. Exports `HDKeyStore`, `HDKeyEntry`, `derivePrivateKey`, `resolveDerivationPath`; call `store.provideIdentity(keyID)` for a `FullIdentity` — async-only, there is no sync twin.
+- **@kokuin/ledger-device** — Ledger hardware wallet integration. Exports `createLedgerIdentityProvider` (an `IdentityProvider<FullIdentity>` — not a keystore class); call `provider.provideIdentity(keyID)` for a `FullIdentity`. Private keys never leave the device.

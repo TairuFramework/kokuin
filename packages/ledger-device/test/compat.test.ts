@@ -3,6 +3,7 @@ import { verifyToken } from '@kokuin/token'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { mnemonicToSeedSync } from '@scure/bip39'
 import { describe, expect, test } from 'vitest'
+
 import { INS } from '../src/apdu.js'
 import { createLedgerIdentityProvider } from '../src/provider.js'
 import type { LedgerTransport } from '../src/types.js'
