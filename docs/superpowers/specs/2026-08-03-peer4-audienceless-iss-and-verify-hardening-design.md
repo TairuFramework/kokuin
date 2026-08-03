@@ -168,7 +168,8 @@ try {
 - **token / identity**: a peer:4 identity signing an audience-less payload emits a long-form `iss`,
   and `verifyToken` succeeds on it with no resolver and no cache. An array-valued `aud` likewise
   yields the long form. `embedLongForm: false` still forces the short form. The existing
-  first-per-aud tests pass unchanged.
+  `uses short form by default when payload has no aud` test encodes the old rule and is inverted;
+  every other first-per-aud test passes unchanged.
 - **token / rotation**: a peer:4 rotation assertion verifies from a verifier with no prior cache.
 - **capability / revocation**: the reported reproduction — a peer:4 signer's revocation record
   verifies with no prior cache, and `createRevocationChecker` rejects the revoked token.
