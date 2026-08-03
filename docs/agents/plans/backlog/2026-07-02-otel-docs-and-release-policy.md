@@ -1,22 +1,21 @@
-# otel: docs and release policy
+# otel: package docs and dead surface
 
 **Status:** backlog
 **Origin:** `completed/2026-07-02-audit.complete.md` (Medium: otel undocumented, unused attr)
 
 ## Context
 
-`@kokuin/otel` is a hard `workspace:^` dependency of all five fixed-group packages but sits
-outside the documented release and architecture surface. Tidy its docs, release policy, and
-dead surface.
+`@kokuin/otel` is a hard `workspace:^` dependency of all five fixed-group packages. The
+architecture docs now cover it; its own README and its dead surface do not.
 
 ## Work
 
-### otel is undocumented and outside release policy
+### otel has no README and ships an unused dep
 
 Partly resolved on 2026-08-03: the architecture review added `@kokuin/otel` to AGENTS.md,
-`docs/agents/architecture.md`, and the root README. Still open — it has no README of its own,
-no changeset group, and declares an unused `@opentelemetry/api` dep. Place it in the release
-policy, and drop or use the unused dep.
+`docs/agents/architecture.md`, and the root README. Still open — the package has no README of
+its own and declares an unused `@opentelemetry/api` dep. Write the README, and drop or use the
+dep.
 
 ### `AUTH_ALGORITHM` attribute defined, never used
 
@@ -25,5 +24,6 @@ Either wire it into `token.sign` or remove it.
 
 ## Out of scope
 
-- Fixed release group configuration for the core packages — see
-  `next/2026-07-02-ci-release-gating.md`.
+- otel's own release policy (fixed group or floating) — moved on 2026-08-03 to
+  `next/2026-08-03-release-config-fixed-group-and-license.md`, which owns the fixed-group
+  decision for the whole repo.

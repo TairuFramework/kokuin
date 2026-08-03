@@ -2,6 +2,11 @@
 
 **Status:** next
 **Origin:** `completed/2026-07-10-token-verification-hardening.complete.md` (deferred review findings)
+**Sequencing (2026-08-03 triage):** do alongside
+`next/2026-08-03-peer4-revocation-records-are-unverifiable.md`. Both work in `peer4.ts` and
+`identity.ts`, and the doc-size guard below sits in the same resolver path that item touches.
+That item is the higher-severity of the two — it is a live fail-open, whereas nothing here is
+remotely reachable.
 
 ## Context
 

@@ -1,6 +1,6 @@
 # Verify the e2e-node keyring behaviour on Linux
 
-**Status:** backlog
+**Status:** next — the whole item is reading one CI run; it costs less to close than to carry.
 **Origin:** `completed/2026-07-14-keystore-contract.complete.md` — the recorded watch-item.
 
 ## Context

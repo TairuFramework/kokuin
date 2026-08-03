@@ -7,6 +7,11 @@
 
 **Priority:** Low -- single-recipient JWE (ECDH-ES direct + A256GCM) is already implemented. Multi-recipient adds `ECDH-ES+A256KW` key wrapping and JWE JSON Serialization for scenarios where a message must be decryptable by multiple parties.
 
+**Sequencing (2026-08-03 triage):** phase 3 of `backlog/2026-06-30-post-quantum-algorithms.md`
+rewrites the same file for a hybrid X25519 + ML-KEM mode. Both introduce a non-direct key
+agreement with per-recipient wrapped CEKs. Whichever lands first should define that shape; the
+other adopts it instead of adding a second one.
+
 ---
 
 ## Task 22: Add ECDH-ES+A256KW key wrapping

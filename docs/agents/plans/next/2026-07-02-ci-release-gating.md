@@ -1,22 +1,18 @@
 # CI and release gating
 
 **Status:** next
-**Origin:** `completed/2026-07-02-audit.complete.md` (Critical #5, High: turbo/ledger-CI/SLIP-0010, Medium: CI pin/LICENSE)
+**Origin:** `completed/2026-07-02-audit.complete.md` (High: turbo/ledger-CI/SLIP-0010, Medium: CI pin)
 
 ## Context
 
 The build/test/release plumbing does not actually gate: fresh-clone `pnpm test` fails,
-firmware and derivation vectors are never exercised, versions have diverged, and CI depends
-on an unpinned external workflow. Make the pipeline enforce what it claims.
+firmware and derivation vectors are never exercised, and CI depends on an unpinned external
+workflow. Make the pipeline enforce what it claims.
+
+Scoped to the pipeline. The release *configuration* (fixed group, LICENSE) split out on
+2026-08-03 — see Out of scope.
 
 ## Work
-
-### Changeset fixed release group not configured (Critical #5)
-
-`.changeset/config.json:5` has `"fixed": []` / `"linked": []`, but AGENTS.md documents that
-token, capability, browser, node, deterministic release together. Versions already diverged
-(token 0.1.1, capability 0.1.0, browser 0.1.2, node 0.1.1, deterministic 0.1.1). Configure
-the `fixed` group.
 
 ### Tests don't depend on build; `clean` task is dead (High)
 
@@ -40,11 +36,6 @@ Assert the vector's expected private-key hex.
 
 `.github/workflows/*.yml` — kokuin CI can break with no commit here. Pin to a SHA or tag.
 
-### No LICENSE file (Medium)
-
-None anywhere, despite all packages declaring `"license": "MIT"` — nothing ships to npm.
-Add the license file.
-
 ### Doc snippets are not typechecked
 
 Handed off from `completed/2026-07-18-auth-docs-provide-identity-refresh.complete.md`, which
@@ -63,3 +54,6 @@ test-depends-on-build fix above.
 
 - The security bug fixes those tests should cover — see the capability/token/keystore
   `next/` items.
+- The changeset fixed group and the LICENSE file — split out on 2026-08-03 into
+  `next/2026-08-03-release-config-fixed-group-and-license.md`, which lands in minutes and
+  should not wait behind the pipeline work here.

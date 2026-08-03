@@ -1,7 +1,12 @@
 # A `did:peer:4` signer cannot produce a verifiable revocation record
 
-**Status:** next
+**Status:** next — highest-priority open item (2026-08-03 triage)
 **Severity:** security — fail-open, latent
+**Sequencing:** pick a direction before writing code; the three below are a real trade-off, not
+a ranked list. Bundle the implementation with
+`next/2026-07-10-verified-token-mutation-and-decode-hardening.md` — same two files. Unblocks
+`backlog/2026-07-02-security-model-docs.md`, which would document whatever `iss` behaviour
+this settles on.
 **Origin:** found from kubun while fixing a delegation-revocation fail-open (`kubun/docs/superpowers/specs/2026-08-03-delegation-revocation-comember-binding-design.md`, question 2.4). Confirmed empirically in kubun's suite, not inferred.
 
 ## What happens

@@ -1,13 +1,18 @@
 # Ledger protocol hardening
 
-**Status:** backlog
+**Status:** next — promoted from backlog on 2026-08-03 (triage)
 **Origin:** `completed/2026-07-02-audit.complete.md` (Medium: protocol version, path encoding)
 
 ## Context
 
 Host↔firmware APDU protocol has no version gate and encodes malformed derivation paths as a
-valid-looking key. Lower priority than the consent bug but should land before the Ledger
-keystore is widely used. The APDU protocol versions in lockstep with `@kokuin/ledger-device`.
+valid-looking key. Should land before the Ledger keystore is widely used. The APDU protocol
+versions in lockstep with `@kokuin/ledger-device`.
+
+Promoted because the path-encoding defect derives the **wrong key silently**, with no error at
+any layer. Re-verified on 2026-08-03, still live: `encodeDerivationPath` validates only that
+each component ends in `'`, so `m/abc'` reaches `Number.parseInt('abc')` → `NaN`, and
+`(NaN | HARDENED_BIT) >>> 0` → `0x80000000` — indistinguishable from a legitimate `m/0'`.
 
 ## Work
 

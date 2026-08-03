@@ -10,6 +10,12 @@ documentation. Consumers need to understand the guarantees and pitfalls before d
 kokuin. Best done after the security fixes land, so the docs describe the corrected
 behaviour.
 
+**Blocked on (2026-08-03 triage):** `next/2026-08-03-peer4-revocation-records-are-unverifiable.md`.
+Every other audit fix has landed — capability authorization, keystore correctness, firmware
+consent, token verification. That one is the last open item that changes behaviour this
+document would describe: it decides when a `did:peer:4` signer embeds the long form in `iss`,
+and therefore which tokens a recipient can verify at all. Write the prose after it settles.
+
 ## Work
 
 ### Write the security model
