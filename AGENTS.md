@@ -1,31 +1,32 @@
 # kokuin
 
-> **For AI agents:** 刻印 ("engraved seal") — the identity / auth / keys layer.
-> token + capability + per-environment keystores. Depends downward on `@sozai`;
-> consumed by `@enkaku` (RPC) and `@kumiai` (MLS).
+> Conventions: `kigu:conventions` skill (canonical -- do not restate).
+> Stack map / sibling docs: `kigu:stack-map` skill.
 
 ## What this repo is
 
-Identity primitives: JWT-style tokens, capabilities, and keystores per runtime
-(browser, node, electron, expo, deterministic HD, ledger-device). Cross-repo deps
-(`@sozai/*`) are published `^` ranges, never `workspace:`. The fixed group
-(token, capability, browser, node, deterministic) releases together; `expo`,
-`electron`, and `ledger-device` are SDK/hardware-bound and float independently.
+刻印 ("engraved seal") -- the identity / auth / keys layer. Depends downward on `@sozai`;
+consumed by `@enkaku` (RPC) and `@kumiai` (MLS).
+
+Identity primitives: JWT-style tokens, capabilities, and keystores per runtime (browser,
+node, electron, expo, deterministic HD, ledger-device). Two supporting packages: `@kokuin/otel`
+(tracer factory and span/attribute names) and `@kokuin/keystore-conformance` (private -- the
+framework-agnostic suite that enforces the `KeyStore` / `KeyEntry` contract on every backend).
+
+End-to-end suites live under `tests/` (`e2e-electron`, `e2e-expo`, `e2e-node`, `e2e-web`,
+`ledger`). `pnpm-workspace.yaml` includes `tests/*` as workspace packages.
 
 `apps/ledger` is the on-device BOLOS firmware (C, Ledger Nano S+/X) paired with
-`@kokuin/ledger-device` over APDU — not a pnpm package, built via its own Docker/Makefile.
+`@kokuin/ledger-device` over APDU -- not a pnpm package, built via its own Docker/Makefile.
 The APDU protocol versions in lockstep with the host-side package.
 
-## Conventions
+## Guardrails
 
-Follow the `conventions` skill from the `kigu` marketplace (the canonical source of
-truth). pnpm only. `type` not `interface`; `Array<T>` not `T[]`; never `any`; capital
-`ID`/`HTTP`/`JWT`/`DID`; ES `#fields`, never `private`/`readonly`. Do not edit
-generated files (`lib/`).
+See the `kigu:conventions` skill. Repo-specific only:
 
-## Toolchain
-
-All dev tooling and shared configs come from `@kigu/dev`. Extend
-`@kigu/dev/tsconfig.json`, `["@kigu/dev/biome.json"]`, and `@kigu/dev/swc.json`.
-
-See `../kigu/docs/repo-split-design.md` for the broader monorepo-split architecture.
+- pnpm only.
+- Cross-repo deps (`@sozai/*`) are published `^` ranges, never `workspace:`.
+- The fixed group (token, capability, browser, node, deterministic) releases together.
+  `expo`, `electron`, and `ledger-device` are SDK/hardware-bound and float independently.
+- All dev tooling and shared config comes from `@kigu/dev`. Extend `@kigu/dev/tsconfig.json`,
+  `["@kigu/dev/biome.json"]`, and `@kigu/dev/swc.json`.

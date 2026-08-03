@@ -13,9 +13,10 @@ dead surface.
 
 ### otel is undocumented and outside release policy
 
-Absent from AGENTS.md, `docs/agents/architecture.md`, and root README; has no README of its
-own; no changeset group; declares an unused `@opentelemetry/api` dep. Document it, place it
-in the release policy, and drop or use the unused dep.
+Partly resolved on 2026-08-03: the architecture review added `@kokuin/otel` to AGENTS.md,
+`docs/agents/architecture.md`, and the root README. Still open — it has no README of its own,
+no changeset group, and declares an unused `@opentelemetry/api` dep. Place it in the release
+policy, and drop or use the unused dep.
 
 ### `AUTH_ALGORITHM` attribute defined, never used
 
