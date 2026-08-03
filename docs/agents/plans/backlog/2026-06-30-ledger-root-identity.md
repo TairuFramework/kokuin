@@ -25,7 +25,8 @@ GroupArchiver (MLS epoch key archival) is kumiai scope, tracked in that repo. Mu
 JWE for archival to multiple roots is `backlog/2026-01-30-jwe-multi-recipient.md`.
 
 CAUTION: the revocation primitive listed above has an open fail-open for `did:peer:4` signers —
-see `next/2026-08-03-peer4-revocation-records-are-unverifiable.md`. Treat "revocation is done"
+see `docs/superpowers/specs/2026-08-03-peer4-audienceless-iss-and-verify-hardening-design.md`.
+Treat "revocation is done"
 as true only for `did:key` identities until that lands.
 
 ## Work
