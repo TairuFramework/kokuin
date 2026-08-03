@@ -20,5 +20,5 @@
     "@changesets/cli": "catalog:",
     "@kigu/dev": "catalog:"
   },
-  "packageManager": "pnpm@11.15.1"
+  "packageManager": "pnpm@11.18.0"
 }

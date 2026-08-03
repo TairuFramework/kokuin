@@ -11,6 +11,7 @@ import {
   isPeer4,
 } from './peer4.js'
 import type { SignatureAlgorithm } from './schemas.js'
+import type { DIDString } from './types.js'
 
 /** @internal */
 export const CODECS: Record<SignatureAlgorithm, Uint8Array> = {
@@ -52,13 +53,13 @@ export function getAlgorithmAndPublicKey(
 }
 
 /** @internal */
-export function getDID(codec: Uint8Array, publicKey: Uint8Array): string {
+export function getDID(codec: Uint8Array, publicKey: Uint8Array): DIDString {
   const bytes = new Uint8Array(codec.length + publicKey.length)
   codec.forEach((v, i) => {
     bytes[i] = v
   })
   bytes.set(publicKey, codec.length)
-  return PREFIX + base58.encode(bytes)
+  return `${PREFIX}${base58.encode(bytes)}`
 }
 
 /** @internal */

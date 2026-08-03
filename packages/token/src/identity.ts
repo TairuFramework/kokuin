@@ -8,12 +8,12 @@ import { decryptToken } from './jwe.js'
 import { encodeMultibase } from './multibase.js'
 import { type DIDDoc, encodePeer4, isPeer4 } from './peer4.js'
 import type { SignedHeader } from './schemas.js'
-import type { SignedToken } from './types.js'
+import type { DIDString, SignedToken } from './types.js'
 import { concatBytes } from './utils.js'
 
 const tracer = createTracer('token')
 
-export type Identity = { readonly id: string }
+export type Identity = { readonly id: DIDString }
 
 export type SignTokenOptions = {
   /** Extra header fields merged into the signed JWS header. */
@@ -195,8 +195,8 @@ export type ResolvedKey = {
 }
 
 export type MultiKeyIdentity = {
-  id: string
-  longForm: string
+  id: DIDString
+  longForm: DIDString
   doc: DIDDoc
   keys: Array<ResolvedKey>
   publicKey: Uint8Array
@@ -352,8 +352,8 @@ function pickAgreementSecret(keys: Array<ResolvedKey>, isPeer: boolean, kid?: st
 }
 
 function buildIdentity(
-  id: string,
-  longForm: string,
+  id: DIDString,
+  longForm: DIDString,
   doc: DIDDoc,
   keys: Array<ResolvedKey>,
 ): MultiKeyIdentity {
@@ -364,7 +364,10 @@ function buildIdentity(
   const sentTo = new Set<string>()
   const isPeer = isPeer4(id)
 
-  function pickIss(payload: Record<string, unknown>, embedLongForm: boolean | undefined): string {
+  function pickIss(
+    payload: Record<string, unknown>,
+    embedLongForm: boolean | undefined,
+  ): DIDString {
     if (!isPeer) return id
     if (embedLongForm === true) return longForm
     if (embedLongForm === false) return id

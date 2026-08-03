@@ -1,5 +1,7 @@
 import type { SignedHeader, SignedPayload, UnsignedHeader } from './schemas.js'
 
+export type DIDString = `did:${string}:${string}`
+
 export type SignedToken<
   Payload extends Record<string, unknown> = Record<string, unknown>,
   Header extends Record<string, unknown> = Record<string, unknown>,

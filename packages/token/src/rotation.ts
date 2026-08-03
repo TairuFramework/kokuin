@@ -1,11 +1,11 @@
 import type { MultiKeyIdentity } from './identity.js'
-import type { SignedToken } from './types.js'
+import type { DIDString, SignedToken } from './types.js'
 
 export type RotationPayload = {
   type: 'did-rotation'
-  iss?: string
-  to: string
-  toLongForm: string
+  iss?: DIDString
+  to: DIDString
+  toLongForm: DIDString
   issuedAt: number
 }
 

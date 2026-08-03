@@ -14,7 +14,7 @@ import {
   validateUnsignedHeader,
 } from './schemas.js'
 import { assertTimeClaimsValid, type TimeValidationOptions } from './time.js'
-import type { SignedToken, Token, UnsignedToken, VerifiedToken } from './types.js'
+import type { DIDString, SignedToken, Token, UnsignedToken, VerifiedToken } from './types.js'
 import { getVerifier, type Verifiers } from './verifier.js'
 
 const tokenTracer = createTracer('token')
@@ -36,7 +36,7 @@ export type VerifyTokenOptions = TimeValidationOptions & {
    * capability's `aud` is the delegation next-hop rather than a service audience. An empty
    * array accepts no audience (every token is rejected).
    */
-  audience?: string | Array<string>
+  audience?: DIDString | Array<DIDString>
   /**
    * Accept unsigned (`alg:none`) tokens. Defaults to `false`.
    *
@@ -50,14 +50,14 @@ export type VerifyTokenOptions = TimeValidationOptions & {
 
 function assertAudienceValid(
   payload: Record<string, unknown>,
-  audience?: string | Array<string>,
+  audience?: DIDString | Array<DIDString>,
 ): void {
   if (audience == null) {
     return
   }
   const aud = payload.aud
   const allowed = Array.isArray(audience) ? audience : [audience]
-  if (typeof aud !== 'string' || !allowed.includes(aud)) {
+  if (typeof aud !== 'string' || !allowed.includes(aud as DIDString)) {
     throw new Error(
       `Invalid token: audience ${typeof aud === 'string' ? `"${aud}"` : 'missing'} not accepted`,
     )

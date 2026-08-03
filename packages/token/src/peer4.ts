@@ -2,6 +2,7 @@ import { canonicalStringify, fromUTF, toUTF } from '@sozai/codec'
 import { createValidator, type FromSchema, isType, type Schema } from '@sozai/schema'
 
 import { decodeMultibase, encodeMultibase, multihashSHA256, verifyMultihash } from './multibase.js'
+import type { DIDString } from './types.js'
 import { concatBytes } from './utils.js'
 
 /** @internal */
@@ -152,7 +153,11 @@ export function decodePeer4(
  * Encode a DID document as a did:peer:4 identifier.
  * Returns both the long form (self-contained, doc embedded) and short form (hash only).
  */
-export function encodePeer4(doc: DIDDoc): { longForm: string; shortForm: string; doc: DIDDoc } {
+export function encodePeer4(doc: DIDDoc): {
+  longForm: DIDString
+  shortForm: DIDString
+  doc: DIDDoc
+} {
   if (!validateDIDDoc(doc)) {
     throw new Error('did:peer:4 doc failed schema validation')
   }
@@ -161,7 +166,7 @@ export function encodePeer4(doc: DIDDoc): { longForm: string; shortForm: string;
   const encodedDoc = encodeMultibase(taggedDoc)
   const hashBytes = multihashSHA256(fromUTF(encodedDoc))
   const hash = encodeMultibase(hashBytes)
-  const shortForm = `${PEER4_PREFIX}${hash}`
-  const longForm = `${shortForm}:${encodedDoc}`
+  const shortForm: DIDString = `${PEER4_PREFIX}${hash}`
+  const longForm: DIDString = `${shortForm}:${encodedDoc}`
   return { longForm, shortForm, doc }
 }
