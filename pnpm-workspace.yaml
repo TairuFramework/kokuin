@@ -18,7 +18,7 @@ catalog:
   '@opentelemetry/sdk-trace-base': ^2.10.0
   '@opentelemetry/sdk-trace-node': ^2.10.0
   '@sozai/async': ^0.2.1
-  '@sozai/codec': ^0.3.0
+  '@sozai/codec': ^0.4.0
   '@sozai/lock': ^0.1.0
   '@sozai/log': ^0.3.0
   '@sozai/otel': ^0.3.2
