@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  assertDocWithinMaxSize,
   type DIDDoc,
   decodePeer4,
   encodePeer4,
@@ -186,5 +187,47 @@ describe('isPeer4 / getPeer4ShortForm', () => {
     })
     expect(getPeer4ShortForm(longForm)).toBe(shortForm)
     expect(getPeer4ShortForm(shortForm)).toBe(shortForm)
+  })
+})
+
+describe('assertDocWithinMaxSize', () => {
+  const entry = { id: '#key-0', type: 'Multikey', publicKeyMultibase: 'z6MkAbc' }
+
+  function docWithEntries(count: number): DIDDoc {
+    return {
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: Array.from({ length: count }, (_, i) => ({ ...entry, id: `#key-${i}` })),
+    }
+  }
+
+  it('accepts a doc under both bounds', () => {
+    const doc: DIDDoc = {
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [entry],
+      authentication: ['#key-0'],
+    }
+    expect(() => assertDocWithinMaxSize(doc)).not.toThrow()
+  })
+
+  it('rejects on entry count before measuring the serialized doc', () => {
+    // 4 KiB default / 40 bytes minimum per entry = 103 entries allowed.
+    expect(() => assertDocWithinMaxSize(docWithEntries(104))).toThrow(
+      'did:peer:4 resolver doc has too many verification methods: 104 > 103',
+    )
+  })
+
+  it('scales the entry cap with maxSize', () => {
+    // 200 / 40 = 5 entries allowed.
+    expect(() => assertDocWithinMaxSize(docWithEntries(6), 200)).toThrow(
+      'did:peer:4 resolver doc has too many verification methods: 6 > 5',
+    )
+  })
+
+  it('still reports the byte-size error for a doc with few but huge entries', () => {
+    const doc: DIDDoc = {
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [{ ...entry, publicKeyMultibase: `z${'1'.repeat(8 * 1024)}` }],
+    }
+    expect(() => assertDocWithinMaxSize(doc)).toThrow(/did:peer:4 resolver doc too large/)
   })
 })

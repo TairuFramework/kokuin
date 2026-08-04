@@ -16,32 +16,24 @@ work that remains came from elsewhere: one live fail-open found downstream in ku
 
 ## Now (in priority order)
 
-1. **`did:peer:4` revocation records are unverifiable** —
-   `next/2026-08-03-peer4-revocation-records-are-unverifiable.md`. A peer:4 grantor can revoke
-   nothing: audience-less tokens carry the short form in `iss`, which no recipient can resolve.
-   Latent rather than live (kokuin's production paths are all `did:key` today) but it is a trap
-   door — `chooseMethod` picks peer:4 automatically for any multi-key identity, which is the
-   natural shape once a KEM key sits on the identity. Needs a design decision between three
-   trade-offs before any code.
-2. **Verified-token mutation and residual decode hardening** —
-   `next/2026-07-10-verified-token-mutation-and-decode-hardening.md`. Nothing remotely
-   reachable. Bundled with item 1: same two files, and its doc-size guard sits in the same
-   resolver path.
-3. **Ledger protocol hardening** — `next/2026-07-02-ledger-protocol-hardening.md`. Promoted from
+1. **Ledger protocol hardening** — `next/2026-07-02-ledger-protocol-hardening.md`. Promoted from
    backlog on 2026-08-03: `encodeDerivationPath` turns a malformed path into a valid-looking
    `m/0'` with no error at any layer, so a wrong key is derived silently. Also gates the APDU
    protocol version, never checked today.
-4. **Release config** — `next/2026-08-03-release-config-fixed-group-and-license.md`. The fixed
+2. **Release config** — `next/2026-08-03-release-config-fixed-group-and-license.md`. The fixed
    group is unconfigured, so five packages that should ship together sit at five versions and
    drift further every release. Plus the missing LICENSE, which blocks npm publication outright.
    Small, and the drift compounds until it lands.
-5. **CI pipeline gating** — `next/2026-07-02-ci-release-gating.md`. The remaining three audit
+3. **CI pipeline gating** — `next/2026-07-02-ci-release-gating.md`. The remaining three audit
    High items, plus workflow pinning and permanent doc-snippet typechecking.
-6. **Verify the e2e-node keyring behaviour on Linux** —
+4. **Verify the e2e-node keyring behaviour on Linux** —
    `next/2026-08-03-verify-e2e-node-keyring-on-linux.md`. Reading one CI run; cheaper to close
    than to carry.
 
-Items 1–3 are correctness. Items 4–6 are the pipeline that should have caught them.
+Item 1 is correctness. Items 2–4 are the pipeline that should have caught them.
+
+The `did:peer:4` audience-less `iss` fail-open that led this list landed on 2026-08-04 —
+`completed/2026-08-04-peer4-audienceless-iss-and-verify-hardening.complete.md`.
 
 ## Later (backlog, no committed timeline)
 

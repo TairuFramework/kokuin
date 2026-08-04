@@ -64,6 +64,20 @@ describe('createInMemoryDIDCache', () => {
     await cache.set(shortForm, docA)
     expect(await cache.get(shortForm)).toEqual(docA)
   })
+
+  it('rejects set for an oversized doc before encoding it', async () => {
+    const cache = createInMemoryDIDCache()
+    const bigDoc = {
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [
+        { id: '#key-0', type: 'Multikey', publicKeyMultibase: `z${'1'.repeat(8 * 1024)}` },
+      ],
+      authentication: ['#key-0'],
+    }
+    // A matching short form, so the rejection can only come from the size guard.
+    const { shortForm } = encodePeer4(bigDoc)
+    await expect(cache.set(shortForm, bigDoc)).rejects.toThrow(/did:peer:4 resolver doc too large/)
+  })
 })
 
 describe('createInMemoryDIDCache LRU', () => {

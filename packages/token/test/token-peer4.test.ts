@@ -46,6 +46,26 @@ describe('verifyToken with did:peer:4', () => {
     await expect(verifyToken(token, { resolver: () => undefined })).rejects.toThrow(/Unknown DID/)
   })
 
+  it('verifies an audience-less token cold, then a short-form one from the populated cache', async () => {
+    const { createIdentity } = await import('../src/identity.js')
+    const identity = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    const cache = createInMemoryDIDCache()
+    // Cold: the cache has never seen this signer, and the payload names no audience, so the
+    // long-form `iss` has to carry the document.
+    const first = await identity.signToken({ sub: 'note-1' })
+    expect(first.payload.iss).toBe(identity.longForm)
+    await expect(verifyToken(first, { cache })).resolves.toBeDefined()
+    // That verification cached the doc under the short form, so a later short-form token resolves.
+    const second = await identity.signToken({ sub: 'note-2' }, { embedLongForm: false })
+    expect(second.payload.iss).toBe(identity.id)
+    await expect(verifyToken(second, { cache })).resolves.toBeDefined()
+    // ...and only because of the cache.
+    await expect(verifyToken(second)).rejects.toThrow(/Unknown DID/)
+  })
+
   it('still verifies a did:key token without a resolver', async () => {
     const { createSigningIdentity } = await import('../src/identity.js')
     const priv = ed25519.utils.randomSecretKey()

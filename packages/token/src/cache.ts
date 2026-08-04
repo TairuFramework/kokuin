@@ -1,4 +1,4 @@
-import { type DIDDoc, encodePeer4, isPeer4 } from './peer4.js'
+import { assertDocWithinMaxSize, type DIDDoc, encodePeer4, isPeer4 } from './peer4.js'
 
 /**
  * Resolves a DID string to a DID document.
@@ -49,6 +49,13 @@ export function createInMemoryDIDCache(options: CreateInMemoryDIDCacheOptions = 
     set(shortForm, doc) {
       if (!isPeer4(shortForm)) {
         return Promise.reject(new Error('DIDCache: short form must be a did:peer:4 identifier'))
+      }
+      // The doc originated from a resolver. Bound it before the encode below, which is linear in
+      // its size — the same guard the resolver path applies.
+      try {
+        assertDocWithinMaxSize(doc)
+      } catch (err) {
+        return Promise.reject(err)
       }
       const expected = encodePeer4(doc).shortForm
       if (expected !== shortForm) {

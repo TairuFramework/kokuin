@@ -21,10 +21,13 @@ export type SignTokenOptions = {
   /** Pick a non-primary signing key by fragment (e.g. "#key-1"). */
   kid?: string
   /**
-   * Override the first-per-aud long-form policy for did:peer:4 identities.
+   * Override the long-form policy for did:peer:4 identities.
    * - true: always use long form (no-op for did:key, where longForm === id).
    * - false: always use short form.
-   * - undefined (default): use long form on first token to a given payload.aud, short form thereafter.
+   * - undefined (default): long form on the first token to a given `payload.aud`, short form
+   *   thereafter; and always long form when the payload names no single string audience, since
+   *   there is then no audience to key first contact on and the recipient may hold no cached
+   *   document for this DID.
    */
   embedLongForm?: boolean
 }
@@ -372,7 +375,9 @@ function buildIdentity(
     if (embedLongForm === true) return longForm
     if (embedLongForm === false) return id
     const aud = payload.aud
-    if (typeof aud !== 'string') return id
+    // No single named audience: there is nothing to key first-contact on, and the recipient may
+    // never have seen this doc. Embed the long form so the token resolves standalone.
+    if (typeof aud !== 'string') return longForm
     const normalizedAud = normalizeDID(aud)
     if (sentTo.has(normalizedAud)) return id
     // Concurrent sign() calls with the same new aud may both emit long-form; recipient cache writes are idempotent so this is acceptable.

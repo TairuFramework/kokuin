@@ -37,4 +37,18 @@ describe('createRotationAssertion', () => {
     })
     expect((verified as { verifiedPublicKey: Uint8Array }).verifiedPublicKey).toBeDefined()
   })
+
+  it('a peer:4 old identity signs an assertion that verifies with no resolver or cache', async () => {
+    const oldId = await createIdentity({
+      keys: [
+        { purpose: 'sig', alg: 'EdDSA' },
+        { purpose: 'kem', alg: 'X25519' },
+      ],
+    })
+    const newId = await createIdentity({ keys: [{ purpose: 'sig', alg: 'EdDSA' }] })
+    const assertion = await createRotationAssertion(oldId, newId)
+    // A rotation assertion carries no aud, so its iss must be self-resolving.
+    expect(assertion.payload.iss).toBe(oldId.longForm)
+    await expect(verifyToken(assertion)).resolves.toBeDefined()
+  })
 })

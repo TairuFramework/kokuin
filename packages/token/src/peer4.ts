@@ -54,6 +54,10 @@ const PEER4_PREFIX = 'did:peer:4'
 const JSON_MULTICODEC = new Uint8Array([0x80, 0x04])
 
 const DEFAULT_MAX_DOC_SIZE = 4 * 1024
+// The smallest legal verificationMethod entry — {"id":"","type":"","publicKeyMultibase":""} at 43
+// bytes plus an array separator — serializes to 44. Undercounting here only widens the cap, so the
+// O(1) guard below can never reject a doc the full byte measure would have accepted.
+const MIN_VERIFICATION_METHOD_BYTES = 40
 // base58 expands bytes to characters by log(256) / log(58).
 const BASE58_EXPANSION = 1.3658
 // A SHA-256 multihash is 34 bytes: 47 base58 characters plus the multibase 'z'.
@@ -67,8 +71,18 @@ export type DecodePeer4Options = {
 /**
  * Throw if a DID document's canonical serialization exceeds `maxSize` bytes.
  * Used to bound a resolver-returned doc before it reaches the O(n^2) base58 encode.
+ *
+ * The entry-count check runs first and is O(1): `canonicalStringify` below is linear in the
+ * document, so an attacker-supplied `verificationMethod` array with millions of entries would
+ * otherwise cost linear time before it could be measured and rejected.
  */
 export function assertDocWithinMaxSize(doc: DIDDoc, maxSize: number = DEFAULT_MAX_DOC_SIZE): void {
+  const maxEntries = Math.ceil(maxSize / MIN_VERIFICATION_METHOD_BYTES)
+  if (Array.isArray(doc.verificationMethod) && doc.verificationMethod.length > maxEntries) {
+    throw new Error(
+      `did:peer:4 resolver doc has too many verification methods: ${doc.verificationMethod.length} > ${maxEntries}`,
+    )
+  }
   const size = fromUTF(canonicalStringify(doc)).length
   if (size > maxSize) {
     throw new Error(`did:peer:4 resolver doc too large: ${size} > ${maxSize}`)

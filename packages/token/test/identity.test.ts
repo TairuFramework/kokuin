@@ -148,13 +148,54 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
     expect(t.payload.iss).toBe(identity.longForm)
   })
 
-  it('uses short form by default when payload has no aud', async () => {
+  it('uses long form when the payload has no aud', async () => {
     const identity = await createIdentity({
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],
       didMethod: 'peer:4',
     })
     const t = await identity.signToken({ sub: identity.id })
+    expect(t.payload.iss).toBe(identity.longForm)
+  })
+
+  it('uses long form when aud is an array rather than a single DID', async () => {
+    const identity = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    const t = await identity.signToken({ sub: identity.id, aud: ['did:example:bob'] })
+    expect(t.payload.iss).toBe(identity.longForm)
+  })
+
+  it('an audience-less token does not consume first contact for a later aud', async () => {
+    const identity = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    // Audience-less: nothing to key first contact on, so it must not mark any peer as contacted.
+    await identity.signToken({ sub: identity.id })
+    const t = await identity.signToken({ sub: identity.id, aud: 'did:example:bob' })
+    expect(t.payload.iss).toBe(identity.longForm)
+  })
+
+  it('embedLongForm:false still forces short form on an audience-less payload', async () => {
+    const identity = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    const t = await identity.signToken({ sub: identity.id }, { embedLongForm: false })
     expect(t.payload.iss).toBe(identity.id)
+  })
+
+  it('an audience-less token from a multi-key identity verifies with no resolver and no cache', async () => {
+    // Two keys means chooseMethod picks peer:4 on its own — the trap door this fixes.
+    const identity = await createIdentity({
+      keys: [
+        { purpose: 'sig', alg: 'EdDSA' },
+        { purpose: 'kem', alg: 'X25519' },
+      ],
+    })
+    const t = await identity.signToken({ sub: identity.id })
+    await expect(verifyToken(t)).resolves.toBeDefined()
   })
 
   it('embedLongForm:true forces long form even on repeat aud', async () => {
