@@ -24,6 +24,13 @@ const tokenTracer = createTracer('token')
 // is only ever skipped for objects produced by `verifyToken` itself.
 const verifiedTokens = new WeakSet<object>()
 
+// The `data` string each verified token's signature was checked against, keyed off the object
+// rather than read back from it. `token.data` is a mutable property of that same object, so
+// comparing a recomputed header/payload against it is vacuous: code that mutates the payload can
+// re-derive `data` from the mutation and stay self-consistent. This map is not reachable from the
+// token, so the value captured at verification time is the one the re-bind compares against.
+const verifiedTokenData = new WeakMap<object, string>()
+
 export type VerifyTokenOptions = TimeValidationOptions & {
   verifiers?: Verifiers
   resolver?: DIDResolver
@@ -191,29 +198,47 @@ export async function signToken<
       >)
 }
 
-function getVerifiableData(token: SignedToken<Record<string, unknown>>): string {
-  const recomputed = `${b64uFromJSON(token.header)}.${b64uFromJSON(token.payload)}`
-  const data = token.data
-  if (data == null || data === recomputed) {
-    return recomputed
+// Whether `data` is a serialization of the token's current header and payload. It may use a
+// different JSON serialization of the same values; accept it only if it decodes to exactly those,
+// so the signed bytes can never be decoupled from the payload used for authorization.
+function matchesVerifiableData(token: SignedToken<Record<string, unknown>>, data: string): boolean {
+  if (data === `${b64uFromJSON(token.header)}.${b64uFromJSON(token.payload)}`) {
+    return true
   }
-  // `data` may use a different JSON serialization of the same header and payload.
-  // Accept it only if it decodes to exactly the same values, so the signed bytes
-  // can never be decoupled from the payload used for authorization.
-  const parts = typeof data === 'string' ? data.split('.') : []
-  if (parts.length === 2) {
-    try {
-      if (
-        canonicalStringify(b64uToJSON(parts[0])) === canonicalStringify(token.header) &&
-        canonicalStringify(b64uToJSON(parts[1])) === canonicalStringify(token.payload)
-      ) {
-        return data
-      }
-    } catch {
-      // invalid base64url or JSON in data: fall through to the error below
-    }
+  const parts = data.split('.')
+  if (parts.length !== 2) {
+    return false
+  }
+  try {
+    return (
+      canonicalStringify(b64uToJSON(parts[0])) === canonicalStringify(token.header) &&
+      canonicalStringify(b64uToJSON(parts[1])) === canonicalStringify(token.payload)
+    )
+  } catch {
+    // invalid base64url or JSON in data
+    return false
+  }
+}
+
+function getVerifiableData(token: SignedToken<Record<string, unknown>>): string {
+  const data = token.data
+  if (data == null) {
+    return `${b64uFromJSON(token.header)}.${b64uFromJSON(token.payload)}`
+  }
+  if (typeof data === 'string' && matchesVerifiableData(token, data)) {
+    return data
   }
   throw new Error('Invalid token: data does not match header and payload')
+}
+
+// Re-bind an already-verified token to the bytes its signature was checked against. The `data`
+// comes from `verifiedTokenData`, never from the token, so a caller that mutates the payload
+// cannot make the check pass by re-deriving `token.data` alongside it.
+function assertVerifiedDataUnchanged(token: SignedToken<Record<string, unknown>>): void {
+  const data = verifiedTokenData.get(token)
+  if (data == null || !matchesVerifiableData(token, data)) {
+    throw new Error('Invalid token: data does not match header and payload')
+  }
 }
 
 async function verifyTokenInner<Payload extends Record<string, unknown> = Record<string, unknown>>(
@@ -231,13 +256,8 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
     if (isVerifiedToken(token)) {
       // The signature was checked when this object entered `verifiedTokens`, but its payload may
       // have been mutated in place since. Re-bind it to the signed bytes — cheap next to a
-      // signature verification, and enough to reject tampering. Without the `data` assertion the
-      // check is vacuous: `getVerifiableData` falls back to a freshly recomputed value when `data`
-      // is absent, and every object the WeakSet admits carries one.
-      if (token.data == null) {
-        throw new Error('Invalid token: verified token missing data')
-      }
-      getVerifiableData(token)
+      // signature verification, and enough to reject tampering.
+      assertVerifiedDataUnchanged(token)
       assertTimeClaimsValid(token.payload as Record<string, unknown>, timeOptions)
       assertAudienceValid(token.payload as Record<string, unknown>, audience)
       return token
@@ -257,6 +277,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
       assertAudienceValid(token.payload as Record<string, unknown>, audience)
       const result = { ...token, data, verifiedPublicKey } as Token<Payload>
       verifiedTokens.add(result)
+      verifiedTokenData.set(result, data)
       return result
     }
     throw new Error('Unsupported token')
@@ -306,6 +327,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
       verifiedPublicKey,
     } as Token<Payload>
     verifiedTokens.add(result)
+    verifiedTokenData.set(result, data)
     return result
   }
 

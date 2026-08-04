@@ -11,7 +11,8 @@ export type RotationPayload = {
 
 /**
  * Sign a rotation assertion linking an old identity to a new one.
- * The assertion is a regular signed token whose `iss` is the old DID.
+ * The assertion is a regular signed token issued by the old identity: its `iss` is that identity's
+ * DID, in long form for a `did:peer:4` signer since the payload names no audience.
  * Verifiers walking a rotation chain can use this to link related identities.
  */
 export async function createRotationAssertion(

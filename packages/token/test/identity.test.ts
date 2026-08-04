@@ -166,6 +166,17 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
     expect(t.payload.iss).toBe(identity.longForm)
   })
 
+  it('an audience-less token does not consume first contact for a later aud', async () => {
+    const identity = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    // Audience-less: nothing to key first contact on, so it must not mark any peer as contacted.
+    await identity.signToken({ sub: identity.id })
+    const t = await identity.signToken({ sub: identity.id, aud: 'did:example:bob' })
+    expect(t.payload.iss).toBe(identity.longForm)
+  })
+
   it('embedLongForm:false still forces short form on an audience-less payload', async () => {
     const identity = await createIdentity({
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],

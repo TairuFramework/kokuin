@@ -435,12 +435,33 @@ describe('verified-token re-submission', () => {
     )
   })
 
+  it('rejects a verified token whose payload was mutated and whose data was recomputed', async () => {
+    const identity = randomIdentity()
+    const token = await identity.signToken({ sub: 'alice', role: 'user' })
+    const verified = await verifyToken(token)
+    const mutable = verified as unknown as {
+      header: Record<string, unknown>
+      payload: Record<string, unknown>
+      data: string
+    }
+    // In-process tampering that also re-derives `data` from the mutated payload: the token is
+    // self-consistent, so the re-bind must compare against the data captured at verification.
+    mutable.payload.role = 'admin'
+    mutable.data = `${b64uFromJSON(mutable.header)}.${b64uFromJSON(mutable.payload)}`
+    await expect(verifyToken(verified)).rejects.toThrow(
+      'Invalid token: data does not match header and payload',
+    )
+  })
+
   it('rejects a verified token whose data was removed', async () => {
     const identity = randomIdentity()
     const token = await identity.signToken({ sub: 'alice' })
     const verified = await verifyToken(token)
     ;(verified as unknown as { data: string | undefined }).data = undefined
-    await expect(verifyToken(verified)).rejects.toThrow('verified token missing data')
+    ;(verified.payload as Record<string, unknown>).role = 'admin'
+    await expect(verifyToken(verified)).rejects.toThrow(
+      'Invalid token: data does not match header and payload',
+    )
   })
 
   it('still accepts an untouched verified token and returns the same object', async () => {

@@ -76,6 +76,8 @@ export async function createRevocationRecord(
   signer: SigningIdentity,
   jti: string,
 ): Promise<RevocationRecord> {
-  // `signToken` injects `iss: signer.id`, so a caller cannot mint a record for another issuer.
+  // `signToken` injects the signer's own DID as `iss`, so a caller cannot mint a record for
+  // another issuer. The record names no audience, so a `did:peer:4` signer embeds its long form
+  // there — the checker above normalizes both sides before comparing, so either form matches.
   return (await signer.signToken({ jti, rev: true, iat: now() })) as RevocationRecord
 }
