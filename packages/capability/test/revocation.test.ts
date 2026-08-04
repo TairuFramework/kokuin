@@ -1,4 +1,4 @@
-import { randomIdentity, stringifyToken } from '@kokuin/token'
+import { createIdentity, randomIdentity, stringifyToken } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
 import { checkDelegationChain, createCapability } from '../src/index.js'
@@ -167,5 +167,40 @@ describe('revocation', () => {
     expect(record.payload.rev).toBe(true)
     expect(typeof record.payload.iat).toBe('number')
     expect(typeof record.signature).toBe('string')
+  })
+
+  test('a did:peer:4 signer produces a revocation record a cold verifier can check', async () => {
+    // Two keys means chooseMethod picks peer:4 on its own — the shape a KEM key produces.
+    const signer = await createIdentity({
+      keys: [
+        { purpose: 'sig', alg: 'EdDSA' },
+        { purpose: 'kem', alg: 'X25519' },
+      ],
+    })
+    const record = await createRevocationRecord(signer, 'cap-peer4')
+    // A revocation record carries no aud, so its iss must carry the document with it.
+    expect(record.payload.iss).toBe(signer.longForm)
+
+    // A backend that has never seen this signer must still verify and store the record.
+    const backend = createMemoryRevocationBackend()
+    await backend.add(record)
+
+    const capability = await createCapability(signer, {
+      sub: signer.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-peer4',
+    })
+    const checker = createRevocationChecker(backend)
+    await expect(checker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
+
+    // The failure mode this replaces, pinned: forcing the old short-form iss makes the same
+    // record unverifiable by the same cold backend.
+    const shortFormRecord = (await signer.signToken(
+      { jti: 'cap-peer4-short', rev: true, iat: Math.floor(Date.now() / 1000) },
+      { embedLongForm: false },
+    )) as typeof record
+    await expect(backend.add(shortFormRecord)).rejects.toThrow(/Unknown DID/)
   })
 })
