@@ -229,6 +229,15 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
       return token
     }
     if (isVerifiedToken(token)) {
+      // The signature was checked when this object entered `verifiedTokens`, but its payload may
+      // have been mutated in place since. Re-bind it to the signed bytes — cheap next to a
+      // signature verification, and enough to reject tampering. Without the `data` assertion the
+      // check is vacuous: `getVerifiableData` falls back to a freshly recomputed value when `data`
+      // is absent, and every object the WeakSet admits carries one.
+      if (token.data == null) {
+        throw new Error('Invalid token: verified token missing data')
+      }
+      getVerifiableData(token)
       assertTimeClaimsValid(token.payload as Record<string, unknown>, timeOptions)
       assertAudienceValid(token.payload as Record<string, unknown>, audience)
       return token
