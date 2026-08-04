@@ -10,12 +10,14 @@ documentation. Consumers need to understand the guarantees and pitfalls before d
 kokuin. Best done after the security fixes land, so the docs describe the corrected
 behaviour.
 
-**Blocked on (2026-08-03 triage):**
-`docs/superpowers/specs/2026-08-03-peer4-audienceless-iss-and-verify-hardening-design.md`.
-Every other audit fix has landed — capability authorization, keystore correctness, firmware
-consent, token verification. That one is the last open item that changes behaviour this
-document would describe: it decides when a `did:peer:4` signer embeds the long form in `iss`,
-and therefore which tokens a recipient can verify at all. Write the prose after it settles.
+**Unblocked (2026-08-04):** the last behaviour-changing item landed —
+`completed/2026-08-04-peer4-audienceless-iss-and-verify-hardening.complete.md`. Its settled
+`iss` rule is one of the things this should document.
+Every audit fix has now landed — capability authorization, keystore correctness, firmware
+consent, token verification. The `iss` rule in particular decides when a `did:peer:4` signer
+embeds the long form, and therefore which tokens a recipient can verify at all: the long form
+whenever the signed payload names no single string `aud`, with `embedLongForm: false` as the
+opt-out. Nothing behaviour-changing is outstanding, so the prose can be written.
 
 ## Work
 

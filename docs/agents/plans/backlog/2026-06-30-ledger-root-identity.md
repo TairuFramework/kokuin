@@ -24,10 +24,10 @@ integration. The primitives are done and now live here as `@kokuin/ledger-device
 GroupArchiver (MLS epoch key archival) is kumiai scope, tracked in that repo. Multi-recipient
 JWE for archival to multiple roots is `backlog/2026-01-30-jwe-multi-recipient.md`.
 
-CAUTION: the revocation primitive listed above has an open fail-open for `did:peer:4` signers —
-see `docs/superpowers/specs/2026-08-03-peer4-audienceless-iss-and-verify-hardening-design.md`.
-Treat "revocation is done"
-as true only for `did:key` identities until that lands.
+The revocation primitive listed above had a fail-open for `did:peer:4` signers — audience-less
+records carried an unresolvable short-form `iss`. Fixed on 2026-08-04, see
+`completed/2026-08-04-peer4-audienceless-iss-and-verify-hardening.complete.md`. "Revocation is
+done" now holds for `did:peer:4` identities too.
 
 ## Work
 

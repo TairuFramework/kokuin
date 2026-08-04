@@ -16,31 +16,24 @@ work that remains came from elsewhere: one live fail-open found downstream in ku
 
 ## Now (in priority order)
 
-1. **`did:peer:4` audience-less issuers, and token verification hardening** — in flight on
-   `fix/peer4-audienceless-iss-and-verify-hardening`; spec at
-   `docs/superpowers/specs/2026-08-03-peer4-audienceless-iss-and-verify-hardening-design.md`.
-   A peer:4 grantor can revoke nothing: audience-less tokens carry the short form in `iss`,
-   which no recipient can resolve. Latent rather than live (kokuin's production paths are all
-   `did:key` today) but it is a trap door — `chooseMethod` picks peer:4 automatically for any
-   multi-key identity, which is the natural shape once a KEM key sits on the identity.
-   `createRotationAssertion` has the same shape. The direction is settled: `pickIss` embeds the
-   long form whenever the payload names no single string audience. Carries the deferred
-   verified-token mutation and decode-hardening findings, which sit in the same files.
-2. **Ledger protocol hardening** — `next/2026-07-02-ledger-protocol-hardening.md`. Promoted from
+1. **Ledger protocol hardening** — `next/2026-07-02-ledger-protocol-hardening.md`. Promoted from
    backlog on 2026-08-03: `encodeDerivationPath` turns a malformed path into a valid-looking
    `m/0'` with no error at any layer, so a wrong key is derived silently. Also gates the APDU
    protocol version, never checked today.
-3. **Release config** — `next/2026-08-03-release-config-fixed-group-and-license.md`. The fixed
+2. **Release config** — `next/2026-08-03-release-config-fixed-group-and-license.md`. The fixed
    group is unconfigured, so five packages that should ship together sit at five versions and
    drift further every release. Plus the missing LICENSE, which blocks npm publication outright.
    Small, and the drift compounds until it lands.
-4. **CI pipeline gating** — `next/2026-07-02-ci-release-gating.md`. The remaining three audit
+3. **CI pipeline gating** — `next/2026-07-02-ci-release-gating.md`. The remaining three audit
    High items, plus workflow pinning and permanent doc-snippet typechecking.
-5. **Verify the e2e-node keyring behaviour on Linux** —
+4. **Verify the e2e-node keyring behaviour on Linux** —
    `next/2026-08-03-verify-e2e-node-keyring-on-linux.md`. Reading one CI run; cheaper to close
    than to carry.
 
-Items 1–2 are correctness. Items 3–5 are the pipeline that should have caught them.
+Item 1 is correctness. Items 2–4 are the pipeline that should have caught them.
+
+The `did:peer:4` audience-less `iss` fail-open that led this list landed on 2026-08-04 —
+`completed/2026-08-04-peer4-audienceless-iss-and-verify-hardening.complete.md`.
 
 ## Later (backlog, no committed timeline)
 
