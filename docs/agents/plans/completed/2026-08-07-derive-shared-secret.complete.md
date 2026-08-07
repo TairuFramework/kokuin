@@ -2,8 +2,8 @@
 
 **Status:** complete
 **Date:** 2026-08-07
-**Origin:** `completed/2026-08-07-public-recipient-key-agreement.md`, filed from kubun's credential
-store work.
+**Origin:** `completed/2026-08-07-public-recipient-key-agreement.complete.md`, filed from kubun's
+credential store work.
 **Branch:** `feat/derive-shared-secret` (7 commits: implementation + tests, exports, changeset and
 plan lifecycle, a bump-level correction, a post-review fix wave, and one doc correction)
 
