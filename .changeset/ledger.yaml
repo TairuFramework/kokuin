@@ -1,0 +1,9 @@
+"@kokuin/capability@0.2.2":
+  dir: packages/capability
+  intents:
+    - peer4-audienceless-iss
+"@kokuin/token@0.4.0":
+  dir: packages/token
+  intents:
+    - derive-shared-secret
+    - peer4-audienceless-iss

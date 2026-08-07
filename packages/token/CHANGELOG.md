@@ -1,5 +1,54 @@
 # @kokuin/token
 
+## 0.4.0
+
+### Minor Changes
+
+- New `deriveSharedSecret(did)` performs X25519 key agreement with a recipient DID directly, without
+  building a JWE to carry a secret the recipient could have derived.
+
+  It generates the ephemeral key pair internally and returns `{ sharedSecret, ephemeralPublicKey }`.
+  The recipient recovers the identical bytes with the existing `identity.agreeKey(ephemeralPublicKey)`.
+
+  ```ts
+  const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipientDID)
+  // recipient, unchanged API:
+  const recovered = await identity.agreeKey(ephemeralPublicKey)
+  ```
+
+  `sharedSecret` is the raw ECDH output, not a key — it is not uniformly random, so run it through a
+  KDF with your own domain separation before use.
+
+  Recipient DIDs are resolved exactly as `createTokenEncrypter` already resolves them, with the same
+  errors: a `did:peer:4` short form is refused, as is a long form publishing no usable X25519
+  `keyAgreement` entry, as is any non-EdDSA `did:key`.
+
+- **BREAKING:** a `did:peer:4` identity now embeds its long form in `iss` whenever the signed payload
+  names no single string audience, where it previously emitted the short form. Pass
+  `embedLongForm: false` to keep the short form on a broadcast path whose recipients are known to
+  hold the document already.
+
+  A short-form `did:peer:4` is a hash of the DID document and cannot be resolved without it, and the
+  first-contact policy that embeds the long form was keyed on `payload.aud` — so an audience-less
+  token was unverifiable by any recipient that had not already cached the signer's document.
+  Revocation records and rotation assertions are both audience-less.
+
+  **BREAKING:** the `@sozai/codec` range moves to `^0.4.0`, which rejects non-canonical base64 by
+  default. The spare bits in a base64 tail chunk must now be zero, so 16 distinct base64url strings
+  no longer decode to the same 64-byte Ed25519 signature. `verifyToken`, `decryptToken` and the
+  re-exported `decodePrivateKey` now throw `Invalid base64 encoding` / `Invalid base64url encoding`
+  on inputs they used to accept. Every encoder in this stack emits canonical output, so anything
+  round-tripped through `@kokuin/token` is unaffected. Padding is untouched: padded and unpadded
+  spellings both still decode.
+
+  `@kokuin/capability`: `createRevocationRecord`'s output is an audience-less payload, so a
+  `did:peer:4` grantor's revocation records now carry the long-form `iss` embed and verify against a
+  backend that has never seen the signer — with no source change in `@kokuin/capability` itself.
+
+  Also hardened, with no API change: `verifyToken` re-binds an already-verified token's payload to
+  its signed bytes rather than trusting object identity, and oversized DID documents are rejected
+  before serialization — both on resolution and in `createInMemoryDIDCache().set`.
+
 ## 0.3.0
 
 ### Minor Changes
