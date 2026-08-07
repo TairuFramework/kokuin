@@ -8,7 +8,7 @@ last month of work and is now mostly closed:
 
 | Severity | Closed | Open |
 |----------|--------|------|
-| Critical | 4 of 5 — prefix escalation, silent signing oracle, `alg:none`, electron clobber | #5 changeset fixed group |
+| Critical | 4 of 5 — prefix escalation, silent signing oracle, `alg:none`, electron clobber | #5 fixed release group |
 | High | 5 of 8 — commit timing, `provideAsync` races, `kid` relationship, audience validation, electron encryption check | firmware-in-CI, turbo `dependsOn`, SLIP-0010 vector |
 
 Every remaining audit item is build and release plumbing, not auth correctness. The security

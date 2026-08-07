@@ -45,5 +45,8 @@
     "@kokuin/deterministic": "workspace:^",
     "@noble/curves": "catalog:",
     "@scure/bip39": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

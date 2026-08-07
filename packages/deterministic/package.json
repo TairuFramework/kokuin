@@ -45,5 +45,8 @@
   },
   "devDependencies": {
     "@kokuin/keystore-conformance": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

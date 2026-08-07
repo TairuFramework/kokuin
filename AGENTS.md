@@ -26,9 +26,14 @@ See the `kigu:conventions` skill. Repo-specific only:
 
 - pnpm only.
 - Cross-repo deps (`@sozai/*`) are published `^` ranges, never `workspace:`.
+- Releases use pnpm's built-in versioning (`pnpm change`, `pnpm version -r`, `pnpm run release`),
+  configured under `versioning:` in `pnpm-workspace.yaml`. No changesets.
+- Every private package must be listed in `versioning.ignore` by exact name -- globs are not
+  supported, and an omitted one makes `pnpm change status` / `pnpm version -r` crash as soon as a
+  bump has to propagate into it.
 - token, capability, browser, node, and deterministic are bumped together by releaser judgement,
-  not a changesets `fixed` group -- `updateInternalDependencies: "patch"` cascades bumps through
-  the internal workspace dependency graph. `expo`, `electron`, and `ledger-device` are
-  SDK/hardware-bound and float independently.
+  not a `versioning.fixed` group -- pnpm cascades a patch through the internal workspace
+  dependency graph on its own. `expo`, `electron`, and `ledger-device` are SDK/hardware-bound and
+  float independently.
 - All dev tooling and shared config comes from `@kigu/dev`. Extend `@kigu/dev/tsconfig.json`,
   `["@kigu/dev/biome.json"]`, and `@kigu/dev/swc.json`.

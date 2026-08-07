@@ -49,5 +49,8 @@
     "@opentelemetry/sdk-trace-base": "catalog:",
     "@opentelemetry/sdk-trace-node": "catalog:",
     "uint8arrays": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

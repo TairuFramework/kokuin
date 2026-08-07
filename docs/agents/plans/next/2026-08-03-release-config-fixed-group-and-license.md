@@ -6,9 +6,8 @@ two land in minutes and stop active bleeding, so they should not wait behind the
 
 ## Context
 
-`.changeset/config.json` declares `"fixed": []` and `"linked": []`, but the release policy says
-token, capability, browser, node and deterministic release together. Nothing enforces it, so
-the group has drifted apart with every release:
+The release policy says token, capability, browser, node and deterministic release together,
+but nothing declares or enforces it, so the group has drifted apart with every release:
 
 | Package | Version (2026-08-03) |
 |---------|----------------------|
@@ -28,9 +27,17 @@ file exists anywhere, so nothing is legally shippable to npm.
 
 ### Configure the fixed release group
 
-Set `"fixed": [["@kokuin/token", "@kokuin/capability", "@kokuin/browser", "@kokuin/node",
-"@kokuin/deterministic"]]` in `.changeset/config.json`. `expo`, `electron` and `ledger-device`
-are SDK/hardware-bound and float independently — they stay out.
+Set the group under `versioning.fixed` in `pnpm-workspace.yaml`:
+
+```yaml
+versioning:
+  fixed:
+    - ['@kokuin/token', '@kokuin/capability', '@kokuin/browser', '@kokuin/node', '@kokuin/deterministic']
+```
+
+`expo`, `electron` and `ledger-device` are SDK/hardware-bound and float independently — they
+stay out. (Release tooling moved from changesets to pnpm's built-in versioning on 2026-08-07;
+this item was written against `.changeset/config.json`.)
 
 Decide what to do about the existing spread: the first fixed release levels all five to one
 version, which means browser/deterministic jump two minors in a single release. That is

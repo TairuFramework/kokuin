@@ -46,5 +46,8 @@
   "devDependencies": {
     "@kokuin/keystore-conformance": "workspace:^",
     "electron": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

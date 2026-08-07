@@ -54,6 +54,6 @@ test-depends-on-build fix above.
 
 - The security bug fixes those tests should cover — see the capability/token/keystore
   `next/` items.
-- The changeset fixed group and the LICENSE file — split out on 2026-08-03 into
+- The fixed release group and the LICENSE file — split out on 2026-08-03 into
   `next/2026-08-03-release-config-fixed-group-and-license.md`, which lands in minutes and
   should not wait behind the pipeline work here.

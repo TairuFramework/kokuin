@@ -35,5 +35,8 @@
   },
   "dependencies": {
     "@kokuin/token": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

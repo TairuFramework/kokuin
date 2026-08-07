@@ -14,8 +14,8 @@ a million-entry `authentication` array — or any other array under the DID docu
 rejected.
 
 This path is reachable ahead of the signature check: `resolveIssuerWithDoc` calls the guard
-while resolving `iss`, so it applies to any verifier that passes a `resolver`. The changeset's
-wording was narrowed to match what actually landed.
+while resolving `iss`, so it applies to any verifier that passes a `resolver`. The change
+intent's wording was narrowed to match what actually landed.
 
 Possible fix: cap the summed length of the known array-valued properties rather than
 `verificationMethod` alone, keeping the same derive-from-`maxSize` and deliberate-undercount
