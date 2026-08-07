@@ -16,6 +16,7 @@ describe('package exports', () => {
     'createInMemoryDIDCache',
     'resolveIssuer',
     'createIdentity',
+    'deriveSharedSecret',
     'createRotationAssertion',
   ])('exports %s', (name) => {
     expect((token as Record<string, unknown>)[name]).toBeDefined()
