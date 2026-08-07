@@ -1,5 +1,5 @@
 ---
-'@kokuin/token': minor
+'@kokuin/token': patch
 ---
 
 New `deriveSharedSecret(did)` performs X25519 key agreement with a recipient DID directly, without
