@@ -36,6 +36,19 @@ export type EncryptOptions = {
   algorithm: 'X25519'
 }
 
+export type SharedSecretResult = {
+  /**
+   * The raw X25519 ECDH output. **Not** uniformly random — run it through a KDF with your own
+   * domain separation before using it as a key.
+   */
+  sharedSecret: Uint8Array
+  /**
+   * Send this to the recipient. They recover the same `sharedSecret` bytes with
+   * `identity.agreeKey(ephemeralPublicKey)`.
+   */
+  ephemeralPublicKey: Uint8Array
+}
+
 function uint32BE(value: number): Uint8Array {
   const buf = new Uint8Array(4)
   const view = new DataView(buf.buffer)
@@ -83,13 +96,16 @@ export function concatKDF(params: ConcatKDFParams): Uint8Array {
   return sha256(hashInput).slice(0, keyLength / 8)
 }
 
-function encryptWithX25519(recipientPublicKey: Uint8Array, plaintext: Uint8Array): string {
-  // Generate ephemeral X25519 key pair
+function agreeWithKey(recipientPublicKey: Uint8Array): SharedSecretResult {
   const ephemeralPrivateKey = x25519.utils.randomSecretKey()
-  const ephemeralPublicKey = x25519.getPublicKey(ephemeralPrivateKey)
+  return {
+    ephemeralPublicKey: x25519.getPublicKey(ephemeralPrivateKey),
+    sharedSecret: x25519.getSharedSecret(ephemeralPrivateKey, recipientPublicKey),
+  }
+}
 
-  // Compute shared secret via ECDH
-  const sharedSecret = x25519.getSharedSecret(ephemeralPrivateKey, recipientPublicKey)
+function encryptWithX25519(recipientPublicKey: Uint8Array, plaintext: Uint8Array): string {
+  const { sharedSecret, ephemeralPublicKey } = agreeWithKey(recipientPublicKey)
 
   // Derive content encryption key via Concat KDF
   const cek = concatKDF({
@@ -160,6 +176,39 @@ function resolveX25519Key(recipient: Uint8Array | string): { key: Uint8Array; id
     return { key: ed25519.utils.toMontgomery(publicKey), id: recipient }
   }
   throw new Error(`Unsupported DID algorithm for encryption: ${algorithm}`)
+}
+
+/**
+ * Perform X25519 key agreement with a recipient DID, without building a JWE.
+ *
+ * Resolves the recipient's agreement key by the same rule `createTokenEncrypter` uses — a
+ * did:peer:4 identity's published `keyAgreement` key, or an EdDSA `did:key`'s birationally
+ * derived one — generates a single-use ephemeral key pair, and returns the ECDH output.
+ * The ephemeral private key never leaves this function.
+ *
+ * The recipient recovers the identical bytes with `identity.agreeKey(ephemeralPublicKey)` —
+ * called with no `kid`; the sender always resolves the first published `keyAgreement` key, and
+ * on a multi-KEM identity a different `kid` silently recovers different bytes.
+ *
+ * The agreement is anonymous — it authenticates nothing about the sender, only that the secret
+ * is recoverable by the recipient. Bind `ephemeralPublicKey` and the recipient DID into your
+ * KDF's info/context.
+ *
+ * ```ts
+ * const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipientDID)
+ * // ship ephemeralPublicKey alongside whatever the secret protects
+ * ```
+ *
+ * The result is a raw ECDH output, not a key: run it through a KDF before use.
+ *
+ * @param recipient a `did:key` EdDSA DID, or a `did:peer:4` **long form**. A peer:4 short form
+ *   throws — the document that carries the agreement key lives only in the long form.
+ */
+export function deriveSharedSecret(recipient: string): SharedSecretResult {
+  if (typeof recipient !== 'string') {
+    throw new Error('deriveSharedSecret requires a DID string')
+  }
+  return agreeWithKey(resolveX25519Key(recipient).key)
 }
 
 /**

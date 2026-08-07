@@ -1,10 +1,10 @@
 # No public path to a recipient's X25519 key
 
-**Status:** next
-**Priority:** low. A consumer needing this has a working alternative today; the ask is to
-remove a cost, not to unblock anything.
-**Origin:** kubun's credential store, 2026-08-07 — `kubun/docs/superpowers/specs/2026-08-07-credential-store-design.md`.
-Filed from kubun. No changes made here.
+**Status:** complete — resolved by `completed/2026-08-07-derive-shared-secret.complete.md`.
+**Priority:** low. A consumer needing this had a working alternative; the ask was to remove a
+cost, not to unblock anything.
+**Origin:** kubun's credential store, 2026-08-07. Filed from kubun; no changes were made here at
+filing time.
 
 ## Context
 

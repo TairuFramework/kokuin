@@ -200,6 +200,40 @@ const plaintext = await decryptToken(recipient, jwe)
 console.log(new TextDecoder().decode(plaintext)) // 'secret payload'
 ```
 
+### Raw key agreement — when you need a shared secret, not an envelope
+
+`deriveSharedSecret(did)` performs the same X25519 key agreement as the JWE path, but returns the
+raw output instead of building an envelope around it — for callers who want a shared secret as an
+input to their own protocol (e.g. one factor among several combined via HKDF), not a JWE.
+
+```typescript
+import { randomIdentity, deriveSharedSecret } from '@kokuin/token'
+
+const recipient = randomIdentity()
+
+const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipient.id)
+// ship ephemeralPublicKey alongside whatever the secret protects
+
+// Recipient recovers the identical bytes with agreeKey (see `DecryptingIdentity` above):
+const recovered = await recipient.agreeKey(ephemeralPublicKey)
+```
+
+`deriveSharedSecret` resolves the recipient's agreement key by the same rule
+`createTokenEncrypter` uses internally, and generates the ephemeral key pair inside the function —
+the ephemeral private key never leaves it. Two caveats before you use the result:
+
+- **It is raw ECDH output, not a key.** Run it through a KDF, and bind `ephemeralPublicKey` and
+  the recipient DID into that KDF's info/context yourself. The JWE path does not do this either —
+  it derives its content key with a fixed `algorithmID` and empty `partyUInfo`/`partyVInfo`, so no
+  party identity reaches the KDF; its only per-message binding is `ephemeralPublicKey`, carried in
+  the protected header that serves as the AES-GCM AAD. NIST SP 800-56A calls for party identities
+  in OtherInfo, and it matters most when this secret is combined with *other* factor secrets via
+  HKDF — precisely where cross-factor confusion becomes possible.
+- **The agreement is anonymous.** This is ephemeral-static ECDH: anyone holding the recipient's
+  DID can mint a valid `{ sharedSecret, ephemeralPublicKey }` pair, so possession of the secret is
+  not evidence about who sent it. If you need sender authentication, use the `jws-in-jwe` envelope
+  mode instead — the raw API has no equivalent.
+
 **Envelope wrapping** (`jws-in-jwe` — signed, then encrypted):
 
 ```typescript
