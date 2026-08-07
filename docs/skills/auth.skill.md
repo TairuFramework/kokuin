@@ -308,6 +308,10 @@ console.log(payload)       // { hello: 'world' }
 - Four envelope modes: `plain`, `jws`, `jws-in-jwe`, `jwe-in-jws`
 - `jws-in-jwe` hides sender identity; `jwe-in-jws` allows routing by sender
 - Ed25519 keys are auto-converted to X25519 for ECDH
+- Need the shared secret itself, not a JWE (e.g. as one HKDF input among several)?
+  `deriveSharedSecret(did)` returns `{ sharedSecret, ephemeralPublicKey }` raw — see
+  `docs/reference/auth.md`'s "Raw key agreement" section for the KDF-context and
+  sender-anonymity caveats before using it
 
 ## When to Use What
 

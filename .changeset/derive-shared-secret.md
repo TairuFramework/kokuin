@@ -22,7 +22,7 @@ hygiene can be got wrong from outside. The recipient recovers the identical byte
 ```ts
 const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipientDID)
 // recipient, unchanged API:
-const sharedSecret = await identity.agreeKey(ephemeralPublicKey)
+const recovered = await identity.agreeKey(ephemeralPublicKey)
 ```
 
 `sharedSecret` is the raw ECDH output, not a key — it is not uniformly random, so run it through a
@@ -31,4 +31,8 @@ KDF with your own domain separation before use. It is returned raw precisely so 
 
 Errors are inherited unchanged from the resolution `createTokenEncrypter` already performs: a
 `did:peer:4` short form is refused (the document lives in the long form), as is a long form
-publishing no usable X25519 `keyAgreement` entry, as is any non-EdDSA `did:key`.
+publishing no usable X25519 `keyAgreement` entry, as is any non-EdDSA `did:key`. Any other DID
+method falls through to `did:key` parsing and is rejected too — pre-existing behaviour, unchanged
+here — as `Invalid DID format` for a well-formed DID of a different method (e.g.
+`did:web:example.com`), or `Unsupported DID signature codec` for a `did:key` whose codec kokuin
+does not recognize.

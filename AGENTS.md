@@ -26,7 +26,9 @@ See the `kigu:conventions` skill. Repo-specific only:
 
 - pnpm only.
 - Cross-repo deps (`@sozai/*`) are published `^` ranges, never `workspace:`.
-- The fixed group (token, capability, browser, node, deterministic) releases together.
-  `expo`, `electron`, and `ledger-device` are SDK/hardware-bound and float independently.
+- token, capability, browser, node, and deterministic are bumped together by releaser judgement,
+  not a changesets `fixed` group -- `updateInternalDependencies: "patch"` cascades bumps through
+  the internal workspace dependency graph. `expo`, `electron`, and `ledger-device` are
+  SDK/hardware-bound and float independently.
 - All dev tooling and shared config comes from `@kigu/dev`. Extend `@kigu/dev/tsconfig.json`,
   `["@kigu/dev/biome.json"]`, and `@kigu/dev/swc.json`.

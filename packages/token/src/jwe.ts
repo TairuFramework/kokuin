@@ -186,7 +186,13 @@ function resolveX25519Key(recipient: Uint8Array | string): { key: Uint8Array; id
  * derived one — generates a single-use ephemeral key pair, and returns the ECDH output.
  * The ephemeral private key never leaves this function.
  *
- * The recipient recovers the identical bytes with `identity.agreeKey(ephemeralPublicKey)`.
+ * The recipient recovers the identical bytes with `identity.agreeKey(ephemeralPublicKey)` —
+ * called with no `kid`; the sender always resolves the first published `keyAgreement` key, and
+ * on a multi-KEM identity a different `kid` silently recovers different bytes.
+ *
+ * The agreement is anonymous — it authenticates nothing about the sender, only that the secret
+ * is recoverable by the recipient. Bind `ephemeralPublicKey` and the recipient DID into your
+ * KDF's info/context.
  *
  * ```ts
  * const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipientDID)
@@ -199,6 +205,9 @@ function resolveX25519Key(recipient: Uint8Array | string): { key: Uint8Array; id
  *   throws — the document that carries the agreement key lives only in the long form.
  */
 export function deriveSharedSecret(recipient: string): SharedSecretResult {
+  if (typeof recipient !== 'string') {
+    throw new Error('deriveSharedSecret requires a DID string')
+  }
   return agreeWithKey(resolveX25519Key(recipient).key)
 }
 

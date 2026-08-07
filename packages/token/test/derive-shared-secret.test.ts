@@ -2,7 +2,7 @@ import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
 import { CODECS, getDID } from '../src/did.js'
-import { createIdentity } from '../src/identity.js'
+import { createIdentity, randomIdentity } from '../src/identity.js'
 import { deriveSharedSecret } from '../src/jwe.js'
 import { isPeer4 } from '../src/peer4.js'
 
@@ -87,5 +87,30 @@ describe('deriveSharedSecret()', () => {
     // ES256 is a supported *signature* codec but has no X25519 agreement path.
     const did = getDID(CODECS.ES256, new Uint8Array(33).fill(1))
     expect(() => deriveSharedSecret(did)).toThrow(/Unsupported DID algorithm for encryption/)
+  })
+
+  test('a randomIdentity recipient agrees', async () => {
+    const recipient = randomIdentity()
+    const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipient.id)
+    expect(await recipient.agreeKey(ephemeralPublicKey)).toEqual(sharedSecret)
+  })
+
+  test('a peer:4 with multiple kem keys: sender and recipient pick the same one', async () => {
+    const identity = await createIdentity({
+      keys: [
+        { purpose: 'sig', alg: 'EdDSA' },
+        { purpose: 'kem', alg: 'X25519' },
+        { purpose: 'kem', alg: 'X25519' },
+      ],
+    })
+    expect(isPeer4(identity.id)).toBe(true)
+
+    const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(identity.longForm)
+    expect(await identity.agreeKey(ephemeralPublicKey)).toEqual(sharedSecret)
+  })
+
+  test('throws when handed something other than a DID string', () => {
+    const notAString = new Uint8Array(32) as unknown as string
+    expect(() => deriveSharedSecret(notAString)).toThrow(/DID string/)
   })
 })
