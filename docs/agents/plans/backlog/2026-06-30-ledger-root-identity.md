@@ -40,6 +40,18 @@ Allow personal and organisational root identities on separate Ledger devices.
 - Identity selection UX is deferred to consumer apps. The framework only needs to stop assuming
   a single device.
 
+`milestones/2026-08-07-profile-did-key-events.md` wants the adjacent case as well: **one** Ledger
+holding the authority keys for **several** profiles, HD-derived hardened per profile
+(`m/<base>/<profile>'`). The provider already derives per path over APDU, so that case may need
+nothing beyond path selection — but it should be confirmed alongside this item rather than
+discovered later. Separate devices per profile and one device across profiles are both wanted, for
+different reasons: the first isolates compromise, the second is what makes several personas usable
+day to day.
+
+That design also puts a Ledger in the rotation quorum rather than making it the sole root, so
+losing the device stops being equivalent to losing the identity. Worth reading before the
+multi-device work is scoped.
+
 ### Ledger app catalog submission
 
 Submit the BOLOS app in `apps/ledger` to Ledger's app catalog. Out-of-band work — paperwork,

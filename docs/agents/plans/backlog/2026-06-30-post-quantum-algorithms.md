@@ -13,6 +13,27 @@ the move. The predecessor link points at the **enkaku** repo's `completed/` fold
 Plug `paulmillr/noble-post-quantum` (ML-DSA signatures, ML-KEM key encapsulation, optionally
 SLH-DSA) into the `@kokuin/token` algorithm registry, so identities can hold PQ keys end to end.
 
+## Relationship to profile DIDs
+
+`milestones/2026-08-07-profile-did-key-events.md` depends on this work, and constrains it in two
+directions.
+
+It needs phase 1 and 2 to be reachable *without changing any identifier*: under `did:peer:4` the
+identifier is a hash of the key document, so adding an ML-DSA key mints a new DID and breaks every
+ownership row downstream. Under the key-event design the key set lives in a log, so the same
+migration is one rotation event and the DID is untouched. That is the strongest argument for doing
+the two together rather than PQ first.
+
+In the other direction, the size numbers below are a first-order constraint on that design, not a
+footnote: every kumiai control-ledger entry is a signed token, replayed at every welcome and covered
+by the authenticated head. ~7 KB tokens argue for rare rotation events, a checkpoint story, and
+keeping device onboarding on the capability path where it produces no ledger entry at all.
+
+Also note RFC 9964 (May 2026) now specifies the JOSE and COSE serialisations for ML-DSA, so phase 1
+has registered `alg` values to target rather than private ones:
+<https://www.rfc-editor.org/info/rfc9964/>. PQ/T hybrid composite signatures are still a draft:
+<https://datatracker.ietf.org/doc/draft-ietf-jose-pq-composite-sigs/>.
+
 ## Phasing (recommended)
 
 Each phase is its own design and plan.
