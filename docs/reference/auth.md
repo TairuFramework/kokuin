@@ -214,9 +214,7 @@ const recipient = randomIdentity()
 const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipient.id)
 // ship ephemeralPublicKey alongside whatever the secret protects
 
-// Recipient recovers the identical bytes with agreeKey (see `DecryptingIdentity` above) —
-// called with no `kid`, since deriveSharedSecret always resolves the first published
-// keyAgreement key:
+// Recipient recovers the identical bytes with agreeKey (see `DecryptingIdentity` above):
 const recovered = await recipient.agreeKey(ephemeralPublicKey)
 ```
 
@@ -225,11 +223,12 @@ const recovered = await recipient.agreeKey(ephemeralPublicKey)
 the ephemeral private key never leaves it. Two caveats before you use the result:
 
 - **It is raw ECDH output, not a key.** Run it through a KDF, and bind `ephemeralPublicKey` and
-  the recipient DID into that KDF's info/context yourself. The JWE path gets this for free from
-  `concatKDF`'s `algorithmID`; a raw consumer gets nothing unless it adds its own. NIST SP 800-56A
-  requires party identities in OtherInfo for exactly this reason, and it matters most when this
-  secret is combined with *other* factor secrets via HKDF — precisely where cross-factor confusion
-  becomes possible.
+  the recipient DID into that KDF's info/context yourself. The JWE path does not do this either —
+  it derives its content key with a fixed `algorithmID` and empty `partyUInfo`/`partyVInfo`, so no
+  party identity reaches the KDF; its only per-message binding is `ephemeralPublicKey`, carried in
+  the protected header that serves as the AES-GCM AAD. NIST SP 800-56A calls for party identities
+  in OtherInfo, and it matters most when this secret is combined with *other* factor secrets via
+  HKDF — precisely where cross-factor confusion becomes possible.
 - **The agreement is anonymous.** This is ephemeral-static ECDH: anyone holding the recipient's
   DID can mint a valid `{ sharedSecret, ephemeralPublicKey }` pair, so possession of the secret is
   not evidence about who sent it. If you need sender authentication, use the `jws-in-jwe` envelope
