@@ -40,6 +40,13 @@ export {
   verifyRotate,
   verifySignatures,
 } from './events.js'
-export { type FoldResult, foldLog, type KeyState, keyStateAt } from './fold.js'
+export {
+  type FoldOptions,
+  type FoldResult,
+  foldLog,
+  foldLogAsync,
+  type KeyState,
+  keyStateAt,
+} from './fold.js'
 export { type Duplicity, type ResolveResult, resolveBranches } from './supersede.js'
 export { VERSION_TAG } from './version.js'
