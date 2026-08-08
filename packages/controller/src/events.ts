@@ -46,6 +46,12 @@ export type SignedEvent<E extends EventCommon = EventCommon> = {
   event: E
   /** base64url ed25519 signatures over the canonical event bytes, positional against `event.k`. */
   sigs: Array<string>
+  /**
+   * The revealed recovery public key, present only on a reset. Pre-rotation means the recovery
+   * key is committed as a digest and unpublished until used, so a reset must reveal it for the
+   * commitment to be checkable.
+   */
+  recoveryKey?: string
 }
 
 // Aliases of `@kokuin/token`'s multibase codec — kept under domain-specific names so callers say
@@ -210,4 +216,69 @@ export function verifyRotate(
     }
   }
   return verifySignatures(event, sigs, event.k)
+}
+
+/**
+ * A reset: a rotate signed by the recovery key that increments the generation and discards
+ * everything under the prior one, including every capability minted there.
+ *
+ * The recovery key lives on the root-retained derivation branch and its digest is committed in
+ * the deterministic inception, so a restored mnemonic can always author one with no log at all.
+ */
+export function createReset(
+  seed: Uint8Array,
+  profile: number,
+  did: string,
+  prior: EventCommon,
+  options: CreateRotateOptions = {},
+): SignedEvent<RotateEvent> {
+  const gen = prior.g + 1
+  const current = deriveKeyPair(seed, authorityPath(profile, gen, 0), 'EdDSA')
+  const next = deriveKeyPair(seed, authorityPath(profile, gen, 1), 'EdDSA')
+  const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
+
+  const event: RotateEvent = {
+    v: 1,
+    t: 'rot',
+    i: did,
+    g: gen,
+    s: 0,
+    p: digestOf(prior),
+    crit: true,
+    k: [encodeKey(current.publicKey)],
+    n: [digestOf(encodeKey(next.publicKey))],
+    kt: 1,
+    nt: 1,
+    a: options.seal,
+    // A reset clears the deny set: every capability under the prior generation is gone anyway.
+    d: options.deny ?? [],
+  }
+
+  return {
+    event,
+    sigs: signEvent(event, [recovery.privateKey]),
+    recoveryKey: encodeKey(recovery.publicKey),
+  }
+}
+
+/** A reset verifies against the committed recovery digest, not against the pre-rotation set. */
+export function verifyReset(
+  signed: SignedEvent<RotateEvent>,
+  prior: { digest: string; r: string },
+): boolean {
+  const { event, sigs } = signed
+  if (event.t !== 'rot' || event.p !== prior.digest || event.s !== 0) {
+    return false
+  }
+  if (sigs.length !== 1) {
+    return false
+  }
+  // The recovery key is committed as a digest in the prior event and is not published until it is
+  // used, so a reset must carry the revealed key on the signed envelope for the commitment to be
+  // checkable.
+  const revealed = signed.recoveryKey
+  if (revealed == null || digestOf(revealed) !== prior.r) {
+    return false
+  }
+  return verifySignatures(event, sigs, [revealed])
 }

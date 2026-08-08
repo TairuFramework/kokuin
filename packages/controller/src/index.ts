@@ -21,6 +21,7 @@ export {
 export {
   type CreateRotateOptions,
   createInception,
+  createReset,
   createRotate,
   DID_PREFIX,
   decodeKey,
@@ -32,6 +33,7 @@ export {
   type RotateEvent,
   type SignedEvent,
   verifyInception,
+  verifyReset,
   verifyRotate,
   verifySignatures,
 } from './events.js'
