@@ -49,5 +49,6 @@ export {
   keyStateAt,
 } from './fold.js'
 export { enumerateProfiles, handleForDID, type ProfileEntry } from './profiles.js'
+export { type ControllerResolverOptions, createControllerResolver } from './resolver.js'
 export { type Duplicity, type ResolveResult, resolveBranches } from './supersede.js'
 export { VERSION_TAG } from './version.js'
