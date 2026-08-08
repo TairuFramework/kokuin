@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Stage:** planning
+**Stage:** executing
 **Mode:** tasks
 **Spec:** `docs/superpowers/specs/2026-08-08-profile-did-key-events-design.md`
 
@@ -59,7 +59,6 @@ Bodies: `icp` and `rot` carry `k` (multibase public keys), `n` (next-key digests
 - Create: `packages/controller/package.json`
 - Create: `packages/controller/tsconfig.json`
 - Create: `packages/controller/tsconfig.test.json`
-- Create: `packages/controller/biome.json`
 - Create: `packages/controller/src/index.ts`
 - Test: `packages/controller/test/package.test.ts`
 
@@ -159,7 +158,7 @@ Expected: FAIL — the package does not exist yet, so the filter matches nothing
 }
 ```
 
-`packages/controller/biome.json` — copy `packages/token/biome.json` verbatim.
+No per-package `biome.json`: this repo has a single root `biome.json` extending `@kigu/dev/biome.json`, and no package under `packages/` carries its own.
 
 `packages/controller/src/index.ts`:
 
@@ -2648,7 +2647,7 @@ git commit -m "feat(controller): offline profile enumeration and recovery handle
 **Files:**
 - Create: `packages/controller-conformance/package.json`
 - Create: `packages/controller-conformance/tsconfig.json`
-- Create: `packages/controller-conformance/biome.json`
+- Create: `packages/controller-conformance/tsconfig.test.json`
 - Create: `packages/controller-conformance/src/index.ts`
 - Modify: `pnpm-workspace.yaml` (`versioning.ignore`)
 - Modify: `packages/controller/package.json` (devDependency)
@@ -2700,7 +2699,7 @@ Expected: FAIL — `Cannot find package '@kokuin/controller-conformance'`.
 
 - [ ] **Step 3: Create the conformance package**
 
-`packages/controller-conformance/package.json` — mirror `packages/keystore-conformance/package.json`, with `"private": true` and no `publishConfig`:
+`packages/controller-conformance/package.json` — mirror `packages/keystore-conformance/package.json` exactly, which is `"private": true`, has no `publishConfig`, and **builds to `lib/`** like every other package here:
 
 ```json
 {
@@ -2711,12 +2710,23 @@ Expected: FAIL — `Cannot find package '@kokuin/controller-conformance'`.
   "license": "MIT",
   "sideEffects": false,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": { ".": "./lib/index.js" },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": ["lib/*"],
   "scripts": {
-    "build:types": "tsc --emitDeclarationOnly --skipLibCheck"
+    "build": "pnpm run build:clean && pnpm run build:js && pnpm run build:types",
+    "build:clean": "del lib",
+    "build:js": "swc src -d ./lib --config-file ../../node_modules/@kigu/dev/swc.json --strip-leading-paths",
+    "build:types": "tsc --emitDeclarationOnly --skipLibCheck",
+    "test:types": "tsc --noEmit --skipLibCheck -p tsconfig.test.json"
   }
 }
 ```
+
+No dependency on `@kokuin/controller`: the implementation is **injected**, and depending on it would make a cycle with the devDependency `@kokuin/controller` takes on this package. The suite's types describe the contract structurally; it imports nothing from the package under test. This mirrors `@kokuin/keystore-conformance`, which depends on `@kokuin/token` for shared types and never on `@kokuin/deterministic`.
+
+Copy `tsconfig.json` and `tsconfig.test.json` from `packages/keystore-conformance`. No per-package `biome.json` — the root one covers every package.
 
 Add to `pnpm-workspace.yaml` under `versioning.ignore`, keeping the list alphabetical:
 
@@ -3145,65 +3155,73 @@ git commit -m "refactor(token)!: split JWE into @kokuin/jwe"
 
 ---
 
-## Task 17: Deprecate `createRotationAssertion`
+## Task 17: Remove `createRotationAssertion`
 
 **Files:**
-- Modify: `packages/token/src/rotation.ts`
-- Test: `packages/token/test/rotation.test.ts`
+- Delete: `packages/token/src/rotation.ts`
+- Delete: `packages/token/test/rotation.test.ts`
+- Modify: `packages/token/src/index.ts` (drop the `createRotationAssertion` / `RotationPayload` exports, around lines 93-94)
+- Test: `packages/token/test/exports.test.ts` (drop `'createRotationAssertion'` from the expected-names list, around line 20)
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `createRotationAssertion` marked `@deprecated`, behaviour unchanged.
+- Produces: `@kokuin/token` no longer exports `createRotationAssertion` or `RotationPayload`.
 
-Rotation chains are what this design replaces, but the function is public API in a published package — deprecate in this release, delete in the next major.
+Rotation chains are exactly what this design replaces: `createRotationAssertion` links two **different** DIDs, which forces a data migration on every rotation, while `did:kokuin:` keeps the identifier stable and rotates the key set beneath it. It has no consumer anywhere in the workspace, and Task 16 already makes this release a breaking `@kokuin/token` major — so it goes now rather than living one more cycle behind a `@deprecated` tag.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Confirm there is no consumer, then make the exports test fail**
 
-```ts
-// packages/token/test/rotation.test.ts — append
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-
-test('createRotationAssertion is documented as deprecated', () => {
-  const source = readFileSync(
-    fileURLToPath(new URL('../src/rotation.ts', import.meta.url)),
-    'utf8',
-  )
-  expect(source).toMatch(/@deprecated/)
-  expect(source).toMatch(/did:kokuin/)
-})
+```bash
+grep -rn "createRotationAssertion\|RotationPayload" --include="*.ts" packages tests | grep -v "/lib/"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+Expected: matches only in `packages/token/src/rotation.ts`, `packages/token/src/index.ts`, `packages/token/test/rotation.test.ts` and `packages/token/test/exports.test.ts`. **If anything else matches, stop and report it** — the removal is only safe because nothing depends on it.
 
-Run: `pnpm --filter @kokuin/token test:unit -- rotation`
-Expected: FAIL — no `@deprecated` tag in the source.
-
-- [ ] **Step 3: Add the deprecation**
+Then drop the name from the expected public surface in `packages/token/test/exports.test.ts`:
 
 ```ts
-/**
- * Sign a rotation assertion linking an old identity to a new one.
- *
- * @deprecated Rotation chains are superseded by `did:kokuin:` controller logs, where the
- * identifier is stable and the key set rotates beneath it — see `@kokuin/controller`. This
- * function links two *different* DIDs, which is what forces a data migration on every rotation.
- * Retained for one release so existing chains stay verifiable; removed in the next major.
- */
-export async function createRotationAssertion(
+    // 'createRotationAssertion' removed — see @kokuin/controller for did:kokuin controller logs.
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `pnpm --filter @kokuin/token test:unit -- exports`
+Expected: FAIL — the barrel still exports `createRotationAssertion`, and `exports.test.ts` asserts the surface is exactly the listed names.
+
+If `exports.test.ts` only checks that each listed name is *present* and never checks for extras, the deletion is not observable from that test alone. In that case add the negative assertion, which is what makes this task testable:
+
+```ts
+  test('no longer exports the superseded rotation-chain helper', () => {
+    expect(token).not.toHaveProperty('createRotationAssertion')
+  })
+```
+
+- [ ] **Step 3: Delete the module**
+
+```bash
+git rm packages/token/src/rotation.ts packages/token/test/rotation.test.ts
+```
+
+Remove the export block from `packages/token/src/index.ts`:
+
+```ts
+export {
+  createRotationAssertion,
+  type RotationPayload,
+} from './rotation.js'
 ```
 
 - [ ] **Step 4: Run the tests**
 
-Run: `pnpm --filter @kokuin/token test`
-Expected: PASS.
+Run: `pnpm --filter @kokuin/token test && pnpm test`
+Expected: PASS across the workspace. Any remaining reference is a real consumer the Step 1 grep missed — report it rather than patching around it.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 pnpm exec biome check --write ./packages
 git add packages/token
-git commit -m "docs(token): deprecate createRotationAssertion in favour of controller logs"
+git commit -m "refactor(token)!: remove createRotationAssertion in favour of controller logs"
 ```
 
 ---
@@ -3300,7 +3318,7 @@ git commit -m "docs(controller): document the public surface and update the repo
 
 ## Self-review notes
 
-**Spec coverage.** Every spec section maps to a task: identifier and no-version-segment (5), derivation with HKDF and the root-retained branch (3), the three event types (5, 6, 8) with reset as a rotate variant (7), criticality (11), fold precedence and superseding recovery (9, 10), deny-set position-dependence (9, 10), key state at position (9), duplicity (10), enumeration and handles (12), the conformance suite (13), the injected resolver (4, 14), the depth cap and mandated `exp` (15), the JWE split (16), the `rotation.ts` deprecation (17), packaging and `versioning.ignore` (1, 13, 18).
+**Spec coverage.** Every spec section maps to a task: identifier and no-version-segment (5), derivation with HKDF and the root-retained branch (3), the three event types (5, 6, 8) with reset as a rotate variant (7), criticality (11), fold precedence and superseding recovery (9, 10), deny-set position-dependence (9, 10), key state at position (9), duplicity (10), enumeration and handles (12), the conformance suite (13), the injected resolver (4, 14), the depth cap and mandated `exp` (15), the JWE split (16), the `rotation.ts` removal (17), packaging and `versioning.ignore` (1, 13, 18).
 
 **Deliberately not covered**, matching the spec's *Out of scope*: kumiai binding entries and roster projection, kubun's cut-off position, ML-DSA in `SUPPORTED_ALGORITHMS`, DIF registration, adopted profiles. The co-signature-gated recovery-commitment field exists in the `RotateEvent` type (Task 6, field `r`) and the fold carries it forward (Task 9), but no task implements *updating* it — that is the retained-but-unimplemented hook the spec describes. **The co-signature check is therefore not implemented**: any task that starts using `r` on a rotate must add it first.
 
