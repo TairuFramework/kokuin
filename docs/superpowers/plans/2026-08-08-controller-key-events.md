@@ -2306,7 +2306,6 @@ git commit -m "feat(controller): superseding recovery and duplicity detection"
 
 **Files:**
 - Modify: `packages/controller/src/fold.ts`
-- Modify: `packages/controller/package.json` (add `@kokuin/capability`)
 - Test: `packages/controller/test/criticality.test.ts`
 
 **Interfaces:**
@@ -2518,34 +2517,34 @@ Unknown-type branch:
     }
 ```
 
-Implement `foldLogAsync` as the real body and `foldLog` as a sync wrapper that passes no `verifyCapability` and asserts the result is not a promise:
+**Do not** try to write one `foldInternal` that "only awaits when a `cap` is present" and have `foldLog` guard with `result instanceof Promise`. An `async function` always returns a promise, so that guard would throw on every log; making it work needs a thenable trampoline, which is worse than the duplication it avoids.
+
+Instead, factor the per-event work into one **pure, synchronous** step function that both loops share. It returns a third outcome for the one case that cannot be decided synchronously:
 
 ```ts
-/** Async fold. Required when the log contains capability-authorised revokes. */
-export async function foldLogAsync(
-  did: string,
-  events: SignedEvent[],
-  options: FoldOptions = {},
-): Promise<FoldResult> {
-  return foldInternal(did, events, options)
-}
+type StepOutcome =
+  | { status: 'ok'; state: KeyState }
+  | { status: 'fail'; reason: string }
+  /** A cap-bearing revoke: `state` is what to apply *if* the capability verifies. */
+  | { status: 'capability'; cap: string; target: string; state: KeyState }
 
 /**
- * Sync fold, for offline verifiers on a hot path. Rejects capability-authorised revokes rather
- * than trusting them — use {@link foldLogAsync} for logs that contain them.
+ * Validate one event against the state so far and produce the next state. Pure and total —
+ * every rejection is a returned reason, never a throw. Criticality is decided here, so both
+ * fold entry points inherit it: an unknown critical event fails closed, an unknown
+ * non-critical one is skipped by carrying the prior state forward unchanged.
  */
-export function foldLog(did: string, events: SignedEvent[]): FoldResult {
-  const result = foldInternal(did, events, {}) as FoldResult | Promise<FoldResult>
-  if (result instanceof Promise) {
-    throw new Error('foldLog: log requires an async verifier; use foldLogAsync')
-  }
-  return result
-}
+function stepEvent(
+  did: string,
+  inception: InceptionEvent,
+  signed: SignedEvent,
+  prior: KeyState,
+): StepOutcome
 ```
 
-Write `foldInternal` so it only awaits when a `cap` is present — every other path returns synchronously.
+`foldLog` walks the events, and on `status: 'capability'` fails with a reason naming the capability — an offline verifier must not trust one it cannot check. `foldLogAsync` walks the same steps and, on `status: 'capability'`, awaits `verifyCapability(cap, did, target)` and either pushes `state` or fails. Neither loop re-implements validation; the only difference is what they do with the third outcome.
 
-Add `"@kokuin/capability": "workspace:^"` to `packages/controller/package.json` dependencies (used by the conformance suite in Task 13 to build a real `verifyCapability`).
+Do **not** add `@kokuin/capability` to `packages/controller/package.json`. The verifier is injected, so this package imports nothing from it — adding it would be an unused dependency. If Task 13's conformance suite wants to build a real `verifyCapability`, it takes the dependency there.
 
 - [ ] **Step 4: Run the tests**
 
