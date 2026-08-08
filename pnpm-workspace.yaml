@@ -19,6 +19,7 @@ versioning:
   # `pnpm change status` / `pnpm version -r` fail once a bump has to propagate
   # into it.
   ignore:
+    - '@kokuin/controller-conformance'
     - '@kokuin/keystore-conformance'
     - '@kokuin/ledger-tests'
     - e2e-electron

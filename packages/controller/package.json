@@ -41,6 +41,9 @@
     "@scure/base": "catalog:",
     "micro-key-producer": "catalog:"
   },
+  "devDependencies": {
+    "@kokuin/controller-conformance": "workspace:^"
+  },
   "publishConfig": {
     "access": "public"
   }

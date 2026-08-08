@@ -183,6 +183,12 @@ importers:
       micro-key-producer:
         specifier: 'catalog:'
         version: 0.9.0
+    devDependencies:
+      '@kokuin/controller-conformance':
+        specifier: workspace:^
+        version: link:../controller-conformance
+
+  packages/controller-conformance: {}
 
   packages/deterministic:
     dependencies:
