@@ -74,6 +74,12 @@ export {
 } from './jwe.js'
 export type { KeyEntry, KeyStore, MutableKeyEntry } from './keystore.js'
 export {
+  type DIDMethodResolver,
+  findMethodResolver,
+  type MethodRegistry,
+  type ResolvedSigningKey,
+} from './method.js'
+export {
   decodeMultibase,
   encodeMultibase,
   multihashSHA256,

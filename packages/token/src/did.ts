@@ -1,6 +1,7 @@
 import { base58 } from '@scure/base'
 
 import type { DIDResolver } from './cache.js'
+import { findMethodResolver, type MethodRegistry } from './method.js'
 import { decodeMultibase } from './multibase.js'
 import type { DIDDoc, VerificationMethod } from './peer4.js'
 import {
@@ -105,7 +106,16 @@ export async function resolveIssuerWithDoc(
   iss: string,
   header: ResolveIssuerHeader = {},
   resolver?: DIDResolver,
+  methods?: MethodRegistry,
 ): Promise<ResolveIssuerWithDocResult> {
+  if (methods != null) {
+    const methodResolver = findMethodResolver(methods, iss)
+    if (methodResolver != null) {
+      const { alg, publicKey } = await methodResolver.resolve(iss, header)
+      return { alg, publicKey }
+    }
+  }
+
   if (isPeer4(iss)) {
     const shortForm = getPeer4ShortForm(iss)
 
@@ -131,8 +141,18 @@ export async function resolveIssuerWithDoc(
     return { alg, publicKey, peer4Doc: { shortForm, doc } }
   }
 
+  // `iss` narrows to `never` in this branch (isPeer4's `value is string` predicate collapses
+  // the false case since the parameter is already `string`), so route the prefix check through
+  // a helper that takes an unnarrowed `string` rather than calling `.startsWith` on `iss` here.
+  if (!hasKeyPrefix(iss)) {
+    throw new Error(`Unknown DID: ${iss}`)
+  }
   const [alg, publicKey] = getSignatureInfo(iss)
   return { alg, publicKey }
+}
+
+function hasKeyPrefix(did: string): boolean {
+  return did.startsWith(PREFIX)
 }
 
 /**
@@ -142,8 +162,9 @@ export async function resolveIssuer(
   iss: string,
   header: ResolveIssuerHeader = {},
   resolver?: DIDResolver,
+  methods?: MethodRegistry,
 ): Promise<[SignatureAlgorithm, Uint8Array]> {
-  const { alg, publicKey } = await resolveIssuerWithDoc(iss, header, resolver)
+  const { alg, publicKey } = await resolveIssuerWithDoc(iss, header, resolver, methods)
   return [alg, publicKey]
 }
 
