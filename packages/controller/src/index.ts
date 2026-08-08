@@ -40,4 +40,5 @@ export {
   verifyRotate,
   verifySignatures,
 } from './events.js'
+export { type FoldResult, foldLog, type KeyState, keyStateAt } from './fold.js'
 export { VERSION_TAG } from './version.js'
