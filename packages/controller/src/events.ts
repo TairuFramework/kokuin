@@ -282,3 +282,55 @@ export function verifyReset(
   }
   return verifySignatures(event, sigs, [revealed])
 }
+
+export type RevokeEvent = EventCommon & {
+  t: 'rev'
+  /** The DID to deny. A device DID, never a capability `jti`. */
+  x: string
+  /** A serialized capability authorising a non-authority signer. Verified in the fold. */
+  cap?: string
+}
+
+/**
+ * Revoke a DID: no capability whose `aud` is that DID is valid from this position onward.
+ *
+ * Naming the device DID rather than a `jti` makes this one entry per device for that device's
+ * life — it covers capabilities the verifier has never seen and covers future re-mints, where
+ * per-`jti` revocation would grow with every renewal.
+ */
+export function createRevoke(
+  seed: Uint8Array,
+  profile: number,
+  did: string,
+  prior: EventCommon,
+  target: string,
+  options: { cap?: string } = {},
+): SignedEvent<RevokeEvent> {
+  const current = deriveKeyPair(seed, authorityPath(profile, prior.g, prior.s), 'EdDSA')
+
+  const event: RevokeEvent = {
+    v: 1,
+    t: 'rev',
+    i: did,
+    g: prior.g,
+    s: prior.s + 1,
+    p: digestOf(prior),
+    crit: true,
+    x: target,
+    cap: options.cap,
+  }
+
+  return { event, sigs: signEvent(event, [current.privateKey]) }
+}
+
+/** Authority-signed revoke. Capability-authorised revokes are checked in the fold. */
+export function verifyRevoke(
+  signed: SignedEvent<RevokeEvent>,
+  prior: { digest: string; keys: Array<string> },
+): boolean {
+  const { event, sigs } = signed
+  if (event.t !== 'rev' || event.p !== prior.digest) {
+    return false
+  }
+  return verifySignatures(event, sigs, prior.keys)
+}
