@@ -3,16 +3,28 @@ import { runControllerConformance } from '@kokuin/controller-conformance'
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
+import { deriveKeyPair, recoveryPath } from '../src/derivation.js'
 import {
   createInception,
   createReset,
   createRevoke,
   createRotate,
   didFromInception,
+  // `signEvent` stays unexported from the package's public barrel (`src/index.ts`) — it is an
+  // internal signing primitive, not part of the wire protocol. Importing it directly from
+  // `events.js` here is legitimate: this is a test file, not a consumer of the public API, and
+  // the conformance suite's root-override group needs to sign with an arbitrary (uncommitted)
+  // key to isolate the recovery-digest check from signature verification.
+  signEvent,
 } from '../src/events.js'
 import { foldLog } from '../src/fold.js'
 import { enumerateProfiles } from '../src/profiles.js'
 import { resolveBranches } from '../src/supersede.js'
+
+/** Test-support only: the recovery private key `createReset` derives internally. */
+function recoveryPrivateKey(seed: Uint8Array, profile: number): Uint8Array {
+  return deriveKeyPair(seed, recoveryPath(profile), 'EdDSA').privateKey
+}
 
 // vitest's `expect` is structurally wider than the suite's minimal `ConformanceExpectation` —
 // every matcher the suite calls is present, so this single documented cast is safe. Keeping it
@@ -35,6 +47,8 @@ const implementation = {
   resolveBranches,
   enumerateProfiles,
   digestOf,
+  recoveryPrivateKey,
+  signEvent,
 }
 
 // `@kokuin/controller`'s events use a closed `EventType` union ('icp' | 'rot' | 'rev'), while the

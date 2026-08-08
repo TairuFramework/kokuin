@@ -99,6 +99,17 @@ export type ControllerImplementation = {
   enumerateProfiles: (seed: Uint8Array, count: number) => Array<ConformanceProfileEntry>
   /** Self-addressing digest of a canonicalized value. Several assertions need to compute one. */
   digestOf: (value: unknown) => string
+  /**
+   * Test-support only, not part of the wire protocol: the recovery private key for a seed and
+   * profile. Every implementation of this protocol derives one internally to sign a reset; this
+   * exposes it so the root-override group can build a reset whose signature is genuinely valid
+   * but signed by a key the inception never committed to — the only way to isolate the recovery
+   * digest check from signature verification without either breaking the signature (a splice) or
+   * failing the chain check first (an untouched foreign branch).
+   */
+  recoveryPrivateKey: (seed: Uint8Array, profile: number) => Uint8Array
+  /** Test-support only: sign an event with arbitrary private keys. Used only for the forgery above. */
+  signEvent: (event: ConformanceEvent, privateKeys: Array<Uint8Array>) => Array<string>
 }
 
 /**
@@ -211,9 +222,15 @@ export function runControllerConformance(
     })
 
     // 4. Root override — a reset signed by anything but the committed recovery key is rejected.
-    // The forged case keeps the victim's real chain position (`i`/`p`) but carries a thief's own
-    // signature and revealed recovery key — the only way to get both a matching anchor and a
-    // valid signature is to actually hold the committed recovery key.
+    // The forged case reuses the victim's own legitimately-shaped reset event byte-for-byte (so
+    // `i`, `p`, `g`, `s` all chain correctly) and re-signs it with a thief's recovery private
+    // key, revealing the thief's matching public key. That signature genuinely verifies against
+    // the key it reveals — the only thing wrong with the event is that the revealed key is not
+    // the one the inception committed to. A splice of `i`/`p` into a thief's own reset would
+    // instead break the signature outright, which an implementation with no commitment check at
+    // all would *also* reject — certifying an implementation that never checks the commitment.
+    // Isolating the property needs a genuinely valid signature from an uncommitted key, which is
+    // why `recoveryPrivateKey`/`signEvent` exist on the contract as test-support members.
     describe('root override', () => {
       test('a reset signed by the committed recovery key folds successfully', () => {
         const icp = impl.createInception(seedA, 0)
@@ -223,13 +240,19 @@ export function runControllerConformance(
         expect(result.ok).toBe(true)
       })
 
-      test('a reset signed by anything but the committed recovery key is rejected', () => {
+      test('a reset with a genuinely valid signature from an uncommitted recovery key is rejected', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
+        // Correctly shaped and chained for the victim — everything but the signer.
+        const legitimate = impl.createReset(seedA, 0, 1)
+        // The thief's own reset reveals a genuinely valid recovery public key, just not the one
+        // committed in the victim's inception.
         const thiefReset = impl.createReset(seedC, 0, 1)
+        const thiefRecoveryPrivateKey = impl.recoveryPrivateKey(seedC, 0)
         const forged: ConformanceSigned = {
-          ...thiefReset,
-          event: { ...thiefReset.event, i: did, p: impl.digestOf(icp.event) },
+          event: legitimate.event,
+          sigs: impl.signEvent(legitimate.event, [thiefRecoveryPrivateKey]),
+          recoveryKey: thiefReset.recoveryKey,
         }
         const result = impl.foldLog(did, [icp, forged])
         expect(result.ok).toBe(false)
