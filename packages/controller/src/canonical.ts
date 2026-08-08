@@ -19,6 +19,10 @@ function canonicalize(value: unknown): string {
     return `[${value.map(canonicalize).join(',')}]`
   }
   if (typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value)
+    if (proto !== Object.prototype && proto !== null) {
+      throw new Error('Canonicalization: only plain objects are supported')
+    }
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))

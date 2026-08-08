@@ -28,6 +28,52 @@ describe('canonicalBytes()', () => {
   test('rejects a non-finite number — it would not round-trip', () => {
     expect(() => canonicalBytes({ a: Number.NaN })).toThrow(/finite/)
   })
+
+  test('encodes an empty object', () => {
+    expect(decoder.decode(canonicalBytes({}))).toBe('{}')
+  })
+
+  test('encodes an empty array', () => {
+    expect(decoder.decode(canonicalBytes({ a: [] }))).toBe('{"a":[]}')
+  })
+
+  test('nests objects inside arrays', () => {
+    expect(decoder.decode(canonicalBytes([{ b: 2, a: 1 }]))).toBe('[{"a":1,"b":2}]')
+  })
+
+  test('preserves unicode strings in raw UTF-8 form without escaping', () => {
+    const utf8 = canonicalBytes({ emoji: '🔑', greek: 'Ω' })
+    const decoded = decoder.decode(utf8)
+    expect(decoded).toBe('{"emoji":"🔑","greek":"Ω"}')
+  })
+
+  test('sorts numeric-looking keys lexicographically, not numerically', () => {
+    // "10" comes before "9" in lexicographic order
+    expect(decoder.decode(canonicalBytes({ '9': 'a', '10': 'b' }))).toBe('{"10":"b","9":"a"}')
+  })
+
+  test('sorts non-ASCII keys lexicographically', () => {
+    const obj: Record<string, number> = {}
+    obj['ß'] = 1
+    obj['ä'] = 2
+    expect(decoder.decode(canonicalBytes(obj))).toBe('{"ß":1,"ä":2}')
+  })
+
+  test('rejects Date objects instead of encoding them as empty objects', () => {
+    expect(() => canonicalBytes({ a: new Date() })).toThrow(/plain objects/)
+  })
+
+  test('rejects Map objects instead of encoding them as empty objects', () => {
+    expect(() => canonicalBytes({ a: new Map() })).toThrow(/plain objects/)
+  })
+
+  test('rejects Uint8Array instead of encoding numeric keys', () => {
+    expect(() => canonicalBytes({ a: new Uint8Array([1, 2, 3]) })).toThrow(/plain objects/)
+  })
+
+  test('throws on undefined values in arrays rather than encoding as null', () => {
+    expect(() => canonicalBytes({ a: [1, undefined, 2] })).toThrow(/unsupported/)
+  })
 })
 
 describe('digestOf()', () => {
