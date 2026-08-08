@@ -53,6 +53,47 @@ Bodies: `icp` and `rot` carry `k` (multibase public keys), `n` (next-key digests
 
 ---
 
+## Amendment A — reset anchors to the inception (decided during Task 8)
+
+**This section is authoritative and supersedes the Task 7, 8, 9 and 10 text below wherever they disagree.**
+
+Two defects surfaced while reviewing Task 8. Both are in the plan's own code, not in an implementation.
+
+**1. A reset could not be authored from a mnemonic alone.** `createReset` took the prior event and derived both `p = digestOf(prior)` and `g = prior.g + 1` from it, so a root holding only its seed — the exact situation recovery exists for — could not author one. The docstring claimed the opposite. A compromised device could never *author* a reset (the recovery key is a hardened sibling of the delegable subtree, unreachable from any sub-seed), so the authority guarantee held; only availability failed.
+
+A reset now anchors to the inception, which the root recomputes from the seed:
+
+```ts
+createReset(seed: Uint8Array, profile: number, gen: number): SignedEvent<RotateEvent>
+verifyReset(signed: SignedEvent<RotateEvent>, inception: InceptionEvent): boolean
+```
+
+- `p = digestOf(inception)`; `i` is `didFromInception(inception)`, also derived internally. No prior event is passed.
+- `s = 0`, `g = gen`, and `gen >= 1`.
+- **No options.** No seal, and `d` is always `[]`. A reset is a pure function of `(seed, profile, gen)`, so two blind resets at the same generation produce identical bytes and resolve as idempotent re-derivation rather than duplicity. Admitting a seal or a deny snapshot would break that and is the reason the options parameter is gone.
+- `verifyReset` takes the inception itself rather than `{ digest, r }` — both values it needs come from there, and passing the event makes the pairing impossible to get wrong.
+- The root does not need to know the current generation. It only needs to eventually exceed it, and no attacker can author a competing reset at *any* generation. A blind root starts at `gen = 1` and retries higher if it learns of one; the cost is a round trip, never loss of control.
+
+**2. `createRevoke` derived the wrong signing key for a second consecutive revoke.** It signed at `authorityPath(profile, prior.g, prior.s)`, which locates the active key only when `prior` is an `icp` or `rot` — those establish a key at their own `s`. A revoke establishes nothing, so a revoke chained onto a revoke signed with the unrevealed pre-committed next key and failed verification. An authority could revoke one device, then no more without an unrelated rotate. The key position is now passed explicitly:
+
+```ts
+createRevoke(
+  seed: Uint8Array,
+  profile: number,
+  did: string,
+  prior: EventCommon,
+  target: string,
+  keyPosition: { gen: number; seq: number },
+  options?: { cap?: string },
+): SignedEvent<RevokeEvent>
+```
+
+`prior` still answers "what is the next sequence number and what do I chain to"; `keyPosition` answers "where does the currently-active authority key live". They coincide only for `icp`/`rot`, which is why one parameter could not serve both.
+
+`KeyState` (Task 9) gains `keyGen` and `keySeq` — the position at which the state's current `keys` were established — so the fold is the natural source for `keyPosition`. They advance only on an `icp` or `rot`; a `rev` carries them forward unchanged.
+
+---
+
 ## Task 1: Scaffold `@kokuin/controller`
 
 **Files:**
@@ -1314,6 +1355,10 @@ git commit -m "feat(controller): rotate events verified against pre-rotation com
 
 ## Task 7: Reset — generation increment under the recovery key
 
+> **Superseded in part by Amendment A.** The signatures and test code below take a `prior` event
+> and an options object; both are gone. Read Amendment A for the shapes that ship. The rationale,
+> the derivation paths, and the `recoveryKey`-on-the-envelope mechanism below are all still current.
+
 **Files:**
 - Modify: `packages/controller/src/events.ts`
 - Test: `packages/controller/test/reset.test.ts`
@@ -1498,6 +1543,10 @@ git commit -m "feat(controller): reset as a recovery-key-signed generation incre
 
 ## Task 8: Revoke events and the deny set
 
+> **Superseded in part by Amendment A.** `createRevoke` takes an explicit `keyPosition` argument
+> between `target` and `options`; the test code below omits it. Read Amendment A for the shape
+> that ships and for why one `prior` parameter could not answer both questions it was being asked.
+
 **Files:**
 - Modify: `packages/controller/src/events.ts`
 - Test: `packages/controller/test/revoke.test.ts`
@@ -1668,7 +1717,7 @@ git commit -m "feat(controller): revoke events naming device DIDs"
 **Interfaces:**
 - Consumes: all event types and verifiers from Tasks 5-8.
 - Produces:
-  - `type KeyState = { did: string; gen: number; seq: number; keys: string[]; next: string[]; recovery: string; deny: ReadonlySet<string>; digest: string }`
+  - `type KeyState = { did: string; gen: number; seq: number; keyGen: number; keySeq: number; keys: Array<string>; next: Array<string>; recovery: string; deny: ReadonlySet<string>; digest: string }` — see Amendment A for `keyGen`/`keySeq`
   - `type FoldResult = { ok: true; states: KeyState[] } | { ok: false; reason: string; index: number }`
   - `foldLog(did: string, events: SignedEvent[]): FoldResult`
   - `keyStateAt(result: FoldResult, position: number): KeyState | undefined`
@@ -1697,7 +1746,9 @@ function build() {
   const icp = createInception(seed, 0)
   const did = didFromInception(icp.event)
   const rot = createRotate(seed, 0, did, icp.event)
-  const rev = createRevoke(seed, 0, did, rot.event, stolen)
+  // The rotate established the active key at its own position (gen 0, seq 1), so that is the
+  // keyPosition the revoke signs with — see Amendment A.
+  const rev = createRevoke(seed, 0, did, rot.event, stolen, { gen: 0, seq: 1 })
   return { did, icp, rot, rev }
 }
 
@@ -1762,7 +1813,8 @@ describe('foldLog()', () => {
 
   test('a reset increments the generation and clears the deny set', () => {
     const { did, icp, rot, rev } = build()
-    const reset = createReset(seed, 0, did, rev.event)
+    // Anchored to the inception, not to the head — see Amendment A.
+    const reset = createReset(seed, 0, 1)
     const result = foldLog(did, [icp, rot, rev, reset])
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -1784,6 +1836,28 @@ describe('keyStateAt()', () => {
     const result = foldLog(did, [icp, rot, rev])
     expect(keyStateAt(result, 1)?.deny.has(stolen)).toBe(false)
     expect(keyStateAt(result, 2)?.deny.has(stolen)).toBe(true)
+  })
+
+  test('a revoke carries the key position forward, so a second revoke can be signed', () => {
+    const { did, icp, rot, rev } = build()
+    const state = keyStateAt(foldLog(did, [icp, rot, rev]), 2)
+    expect(state).toBeDefined()
+    if (state == null) return
+    // The revoke did not rotate, so the keys are still the rotate's and so is their position.
+    expect(state.keys).toEqual(rot.event.k)
+    expect(state.keyGen).toBe(0)
+    expect(state.keySeq).toBe(1)
+    // Signing a second revoke from that position must produce a foldable event — the defect
+    // Amendment A fixes was that this chained revoke signed with an unrevealed key.
+    const second = createRevoke(seed, 0, did, rev.event, 'did:key:zOther', {
+      gen: state.keyGen,
+      seq: state.keySeq,
+    })
+    const chained = foldLog(did, [icp, rot, rev, second])
+    expect(chained.ok).toBe(true)
+    if (!chained.ok) return
+    expect(chained.states[3].deny.has(stolen)).toBe(true)
+    expect(chained.states[3].deny.has('did:key:zOther')).toBe(true)
   })
 
   test('returns undefined past the end of the log', () => {
@@ -1855,11 +1929,13 @@ export function foldLog(did: string, events: SignedEvent[]): FoldResult {
     return fail('invalid inception', 0)
   }
 
-  const states: KeyState[] = [
+  const states: Array<KeyState> = [
     {
       did,
       gen: first.event.g,
       seq: first.event.s,
+      keyGen: first.event.g,
+      keySeq: first.event.s,
       keys: first.event.k,
       next: first.event.n,
       recovery: first.event.r,
@@ -1876,22 +1952,24 @@ export function foldLog(did: string, events: SignedEvent[]): FoldResult {
     if (event.i !== did) {
       return fail('event names a different controller', i)
     }
-    if (event.p !== prior.digest) {
-      return fail('event does not chain to the previous digest', i)
-    }
 
     if (event.t === 'rot') {
       const rot = signed as SignedEvent<RotateEvent>
-      const isReset = rot.event.g === prior.gen + 1
+      const isReset = rot.event.g > prior.gen
 
       if (isReset) {
+        // A reset chains to the inception, not to the head — Amendment A. That is what lets a
+        // root holding only its seed author one: `p` is recomputable without the log.
         if (rot.event.s !== 0) {
           return fail('reset must restart the sequence', i)
         }
-        if (!verifyReset(rot, { digest: prior.digest, r: prior.recovery })) {
+        if (!verifyReset(rot, first.event)) {
           return fail('invalid reset', i)
         }
       } else {
+        if (rot.event.p !== prior.digest) {
+          return fail('event does not chain to the previous digest', i)
+        }
         if (rot.event.g !== prior.gen || rot.event.s !== prior.seq + 1) {
           return fail('sequence gap', i)
         }
@@ -1904,6 +1982,9 @@ export function foldLog(did: string, events: SignedEvent[]): FoldResult {
         did,
         gen: rot.event.g,
         seq: rot.event.s,
+        // A rotate (reset included) establishes new keys at its own position.
+        keyGen: rot.event.g,
+        keySeq: rot.event.s,
         keys: rot.event.k,
         next: rot.event.n,
         recovery: rot.event.r ?? prior.recovery,
@@ -1911,6 +1992,10 @@ export function foldLog(did: string, events: SignedEvent[]): FoldResult {
         digest: digestOf(rot.event),
       })
       continue
+    }
+
+    if (event.p !== prior.digest) {
+      return fail('event does not chain to the previous digest', i)
     }
 
     if (event.t === 'rev') {
@@ -1923,6 +2008,8 @@ export function foldLog(did: string, events: SignedEvent[]): FoldResult {
       }
       const deny = new Set(prior.deny)
       deny.add(rev.event.x)
+      // `keyGen`/`keySeq` ride along in the spread: a revoke establishes no key, so the active
+      // position is still wherever the last icp/rot put it.
       states.push({ ...prior, seq: rev.event.s, deny, digest: digestOf(rev.event) })
       continue
     }
@@ -2006,8 +2093,8 @@ describe('resolveBranches()', () => {
   test('a higher generation wins outright over a longer lower generation', () => {
     const { did, icp } = build()
     const rot = createRotate(seed, 0, did, icp.event)
-    const rev = createRevoke(seed, 0, did, rot.event, victim)
-    const reset = createReset(seed, 0, did, icp.event)
+    const rev = createRevoke(seed, 0, did, rot.event, victim, { gen: 0, seq: 1 })
+    const reset = createReset(seed, 0, 1)
     const result = resolveBranches(did, [[icp, rot, rev], [icp, reset]])
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -2016,8 +2103,9 @@ describe('resolveBranches()', () => {
 
   test('a rotate signed by pre-committed next keys supersedes a current-key event at the same position', () => {
     const { did, icp } = build()
-    // The thief holds the current authority key and revokes the owner's other device.
-    const thiefRevoke = createRevoke(seed, 0, did, icp.event, victim)
+    // The thief holds the current authority key — established by the inception at (0, 0) — and
+    // revokes the owner's other device.
+    const thiefRevoke = createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })
     // The owner rotates using the pre-committed next keys at the same position.
     const ownerRotate = createRotate(seed, 0, did, icp.event)
     const result = resolveBranches(did, [[icp, thiefRevoke], [icp, ownerRotate]])
@@ -2029,7 +2117,7 @@ describe('resolveBranches()', () => {
 
   test('order of presentation does not change the winner', () => {
     const { did, icp } = build()
-    const thiefRevoke = createRevoke(seed, 0, did, icp.event, victim)
+    const thiefRevoke = createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })
     const ownerRotate = createRotate(seed, 0, did, icp.event)
     const a = resolveBranches(did, [[icp, ownerRotate], [icp, thiefRevoke]])
     const b = resolveBranches(did, [[icp, thiefRevoke], [icp, ownerRotate]])
@@ -2040,8 +2128,8 @@ describe('resolveBranches()', () => {
 
   test('two current-key events at the same position are duplicity, not a merge', () => {
     const { did, icp } = build()
-    const revokeA = createRevoke(seed, 0, did, icp.event, victim)
-    const revokeB = createRevoke(seed, 0, did, icp.event, 'did:key:zOther')
+    const revokeA = createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })
+    const revokeB = createRevoke(seed, 0, did, icp.event, 'did:key:zOther', { gen: 0, seq: 0 })
     const result = resolveBranches(did, [[icp, revokeA], [icp, revokeB]])
     expect(result.ok).toBe(false)
     if (result.ok) return
