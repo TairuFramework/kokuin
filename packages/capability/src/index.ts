@@ -26,8 +26,24 @@ export function now(): number {
   return Math.floor(Date.now() / 1000)
 }
 
-/** Default maximum delegation chain depth */
-export const DEFAULT_MAX_DELEGATION_DEPTH = 20
+/**
+ * Maximum delegation links an offline verifier will walk.
+ *
+ * Four: management → device → connector is three, plus one of headroom. Lowered from 20 —
+ * lowering the default can only reject chains, never accept new ones, and `maxDepth` stays
+ * overridable per call for anything that legitimately needs more.
+ */
+export const DEFAULT_MAX_DELEGATION_DEPTH = 4
+
+/**
+ * Default ceiling on a device capability's lifetime.
+ *
+ * The expiry length *is* the accepted-loss window at an offline verifier: revocation reaches it
+ * best-effort, an unrenewed expiry is unconditional. On-log revocation narrows the window but
+ * does not remove it, so pick this by how many days of a thief writing as the victim is
+ * acceptable — not by renewal convenience.
+ */
+export const DEFAULT_MAX_DEVICE_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 
 /** Hook called for each token during verification. Throw to reject. */
 export type VerifyTokenHook = (token: CapabilityToken, raw: string) => void | Promise<void>
@@ -36,7 +52,7 @@ export type VerifyTokenHook = (token: CapabilityToken, raw: string) => void | Pr
 export type DelegationChainOptions = {
   /** Time to use for expiration checks (seconds since epoch). Defaults to now(). */
   atTime?: number
-  /** Maximum depth of delegation chain. Defaults to 20. */
+  /** Maximum depth of delegation chain. Defaults to {@link DEFAULT_MAX_DELEGATION_DEPTH}. */
   maxDepth?: number
   /** Optional hook called for each token in the chain after verification. Can be used for revocation checks. */
   verifyToken?: VerifyTokenHook
@@ -300,6 +316,35 @@ export function hasPermission(expected: Permission, granted: Permission): boolea
 export function assertNonExpired(payload: { exp?: number }, atTime?: number): void {
   if (payload.exp != null && payload.exp < (atTime ?? now())) {
     throw new Error('Invalid token: expired')
+  }
+}
+
+export type DeviceCapabilityPolicyOptions = {
+  maxLifetimeSeconds?: number
+  now?: number
+}
+
+/**
+ * Enforce that a device capability sets a bounded expiry.
+ *
+ * `exp` is optional in the capability schema and `assertNonExpired` only enforces it when
+ * present, so the schema will never require it. Mint and verify paths for device capabilities
+ * must call this.
+ */
+export function assertDeviceCapabilityPolicy(
+  payload: { exp?: number },
+  options: DeviceCapabilityPolicyOptions = {},
+): void {
+  const atTime = options.now ?? now()
+  const maxLifetime = options.maxLifetimeSeconds ?? DEFAULT_MAX_DEVICE_LIFETIME_SECONDS
+  if (payload.exp == null) {
+    throw new Error('CapabilityError.PolicyViolation: device capabilities must set exp')
+  }
+  assertNonExpired(payload, atTime)
+  if (payload.exp - atTime > maxLifetime) {
+    throw new Error(
+      `CapabilityError.PolicyViolation: device capability lifetime exceeds ${maxLifetime}s`,
+    )
   }
 }
 
