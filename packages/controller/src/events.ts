@@ -222,17 +222,29 @@ export function verifyRotate(
  * A reset: a rotate signed by the recovery key that increments the generation and discards
  * everything under the prior one, including every capability minted there.
  *
- * The recovery key lives on the root-retained derivation branch and its digest is committed in
- * the deterministic inception, so a restored mnemonic can always author one with no log at all.
+ * Anchored to the inception rather than to the log head, which the root recomputes from the seed
+ * alone — the recovery key lives on the root-retained derivation branch and its digest is
+ * committed in the deterministic inception, so a restored mnemonic can author one with no log
+ * knowledge or availability at all. Carries no options: no seal, and `d` is always `[]`, so a
+ * reset is a pure function of `(seed, profile, gen)` — two blind resets at the same generation
+ * produce identical bytes and resolve as idempotent re-derivation rather than duplicity.
+ *
+ * The root does not need to know the current generation; it only needs to eventually exceed it,
+ * since no attacker can author a competing reset at any generation. A blind root starts at
+ * `gen = 1` and retries higher if it learns of one — the cost is a round trip, never loss of
+ * control.
  */
 export function createReset(
   seed: Uint8Array,
   profile: number,
-  did: string,
-  prior: EventCommon,
-  options: CreateRotateOptions = {},
+  gen: number,
 ): SignedEvent<RotateEvent> {
-  const gen = prior.g + 1
+  if (gen < 1) {
+    throw new Error(`Reset: gen must be >= 1, got ${gen}`)
+  }
+
+  const inception = createInception(seed, profile)
+  const did = didFromInception(inception.event)
   const current = deriveKeyPair(seed, authorityPath(profile, gen, 0), 'EdDSA')
   const next = deriveKeyPair(seed, authorityPath(profile, gen, 1), 'EdDSA')
   const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
@@ -243,15 +255,14 @@ export function createReset(
     i: did,
     g: gen,
     s: 0,
-    p: digestOf(prior),
+    p: digestOf(inception.event),
     crit: true,
     k: [encodeKey(current.publicKey)],
     n: [digestOf(encodeKey(next.publicKey))],
     kt: 1,
     nt: 1,
-    a: options.seal,
     // A reset clears the deny set: every capability under the prior generation is gone anyway.
-    d: options.deny ?? [],
+    d: [],
   }
 
   return {
@@ -261,23 +272,24 @@ export function createReset(
   }
 }
 
-/** A reset verifies against the committed recovery digest, not against the pre-rotation set. */
-export function verifyReset(
-  signed: SignedEvent<RotateEvent>,
-  prior: { digest: string; r: string },
-): boolean {
+/**
+ * A reset verifies against the committed recovery digest, not against the pre-rotation set. Both
+ * values it needs — the anchor digest and the recovery commitment — come from the inception
+ * itself, so passing the inception event makes the pairing impossible to get wrong.
+ */
+export function verifyReset(signed: SignedEvent<RotateEvent>, inception: InceptionEvent): boolean {
   const { event, sigs } = signed
-  if (event.t !== 'rot' || event.p !== prior.digest || event.s !== 0) {
+  if (event.t !== 'rot' || event.p !== digestOf(inception) || event.s !== 0 || event.g < 1) {
     return false
   }
   if (sigs.length !== 1) {
     return false
   }
-  // The recovery key is committed as a digest in the prior event and is not published until it is
+  // The recovery key is committed as a digest in the inception and is not published until it is
   // used, so a reset must carry the revealed key on the signed envelope for the commitment to be
   // checkable.
   const revealed = signed.recoveryKey
-  if (revealed == null || digestOf(revealed) !== prior.r) {
+  if (revealed == null || digestOf(revealed) !== inception.r) {
     return false
   }
   return verifySignatures(event, sigs, [revealed])

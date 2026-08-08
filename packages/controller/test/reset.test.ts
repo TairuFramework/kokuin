@@ -10,47 +10,58 @@ function setup() {
   return {
     inception,
     did: didFromInception(inception.event),
-    priorDigest: digestOf(inception.event),
   }
 }
 
 describe('createReset()', () => {
   test('increments the generation and restarts the sequence', () => {
-    const { inception, did } = setup()
-    const { event } = createReset(seed, 0, did, inception.event)
+    const { event } = createReset(seed, 0, 1)
     expect(event.g).toBe(1)
     expect(event.s).toBe(0)
   })
 
   test('is a rotate variant, not a fourth event type', () => {
-    const { inception, did } = setup()
-    expect(createReset(seed, 0, did, inception.event).event.t).toBe('rot')
+    expect(createReset(seed, 0, 1).event.t).toBe('rot')
   })
 
   test('clears the deny set by carrying an empty snapshot', () => {
+    expect(createReset(seed, 0, 1).event.d).toEqual([])
+  })
+
+  test('anchors to the inception, with no reference to any event beyond it', () => {
     const { inception, did } = setup()
-    expect(createReset(seed, 0, did, inception.event).event.d).toEqual([])
+    const { event } = createReset(seed, 0, 1)
+    expect(event.p).toBe(digestOf(inception.event))
+    expect(event.i).toBe(did)
+  })
+
+  test('is a pure function of (seed, profile, gen) — two blind resets are byte-identical', () => {
+    expect(createReset(seed, 0, 1)).toEqual(createReset(seed, 0, 1))
+  })
+
+  test('rejects a generation below 1', () => {
+    expect(() => createReset(seed, 0, 0)).toThrow()
   })
 })
 
 describe('verifyReset()', () => {
   test('accepts a reset signed by the committed recovery key', () => {
-    const { inception, did, priorDigest } = setup()
-    const signed = createReset(seed, 0, did, inception.event)
-    expect(verifyReset(signed, { digest: priorDigest, r: inception.event.r })).toBe(true)
+    const { inception } = setup()
+    const signed = createReset(seed, 0, 1)
+    expect(verifyReset(signed, inception.event)).toBe(true)
   })
 
   test('rejects a reset signed by any other key — the root always wins the race', () => {
-    const { inception, did, priorDigest } = setup()
+    const { inception } = setup()
     const thiefSeed = new Uint8Array(32).fill(9)
-    const signed = createReset(thiefSeed, 0, did, inception.event)
-    expect(verifyReset(signed, { digest: priorDigest, r: inception.event.r })).toBe(false)
+    const signed = createReset(thiefSeed, 0, 1)
+    expect(verifyReset(signed, inception.event)).toBe(false)
   })
 
   test('rejects a reset that does not increment the generation', () => {
-    const { inception, did, priorDigest } = setup()
-    const signed = createReset(seed, 0, did, inception.event)
+    const { inception } = setup()
+    const signed = createReset(seed, 0, 1)
     const tampered = { ...signed, event: { ...signed.event, g: 0 } }
-    expect(verifyReset(tampered, { digest: priorDigest, r: inception.event.r })).toBe(false)
+    expect(verifyReset(tampered, inception.event)).toBe(false)
   })
 })
