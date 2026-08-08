@@ -18,4 +18,17 @@ export {
   deriveKeyPair,
   recoveryPath,
 } from './derivation.js'
+export {
+  createInception,
+  DID_PREFIX,
+  decodeKey,
+  didFromInception,
+  type EventCommon,
+  type EventType,
+  encodeKey,
+  type InceptionEvent,
+  type SignedEvent,
+  verifyInception,
+  verifySignatures,
+} from './events.js'
 export { VERSION_TAG } from './version.js'
