@@ -16,3 +16,5 @@
  * package name.
  */
 export const VERSION_TAG = 'did:kokuin/v1'
+
+export { canonicalBytes, digestOf, verifyDigest } from './canonical.js'
