@@ -19,7 +19,9 @@ export {
   recoveryPath,
 } from './derivation.js'
 export {
+  type CreateRotateOptions,
   createInception,
+  createRotate,
   DID_PREFIX,
   decodeKey,
   didFromInception,
@@ -27,8 +29,10 @@ export {
   type EventType,
   encodeKey,
   type InceptionEvent,
+  type RotateEvent,
   type SignedEvent,
   verifyInception,
+  verifyRotate,
   verifySignatures,
 } from './events.js'
 export { VERSION_TAG } from './version.js'

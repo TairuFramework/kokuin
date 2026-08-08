@@ -128,3 +128,86 @@ export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string
   }
   return verifySignatures(signed.event, signed.sigs, signed.event.k)
 }
+
+export type RotateEvent = EventCommon & {
+  t: 'rot'
+  /** Keys the prior event pre-committed, now revealed, multibase-encoded. */
+  k: Array<string>
+  /** Digests of the next public keys — pre-rotation. */
+  n: Array<string>
+  /** Signing threshold. */
+  kt: number
+  /** Rotation threshold. */
+  nt: number
+  /** Recovery-commitment update. Only valid when co-signed by the current recovery key. */
+  r?: string
+  /** Seal: an anchored external digest, used to pin a high-value grant to a log position. */
+  a?: string
+  /** Deny-set snapshot. Replaces the accumulated set, pruning it. */
+  d?: Array<string>
+}
+
+export type CreateRotateOptions = {
+  seal?: string
+  deny?: Array<string>
+}
+
+/**
+ * A rotate reveals the keys the prior event pre-committed and commits the next set. Signed by the
+ * newly revealed keys, per KERI, which is what makes a stolen current key unable to rotate.
+ *
+ * Reproducible from the seed alone unless it carries a seal or a deny snapshot.
+ */
+export function createRotate(
+  seed: Uint8Array,
+  profile: number,
+  did: string,
+  prior: EventCommon,
+  options: CreateRotateOptions = {},
+): SignedEvent<RotateEvent> {
+  const gen = prior.g
+  const seq = prior.s + 1
+  const current = deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA')
+  const next = deriveKeyPair(seed, authorityPath(profile, gen, seq + 1), 'EdDSA')
+
+  const event: RotateEvent = {
+    v: 1,
+    t: 'rot',
+    i: did,
+    g: gen,
+    s: seq,
+    p: digestOf(prior),
+    crit: true,
+    k: [encodeKey(current.publicKey)],
+    n: [digestOf(encodeKey(next.publicKey))],
+    kt: 1,
+    nt: 1,
+    a: options.seal,
+    d: options.deny,
+  }
+
+  return { event, sigs: signEvent(event, [current.privateKey]) }
+}
+
+/**
+ * A rotate is valid when it chains to the prior digest, its revealed keys match the prior
+ * event's pre-rotation commitment, and its signatures verify against those keys.
+ */
+export function verifyRotate(
+  signed: SignedEvent<RotateEvent>,
+  prior: { digest: string; n: Array<string> },
+): boolean {
+  const { event, sigs } = signed
+  if (event.t !== 'rot' || event.p !== prior.digest) {
+    return false
+  }
+  if (event.k.length !== prior.n.length) {
+    return false
+  }
+  for (let i = 0; i < event.k.length; i++) {
+    if (digestOf(event.k[i]) !== prior.n[i]) {
+      return false
+    }
+  }
+  return verifySignatures(event, sigs, event.k)
+}
