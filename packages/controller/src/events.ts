@@ -297,6 +297,12 @@ export type RevokeEvent = EventCommon & {
  * Naming the device DID rather than a `jti` makes this one entry per device for that device's
  * life — it covers capabilities the verifier has never seen and covers future re-mints, where
  * per-`jti` revocation would grow with every renewal.
+ *
+ * `prior` answers "what is the next sequence number and what do I chain to"; `keyPosition`
+ * separately answers "where does the currently-active authority key live". They coincide only
+ * for an `icp`/`rot` prior, which establish a key at their own `s` — a `rev` prior establishes no
+ * key at all, so a revoke chained onto a revoke must still point at the last `icp`/`rot`
+ * position, not at the prior revoke's own `s`.
  */
 export function createRevoke(
   seed: Uint8Array,
@@ -304,9 +310,14 @@ export function createRevoke(
   did: string,
   prior: EventCommon,
   target: string,
+  keyPosition: { gen: number; seq: number },
   options: { cap?: string } = {},
 ): SignedEvent<RevokeEvent> {
-  const current = deriveKeyPair(seed, authorityPath(profile, prior.g, prior.s), 'EdDSA')
+  const current = deriveKeyPair(
+    seed,
+    authorityPath(profile, keyPosition.gen, keyPosition.seq),
+    'EdDSA',
+  )
 
   const event: RevokeEvent = {
     v: 1,
