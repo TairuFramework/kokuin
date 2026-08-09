@@ -4080,6 +4080,106 @@ git commit -m "test(controller-conformance): contract coverage for the agreement
 
 ---
 
+## Task 24: End-to-end encryption to a `did:kokuin:` recipient
+
+**Files:**
+- Modify: `packages/controller/package.json` (add `@kokuin/jwe` as a **devDependency**)
+- Test: `packages/controller/test/encrypt-to-profile.test.ts` (create)
+
+**Interfaces:**
+- Consumes: `createInception`, `createRotate`, `createControllerResolver` from `@kokuin/controller`;
+  `createTokenEncrypterAsync`, `encryptToken`, `decryptToken` from `@kokuin/jwe`.
+
+Every layer of the key agreement work is unit-tested, but nothing exercises the whole path. Task 22
+proves jwe's contract against a hand-built fake resolver, which is a legitimate unit test and
+correctly avoids a dependency — but it means no test anywhere runs a real folded log through
+`createControllerResolver` into a real encryption. Confirmed by the Task 22 review. Since the
+release requirement is that `did:kokuin:` works as an encryption target, that path deserves a real
+test.
+
+**The dependency direction is safe and must stay this way.** `@kokuin/jwe` depends only on
+`@kokuin/token` and never imports `@kokuin/controller`, so a **devDependency** from controller onto
+jwe does not cycle. Do not add it as a runtime dependency, and do not add anything to `packages/jwe`.
+A cycle here broke the cold build earlier on this branch while every test still passed, so verify
+with a cold build, not just a test run.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+import {
+  createTokenEncrypterAsync,
+  decryptToken,
+  encryptToken,
+} from '@kokuin/jwe'
+import { x25519 } from '@noble/curves/ed25519.js'
+import { describe, expect, test } from 'vitest'
+
+import { agreementPath, deriveKeyPair } from '../src/derivation.js'
+import { createInception, didFromInception } from '../src/events.js'
+import { createControllerResolver } from '../src/resolver.js'
+
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
+describe('encrypting to a did:kokuin: profile', () => {
+  test('round-trips through a real folded log', async () => {
+    const seed = new Uint8Array(32).fill(3)
+    const inception = createInception(seed, 0)
+    const did = didFromInception(inception.event)
+    const resolver = createControllerResolver({ loadLog: async () => [inception] })
+
+    const encrypter = await createTokenEncrypterAsync(did, { methods: [resolver] })
+    const jwe = await encryptToken(encrypter, encoder.encode('hello'))
+
+    // The recipient side: the profile holder derives the same agreement key from the seed.
+    const agreement = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
+    const recipient = {
+      id: did,
+      agreeKey: async (ephemeralPublicKey: Uint8Array) =>
+        x25519.getSharedSecret(agreement.privateKey, ephemeralPublicKey),
+    }
+
+    expect(decoder.decode(await decryptToken(recipient, jwe))).toBe('hello')
+  })
+
+  test('a rotation moves the encryption target', async () => {
+    // Build a log with one rotate, encrypt to the DID, and confirm the ciphertext opens with the
+    // ROTATED agreement key and NOT with the inception's. Without the negative half, an
+    // implementation that resolved `ka` off the inception would pass.
+  })
+})
+```
+
+Write the second test in full following the first's shape, using `createRotate` to extend the log
+and `agreementPath(0, 0, 1)` for the rotated key. Both halves are required: assert the rotated key
+decrypts, and assert the inception's key does **not**.
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `pnpm --filter @kokuin/controller exec vitest run test/encrypt-to-profile.test.ts`
+Expected: FAIL — `@kokuin/jwe` is not resolvable from this package yet.
+
+- [ ] **Step 3: Add the devDependency**
+
+Add `"@kokuin/jwe": "workspace:^"` to `devDependencies` in `packages/controller/package.json`, then
+`pnpm install`.
+
+- [ ] **Step 4: Verify**
+
+Run: `pnpm --filter @kokuin/controller test`, then the full workspace suite, then
+`rm -rf packages/*/lib && rtk proxy pnpm run build`. The cold build is the one that catches a
+dependency-ordering problem; a passing test suite does not.
+
+- [ ] **Step 5: Commit**
+
+```bash
+pnpm exec biome check --write ./packages
+git add packages/controller pnpm-lock.yaml
+git commit -m "test(controller): end-to-end encryption to a did:kokuin: recipient"
+```
+
+---
+
 ## Self-review notes
 
 **Spec coverage.** Every spec section maps to a task: identifier and no-version-segment (5), derivation with HKDF and the root-retained branch (3), the three event types (5, 6, 8) with reset as a rotate variant (7), criticality (11), fold precedence and superseding recovery (9, 10), deny-set position-dependence (9, 10), key state at position (9, 20), duplicity (10), enumeration and handles (12), the conformance suite (13, 23), the injected resolver (4, 14, 21), the depth cap and mandated `exp` (15), the JWE split (16), the `rotation.ts` removal (17), key agreement and key encoding (19, 20), the async recipient path (22), packaging and `versioning.ignore` (1, 13, 18).
