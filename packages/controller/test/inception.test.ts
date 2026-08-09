@@ -13,7 +13,7 @@ describe('createInception()', () => {
   test('contains no timestamp, nonce or label', () => {
     const { event } = createInception(seedA, 0)
     const keys = Object.keys(event).sort()
-    expect(keys).toEqual(['crit', 'g', 'k', 'kt', 'n', 'nt', 'r', 's', 't', 'v'])
+    expect(keys).toEqual(['crit', 'g', 'k', 'ka', 'kt', 'n', 'nt', 'r', 's', 't', 'v'])
   })
 
   test('omits `i` from the inception body — the DID is its hash', () => {
@@ -42,6 +42,13 @@ describe('createInception()', () => {
 
   test('is marked critical — a verifier that cannot read it must not proceed', () => {
     expect(createInception(seedA, 0).event.crit).toBe(true)
+  })
+
+  test('carries exactly one key agreement key, encoded and tagged like the authority key', () => {
+    const { event } = createInception(seedA, 0)
+    expect(event.ka).toHaveLength(1)
+    expect(event.ka[0]).toMatch(/^z/)
+    expect(event.ka[0]).not.toBe(event.k[0])
   })
 })
 
@@ -94,5 +101,36 @@ describe('verifyInception()', () => {
     const signed = createInception(seedA, 0)
     const did = didFromInception(signed.event)
     expect(verifyInception({ ...signed, sigs: ['zzz'] }, did)).toBe(false)
+  })
+
+  test('rejects an inception publishing no key agreement key', () => {
+    const signed = createInception(seedA, 0)
+    const did = didFromInception(signed.event)
+    const tampered = { ...signed, event: { ...signed.event, ka: [] } }
+    expect(verifyInception(tampered, did)).toBe(false)
+  })
+
+  test('rejects an inception whose ka holds a key that is not X25519-tagged', () => {
+    const signed = createInception(seedA, 0)
+    const did = didFromInception(signed.event)
+    // An authority-tagged key presented as an agreement key.
+    const tampered = { ...signed, event: { ...signed.event, ka: [signed.event.k[0]] } }
+    expect(verifyInception(tampered, did)).toBe(false)
+  })
+
+  test('rejects an inception whose ka holds an untagged or malformed value', () => {
+    const signed = createInception(seedA, 0)
+    const did = didFromInception(signed.event)
+    const tampered = { ...signed, event: { ...signed.event, ka: ['zBOGUS'] } }
+    expect(verifyInception(tampered, did)).toBe(false)
+  })
+
+  test('rejects an inception whose k holds an X25519-tagged key rather than EdDSA', () => {
+    const signed = createInception(seedA, 0)
+    const did = didFromInception(signed.event)
+    // The agreement key presented as the signing key — the signature was made by the real
+    // authority key, so this only fails if verification checks the tag, not just the signature.
+    const tampered = { ...signed, event: { ...signed.event, k: [signed.event.ka[0]] } }
+    expect(verifyInception(tampered, did)).toBe(false)
   })
 })

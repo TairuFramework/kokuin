@@ -1,9 +1,13 @@
-import { decodeMultibase, encodeMultibase } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { base64urlnopad } from '@scure/base'
 
 import { canonicalBytes, digestOf } from './canonical.js'
-import { authorityPath, deriveKeyPair, recoveryPath } from './derivation.js'
+import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from './derivation.js'
+import { decodeKey, encodeKey, tryDecodeKey } from './keys.js'
+
+// Re-exported so the barrel stays unchanged for existing consumers — the encoding now lives in
+// `keys.ts`, tagged with a multicodec prefix.
+export { decodeKey, encodeKey }
 
 export const DID_PREFIX = 'did:kokuin:'
 
@@ -30,8 +34,14 @@ export type EventCommon = {
 
 export type InceptionEvent = EventCommon & {
   t: 'icp'
-  /** Current public keys, multibase-encoded. */
+  /** Current authority public keys, multicodec-tagged and multibase-encoded. */
   k: Array<string>
+  /**
+   * Key agreement public keys — an OR set, never combined. Encrypting to this profile means
+   * encrypting to one of these. Carries no pre-rotation commitment: an exposed agreement key
+   * discloses past ciphertexts but confers no authority.
+   */
+  ka: Array<string>
   /** Digests of the next public keys — pre-rotation. */
   n: Array<string>
   /** Signing threshold. */
@@ -54,17 +64,6 @@ export type SignedEvent<E extends EventCommon = EventCommon> = {
   recoveryKey?: string
 }
 
-// Aliases of `@kokuin/token`'s multibase codec — kept under domain-specific names so callers say
-// "this is a public key", not "this is a multibase string". Do not re-implement: `canonical.ts`
-// already imports the same codec for digests, and a second implementation would only invite drift.
-export function encodeKey(publicKey: Uint8Array): string {
-  return encodeMultibase(publicKey)
-}
-
-export function decodeKey(value: string): Uint8Array {
-  return decodeMultibase(value)
-}
-
 export function signEvent(event: EventCommon, privateKeys: Array<Uint8Array>): Array<string> {
   const bytes = canonicalBytes(event)
   return privateKeys.map((key) => base64urlnopad.encode(ed25519.sign(bytes, key)))
@@ -82,7 +81,11 @@ export function verifySignatures(
   const bytes = canonicalBytes(event)
   for (let i = 0; i < sigs.length; i++) {
     try {
-      if (!ed25519.verify(base64urlnopad.decode(sigs[i]), bytes, decodeKey(keys[i]))) {
+      const key = tryDecodeKey(keys[i])
+      if (key == null || key.alg !== 'EdDSA') {
+        return false
+      }
+      if (!ed25519.verify(base64urlnopad.decode(sigs[i]), bytes, key.publicKey)) {
         return false
       }
     } catch {
@@ -104,6 +107,7 @@ export function createInception(seed: Uint8Array, profile: number): SignedEvent<
   const current = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
   const next = deriveKeyPair(seed, authorityPath(profile, 0, 1), 'EdDSA')
   const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
+  const agreement = deriveKeyPair(seed, agreementPath(profile, 0, 0), 'X25519')
 
   const event: InceptionEvent = {
     v: 1,
@@ -111,11 +115,12 @@ export function createInception(seed: Uint8Array, profile: number): SignedEvent<
     g: 0,
     s: 0,
     crit: true,
-    k: [encodeKey(current.publicKey)],
-    n: [digestOf(encodeKey(next.publicKey))],
+    k: [encodeKey(current.publicKey, 'EdDSA')],
+    ka: [encodeKey(agreement.publicKey, 'X25519')],
+    n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
     kt: 1,
     nt: 1,
-    r: digestOf(encodeKey(recovery.publicKey)),
+    r: digestOf(encodeKey(recovery.publicKey, 'EdDSA')),
   }
 
   return { event, sigs: signEvent(event, [current.privateKey]) }
@@ -132,13 +137,27 @@ export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string
   if (didFromInception(signed.event) !== did) {
     return false
   }
+  // An icp-only log must not be a valid DID publishing no agreement key.
+  if (signed.event.ka.length === 0) {
+    return false
+  }
+  for (const ka of signed.event.ka) {
+    const key = tryDecodeKey(ka)
+    if (key == null || key.alg !== 'X25519') {
+      return false
+    }
+  }
   return verifySignatures(signed.event, signed.sigs, signed.event.k)
 }
 
 export type RotateEvent = EventCommon & {
   t: 'rot'
-  /** Keys the prior event pre-committed, now revealed, multibase-encoded. */
+  /** Keys the prior event pre-committed, now revealed, multicodec-tagged and multibase-encoded. */
   k: Array<string>
+  /**
+   * Key agreement public keys — an OR set, never combined. Carries no pre-rotation commitment.
+   */
+  ka: Array<string>
   /** Digests of the next public keys — pre-rotation. */
   n: Array<string>
   /** Signing threshold. */
@@ -175,6 +194,7 @@ export function createRotate(
   const seq = prior.s + 1
   const current = deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA')
   const next = deriveKeyPair(seed, authorityPath(profile, gen, seq + 1), 'EdDSA')
+  const agreement = deriveKeyPair(seed, agreementPath(profile, gen, seq), 'X25519')
 
   const event: RotateEvent = {
     v: 1,
@@ -184,8 +204,9 @@ export function createRotate(
     s: seq,
     p: digestOf(prior),
     crit: true,
-    k: [encodeKey(current.publicKey)],
-    n: [digestOf(encodeKey(next.publicKey))],
+    k: [encodeKey(current.publicKey, 'EdDSA')],
+    ka: [encodeKey(agreement.publicKey, 'X25519')],
+    n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
     kt: 1,
     nt: 1,
     a: options.seal,
@@ -248,6 +269,7 @@ export function createReset(
   const current = deriveKeyPair(seed, authorityPath(profile, gen, 0), 'EdDSA')
   const next = deriveKeyPair(seed, authorityPath(profile, gen, 1), 'EdDSA')
   const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
+  const agreement = deriveKeyPair(seed, agreementPath(profile, gen, 0), 'X25519')
 
   const event: RotateEvent = {
     v: 1,
@@ -257,8 +279,9 @@ export function createReset(
     s: 0,
     p: digestOf(inception.event),
     crit: true,
-    k: [encodeKey(current.publicKey)],
-    n: [digestOf(encodeKey(next.publicKey))],
+    k: [encodeKey(current.publicKey, 'EdDSA')],
+    ka: [encodeKey(agreement.publicKey, 'X25519')],
+    n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
     kt: 1,
     nt: 1,
     // A reset clears the deny set: every capability under the prior generation is gone anyway.
@@ -268,7 +291,7 @@ export function createReset(
   return {
     event,
     sigs: signEvent(event, [recovery.privateKey]),
-    recoveryKey: encodeKey(recovery.publicKey),
+    recoveryKey: encodeKey(recovery.publicKey, 'EdDSA'),
   }
 }
 

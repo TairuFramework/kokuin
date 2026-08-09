@@ -73,4 +73,18 @@ describe('deriveKeyPair()', () => {
   test('rejects an algorithm it cannot build a keypair for', () => {
     expect(() => deriveKeyPair(seed, authorityPath(0, 0, 0), 'ML-DSA-65')).toThrow(/Unsupported/)
   })
+
+  test('derives a 32-byte x25519 keypair', () => {
+    const { privateKey, publicKey } = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
+    expect(privateKey.length).toBe(32)
+    expect(publicKey.length).toBe(32)
+  })
+
+  // The HKDF `info` (`did:kokuin/v1|<alg>`) separates the roles at an identical tree position —
+  // a regression here would silently reuse one key for both.
+  test('the agreement key at a position is unrelated to the authority key at the same position', () => {
+    const authority = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
+    const agreement = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
+    expect(agreement.privateKey).not.toEqual(authority.privateKey)
+  })
 })

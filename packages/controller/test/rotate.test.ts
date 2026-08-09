@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import { createInception, createRotate, didFromInception, verifyRotate } from '../src/events.js'
+import {
+  createInception,
+  createRotate,
+  didFromInception,
+  verifyRotate,
+  verifySignatures,
+} from '../src/events.js'
 
 const seed = new Uint8Array(32).fill(1)
 
@@ -82,5 +88,14 @@ describe('verifyRotate()', () => {
     const signed = createRotate(seed, 0, did, inception.event)
     const tampered = { ...signed, event: { ...signed.event, d: ['did:key:zInjected'] } }
     expect(verifyRotate(tampered, { digest: priorDigest, n: inception.event.n })).toBe(false)
+  })
+
+  test('rejects a key presented as an authority key when it is X25519-tagged, not EdDSA', () => {
+    // A caller must not be able to present a key agreement key as an authority key by swapping
+    // the tag a verifier trusts without checking.
+    const { inception, did } = setup()
+    const signed = createRotate(seed, 0, did, inception.event)
+    const swapped = { ...signed, event: { ...signed.event, k: [signed.event.ka[0]] } }
+    expect(verifySignatures(swapped.event, swapped.sigs, swapped.event.k)).toBe(false)
   })
 })

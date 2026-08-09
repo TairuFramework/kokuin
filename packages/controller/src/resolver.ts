@@ -34,7 +34,7 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
       if (state.keys.length === 0) {
         throw new Error(`Controller ${did} has no signing key`)
       }
-      return { alg: 'EdDSA', publicKey: decodeKey(state.keys[0]) }
+      return { alg: 'EdDSA', publicKey: decodeKey(state.keys[0]).publicKey }
     },
   }
 }

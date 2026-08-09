@@ -21,7 +21,7 @@ describe('createControllerResolver()', () => {
     const resolver = createControllerResolver({ loadLog: async () => [icp] })
     const resolved = await resolver.resolve(did, {})
     expect(resolved.alg).toBe('EdDSA')
-    expect(resolved.publicKey).toEqual(decodeKey(icp.event.k[0]))
+    expect(resolved.publicKey).toEqual(decodeKey(icp.event.k[0]).publicKey)
   })
 
   test('rejects a DID with no log rather than returning a guess', async () => {
@@ -41,7 +41,7 @@ describe('createControllerResolver()', () => {
     const rot = createRotate(seed, 0, did, icp.event)
     const resolver = createControllerResolver({ loadLog: async () => [icp, rot] })
     const resolved = await resolver.resolve(did, {})
-    expect(resolved.publicKey).toEqual(decodeKey(rot.event.k[0]))
-    expect(resolved.publicKey).not.toEqual(decodeKey(icp.event.k[0]))
+    expect(resolved.publicKey).toEqual(decodeKey(rot.event.k[0]).publicKey)
+    expect(resolved.publicKey).not.toEqual(decodeKey(icp.event.k[0]).publicKey)
   })
 })

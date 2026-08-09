@@ -1,4 +1,4 @@
-import { ed25519 } from '@noble/curves/ed25519.js'
+import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import HDKey from 'micro-key-producer/slip10.js'
@@ -51,6 +51,7 @@ export function recoveryPath(profile: number): string {
 
 const KEY_LENGTHS: Record<string, number> = {
   EdDSA: 32,
+  X25519: 32,
   'ML-DSA-65': 32,
   'ML-KEM-768': 64,
 }
@@ -80,9 +81,12 @@ export function deriveKeyPair(
   path: string,
   alg: string,
 ): { privateKey: Uint8Array; publicKey: Uint8Array } {
-  if (alg !== 'EdDSA') {
-    throw new Error(`Derivation: Unsupported algorithm for key pair derivation: ${alg}`)
-  }
   const privateKey = deriveKeyMaterial(seed, path, alg)
-  return { privateKey, publicKey: ed25519.getPublicKey(privateKey) }
+  if (alg === 'EdDSA') {
+    return { privateKey, publicKey: ed25519.getPublicKey(privateKey) }
+  }
+  if (alg === 'X25519') {
+    return { privateKey, publicKey: x25519.getPublicKey(privateKey) }
+  }
+  throw new Error(`Derivation: Unsupported algorithm for key pair derivation: ${alg}`)
 }

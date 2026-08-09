@@ -190,7 +190,7 @@ export function runControllerConformance(
       test('an inception carries exactly the protocol fields', () => {
         const { event } = impl.createInception(seedA, 0)
         const keys = Object.keys(event).sort()
-        expect(keys).toEqual(['crit', 'g', 'k', 'kt', 'n', 'nt', 'r', 's', 't', 'v'])
+        expect(keys).toEqual(['crit', 'g', 'k', 'ka', 'kt', 'n', 'nt', 'r', 's', 't', 'v'])
       })
 
       test('the DID is absent from the inception body — it is the hash of the event', () => {

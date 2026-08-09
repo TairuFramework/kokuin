@@ -48,6 +48,11 @@ export {
   type KeyState,
   keyStateAt,
 } from './fold.js'
+export {
+  type KeyAlgorithm,
+  type TaggedKey,
+  tryDecodeKey,
+} from './keys.js'
 export { enumerateProfiles, handleForDID, type ProfileEntry } from './profiles.js'
 export { type ControllerResolverOptions, createControllerResolver } from './resolver.js'
 export { type Duplicity, type ResolveResult, resolveBranches } from './supersede.js'
