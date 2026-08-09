@@ -1,12 +1,15 @@
-import { createTokenEncrypter, decryptToken, encryptToken } from '@kokuin/jwe'
+import {
+  createIdentity,
+  type DIDDoc,
+  encodeMultibase,
+  encodePeer4,
+  getAgreementKey,
+  isPeer4,
+} from '@kokuin/token'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
-import { getAgreementKey } from '../src/did.js'
-import { createIdentity } from '../src/identity.js'
-import { encodeMultibase } from '../src/multibase.js'
-import type { DIDDoc } from '../src/peer4.js'
-import { encodePeer4, isPeer4 } from '../src/peer4.js'
+import { createTokenEncrypter, decryptToken, encryptToken } from '../src/index.js'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()

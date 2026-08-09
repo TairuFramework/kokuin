@@ -45,7 +45,6 @@
     "@sozai/schema": "catalog:"
   },
   "devDependencies": {
-    "@kokuin/jwe": "workspace:^",
     "@opentelemetry/sdk-trace-base": "catalog:",
     "@opentelemetry/sdk-trace-node": "catalog:",
     "uint8arrays": "catalog:"

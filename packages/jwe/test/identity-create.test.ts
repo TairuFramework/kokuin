@@ -1,11 +1,8 @@
-import { createTokenEncrypter, decryptToken, encryptToken } from '@kokuin/jwe'
+import { createIdentity, createInMemoryDIDCache, isPeer4, verifyToken } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, it } from 'vitest'
 
-import { createInMemoryDIDCache } from '../src/cache.js'
-import { createIdentity } from '../src/identity.js'
-import { isPeer4 } from '../src/peer4.js'
-import { verifyToken } from '../src/token.js'
+import { createTokenEncrypter, decryptToken, encryptToken } from '../src/index.js'
 
 describe('createIdentity', () => {
   it('emits did:key for a single classical signing key', async () => {

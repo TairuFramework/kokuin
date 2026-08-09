@@ -13,10 +13,10 @@ import {
   randomIdentity,
   createIdentity,
   createSigningIdentity,
-  createDecryptingIdentity,
+  createKeyAgreementIdentity,
   createFullIdentity,
   isSigningIdentity,
-  isDecryptingIdentity,
+  isKeyAgreementIdentity,
   isFullIdentity,
   isOwnIdentity,
 } from '@kokuin/token'
@@ -24,7 +24,7 @@ import type {
   Identity,
   OwnIdentity,
   SigningIdentity,
-  DecryptingIdentity,
+  KeyAgreementIdentity,
   FullIdentity,
   MultiKeyIdentity,
   IdentityKeySpec,
@@ -38,12 +38,12 @@ import type {
 | `randomIdentity()` | `OwnIdentity` | Fresh Ed25519 key pair in memory (`did:key:…`) |
 | `createIdentity(input)` | `Promise<MultiKeyIdentity>` | Multi-key `did:peer:4` identity with signing + encryption keys |
 | `createSigningIdentity(privateKey)` | `SigningIdentity` | Sign-only identity from an Ed25519 private key |
-| `createDecryptingIdentity(privateKey)` | `DecryptingIdentity` | Decrypt-only identity (JWE recipient) |
-| `createFullIdentity(privateKey)` | `FullIdentity` | Sign + decrypt from one Ed25519 private key |
+| `createKeyAgreementIdentity(privateKey)` | `KeyAgreementIdentity` | Key-agreement-only identity (JWE recipient, via `@kokuin/jwe`) |
+| `createFullIdentity(privateKey)` | `FullIdentity` | Sign + key agreement from one Ed25519 private key |
 
-**Identity hierarchy**: `OwnIdentity ⊇ FullIdentity ⊇ SigningIdentity | DecryptingIdentity`.
+**Identity hierarchy**: `OwnIdentity ⊇ FullIdentity ⊇ SigningIdentity | KeyAgreementIdentity`.
 
-Type guards: `isSigningIdentity`, `isDecryptingIdentity`, `isFullIdentity`, `isOwnIdentity`.
+Type guards: `isSigningIdentity`, `isKeyAgreementIdentity`, `isFullIdentity`, `isOwnIdentity`.
 
 The `id` field on every identity is its DID (e.g. `did:key:z6Mk…`). Because the public key is encoded in the DID, any token can be verified by extracting the key from the `iss` claim — no external key lookup required.
 
@@ -59,12 +59,11 @@ type SigningIdentity = Identity & {
   ): Promise<SignedToken<Payload, Header>>
 }
 
-type DecryptingIdentity = Identity & {
-  decrypt(jwe: string): Promise<Uint8Array>
+type KeyAgreementIdentity = Identity & {
   agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array>
 }
 
-type FullIdentity = SigningIdentity & DecryptingIdentity
+type FullIdentity = SigningIdentity & KeyAgreementIdentity
 
 type OwnIdentity = FullIdentity & { privateKey: Uint8Array }
 ```
@@ -161,6 +160,9 @@ type SignedPayload = {
 
 ### Encryption (JWE envelope modes)
 
+JWE support lives in the separate `@kokuin/jwe` package, so verify-only consumers of
+`@kokuin/token` do not pay for `@noble/ciphers`.
+
 ```typescript
 import {
   createTokenEncrypter,
@@ -168,8 +170,8 @@ import {
   decryptToken,
   wrapEnvelope,
   unwrapEnvelope,
-} from '@kokuin/token'
-import type { EnvelopeMode, TokenEncrypter } from '@kokuin/token'
+} from '@kokuin/jwe'
+import type { EnvelopeMode, TokenEncrypter } from '@kokuin/jwe'
 ```
 
 | `EnvelopeMode` | Description |
@@ -182,12 +184,12 @@ import type { EnvelopeMode, TokenEncrypter } from '@kokuin/token'
 **JWE encrypt / decrypt** (ECDH-ES + A256GCM):
 
 ```typescript
+import { randomIdentity } from '@kokuin/token'
 import {
-  randomIdentity,
   createTokenEncrypter,
   encryptToken,
   decryptToken,
-} from '@kokuin/token'
+} from '@kokuin/jwe'
 
 const recipient = randomIdentity()
 
@@ -195,7 +197,8 @@ const recipient = randomIdentity()
 const encrypter = createTokenEncrypter(recipient.id)
 const jwe = await encryptToken(encrypter, new TextEncoder().encode('secret payload'))
 
-// Recipient decrypts with their private identity
+// Recipient decrypts with their private identity — decryptToken reads only
+// recipient.agreeKey(), so any KeyAgreementIdentity (including a FullIdentity) works
 const plaintext = await decryptToken(recipient, jwe)
 console.log(new TextDecoder().decode(plaintext)) // 'secret payload'
 ```
@@ -207,14 +210,15 @@ raw output instead of building an envelope around it — for callers who want a 
 input to their own protocol (e.g. one factor among several combined via HKDF), not a JWE.
 
 ```typescript
-import { randomIdentity, deriveSharedSecret } from '@kokuin/token'
+import { randomIdentity } from '@kokuin/token'
+import { deriveSharedSecret } from '@kokuin/jwe'
 
 const recipient = randomIdentity()
 
 const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipient.id)
 // ship ephemeralPublicKey alongside whatever the secret protects
 
-// Recipient recovers the identical bytes with agreeKey (see `DecryptingIdentity` above):
+// Recipient recovers the identical bytes with agreeKey (see `KeyAgreementIdentity` above):
 const recovered = await recipient.agreeKey(ephemeralPublicKey)
 ```
 
@@ -237,13 +241,13 @@ the ephemeral private key never leaves it. Two caveats before you use the result
 **Envelope wrapping** (`jws-in-jwe` — signed, then encrypted):
 
 ```typescript
+import { randomIdentity } from '@kokuin/token'
 import {
-  randomIdentity,
   createTokenEncrypter,
   wrapEnvelope,
   unwrapEnvelope,
-} from '@kokuin/token'
-import type { EnvelopeMode } from '@kokuin/token'
+} from '@kokuin/jwe'
+import type { EnvelopeMode } from '@kokuin/jwe'
 
 const signer = randomIdentity()
 const recipient = randomIdentity()
