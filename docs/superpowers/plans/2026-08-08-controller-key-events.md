@@ -4049,6 +4049,17 @@ satisfy the contract by treating the field as optional.
 Keep the existing group numbering and append; the suite's groups are referenced by number in the
 Task 13 ledger notes.
 
+**Also close one unit-test gap in `packages/controller`**, carried over from the Task 21 review.
+`resolver.ts:44-47` — where `resolve` reads the algorithm off the decoded key instead of hardcoding
+`'EdDSA'` — has no coverage of any kind, not even type-level. It is on the identity layer, so it
+should not ship untested.
+
+A hand-built event carrying a differently-tagged algorithm is **not** constructible today:
+`KeyAlgorithm` is a closed two-member union, and the encoder rejects anything outside it. Use
+`vi.mock('./keys.js', ...)` to force `decodeKey` to return a non-EdDSA algorithm, and assert that
+`resolve` surfaces that algorithm rather than `'EdDSA'`. Verify the test has teeth by restoring the
+hardcode and watching it fail.
+
 - [ ] **Step 1: Run the suite to verify the new group fails against a stub**
 
 Temporarily return a fixed empty array from the contract's fold entry point and confirm the new
