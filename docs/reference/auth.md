@@ -268,12 +268,14 @@ console.log(unwrapped.mode)    // 'jws-in-jwe'
 
 Key rotation in `did:kokuin:` keeps the identifier stable while replacing the key set. Unlike older rotation chains that required creating a new DID on each rotation, the `did:kokuin:` event log records key material transitions as cryptographically linked events without changing the identifier.
 
-Rotation is managed through `@kokuin/controller`, which provides `createRotate` to sign a new rotation event and `verifyRotate` to verify a chain of rotations. The event log records:
-- **Rotation events** (`t: 'rot'`): Commit new signature and agreement keys, with a pre-rotation digest from the prior event
-- **Generation and sequence** (`g`, `s`): Track all rotations from inception
-- **Key commitments** (`n`): Pre-commit future keys so signers cannot forge old keys
+Rotation is managed through `@kokuin/controller`. A rotation event contains:
+- **Prior event digest** (`p`): Chains to the prior event in the log
+- **Signature and agreement keys** (`k`, `ka`): The new key material being rotated into
+- **Pre-rotation commitments** (`n`): Digests of the keys the *next* rotation must reveal
 
-See `@kokuin/controller` and `packages/controller/src/events.ts` for the full key event log API and examples.
+`verifyRotate` validates a single rotate: it checks that `k` hashes to the digests the prior event committed in `n`. This creates a key takeover protection: an attacker who steals the current signing key still cannot rotate the profile, because rotation requires revealing keys that match the pre-committed digests — keys they do not possess. Chain-level operations (`foldLog` and `foldLogAsync` in `packages/controller/src/fold.ts`) walk the entire event log to establish the current key state.
+
+See `@kokuin/controller` and `packages/controller/src/events.ts` for the full key event log API.
 
 ---
 
