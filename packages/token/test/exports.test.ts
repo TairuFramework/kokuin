@@ -18,7 +18,7 @@ describe('package exports', () => {
     'createIdentity',
     'createKeyAgreementIdentity',
     'isKeyAgreementIdentity',
-    'createRotationAssertion',
+    // 'createRotationAssertion' removed — see @kokuin/controller for did:kokuin controller logs.
   ])('exports %s', (name) => {
     expect((token as Record<string, unknown>)[name]).toBeDefined()
   })
@@ -36,6 +36,9 @@ describe('package exports', () => {
     // DecryptingIdentity was renamed to KeyAgreementIdentity and lost its `decrypt` sugar.
     'createDecryptingIdentity',
     'isDecryptingIdentity',
+    // Rotation chains superseded by did:kokuin event logs.
+    'createRotationAssertion',
+    'RotationPayload',
   ])('does not export %s', (name) => {
     expect((token as Record<string, unknown>)[name]).toBeUndefined()
   })

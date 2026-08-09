@@ -76,10 +76,6 @@ export {
   validateDIDDoc,
 } from './peer4.js'
 export {
-  createRotationAssertion,
-  type RotationPayload,
-} from './rotation.js'
-export {
   capabilitySchema,
   type SignatureAlgorithm,
   type SignedHeader,
