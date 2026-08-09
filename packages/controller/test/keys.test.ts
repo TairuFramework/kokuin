@@ -38,4 +38,20 @@ describe('tagged key encoding', () => {
     expect(tryDecodeKey('not-multibase')).toBeUndefined()
     expect(() => decodeKey('not-multibase')).toThrow()
   })
+
+  test('rejects a bare untagged key whose first two bytes coincide with a codec prefix', () => {
+    // 32 raw bytes where the first two happen to be 0xed 0x01 — indistinguishable from a codec
+    // prefix by bytes alone. Only the payload length after stripping it (30, not 32) gives it away.
+    const collision = encodeMultibase(new Uint8Array([0xed, 0x01, ...new Uint8Array(30).fill(1)]))
+    expect(tryDecodeKey(collision)).toBeUndefined()
+    expect(() => decodeKey(collision)).toThrow(/Unrecognised key encoding/)
+  })
+
+  test('rejects a correctly-tagged key with a truncated payload', () => {
+    // A well-formed X25519 prefix over a single-byte payload. Accepting this would mint a DID
+    // whose agreement key throws downstream in every future encryptor, instead of failing here.
+    const truncated = encodeMultibase(new Uint8Array([0xec, 0x01, 0x00]))
+    expect(tryDecodeKey(truncated)).toBeUndefined()
+    expect(() => decodeKey(truncated)).toThrow(/Unrecognised key encoding/)
+  })
 })

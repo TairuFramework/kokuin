@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'vitest'
 
-import { createInception, didFromInception, verifyInception } from '../src/events.js'
+import { authorityPath, deriveKeyPair } from '../src/derivation.js'
+import {
+  createInception,
+  didFromInception,
+  encodeKey,
+  type InceptionEvent,
+  signEvent,
+  verifyInception,
+} from '../src/events.js'
 
 const seedA = new Uint8Array(32).fill(1)
 const seedB = new Uint8Array(32).fill(2)
@@ -103,34 +111,47 @@ describe('verifyInception()', () => {
     expect(verifyInception({ ...signed, sigs: ['zzz'] }, did)).toBe(false)
   })
 
+  // Each case below rebuilds the inception event with one field tampered, then re-signs the
+  // tampered event with the real authority key and recomputes the DID from it. That makes the DID
+  // check and the signature check pass on the tampered event itself, so the only thing left that
+  // can reject is the guard under test — a naive tamper-and-reuse-the-old-signature-and-DID test
+  // would fail at the DID check (events.ts, the `didFromInception(signed.event) !== did` line)
+  // before ever reaching these guards, certifying nothing about them.
+  function resign(event: InceptionEvent) {
+    const current = deriveKeyPair(seedA, authorityPath(0, 0, 0), 'EdDSA')
+    return {
+      event,
+      sigs: signEvent(event, [current.privateKey]),
+      did: didFromInception(event),
+    }
+  }
+
   test('rejects an inception publishing no key agreement key', () => {
-    const signed = createInception(seedA, 0)
-    const did = didFromInception(signed.event)
-    const tampered = { ...signed, event: { ...signed.event, ka: [] } }
+    const { event } = createInception(seedA, 0)
+    const { did, ...tampered } = resign({ ...event, ka: [] })
     expect(verifyInception(tampered, did)).toBe(false)
   })
 
   test('rejects an inception whose ka holds a key that is not X25519-tagged', () => {
-    const signed = createInception(seedA, 0)
-    const did = didFromInception(signed.event)
-    // An authority-tagged key presented as an agreement key.
-    const tampered = { ...signed, event: { ...signed.event, ka: [signed.event.k[0]] } }
+    const { event } = createInception(seedA, 0)
+    // A genuine, correctly-sized key, tagged as the wrong algorithm.
+    const { did, ...tampered } = resign({ ...event, ka: [event.k[0]] })
     expect(verifyInception(tampered, did)).toBe(false)
   })
 
   test('rejects an inception whose ka holds an untagged or malformed value', () => {
-    const signed = createInception(seedA, 0)
-    const did = didFromInception(signed.event)
-    const tampered = { ...signed, event: { ...signed.event, ka: ['zBOGUS'] } }
+    const { event } = createInception(seedA, 0)
+    const { did, ...tampered } = resign({ ...event, ka: ['zBOGUS'] })
     expect(verifyInception(tampered, did)).toBe(false)
   })
 
   test('rejects an inception whose k holds an X25519-tagged key rather than EdDSA', () => {
-    const signed = createInception(seedA, 0)
-    const did = didFromInception(signed.event)
-    // The agreement key presented as the signing key — the signature was made by the real
-    // authority key, so this only fails if verification checks the tag, not just the signature.
-    const tampered = { ...signed, event: { ...signed.event, k: [signed.event.ka[0]] } }
+    const { event } = createInception(seedA, 0)
+    const current = deriveKeyPair(seedA, authorityPath(0, 0, 0), 'EdDSA')
+    // The real authority key, mistagged as key agreement rather than substituted for a different
+    // key — a genuine signature by this exact key over these exact bytes verifies cleanly, so this
+    // only fails if verification checks the tag, not just the signature.
+    const { did, ...tampered } = resign({ ...event, k: [encodeKey(current.publicKey, 'X25519')] })
     expect(verifyInception(tampered, did)).toBe(false)
   })
 })

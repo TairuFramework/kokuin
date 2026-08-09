@@ -1,7 +1,14 @@
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import { createInception, createReset, didFromInception, verifyReset } from '../src/events.js'
+import { deriveKeyPair, recoveryPath } from '../src/derivation.js'
+import {
+  createInception,
+  createReset,
+  didFromInception,
+  signEvent,
+  verifyReset,
+} from '../src/events.js'
 
 const seed = new Uint8Array(32).fill(1)
 
@@ -63,5 +70,30 @@ describe('verifyReset()', () => {
     const signed = createReset(seed, 0, 1)
     const tampered = { ...signed, event: { ...signed.event, g: 0 } }
     expect(verifyReset(tampered, inception.event)).toBe(false)
+  })
+
+  // `p`/`s`/`g` and the revealed recovery key stay exactly as createReset produced them, and the
+  // event is re-signed with the real recovery private key over the tampered bytes — so only a
+  // dedicated `ka` check, not a chain/recovery/signature failure, can reject these.
+  test('rejects a reset publishing no key agreement key', () => {
+    const { inception } = setup()
+    const signed = createReset(seed, 0, 1)
+    const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
+    const event = { ...signed.event, ka: [] }
+    const sigs = signEvent(event, [recovery.privateKey])
+    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
+      false,
+    )
+  })
+
+  test('rejects a reset whose ka holds a key that is not X25519-tagged', () => {
+    const { inception } = setup()
+    const signed = createReset(seed, 0, 1)
+    const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
+    const event = { ...signed.event, ka: [signed.event.k[0]] }
+    const sigs = signEvent(event, [recovery.privateKey])
+    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
+      false,
+    )
   })
 })

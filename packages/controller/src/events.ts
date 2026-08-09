@@ -69,6 +69,24 @@ export function signEvent(event: EventCommon, privateKeys: Array<Uint8Array>): A
   return privateKeys.map((key) => base64urlnopad.encode(ed25519.sign(bytes, key)))
 }
 
+/**
+ * A key agreement set is valid when non-empty and every entry is a well-formed X25519-tagged key.
+ * Shared by every event that carries `ka` — inception, rotate, and reset all publish or republish
+ * the agreement key set, and a verifier must reject the same malformed shapes everywhere it appears.
+ */
+function verifyAgreementKeys(ka: Array<string>): boolean {
+  if (ka.length === 0) {
+    return false
+  }
+  for (const entry of ka) {
+    const key = tryDecodeKey(entry)
+    if (key == null || key.alg !== 'X25519') {
+      return false
+    }
+  }
+  return true
+}
+
 /** Total: a malformed signature or key yields false rather than throwing. */
 export function verifySignatures(
   event: EventCommon,
@@ -138,14 +156,8 @@ export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string
     return false
   }
   // An icp-only log must not be a valid DID publishing no agreement key.
-  if (signed.event.ka.length === 0) {
+  if (!verifyAgreementKeys(signed.event.ka)) {
     return false
-  }
-  for (const ka of signed.event.ka) {
-    const key = tryDecodeKey(ka)
-    if (key == null || key.alg !== 'X25519') {
-      return false
-    }
   }
   return verifySignatures(signed.event, signed.sigs, signed.event.k)
 }
@@ -236,6 +248,9 @@ export function verifyRotate(
       return false
     }
   }
+  if (!verifyAgreementKeys(event.ka)) {
+    return false
+  }
   return verifySignatures(event, sigs, event.k)
 }
 
@@ -306,6 +321,9 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
     return false
   }
   if (sigs.length !== 1) {
+    return false
+  }
+  if (!verifyAgreementKeys(event.ka)) {
     return false
   }
   // The recovery key is committed as a digest in the inception and is not published until it is
