@@ -3,7 +3,7 @@ import { runControllerConformance } from '@kokuin/controller-conformance'
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import { deriveKeyPair, recoveryPath } from '../src/derivation.js'
+import { authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
 import {
   createInception,
   createReset,
@@ -24,6 +24,16 @@ import { resolveBranches } from '../src/supersede.js'
 /** Test-support only: the recovery private key `createReset` derives internally. */
 function recoveryPrivateKey(seed: Uint8Array, profile: number): Uint8Array {
   return deriveKeyPair(seed, recoveryPath(profile), 'EdDSA').privateKey
+}
+
+/** Test-support only: the authority (signing) private key `createInception`/`createRotate` derive internally. */
+function authorityPrivateKey(
+  seed: Uint8Array,
+  profile: number,
+  gen: number,
+  seq: number,
+): Uint8Array {
+  return deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA').privateKey
 }
 
 // vitest's `expect` is structurally wider than the suite's minimal `ConformanceExpectation` —
@@ -48,6 +58,7 @@ const implementation = {
   enumerateProfiles,
   digestOf,
   recoveryPrivateKey,
+  authorityPrivateKey,
   signEvent,
 }
 

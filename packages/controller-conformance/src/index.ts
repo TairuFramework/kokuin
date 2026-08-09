@@ -110,7 +110,15 @@ export type ControllerImplementation = {
    * failing the chain check first (an untouched foreign branch).
    */
   recoveryPrivateKey: (seed: Uint8Array, profile: number) => Uint8Array
-  /** Test-support only: sign an event with arbitrary private keys. Used only for the forgery above. */
+  /**
+   * Test-support only, not part of the wire protocol: the authority (signing) private key for a
+   * seed, profile, and key position. Lets the agreement-key group build an inception whose
+   * signature genuinely verifies and whose DID genuinely matches, but whose declared `ka` is
+   * empty — isolating the empty-agreement-set check from signature and DID verification the same
+   * way `recoveryPrivateKey` isolates the root-override check above.
+   */
+  authorityPrivateKey: (seed: Uint8Array, profile: number, gen: number, seq: number) => Uint8Array
+  /** Test-support only: sign an event with arbitrary private keys. Used only for the forgeries above. */
   signEvent: (event: ConformanceEvent, privateKeys: Array<Uint8Array>) => Array<string>
 }
 
@@ -487,13 +495,20 @@ export function runControllerConformance(
     // 12. Agreement keys — an inception publishes a non-empty key agreement set, a rotate
     // replaces it, and a revoke leaves it unchanged. Property 2 asserts the post-rotate set
     // *differs* from the inception's rather than merely being non-empty — an implementation that
-    // carried the inception's `ka` forward on rotate would pass a mere non-empty check. Property
-    // 4 forges an inception with an empty agreement set by mutating a genuine one; canonicalization
-    // covers every field including `ka`, so the mutation invalidates both the digest (and hence
-    // the DID recomputed from it) and the signature, guaranteeing rejection regardless of which
-    // check an implementation happens to run first — unlike the root-override group, this property
-    // does not need a genuinely-valid-signature forgery, because the contract exposes no authority
-    // private key to build one with.
+    // carried the inception's `ka` forward on rotate would pass a mere non-empty check. Properties
+    // 1-3 also assert the folded value equals the `ka` the triggering event actually declared, not
+    // just that it changes/holds shape — otherwise an implementation folding an entirely unrelated
+    // (but still non-empty, still-changing, still-stable) value would pass all three. Property 4
+    // forges an inception with a genuinely valid signature and a genuinely matching DID whose only
+    // defect is an empty declared `ka` — the same isolation technique as the root-override group
+    // above, using `authorityPrivateKey` in place of `recoveryPrivateKey`. A byte-level splice
+    // (mutating `ka` on an already-signed event) was tried first and rejected: canonicalization
+    // covers every field, so a spliced `ka` also invalidates the signature, and a fold that never
+    // checks `ka` at all still gets rejected by signature verification alone — confirmed by
+    // deleting the `ka` guard at `events.ts:158-161` and observing the splice-based version of
+    // this test still pass. The signed forgery below closes that gap: with a signature that
+    // genuinely verifies and a DID that genuinely matches, the empty `ka` guard is the only check
+    // left that can reject it.
     describe('agreement keys', () => {
       test('a folded inception exposes a non-empty agreement set', () => {
         const icp = impl.createInception(seedA, 0)
@@ -504,6 +519,7 @@ export function runControllerConformance(
           return
         }
         expect(result.states[0].agreement.length > 0).toBe(true)
+        expect(result.states[0].agreement).toEqual(icp.event.ka)
       })
 
       test('a rotate replaces the agreement set', () => {
@@ -516,6 +532,7 @@ export function runControllerConformance(
           return
         }
         expect(result.states[1].agreement).not.toEqual(result.states[0].agreement)
+        expect(result.states[1].agreement).toEqual(rot.event.ka)
       })
 
       test('a revoke leaves the agreement set unchanged', () => {
@@ -529,13 +546,19 @@ export function runControllerConformance(
           return
         }
         expect(result.states[2].agreement).toEqual(result.states[1].agreement)
+        expect(result.states[2].agreement).toEqual(rot.event.ka)
       })
 
-      test('an inception with an empty agreement set is rejected', () => {
+      test('an inception with a genuinely valid signature but an empty agreement set is rejected', () => {
         const icp = impl.createInception(seedA, 0)
         const forgedEvent: ConformanceEvent = { ...icp.event, ka: [] }
         const did = impl.didFromInception(forgedEvent)
-        const result = impl.foldLog(did, [{ event: forgedEvent, sigs: icp.sigs }])
+        const authorityPrivateKey = impl.authorityPrivateKey(seedA, 0, 0, 0)
+        const forged: ConformanceSigned = {
+          event: forgedEvent,
+          sigs: impl.signEvent(forgedEvent, [authorityPrivateKey]),
+        }
+        const result = impl.foldLog(did, [forged])
         expect(result.ok).toBe(false)
       })
     })
