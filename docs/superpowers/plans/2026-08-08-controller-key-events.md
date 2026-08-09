@@ -3175,17 +3175,70 @@ git commit -m "feat(capability): cap delegation depth at 4 and mandate device ex
 ## Task 16: Split `@kokuin/jwe` out of `@kokuin/token`
 
 **Files:**
-- Create: `packages/jwe/package.json`, `tsconfig.json`, `tsconfig.test.json`, `biome.json`
+- Create: `packages/jwe/package.json`, `tsconfig.json`, `tsconfig.test.json`
 - Move: `packages/token/src/jwe.ts` → `packages/jwe/src/index.ts`
 - Move: `packages/token/test/jwe.test.ts` → `packages/jwe/test/jwe.test.ts`
-- Modify: `packages/token/src/index.ts` (drop the JWE re-exports)
+- Modify: `packages/token/src/identity.ts` (narrow `DecryptingIdentity`, see Amendment B)
+- Modify: `packages/token/src/index.ts` (drop the JWE re-exports, rename identity exports)
 - Modify: `packages/token/package.json` (drop `@noble/ciphers`)
+- Modify: `packages/browser/src/identity.ts`, `packages/ledger-device/src/provider.ts`
+- Modify: the test files listed in Amendment B
 
 **Interfaces:**
 - Consumes: `@kokuin/token` for `DIDDoc`, `getAgreementKey`, `concatBytes`.
 - Produces: `@kokuin/jwe` exporting everything `token/src/jwe.ts` exported today — `concatKDF`, `createTokenEncrypter`, `decryptToken`, `deriveSharedSecret`, `encryptToken`, `unwrapEnvelope`, `wrapEnvelope`, and the types `ConcatKDFParams`, `EncryptOptions`, `EnvelopeMode`, `JWEHeader`, `SharedSecretResult`, `TokenEncrypter`, `UnwrapOptions`, `UnwrappedEnvelope`, `WrapOptions`.
 
 This is a breaking change to `@kokuin/token`'s public API. It rides the same major as the `iss` resolution change rather than being released separately.
+
+### Amendment B — narrow `DecryptingIdentity` to `KeyAgreementIdentity` (decided before Task 16)
+
+**This subsection is authoritative over the steps below wherever they disagree.**
+
+Moving `jwe.ts` out as written creates a dependency cycle. `packages/token/src/identity.ts:7`
+imports `decryptToken` from `./jwe.js` to implement the `decrypt` convenience method on
+`DecryptingIdentity`, so `token → jwe → token`. The cycle would also defeat the split's stated
+purpose: the spec justifies the package because verify-only consumers should stop paying for
+`@noble/ciphers`, and a token that still calls `decryptToken` keeps that dependency transitively.
+
+`decryptToken` reads only `decrypter.agreeKey`. The `decrypt` method passes the identity to itself
+recursively and is never consumed, so the cycle exists purely to offer `identity.decrypt(jwe)` as
+sugar. Remove the sugar and the cycle goes with it.
+
+In `packages/token/src/identity.ts`:
+
+```ts
+export type KeyAgreementIdentity = Identity & {
+  agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array>
+}
+
+export type FullIdentity = SigningIdentity & KeyAgreementIdentity
+```
+
+- `DecryptingIdentity` is renamed to `KeyAgreementIdentity` and loses its `decrypt` member. The
+  name follows DID Core's `keyAgreement` verification relationship, which is what the type models.
+- `isDecryptingIdentity` becomes `isKeyAgreementIdentity` and drops the `decrypt` check from its
+  guard, testing only `agreeKey`.
+- `createDecryptingIdentity` becomes `createKeyAgreementIdentity` and returns `{ id, agreeKey }`.
+- `FullIdentity` keeps its name — it describes completeness, not mechanism. Do not rename it. The
+  keystore packages (`deterministic`, `expo`, `node`, `electron`, `browser`) reference it only as a
+  passthrough type and must not need edits.
+- In `packages/jwe/src/index.ts`, the `decryptToken` parameter and `UnwrapOptions.decrypter` take
+  `KeyAgreementIdentity`.
+
+Callers that used the sugar call `decryptToken(identity, jwe)` from `@kokuin/jwe` instead:
+
+- `packages/browser/src/identity.ts` — drop `decrypt` from the returned identity; the package gains
+  a `@kokuin/jwe` dependency only if it still needs one after the drop.
+- `packages/ledger-device/src/provider.ts:160-164` — drop `decrypt` from the `FullIdentity` literal
+  and the dynamic `import('@kokuin/token')` that fed it.
+- Tests that call `identity.decrypt(...)`: `packages/token/test/peer4-kem.test.ts`,
+  `packages/token/test/identity-create.test.ts`, `packages/browser/test/identity.test.ts`,
+  `tests/ledger/test/speculos.test.ts`, and the moved `packages/jwe/test/jwe.test.ts` (whose
+  `DecryptingIdentity.decrypt()` describe block covers behaviour that now belongs to
+  `decryptToken`).
+
+`packages/token/test/exports.test.ts` must assert the new names and assert the absence of the old
+ones, the same way Task 17 handles `createRotationAssertion`.
 
 - [ ] **Step 1: Move the tests first and watch them fail**
 
@@ -3219,7 +3272,8 @@ Expected: FAIL — the package does not exist.
 }
 ```
 
-Copy `tsconfig.json`, `tsconfig.test.json` and `biome.json` from `packages/controller`.
+Copy `tsconfig.json` and `tsconfig.test.json` from `packages/controller`. There is no per-package
+`biome.json` in this repo — do not create one.
 
 ```bash
 git mv packages/token/src/jwe.ts packages/jwe/src/index.ts
