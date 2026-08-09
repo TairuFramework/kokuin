@@ -116,14 +116,91 @@ Canonical and deterministic: no timestamp, no nonce, no user label, no device-su
 contents are a pure function of the seed and the profile index, so `hash(inception)` — and therefore
 the DID — is too.
 
-Commits the initial key set, the next-key digests, and **the digest of the recovery key**.
+Commits the initial key set, the next-key digests, **the digest of the recovery key**, and **the
+key agreement key set (`ka`)**.
 
 A user label must never enter inception. The DID depends on every byte, so a mistyped label on
 recovery would reproduce a different DID.
 
+### Key agreement
+
+A profile publishes an X25519 key agreement key set (`ka`) alongside its authority keys, derived on
+the reserved `role 1'` branch at the same `(gen, seq)` position as the authority key. Encrypting to
+a profile means encrypting to `ka`; device keys are never the target, because devices hold their own
+disposable DIDs.
+
+`ka` lives in the **inception**, not in a later event. Determinism is unaffected either way —
+`agreementPath` is as pure a function of `(seed, profile)` as `authorityPath` is. The reason is the
+minimal valid log: were `ka` introduced by a first `rotate`, an inception alone would be a complete,
+signature-valid `did:kokuin:` publishing no agreement key, and a verifier holding a truncated log
+could not distinguish "this profile does key agreement nowhere" from "I am missing events". It would
+either fail closed on a legitimate DID or fall back silently. With `ka` in the inception, the
+smallest valid log already carries every purpose the profile has.
+
+Converting the Ed25519 authority key to X25519 was rejected. It needs no schema field, but it
+couples encryption to rotation authority — the key others encrypt to would also be the key that
+rotates the profile — and it re-addresses encryption on every authority rotation. It would also
+leave `role 1'` reserved and unused, contradicting the several-purposes requirement above.
+
+`ka` carries **no pre-rotation commitment**. Pre-rotation exists so a stolen current key cannot
+rotate; an exposed agreement key discloses past ciphertexts to its holder but confers no authority,
+so there is nothing for a commitment to protect. A `rotate` may replace `ka` freely, because only a
+signer holding the pre-committed authority key can author one at all.
+
+A `revoke` establishes no keys, so `ka` rides forward across it exactly as the authority key set
+does.
+
+**`ka` is an OR set.** Every entry is independently sufficient, and a sender picks the strongest
+algorithm it supports. Entries are never combined.
+
+This has to be stated, because a set of keys can mean two opposite things. Hybrid post-quantum
+encryption means encrypting to X25519 *and* ML-KEM and mixing both shared secrets, so that an
+attacker must break both — AND semantics. A verifier that reads `ka` as OR when the author meant AND
+silently delivers the security of the weaker key.
+
+The ambiguity is removed rather than answered: hybrid arrives as a **single** entry under its own
+hybrid codec — X-Wing (X25519 + ML-KEM-768) is exactly this, one KEM primitive with one public key
+and one shared secret — not as two entries a verifier must know to combine. `ka` semantics then
+never change.
+
+### Key encoding
+
+Every key in `k` and `ka` is **multicodec-prefixed before multibase encoding**, following the
+`did:key` convention — `0xed 0x01` for Ed25519, `0xec 0x01` for X25519. Entries are therefore
+self-describing, and a resolver reads the algorithm off the key rather than assuming one.
+
+This is what makes a new algorithm additive. Bare multibase, as the first implementation used, is
+opaque bytes: telling X25519 from ML-KEM-768 would mean sniffing the length. Tagging costs nothing
+in this release, because `ka` changes the inception bytes and therefore every DID value anyway; done
+later it costs a second DID migration against published identifiers.
+
+A verifier meeting an unknown codec still chooses between skipping the entry and failing closed.
+That is a policy decision at adoption time, not a vulnerability: `k` and `ka` sit inside a signed
+event covered by the digest, so an attacker cannot strip a stronger key to force a weaker one.
+
+### Post-quantum readiness
+
+The design is post-quantum **ready**, not post-quantum **implementing**. Tagged keys, `ka` as a set
+rather than a single key, HKDF `info` already separating algorithms in `deriveKeyMaterial`, and
+`KEY_LENGTHS` already carrying `ML-DSA-65` and `ML-KEM-768` mean a hybrid key set arrives by
+rotation as a data change, with no schema movement.
+
+Signatures and encryption run on different clocks. Forging a signature requires a quantum computer
+at the moment of use, so PQ signatures can wait for a rotation once the threat is real. Encryption
+cannot: see the harvest-now-decrypt-later limitation below.
+
+Adoption is blocked on the wire format, not on effort. ML-KEM is standardized (FIPS 203) and
+implementations are available, but JOSE has no finalized `alg` for it, and ECDH-ES does not
+structurally fit a KEM — X25519 agrees a key, ML-KEM encapsulates one, producing a ciphertext that
+needs a defined home in the JWE. Choosing a value now most likely means choosing wrongly, which is
+the second breaking change this readiness work exists to avoid.
+
+**Trigger:** adopt when the JOSE ML-KEM draft reaches RFC, as hybrid X25519 + ML-KEM-768 introduced
+by rotation.
+
 ### `rotate`
 
-New key set, new next-key digests. Three optional fields:
+New key set, new next-key digests, new agreement key set. Three optional fields:
 
 - **Seal (`a`)** — anchors an external digest, used to pin a high-value capability grant to a log
   position.
@@ -203,9 +280,10 @@ same bytes and the same digest), so a fork can only arise from a non-reproducibl
 
 ## Key state
 
-The consumable output is a resolver interface: **key state of a DID at a position** — key set, deny
-set, thresholds. `@kokuin/token` uses it to resolve `iss`; kubun uses it on the apply path; kumiai
-uses it for the roster projection.
+The consumable output is a resolver interface: **key state of a DID at a position** — authority key
+set, agreement key set, deny set, thresholds. `@kokuin/token` uses it to resolve `iss`; `@kokuin/jwe`
+uses the agreement set to encrypt to a profile; kubun uses it on the apply path; kumiai uses it for
+the roster projection.
 
 The position must not be an HLC. HLCs are author-supplied and attacker-controllable; anchoring the
 cut-off to a group's epoch or ledger position is the sibling repos' responsibility and is recorded
@@ -311,7 +389,7 @@ for when it is reachable, never a requirement.
 | `@kokuin/controller` | Derivation, event schema, self-addressing digest, fold, key state at position, duplicity detection, handle derivation, profile enumeration |
 | `@kokuin/controller-conformance` | Private, framework-agnostic contract suite, following the `@kokuin/keystore-conformance` habit |
 | `@kokuin/token` | `iss` resolved through an injected `DIDMethodResolver`; built-in methods behind subpath exports; `embedLongForm` retained for genesis bootstrap |
-| `@kokuin/jwe` | Split out of `@kokuin/token` |
+| `@kokuin/jwe` | Split out of `@kokuin/token`; async recipient path for resolver-backed methods |
 | `@kokuin/capability` | Depth cap lowered; device capabilities mandate `exp` at the mint and verify policy layer |
 
 The name follows DID Core, which calls the entity that may change a DID document its **controller**.
@@ -329,8 +407,17 @@ decoupling. `jwe.ts` is the one split with a measured payoff: it is the sole `@n
 consumer, so verify-only consumers currently pay for a cipher dependency they never call.
 
 `packages/token/src/rotation.ts` and `createRotationAssertion` become dead — rotation chains are
-what this design replaces. Deprecate rather than delete in the first release; it is public API in a
-published package.
+what this design replaces. They are **deleted**, not deprecated: nothing in the workspace consumes
+them, and the JWE split already makes this a breaking `@kokuin/token` major, so a deprecation would
+buy a cycle of dead code and no migration window anyone needs.
+
+Encrypting to a `did:kokuin:` recipient needs an async path, because the agreement key comes from
+the fold rather than from the identifier. The existing sync `deriveSharedSecret` and
+`createTokenEncrypter` are retained unchanged for self-contained DIDs — `did:key` and `did:peer:4`
+long form — and async siblings take a resolver registry. `DIDMethodResolver` gains an optional
+`resolveAgreementKey` returning the tagged `ka` set; jwe selects by its own preference order and
+fails with a named error when it supports none of the entries. Keeping selection in jwe means a
+future hybrid codec changes one preference list rather than every method implementation.
 
 `@kokuin/controller` releases independently of the token / capability / browser / node /
 deterministic judgement group, which matters while the event format is still moving.
@@ -356,6 +443,13 @@ deterministic judgement group, which matters while the event format is still mov
 - **No log compaction path.** Every rotation is permanent and replayed at every welcome. The design
   keeps rotations rare — authority changes, post-quantum migration, recovery — which is what keeps
   the kumiai control ledger bounded.
+- **Harvest-now-decrypt-later applies to `ka`.** X25519 is the only key agreement algorithm shipping
+  in this release, so anything encrypted to a profile today can be captured now and opened once a
+  cryptographically relevant quantum computer exists. The exposure lasts as long as the data's
+  confidentiality lifetime, and the spec says durable data encrypts to these keys — so this is a
+  real window, not a theoretical one. Signatures do not share it: forgery requires a quantum
+  computer at the moment of use, which a rotation can stay ahead of. The format is ready (see
+  *Post-quantum readiness*); only the wire standard is missing.
 - **Post-quantum token size.** ML-DSA-65 signatures are ~3.3 KB, taking tokens from ~200 bytes to
   ~7 KB. Every ledger entry is a signed token, so this hits the kumiai welcome transfer, the
   `did:peer:4` document-size guards, and hub retention at once. It is a first-order constraint, not
@@ -382,6 +476,11 @@ deterministic judgement group, which matters while the event format is still mov
 - **kokuin** — ML-DSA in `SUPPORTED_ALGORITHMS` per RFC 9964, and PQ/T composite signatures once
   `draft-ietf-jose-pq-composite-sigs` settles. Tracked in
   `backlog/2026-06-30-post-quantum-algorithms.md`.
+- **kokuin** — post-quantum key agreement in `ka`. **Trigger:** the JOSE ML-KEM draft reaching RFC.
+  Ships as hybrid X-Wing (X25519 + ML-KEM-768) under its own multicodec, introduced by a `rotate`,
+  as a single `ka` entry rather than two combined ones. No schema change is required; the work is a
+  new codec, a new branch in jwe's preference order, and a `deriveKeyPair` that handles the
+  algorithm. See *Post-quantum readiness* and the harvest-now-decrypt-later limitation.
 - **kokuin** — token repackaging beyond the JWE split, if a consumer's bundle ever justifies it.
 - **DIF registration** of `did:kokuin:`.
 
