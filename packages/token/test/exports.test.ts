@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import type { AgreementAlgorithm, ResolvedAgreementKey } from '../src/index.js'
 import * as token from '../src/index.js'
 
 describe('package exports', () => {
@@ -41,5 +42,14 @@ describe('package exports', () => {
     'RotationPayload',
   ])('does not export %s', (name) => {
     expect((token as Record<string, unknown>)[name]).toBeUndefined()
+  })
+
+  it('exports the agreement key resolution types from the barrel', () => {
+    // Type-only exports have no runtime presence to assert with `toBeDefined`. This import
+    // resolving at all is the check: `pnpm run test:types` fails to compile if either type is
+    // dropped from `index.ts`.
+    const alg: AgreementAlgorithm = 'X25519'
+    const key: ResolvedAgreementKey = { alg, publicKey: new Uint8Array() }
+    expect(key.alg).toBe('X25519')
   })
 })

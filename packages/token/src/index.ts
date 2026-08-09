@@ -54,9 +54,11 @@ export {
 } from './identity.js'
 export type { KeyEntry, KeyStore, MutableKeyEntry } from './keystore.js'
 export {
+  type AgreementAlgorithm,
   type DIDMethodResolver,
   findMethodResolver,
   type MethodRegistry,
+  type ResolvedAgreementKey,
   type ResolvedSigningKey,
 } from './method.js'
 export {

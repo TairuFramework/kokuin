@@ -36,6 +36,27 @@ describe('findMethodResolver()', () => {
   })
 })
 
+describe('DIDMethodResolver.resolveAgreementKey', () => {
+  test('is optional -- a resolver may omit it entirely', () => {
+    const resolverWithoutAgreement: DIDMethodResolver = {
+      method: 'kokuin',
+      resolve: async () => ({ alg: 'EdDSA', publicKey }),
+    }
+    expect(resolverWithoutAgreement.resolveAgreementKey).toBeUndefined()
+  })
+
+  test('resolves the agreement key set when the method supports it', async () => {
+    const agreementKey = new Uint8Array(32).fill(9)
+    const resolverWithAgreement: DIDMethodResolver = {
+      method: 'kokuin',
+      resolve: async () => ({ alg: 'EdDSA', publicKey }),
+      resolveAgreementKey: async () => [{ alg: 'X25519', publicKey: agreementKey }],
+    }
+    const keys = await resolverWithAgreement.resolveAgreementKey?.('did:kokuin:zABC')
+    expect(keys).toEqual([{ alg: 'X25519', publicKey: agreementKey }])
+  })
+})
+
 describe('resolveIssuerWithDoc() with an injected method', () => {
   test('delegates an unknown method to its resolver', async () => {
     const result = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [kokuinResolver])

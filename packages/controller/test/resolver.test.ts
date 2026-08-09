@@ -45,3 +45,29 @@ describe('createControllerResolver()', () => {
     expect(resolved.publicKey).not.toEqual(decodeKey(icp.event.k[0]).publicKey)
   })
 })
+
+describe('createControllerResolver().resolveAgreementKey()', () => {
+  test('resolves the agreement key set from the folded state', async () => {
+    const { icp, did } = build()
+    const resolver = createControllerResolver({ loadLog: async () => [icp] })
+    const keys = await resolver.resolveAgreementKey?.(did)
+    expect(keys).toHaveLength(1)
+    expect(keys?.[0].alg).toBe('X25519')
+    expect(keys?.[0].publicKey).toEqual(decodeKey(icp.event.ka[0]).publicKey)
+  })
+
+  test('reflects a rotation rather than the inception', async () => {
+    const { icp, did } = build()
+    const rot = createRotate(seed, 0, did, icp.event)
+    const resolver = createControllerResolver({ loadLog: async () => [icp, rot] })
+    const keys = await resolver.resolveAgreementKey?.(did)
+    expect(keys?.[0].publicKey).toEqual(decodeKey(rot.event.ka[0]).publicKey)
+    expect(keys?.[0].publicKey).not.toEqual(decodeKey(icp.event.ka[0]).publicKey)
+  })
+
+  test('rejects an unknown DID the same way resolve does', async () => {
+    const { did } = build()
+    const resolver = createControllerResolver({ loadLog: async () => undefined })
+    await expect(resolver.resolveAgreementKey?.(did)).rejects.toThrow(/Unknown DID/)
+  })
+})

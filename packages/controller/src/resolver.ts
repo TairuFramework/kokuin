@@ -1,7 +1,7 @@
-import type { DIDMethodResolver, ResolvedSigningKey } from '@kokuin/token'
+import type { DIDMethodResolver, ResolvedAgreementKey, ResolvedSigningKey } from '@kokuin/token'
 
 import { DID_PREFIX, decodeKey, type SignedEvent } from './events.js'
-import { foldLog } from './fold.js'
+import { foldLog, type KeyState } from './fold.js'
 
 export type ControllerResolverOptions = {
   /** Load a controller's event log. Returns undefined when the DID is unknown. */
@@ -16,25 +16,45 @@ export type ControllerResolverOptions = {
  * the fold exists.
  */
 export function createControllerResolver(options: ControllerResolverOptions): DIDMethodResolver {
+  // Shared by both members: load the log, fold it, take the last state, throw `Unknown DID` when
+  // absent. A second copy of this sequence would drift.
+  async function loadState(did: string): Promise<KeyState> {
+    if (!did.startsWith(DID_PREFIX)) {
+      throw new Error(`Unknown DID: ${did}`)
+    }
+    const events = await options.loadLog(did)
+    if (events == null || events.length === 0) {
+      throw new Error(`Unknown DID: ${did}`)
+    }
+    const result = foldLog(did, events)
+    if (!result.ok) {
+      throw new Error(`Invalid controller log for ${did}: ${result.reason}`)
+    }
+    return result.states[result.states.length - 1]
+  }
+
   return {
     method: 'kokuin',
     async resolve(did: string): Promise<ResolvedSigningKey> {
-      if (!did.startsWith(DID_PREFIX)) {
-        throw new Error(`Unknown DID: ${did}`)
-      }
-      const events = await options.loadLog(did)
-      if (events == null || events.length === 0) {
-        throw new Error(`Unknown DID: ${did}`)
-      }
-      const result = foldLog(did, events)
-      if (!result.ok) {
-        throw new Error(`Invalid controller log for ${did}: ${result.reason}`)
-      }
-      const state = result.states[result.states.length - 1]
+      const state = await loadState(did)
       if (state.keys.length === 0) {
         throw new Error(`Controller ${did} has no signing key`)
       }
-      return { alg: 'EdDSA', publicKey: decodeKey(state.keys[0]).publicKey }
+      const key = decodeKey(state.keys[0])
+      if (key.alg === 'X25519') {
+        throw new Error(`Controller ${did} signing key is not a signature algorithm: ${key.alg}`)
+      }
+      return { alg: key.alg, publicKey: key.publicKey }
+    },
+    async resolveAgreementKey(did: string): Promise<Array<ResolvedAgreementKey>> {
+      const state = await loadState(did)
+      return state.agreement.map((value) => {
+        const key = decodeKey(value)
+        if (key.alg !== 'X25519') {
+          throw new Error(`Controller ${did} publishes an unsupported agreement key: ${key.alg}`)
+        }
+        return { alg: key.alg, publicKey: key.publicKey }
+      })
     },
   }
 }

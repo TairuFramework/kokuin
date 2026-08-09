@@ -7,6 +7,14 @@ export type ResolvedSigningKey = {
   publicKey: Uint8Array
 }
 
+export type AgreementAlgorithm = 'X25519'
+
+/** A key agreement key a DID method resolved for a recipient. */
+export type ResolvedAgreementKey = {
+  alg: AgreementAlgorithm
+  publicKey: Uint8Array
+}
+
 /**
  * A DID method this package can resolve `iss` through without importing its implementation.
  *
@@ -19,6 +27,16 @@ export type DIDMethodResolver = {
   /** The method segment, without `did:` and without the trailing colon. E.g. `kokuin`. */
   method: string
   resolve(did: string, header: ResolveIssuerHeader): Promise<ResolvedSigningKey>
+  /**
+   * Resolve the recipient's key agreement key set, in the method's own order.
+   *
+   * Returns every entry with its algorithm rather than one chosen key: the set is an OR set, and
+   * selection belongs to the encrypting package, which knows what it supports. A future hybrid
+   * codec then changes one preference list instead of every method implementation.
+   *
+   * Optional: a method with no key agreement omits it.
+   */
+  resolveAgreementKey?(did: string): Promise<Array<ResolvedAgreementKey>>
 }
 
 export type MethodRegistry = ReadonlyArray<DIDMethodResolver>
