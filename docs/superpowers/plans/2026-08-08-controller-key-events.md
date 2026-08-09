@@ -3457,9 +3457,617 @@ git commit -m "docs(controller): document the public surface and update the repo
 
 ---
 
+## Amendment C — key agreement, tagged key encoding, PQ readiness (decided after Task 16)
+
+**Execution order: Tasks 19, 20, 21, 22, 23 run after Task 17 and BEFORE Task 18**, so Task 18
+documents the finished surface. Task 18's file list gains `packages/jwe` and the `ka` surface.
+
+`did:kokuin:` could not be an encryption recipient. `deriveSharedSecret` is synchronous and resolves
+only self-contained DIDs, and the fold produced no agreement key at all — `role 1'` was reserved in
+the derivation tree (`agreementPath` already exists in `derivation.ts:36`) but never used. Spec
+sections *Key agreement*, *Key encoding*, and *Post-quantum readiness* record the decisions.
+
+Four rulings bind these tasks:
+
+1. **`ka` lives in the inception**, not in a bootstrap rotate. Determinism is unaffected either way;
+   the reason is that an icp-only log must not be a valid DID that publishes no agreement key.
+2. **Keys in `k` and `ka` are multicodec-tagged** before multibase encoding — `0xed 0x01` Ed25519,
+   `0xec 0x01` X25519 — so a new algorithm is additive. This changes every digest and therefore
+   every DID value. Free now, a second migration later.
+3. **`ka` is an OR set.** Entries are alternatives, never combined. Hybrid PQ will arrive as a
+   single entry under its own codec (X-Wing), not as two entries to mix.
+4. **The sync JWE entry points are unchanged.** Async siblings serve resolver-backed methods.
+
+Every `did:kokuin:` DID changes value in Task 19. Any test carrying a hardcoded DID or digest
+fixture must be regenerated, not hand-patched.
+
+---
+
+## Task 19: Tagged key encoding and `ka` in the event schema
+
+**Files:**
+- Create: `packages/controller/src/keys.ts`, `packages/controller/test/keys.test.ts`
+- Modify: `packages/controller/src/derivation.ts`, `packages/controller/src/events.ts`,
+  `packages/controller/src/index.ts`
+- Test: `packages/controller/test/events.test.ts`, `packages/controller/test/derivation.test.ts`
+
+**Interfaces:**
+- Produces: `encodeKey(publicKey: Uint8Array, alg: KeyAlgorithm): string`,
+  `decodeKey(value: string): TaggedKey`, `tryDecodeKey(value: string): TaggedKey | undefined`,
+  `type KeyAlgorithm = 'EdDSA' | 'X25519'`, `type TaggedKey = { alg: KeyAlgorithm; publicKey: Uint8Array }`.
+  `InceptionEvent` and `RotateEvent` gain `ka: Array<string>`.
+- Consumes: `agreementPath` from `derivation.ts`, already present and currently unused.
+
+`encodeKey`/`decodeKey` currently live in `events.ts` as bare aliases of token's multibase codec.
+They move to `keys.ts` and gain the codec prefix. `events.ts` imports them from there.
+
+- [ ] **Step 1: Write the failing tests**
+
+`packages/controller/test/keys.test.ts`:
+
+```ts
+import { x25519 } from '@noble/curves/ed25519.js'
+import { describe, expect, test } from 'vitest'
+
+import { decodeKey, encodeKey, tryDecodeKey } from '../src/keys.js'
+
+describe('tagged key encoding', () => {
+  const ed = new Uint8Array(32).fill(7)
+  const x = x25519.getPublicKey(new Uint8Array(32).fill(9))
+
+  test('round-trips an Ed25519 key with its algorithm', () => {
+    expect(decodeKey(encodeKey(ed, 'EdDSA'))).toEqual({ alg: 'EdDSA', publicKey: ed })
+  })
+
+  test('round-trips an X25519 key with its algorithm', () => {
+    expect(decodeKey(encodeKey(x, 'X25519'))).toEqual({ alg: 'X25519', publicKey: x })
+  })
+
+  test('the same bytes under two algorithms encode differently', () => {
+    expect(encodeKey(ed, 'EdDSA')).not.toBe(encodeKey(ed, 'X25519'))
+  })
+
+  test('rejects an unknown multicodec rather than guessing by length', () => {
+    // 0x99 0x01 is not a codec this package knows. Encoded through token's raw multibase codec,
+    // so the unknown prefix survives instead of being wrapped in a known one.
+    const unknown = encodeMultibase(new Uint8Array([0x99, 0x01, ...ed]))
+    expect(tryDecodeKey(unknown)).toBeUndefined()
+    expect(() => decodeKey(unknown)).toThrow(/Unrecognised key encoding/)
+  })
+
+  test('rejects a bare untagged key of the right length', () => {
+    // What the first implementation wrote: 32 raw bytes, no codec. Accepting these would defeat
+    // the tagging, since a future algorithm would be distinguishable only by length.
+    expect(tryDecodeKey(encodeMultibase(ed))).toBeUndefined()
+  })
+
+  test('tryDecodeKey is total where decodeKey throws', () => {
+    expect(tryDecodeKey('not-multibase')).toBeUndefined()
+    expect(() => decodeKey('not-multibase')).toThrow()
+  })
+})
+```
+
+Import `encodeMultibase` from `@kokuin/token` in this test file.
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `pnpm --filter @kokuin/controller exec vitest run test/keys.test.ts`
+Expected: FAIL — `src/keys.js` does not exist.
+
+- [ ] **Step 3: Write `packages/controller/src/keys.ts`**
+
+```ts
+import { decodeMultibase, encodeMultibase } from '@kokuin/token'
+
+export type KeyAlgorithm = 'EdDSA' | 'X25519'
+
+export type TaggedKey = { alg: KeyAlgorithm; publicKey: Uint8Array }
+
+/**
+ * Multicodec prefixes, following the `did:key` convention. Tagging is what makes a new algorithm
+ * additive: an untagged key is opaque bytes, and telling X25519 from ML-KEM-768 would mean
+ * sniffing the length.
+ */
+const CODECS: Record<KeyAlgorithm, Uint8Array> = {
+  EdDSA: new Uint8Array([0xed, 0x01]),
+  X25519: new Uint8Array([0xec, 0x01]),
+}
+
+export function encodeKey(publicKey: Uint8Array, alg: KeyAlgorithm): string {
+  const codec = CODECS[alg]
+  if (codec == null) {
+    throw new Error(`Unsupported key algorithm: ${alg}`)
+  }
+  const bytes = new Uint8Array(codec.length + publicKey.length)
+  bytes.set(codec, 0)
+  bytes.set(publicKey, codec.length)
+  return encodeMultibase(bytes)
+}
+
+/** Total: any malformed or unknown-codec value yields undefined rather than throwing. */
+export function tryDecodeKey(value: string): TaggedKey | undefined {
+  let bytes: Uint8Array
+  try {
+    bytes = decodeMultibase(value)
+  } catch {
+    return undefined
+  }
+  for (const alg of Object.keys(CODECS) as Array<KeyAlgorithm>) {
+    const codec = CODECS[alg]
+    if (bytes.length > codec.length && bytes[0] === codec[0] && bytes[1] === codec[1]) {
+      return { alg, publicKey: bytes.slice(codec.length) }
+    }
+  }
+  return undefined
+}
+
+export function decodeKey(value: string): TaggedKey {
+  const key = tryDecodeKey(value)
+  if (key == null) {
+    throw new Error(`Unrecognised key encoding: ${value}`)
+  }
+  return key
+}
+```
+
+- [ ] **Step 4: Derive X25519 key pairs**
+
+In `packages/controller/src/derivation.ts`, add `X25519: 32` to `KEY_LENGTHS`, import `x25519`
+alongside `ed25519`, and widen `deriveKeyPair`:
+
+```ts
+export function deriveKeyPair(
+  seed: Uint8Array,
+  path: string,
+  alg: string,
+): { privateKey: Uint8Array; publicKey: Uint8Array } {
+  const privateKey = deriveKeyMaterial(seed, path, alg)
+  if (alg === 'EdDSA') {
+    return { privateKey, publicKey: ed25519.getPublicKey(privateKey) }
+  }
+  if (alg === 'X25519') {
+    return { privateKey, publicKey: x25519.getPublicKey(privateKey) }
+  }
+  throw new Error(`Derivation: Unsupported algorithm for key pair derivation: ${alg}`)
+}
+```
+
+Add a test asserting that `deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')` and
+`deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')` produce unrelated private keys — the HKDF
+`info` (`did:kokuin/v1|<alg>`) is what separates them, and a regression there would silently reuse
+one key for both roles.
+
+- [ ] **Step 5: Add `ka` to the events**
+
+In `packages/controller/src/events.ts`: delete the local `encodeKey`/`decodeKey` definitions, import
+them from `./keys.js`, and re-export them so the barrel is unchanged for existing consumers. Every
+existing call site gains its algorithm argument — authority, next-key, and recovery keys are all
+`'EdDSA'`.
+
+```ts
+export type InceptionEvent = EventCommon & {
+  t: 'icp'
+  /** Current authority public keys, multicodec-tagged and multibase-encoded. */
+  k: Array<string>
+  /**
+   * Key agreement public keys — an OR set, never combined. Encrypting to this profile means
+   * encrypting to one of these. Carries no pre-rotation commitment: an exposed agreement key
+   * discloses past ciphertexts but confers no authority.
+   */
+  ka: Array<string>
+  n: Array<string>
+  kt: number
+  nt: number
+  r: string
+}
+```
+
+`RotateEvent` gains the identical `ka` field. In `createInception`:
+
+```ts
+  const agreement = deriveKeyPair(seed, agreementPath(profile, 0, 0), 'X25519')
+  // ...
+    k: [encodeKey(current.publicKey, 'EdDSA')],
+    ka: [encodeKey(agreement.publicKey, 'X25519')],
+    n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
+```
+
+`createRotate` derives at `agreementPath(profile, gen, seq)` and `createReset` at
+`agreementPath(profile, gen, 0)`, matching each event's own position. `createReset` must stay a pure
+function of `(seed, profile, gen)` — Amendment A — and it does, because `agreementPath` is as
+deterministic as `authorityPath`.
+
+In `verifySignatures`, reject a signature whose key is not an Ed25519 key:
+
+```ts
+      const key = tryDecodeKey(keys[i])
+      if (key == null || key.alg !== 'EdDSA') {
+        return false
+      }
+      if (!ed25519.verify(base64urlnopad.decode(sigs[i]), bytes, key.publicKey)) {
+        return false
+      }
+```
+
+Add a test that an event whose `k` holds an X25519-tagged key fails verification. Without the `alg`
+check, a caller could present an agreement key as an authority key.
+
+In `verifyInception`, reject an inception whose `ka` is empty or holds any entry that is not a valid
+X25519-tagged key. Add tests for both.
+
+- [ ] **Step 6: Regenerate fixtures and run the suite**
+
+Every DID and digest changes. Run `pnpm --filter @kokuin/controller test` and regenerate any
+hardcoded fixture from the code rather than editing digits.
+
+- [ ] **Step 7: Commit**
+
+```bash
+pnpm exec biome check --write ./packages
+git add packages/controller
+git commit -m "feat(controller)!: multicodec-tagged keys and ka in the event schema"
+```
+
+---
+
+## Task 20: Fold the agreement key set into `KeyState`
+
+**Files:**
+- Modify: `packages/controller/src/fold.ts`
+- Test: `packages/controller/test/fold.test.ts`
+
+**Interfaces:**
+- Produces: `KeyState` gains `agreement: Array<string>`.
+- Consumes: `InceptionEvent.ka` / `RotateEvent.ka` from Task 19.
+
+- [ ] **Step 1: Write the failing tests**
+
+Three behaviours, in `packages/controller/test/fold.test.ts`:
+
+```ts
+test('the inception seeds the agreement set', () => {
+  const result = foldLog(did, [inception])
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.states[0].agreement).toEqual(inception.event.ka)
+})
+
+test('a rotate replaces the agreement set', () => {
+  const result = foldLog(did, [inception, rotate])
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.states[1].agreement).toEqual(rotate.event.ka)
+  expect(result.states[1].agreement).not.toEqual(inception.event.ka)
+})
+
+test('a revoke carries the agreement set forward unchanged', () => {
+  const result = foldLog(did, [inception, revoke])
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.states[1].agreement).toEqual(inception.event.ka)
+})
+```
+
+The second test's `not.toEqual` is load-bearing: without it, a `KeyState` that ignored `ka` on
+rotate and carried the inception's forward would pass the first and third tests.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `pnpm --filter @kokuin/controller exec vitest run test/fold.test.ts`
+Expected: FAIL — `agreement` is undefined.
+
+- [ ] **Step 3: Implement**
+
+In `KeyState`, after `keys`:
+
+```ts
+  /** Key agreement keys — an OR set. Established by icp/rot, carried across rev. */
+  agreement: Array<string>
+```
+
+`initFold` sets `agreement: first.event.ka`. The `rot` branch of `stepEvent` sets
+`agreement: rot.event.ka`. The `rev` branch needs no change: `agreement` rides forward in the
+existing `{ ...prior }` spread, exactly as `keys`, `keyGen`, and `keySeq` do.
+
+The unknown-non-critical branch also needs no change, for the same reason.
+
+- [ ] **Step 4: Run the suite**
+
+Run: `pnpm --filter @kokuin/controller test`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+pnpm exec biome check --write ./packages
+git add packages/controller
+git commit -m "feat(controller): fold the agreement key set into KeyState"
+```
+
+---
+
+## Task 21: `resolveAgreementKey` on the method resolver
+
+**Files:**
+- Modify: `packages/token/src/method.ts`, `packages/token/src/index.ts`,
+  `packages/controller/src/resolver.ts`
+- Test: `packages/token/test/method.test.ts`, `packages/controller/test/resolver.test.ts`,
+  `packages/token/test/exports.test.ts`
+
+**Interfaces:**
+- Produces: `type AgreementAlgorithm = 'X25519'`,
+  `type ResolvedAgreementKey = { alg: AgreementAlgorithm; publicKey: Uint8Array }`, and an optional
+  `resolveAgreementKey(did: string): Promise<Array<ResolvedAgreementKey>>` on `DIDMethodResolver`.
+- Consumes: `KeyState.agreement` from Task 20.
+
+The member is **optional**. A method that cannot do key agreement omits it, and `@kokuin/jwe`
+(Task 22) reports that precisely rather than failing as a bad DID.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `packages/controller/test/resolver.test.ts`:
+
+```ts
+test('resolves the agreement key set from the folded state', async () => {
+  const resolver = createControllerResolver({ loadLog: async () => [inception] })
+  const keys = await resolver.resolveAgreementKey?.(did)
+  expect(keys).toHaveLength(1)
+  expect(keys?.[0].alg).toBe('X25519')
+  expect(keys?.[0].publicKey).toEqual(decodeKey(inception.event.ka[0]).publicKey)
+})
+
+test('reflects a rotation rather than the inception', async () => {
+  const resolver = createControllerResolver({ loadLog: async () => [inception, rotate] })
+  const keys = await resolver.resolveAgreementKey?.(did)
+  expect(keys?.[0].publicKey).toEqual(decodeKey(rotate.event.ka[0]).publicKey)
+})
+
+test('rejects an unknown DID the same way resolve does', async () => {
+  const resolver = createControllerResolver({ loadLog: async () => undefined })
+  await expect(resolver.resolveAgreementKey?.(did)).rejects.toThrow(/Unknown DID/)
+})
+```
+
+The second test is what stops an implementation reading `ka` off `events[0]` instead of folding.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `pnpm --filter @kokuin/controller exec vitest run test/resolver.test.ts`
+Expected: FAIL — `resolveAgreementKey` is undefined.
+
+- [ ] **Step 3: Extend the interface in `packages/token/src/method.ts`**
+
+```ts
+export type AgreementAlgorithm = 'X25519'
+
+export type ResolvedAgreementKey = {
+  alg: AgreementAlgorithm
+  publicKey: Uint8Array
+}
+```
+
+and on `DIDMethodResolver`:
+
+```ts
+  /**
+   * Resolve the recipient's key agreement key set, in the method's own order.
+   *
+   * Returns every entry with its algorithm rather than one chosen key: the set is an OR set, and
+   * selection belongs to the encrypting package, which knows what it supports. A future hybrid
+   * codec then changes one preference list instead of every method implementation.
+   *
+   * Optional: a method with no key agreement omits it.
+   */
+  resolveAgreementKey?(did: string): Promise<Array<ResolvedAgreementKey>>
+```
+
+Export both types from `packages/token/src/index.ts` and assert them in `exports.test.ts`.
+
+- [ ] **Step 4: Implement it in the controller resolver**
+
+Factor the load-and-fold prelude of `resolve` into a local helper — both members need the same
+"load the log, fold it, take the last state, throw `Unknown DID` when absent" sequence, and a second
+copy would drift.
+
+```ts
+    async resolveAgreementKey(did: string): Promise<Array<ResolvedAgreementKey>> {
+      const state = await loadState(did)
+      return state.agreement.map((value) => {
+        const key = decodeKey(value)
+        if (key.alg !== 'X25519') {
+          throw new Error(`Controller ${did} publishes an unsupported agreement key: ${key.alg}`)
+        }
+        return { alg: key.alg, publicKey: key.publicKey }
+      })
+    },
+```
+
+While you are in `resolve`, stop hardcoding `alg: 'EdDSA'` — read it from `decodeKey(state.keys[0])`
+and throw if it is not a signature algorithm. Task 19 made the key self-describing precisely so this
+assumption could go.
+
+- [ ] **Step 5: Run both suites and commit**
+
+```bash
+pnpm --filter @kokuin/token test && pnpm --filter @kokuin/controller test
+pnpm exec biome check --write ./packages
+git add packages/token packages/controller
+git commit -m "feat(token): resolve agreement keys through DIDMethodResolver"
+```
+
+---
+
+## Task 22: Async recipient path in `@kokuin/jwe`
+
+**Files:**
+- Modify: `packages/jwe/src/index.ts`
+- Test: `packages/jwe/test/async-recipient.test.ts` (create)
+
+**Interfaces:**
+- Produces: `deriveSharedSecretAsync(recipient, options)`, `createTokenEncrypterAsync(recipient, options)`,
+  `type ResolveRecipientOptions = { methods: MethodRegistry }`.
+- Consumes: `MethodRegistry`, `findMethodResolver`, `ResolvedAgreementKey` from `@kokuin/token`.
+
+The sync `deriveSharedSecret` and `createTokenEncrypter` are unchanged. `did:key` and
+`did:peer:4` long form stay synchronous, so kubun's `suite.ts:177` and `manager.ts:195` need only the
+import-path change from the Task 16 split.
+
+- [ ] **Step 1: Write the failing tests**
+
+```ts
+test('encrypts to a resolver-backed DID and round-trips', async () => {
+  const encrypter = await createTokenEncrypterAsync(kokuinDID, { methods: [controllerResolver] })
+  const jwe = await encryptToken(encrypter, encoder.encode('hello'))
+  expect(decoder.decode(await decryptToken(profileAgreement, jwe))).toBe('hello')
+})
+
+test('falls through to the sync path for a self-contained DID', async () => {
+  const identity = randomIdentity()
+  const encrypter = await createTokenEncrypterAsync(identity.id, { methods: [] })
+  expect(encrypter.recipientID).toBe(identity.id)
+})
+
+test('names the method when no resolver is registered', async () => {
+  await expect(
+    createTokenEncrypterAsync(kokuinDID, { methods: [] }),
+  ).rejects.toThrow(/no resolver registered for did:kokuin/i)
+})
+
+test('reports a method that cannot do key agreement', async () => {
+  const signOnly = { method: 'kokuin', resolve: async () => { throw new Error('unused') } }
+  await expect(
+    createTokenEncrypterAsync(kokuinDID, { methods: [signOnly] }),
+  ).rejects.toThrow(/does not support key agreement/i)
+})
+
+test('reports a set holding no algorithm this package supports', async () => {
+  const exotic = {
+    method: 'kokuin',
+    resolve: async () => { throw new Error('unused') },
+    resolveAgreementKey: async () => [{ alg: 'ML-KEM-768', publicKey: new Uint8Array(1184) }],
+  }
+  await expect(
+    createTokenEncrypterAsync(kokuinDID, { methods: [exotic as never] }),
+  ).rejects.toThrow(/no supported key agreement algorithm/i)
+})
+```
+
+The last three are the ones that matter: three different failures a caller must be able to tell
+apart — no resolver, a resolver without key agreement, and a resolver whose keys are all unsupported.
+A single generic throw would pass none of them.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `pnpm --filter @kokuin/jwe exec vitest run test/async-recipient.test.ts`
+Expected: FAIL — the async functions do not exist.
+
+- [ ] **Step 3: Implement**
+
+```ts
+export type ResolveRecipientOptions = {
+  methods: MethodRegistry
+}
+
+/** Algorithms this package can encrypt with, strongest first. */
+const AGREEMENT_PREFERENCE: Array<AgreementAlgorithm> = ['X25519']
+
+async function resolveRecipientKey(
+  recipient: string,
+  options: ResolveRecipientOptions,
+): Promise<{ key: Uint8Array; id: string }> {
+  const resolver = findMethodResolver(options.methods, recipient)
+  if (resolver == null) {
+    const method = recipient.split(':').slice(0, 2).join(':')
+    throw new Error(`Cannot encrypt: no resolver registered for ${method}`)
+  }
+  if (resolver.resolveAgreementKey == null) {
+    throw new Error(`Cannot encrypt: ${resolver.method} does not support key agreement`)
+  }
+  const keys = await resolver.resolveAgreementKey(recipient)
+  for (const alg of AGREEMENT_PREFERENCE) {
+    const match = keys.find((key) => key.alg === alg)
+    if (match != null) {
+      return { key: match.publicKey, id: recipient }
+    }
+  }
+  throw new Error(
+    `Cannot encrypt to ${recipient}: no supported key agreement algorithm in [${keys
+      .map((key) => key.alg)
+      .join(', ')}]`,
+  )
+}
+```
+
+Both async entry points try the sync `resolveX25519Key` path first and fall back to
+`resolveRecipientKey` only when the DID has a registered method resolver. Decide the branch on
+`findMethodResolver` returning a resolver, not on catching an error from the sync path — swallowing
+the sync path's own diagnostics (`did:peer:4` short form, unsupported algorithm) would turn precise
+errors into a misleading "no resolver" message.
+
+- [ ] **Step 4: Run the suite**
+
+Run: `pnpm --filter @kokuin/jwe test`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+pnpm exec biome check --write ./packages
+git add packages/jwe
+git commit -m "feat(jwe): async recipient resolution for resolver-backed DID methods"
+```
+
+---
+
+## Task 23: Conformance coverage for the agreement key set
+
+**Files:**
+- Modify: `packages/controller-conformance/src/index.ts`
+- Test: run the suite from `packages/controller/test/conformance.test.ts`
+
+**Interfaces:**
+- Consumes: the contract type the suite already defines, plus `ka` on the events it builds.
+
+Add one group asserting the three contract properties Task 20 established, phrased against the
+injected implementation rather than the concrete one:
+
+1. A folded inception exposes a non-empty agreement set.
+2. A rotate replaces it — assert the post-rotate set differs from the inception's, not merely that
+   it is non-empty. An implementation that ignored `ka` on rotate would pass a non-empty assertion.
+3. A revoke leaves it unchanged.
+
+Add a fourth asserting that an inception with an empty `ka` is rejected, so an implementation cannot
+satisfy the contract by treating the field as optional.
+
+Keep the existing group numbering and append; the suite's groups are referenced by number in the
+Task 13 ledger notes.
+
+- [ ] **Step 1: Run the suite to verify the new group fails against a stub**
+
+Temporarily return a fixed empty array from the contract's fold entry point and confirm the new
+group fails. Restore afterwards. This is the check that the group has teeth.
+
+- [ ] **Step 2: Run the real suite**
+
+Run: `pnpm --filter @kokuin/controller test && pnpm --filter @kokuin/controller-conformance test`
+Expected: PASS.
+
+- [ ] **Step 3: Commit**
+
+```bash
+pnpm exec biome check --write ./packages
+git add packages/controller-conformance packages/controller
+git commit -m "test(controller-conformance): contract coverage for the agreement key set"
+```
+
+---
+
 ## Self-review notes
 
-**Spec coverage.** Every spec section maps to a task: identifier and no-version-segment (5), derivation with HKDF and the root-retained branch (3), the three event types (5, 6, 8) with reset as a rotate variant (7), criticality (11), fold precedence and superseding recovery (9, 10), deny-set position-dependence (9, 10), key state at position (9), duplicity (10), enumeration and handles (12), the conformance suite (13), the injected resolver (4, 14), the depth cap and mandated `exp` (15), the JWE split (16), the `rotation.ts` removal (17), packaging and `versioning.ignore` (1, 13, 18).
+**Spec coverage.** Every spec section maps to a task: identifier and no-version-segment (5), derivation with HKDF and the root-retained branch (3), the three event types (5, 6, 8) with reset as a rotate variant (7), criticality (11), fold precedence and superseding recovery (9, 10), deny-set position-dependence (9, 10), key state at position (9, 20), duplicity (10), enumeration and handles (12), the conformance suite (13, 23), the injected resolver (4, 14, 21), the depth cap and mandated `exp` (15), the JWE split (16), the `rotation.ts` removal (17), key agreement and key encoding (19, 20), the async recipient path (22), packaging and `versioning.ignore` (1, 13, 18).
+
+**Post-quantum readiness (spec) is covered by Task 19's tagging and Task 21's set-returning resolver, not by an implementing task.** Adoption is deferred with an explicit trigger — the JOSE ML-KEM draft reaching RFC — recorded in the spec's *Deferred, with owners*.
 
 **Deliberately not covered**, matching the spec's *Out of scope*: kumiai binding entries and roster projection, kubun's cut-off position, ML-DSA in `SUPPORTED_ALGORITHMS`, DIF registration, adopted profiles. The co-signature-gated recovery-commitment field exists in the `RotateEvent` type (Task 6, field `r`) and the fold carries it forward (Task 9), but no task implements *updating* it — that is the retained-but-unimplemented hook the spec describes. **The co-signature check is therefore not implemented**: any task that starts using `r` on a rotate must add it first.
 
