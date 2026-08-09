@@ -30,6 +30,8 @@ export type ConformanceKeyState = {
   keyGen: number
   keySeq: number
   keys: Array<string>
+  /** Key agreement keys — an OR set. Established by icp/rot, carried forward across rev. */
+  agreement: Array<string>
   next: Array<string>
   recovery: string
   deny: ReadonlySet<string>
@@ -479,6 +481,62 @@ export function runControllerConformance(
         }
         expect(result.states[3].deny.has(deviceA)).toBe(true)
         expect(result.states[3].deny.has(deviceC)).toBe(true)
+      })
+    })
+
+    // 12. Agreement keys — an inception publishes a non-empty key agreement set, a rotate
+    // replaces it, and a revoke leaves it unchanged. Property 2 asserts the post-rotate set
+    // *differs* from the inception's rather than merely being non-empty — an implementation that
+    // carried the inception's `ka` forward on rotate would pass a mere non-empty check. Property
+    // 4 forges an inception with an empty agreement set by mutating a genuine one; canonicalization
+    // covers every field including `ka`, so the mutation invalidates both the digest (and hence
+    // the DID recomputed from it) and the signature, guaranteeing rejection regardless of which
+    // check an implementation happens to run first — unlike the root-override group, this property
+    // does not need a genuinely-valid-signature forgery, because the contract exposes no authority
+    // private key to build one with.
+    describe('agreement keys', () => {
+      test('a folded inception exposes a non-empty agreement set', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const result = impl.foldLog(did, [icp])
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
+        expect(result.states[0].agreement.length > 0).toBe(true)
+      })
+
+      test('a rotate replaces the agreement set', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const rot = impl.createRotate(seedA, 0, did, icp.event)
+        const result = impl.foldLog(did, [icp, rot])
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
+        expect(result.states[1].agreement).not.toEqual(result.states[0].agreement)
+      })
+
+      test('a revoke leaves the agreement set unchanged', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const rot = impl.createRotate(seedA, 0, did, icp.event)
+        const rev = impl.createRevoke(seedA, 0, did, rot.event, deviceA, { gen: 0, seq: 1 })
+        const result = impl.foldLog(did, [icp, rot, rev])
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
+        expect(result.states[2].agreement).toEqual(result.states[1].agreement)
+      })
+
+      test('an inception with an empty agreement set is rejected', () => {
+        const icp = impl.createInception(seedA, 0)
+        const forgedEvent: ConformanceEvent = { ...icp.event, ka: [] }
+        const did = impl.didFromInception(forgedEvent)
+        const result = impl.foldLog(did, [{ event: forgedEvent, sigs: icp.sigs }])
+        expect(result.ok).toBe(false)
       })
     })
   })
