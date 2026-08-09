@@ -4029,6 +4029,12 @@ git commit -m "feat(jwe): async recipient resolution for resolver-backed DID met
 **Interfaces:**
 - Consumes: the contract type the suite already defines, plus `ka` on the events it builds.
 
+**First, add `agreement` to `ConformanceKeyState`** at `packages/controller-conformance/src/index.ts:27`.
+That type is documented as mirroring `KeyState` and is what every `did:kokuin:` implementation is
+tested against, but Task 20 did not update it — so the suite currently asserts nothing about
+agreement keys for any implementation. Found by the Task 20 review; without this the group below
+cannot see the field at all.
+
 Add one group asserting the three contract properties Task 20 established, phrased against the
 injected implementation rather than the concrete one:
 
