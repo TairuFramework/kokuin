@@ -266,35 +266,14 @@ console.log(unwrapped.mode)    // 'jws-in-jwe'
 
 ### Key rotation
 
-```typescript
-import { createRotationAssertion } from '@kokuin/token'
-import type { RotationPayload } from '@kokuin/token'
-```
+Key rotation in `did:kokuin:` keeps the identifier stable while replacing the key set. Unlike older rotation chains that required creating a new DID on each rotation, the `did:kokuin:` event log records key material transitions as cryptographically linked events without changing the identifier.
 
-`createRotationAssertion` signs a rotation claim with the **old** identity, declaring the new DID. Verifiers walking a rotation chain follow these assertions to reach the current key.
+Rotation is managed through `@kokuin/controller`, which provides `createRotate` to sign a new rotation event and `verifyRotate` to verify a chain of rotations. The event log records:
+- **Rotation events** (`t: 'rot'`): Commit new signature and agreement keys, with a pre-rotation digest from the prior event
+- **Generation and sequence** (`g`, `s`): Track all rotations from inception
+- **Key commitments** (`n`): Pre-commit future keys so signers cannot forge old keys
 
-```typescript
-import { createIdentity, createRotationAssertion } from '@kokuin/token'
-
-// Both old and new must be MultiKeyIdentity (use createIdentity)
-const oldIdentity = await createIdentity({
-  keys: [
-    { purpose: 'sig', alg: 'EdDSA' },
-    { purpose: 'kem', alg: 'X25519' },
-  ],
-})
-const newIdentity = await createIdentity({
-  keys: [
-    { purpose: 'sig', alg: 'EdDSA' },
-    { purpose: 'kem', alg: 'X25519' },
-  ],
-})
-
-// Old identity signs the assertion linking it to the new one
-const assertion = await createRotationAssertion(oldIdentity, newIdentity)
-// assertion.payload.type === 'did-rotation'
-// assertion.payload.to   === newIdentity.id
-```
+See `@kokuin/controller` and `packages/controller/src/events.ts` for the full key event log API and examples.
 
 ---
 
