@@ -16,9 +16,27 @@ describe('package exports', () => {
     'createInMemoryDIDCache',
     'resolveIssuer',
     'createIdentity',
-    'deriveSharedSecret',
+    'createKeyAgreementIdentity',
+    'isKeyAgreementIdentity',
     'createRotationAssertion',
   ])('exports %s', (name) => {
     expect((token as Record<string, unknown>)[name]).toBeDefined()
+  })
+
+  it.each([
+    // JWE moved to @kokuin/jwe -- verify-only consumers of @kokuin/token no longer pay for
+    // @noble/ciphers.
+    'concatKDF',
+    'createTokenEncrypter',
+    'decryptToken',
+    'deriveSharedSecret',
+    'encryptToken',
+    'unwrapEnvelope',
+    'wrapEnvelope',
+    // DecryptingIdentity was renamed to KeyAgreementIdentity and lost its `decrypt` sugar.
+    'createDecryptingIdentity',
+    'isDecryptingIdentity',
+  ])('does not export %s', (name) => {
+    expect((token as Record<string, unknown>)[name]).toBeUndefined()
   })
 })

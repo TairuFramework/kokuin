@@ -156,6 +156,9 @@ importers:
         specifier: 'catalog:'
         version: 0.3.2(@logtape/logtape@2.3.0)
     devDependencies:
+      '@kokuin/jwe':
+        specifier: workspace:^
+        version: link:../jwe
       '@kokuin/keystore-conformance':
         specifier: workspace:^
         version: link:../keystore-conformance
@@ -274,6 +277,24 @@ importers:
         specifier: workspace:^
         version: link:../keystore-conformance
 
+  packages/jwe:
+    dependencies:
+      '@kokuin/token':
+        specifier: workspace:^
+        version: link:../token
+      '@noble/ciphers':
+        specifier: 'catalog:'
+        version: 2.2.0
+      '@noble/curves':
+        specifier: 'catalog:'
+        version: 2.3.0
+      '@noble/hashes':
+        specifier: 'catalog:'
+        version: 2.3.0
+      '@sozai/codec':
+        specifier: 'catalog:'
+        version: 0.4.0
+
   packages/keystore-conformance:
     dependencies:
       '@kokuin/token':
@@ -350,9 +371,6 @@ importers:
       '@kokuin/otel':
         specifier: workspace:^
         version: link:../otel
-      '@noble/ciphers':
-        specifier: 'catalog:'
-        version: 2.2.0
       '@noble/curves':
         specifier: 'catalog:'
         version: 2.3.0
@@ -372,6 +390,9 @@ importers:
         specifier: 'catalog:'
         version: 0.1.1
     devDependencies:
+      '@kokuin/jwe':
+        specifier: workspace:^
+        version: link:../jwe
       '@opentelemetry/sdk-trace-base':
         specifier: 'catalog:'
         version: 2.10.0(@opentelemetry/api@1.9.1)
@@ -523,6 +544,9 @@ importers:
       '@kokuin/deterministic':
         specifier: workspace:^
         version: link:../../packages/deterministic
+      '@kokuin/jwe':
+        specifier: workspace:^
+        version: link:../../packages/jwe
       '@kokuin/ledger-device':
         specifier: workspace:^
         version: link:../../packages/ledger-device

@@ -1,10 +1,14 @@
+import {
+  createFullIdentity,
+  createKeyAgreementIdentity,
+  randomIdentity,
+  randomPrivateKey,
+} from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { b64uFromJSON } from '@sozai/codec'
 import { describe, expect, test } from 'vitest'
 
-import { createDecryptingIdentity, createFullIdentity, randomIdentity } from '../src/identity.js'
-import { concatKDF, createTokenEncrypter, decryptToken, encryptToken } from '../src/jwe.js'
-import { randomPrivateKey } from '../src/signer.js'
+import { concatKDF, createTokenEncrypter, decryptToken, encryptToken } from '../src/index.js'
 
 describe('concatKDF', () => {
   test('derives 256-bit key from shared secret', () => {
@@ -71,7 +75,7 @@ describe('JWE encrypt and decrypt', () => {
     const x25519Public = edToX25519Public(privateKey)
 
     const encrypter = createTokenEncrypter(x25519Public, { algorithm: 'X25519' })
-    const decrypter = createDecryptingIdentity(privateKey)
+    const decrypter = createKeyAgreementIdentity(privateKey)
 
     const plaintext = new TextEncoder().encode('hello world')
     const jwe = await encryptToken(encrypter, plaintext)
@@ -101,7 +105,7 @@ describe('JWE encrypt and decrypt', () => {
     const privateKey2 = ed25519.utils.randomSecretKey()
 
     const encrypter = createTokenEncrypter(x25519Public1, { algorithm: 'X25519' })
-    const decrypter = createDecryptingIdentity(privateKey2)
+    const decrypter = createKeyAgreementIdentity(privateKey2)
 
     const plaintext = new TextEncoder().encode('secret')
     const jwe = await encryptToken(encrypter, plaintext)
@@ -129,7 +133,7 @@ describe('createTokenEncrypter', () => {
     const x25519Public = edToX25519Public(privateKey)
 
     const encrypter = createTokenEncrypter(x25519Public, { algorithm: 'X25519' })
-    const decrypter = createDecryptingIdentity(privateKey)
+    const decrypter = createKeyAgreementIdentity(privateKey)
 
     const plaintext = new TextEncoder().encode('test')
     const jwe1 = await encryptToken(encrypter, plaintext)
@@ -148,14 +152,14 @@ describe('createTokenEncrypter', () => {
 
 describe('decryptToken() error paths', () => {
   test('rejects JWE with wrong number of parts', async () => {
-    const decrypter = createDecryptingIdentity(ed25519.utils.randomSecretKey())
+    const decrypter = createKeyAgreementIdentity(ed25519.utils.randomSecretKey())
     await expect(decryptToken(decrypter, 'a.b.c')).rejects.toThrow('Invalid JWE format')
     await expect(decryptToken(decrypter, 'a.b.c.d')).rejects.toThrow('Invalid JWE format')
     await expect(decryptToken(decrypter, 'a.b.c.d.e.f')).rejects.toThrow('Invalid JWE format')
   })
 
   test('rejects JWE with unsupported algorithm', async () => {
-    const decrypter = createDecryptingIdentity(ed25519.utils.randomSecretKey())
+    const decrypter = createKeyAgreementIdentity(ed25519.utils.randomSecretKey())
     const header = { alg: 'RSA-OAEP', enc: 'A256GCM', epk: { kty: 'RSA', crv: '', x: '' } }
     const encodedHeader = b64uFromJSON(header as unknown as Record<string, unknown>)
     const jwe = `${encodedHeader}..AAAA.BBBB.CCCC`
@@ -163,7 +167,7 @@ describe('decryptToken() error paths', () => {
   })
 
   test('rejects JWE with unsupported encryption', async () => {
-    const decrypter = createDecryptingIdentity(ed25519.utils.randomSecretKey())
+    const decrypter = createKeyAgreementIdentity(ed25519.utils.randomSecretKey())
     const header = { alg: 'ECDH-ES', enc: 'A128GCM', epk: { kty: 'OKP', crv: 'X25519', x: '' } }
     const encodedHeader = b64uFromJSON(header as unknown as Record<string, unknown>)
     const jwe = `${encodedHeader}..AAAA.BBBB.CCCC`
@@ -180,13 +184,13 @@ describe('createTokenEncrypter() error paths', () => {
   })
 })
 
-describe('DecryptingIdentity.decrypt()', () => {
+describe('decryptToken() with a FullIdentity', () => {
   test('decrypts JWE encrypted to identity DID', async () => {
     const identity = createFullIdentity(randomPrivateKey())
     const encrypter = createTokenEncrypter(identity.id)
     const plaintext = new TextEncoder().encode('hello world')
     const jwe = await encrypter.encrypt(plaintext)
-    const decrypted = await identity.decrypt(jwe)
+    const decrypted = await decryptToken(identity, jwe)
     expect(decrypted).toEqual(plaintext)
   })
 })

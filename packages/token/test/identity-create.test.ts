@@ -1,9 +1,9 @@
+import { createTokenEncrypter, decryptToken, encryptToken } from '@kokuin/jwe'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, it } from 'vitest'
 
 import { createInMemoryDIDCache } from '../src/cache.js'
 import { createIdentity } from '../src/identity.js'
-import { createTokenEncrypter, encryptToken } from '../src/jwe.js'
 import { isPeer4 } from '../src/peer4.js'
 import { verifyToken } from '../src/token.js'
 
@@ -89,7 +89,7 @@ describe('createIdentity', () => {
     const plaintext = new TextEncoder().encode('hello world')
     const encrypter = createTokenEncrypter(kemKey.publicKey, { algorithm: 'X25519' })
     const jwe = await encryptToken(encrypter, plaintext)
-    const decrypted = await identity.decrypt(jwe)
+    const decrypted = await decryptToken(identity, jwe)
     expect(new TextDecoder().decode(decrypted)).toBe('hello world')
   })
 
@@ -100,11 +100,11 @@ describe('createIdentity', () => {
     const plaintext = new TextEncoder().encode('hello world')
     const encrypter = createTokenEncrypter(identity.id)
     const jwe = await encryptToken(encrypter, plaintext)
-    const decrypted = await identity.decrypt(jwe)
+    const decrypted = await decryptToken(identity, jwe)
     expect(new TextDecoder().decode(decrypted)).toBe('hello world')
   })
 
-  it('throws when decrypting without any agreement key (did:peer:4, no kem key)', async () => {
+  it('throws when agreeing without any agreement key (did:peer:4, no kem key)', async () => {
     const identity = await createIdentity({
       keys: [
         { purpose: 'sig', alg: 'EdDSA' },
@@ -112,6 +112,6 @@ describe('createIdentity', () => {
       ],
     })
     expect(isPeer4(identity.id)).toBe(true)
-    await expect(identity.decrypt('fake.jwe')).rejects.toThrow(/no KEM key|no kem key/i)
+    await expect(identity.agreeKey(new Uint8Array(32))).rejects.toThrow(/no KEM key|no kem key/i)
   })
 })

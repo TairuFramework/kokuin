@@ -1,7 +1,7 @@
+import { randomIdentity } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
-import { randomIdentity } from '../src/identity.js'
-import { createTokenEncrypter, unwrapEnvelope, wrapEnvelope } from '../src/jwe.js'
+import { createTokenEncrypter, unwrapEnvelope, wrapEnvelope } from '../src/index.js'
 
 describe('wrapEnvelope / unwrapEnvelope', () => {
   test('plain mode round-trip', async () => {

@@ -1,4 +1,5 @@
-import { CODECS, createTokenEncrypter, encryptToken, getDID, verifyToken } from '@kokuin/token'
+import { createTokenEncrypter, decryptToken, encryptToken } from '@kokuin/jwe'
+import { CODECS, getDID, verifyToken } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
 import { createBrowserIdentity, createLegacyES256Identity } from '../src/identity.js'
@@ -29,7 +30,7 @@ describe('createBrowserIdentity', () => {
       createTokenEncrypter(identity.id),
       new TextEncoder().encode('secret'),
     )
-    expect(new TextDecoder().decode(await identity.decrypt(jwe))).toBe('secret')
+    expect(new TextDecoder().decode(await decryptToken(identity, jwe))).toBe('secret')
   })
 
   test('rejects a payload whose iss is not this identity', async () => {

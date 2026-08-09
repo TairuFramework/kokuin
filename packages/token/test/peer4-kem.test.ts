@@ -1,9 +1,9 @@
+import { createTokenEncrypter, decryptToken, encryptToken } from '@kokuin/jwe'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
 import { getAgreementKey } from '../src/did.js'
 import { createIdentity } from '../src/identity.js'
-import { createTokenEncrypter, encryptToken } from '../src/jwe.js'
 import { encodeMultibase } from '../src/multibase.js'
 import type { DIDDoc } from '../src/peer4.js'
 import { encodePeer4, isPeer4 } from '../src/peer4.js'
@@ -33,7 +33,7 @@ describe('did:peer:4 keyAgreement', () => {
     expect(encrypter.recipientID).toBe(identity.id)
 
     const jwe = await encryptToken(encrypter, encoder.encode('hello'))
-    expect(decoder.decode(await identity.decrypt(jwe))).toBe('hello')
+    expect(decoder.decode(await decryptToken(identity, jwe))).toBe('hello')
   })
 
   test('the published key is used, NOT the montgomery-derived signing key', async () => {
@@ -48,13 +48,13 @@ describe('did:peer:4 keyAgreement', () => {
 
     // A JWE built from the published key decrypts; one built from the derived key does not.
     const good = await encryptToken(createTokenEncrypter(identity.longForm), encoder.encode('ok'))
-    expect(decoder.decode(await identity.decrypt(good))).toBe('ok')
+    expect(decoder.decode(await decryptToken(identity, good))).toBe('ok')
 
     const bad = await encryptToken(
       createTokenEncrypter(derived, { algorithm: 'X25519' }),
       encoder.encode('ok'),
     )
-    await expect(identity.decrypt(bad)).rejects.toThrow()
+    await expect(decryptToken(identity, bad)).rejects.toThrow()
   })
 
   test('a short form throws — it carries no document to read the key from', async () => {
@@ -81,7 +81,7 @@ describe('did:key EdDSA identities are decryptable', () => {
 
     // A sender knows only the DID, from which it montgomery-derives the agreement key.
     const jwe = await encryptToken(createTokenEncrypter(identity.id), encoder.encode('hello'))
-    expect(decoder.decode(await identity.decrypt(jwe))).toBe('hello')
+    expect(decoder.decode(await decryptToken(identity, jwe))).toBe('hello')
   })
 })
 

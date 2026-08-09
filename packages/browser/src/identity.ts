@@ -1,6 +1,5 @@
 import {
   CODECS,
-  decryptToken,
   type FullIdentity,
   getDID,
   type SignedHeader,
@@ -86,11 +85,7 @@ export async function createBrowserIdentity(record: BrowserKeyRecord): Promise<F
     return new Uint8Array(shared)
   }
 
-  async function decrypt(jwe: string): Promise<Uint8Array> {
-    return decryptToken({ id, decrypt, agreeKey }, jwe)
-  }
-
-  return { id, publicKey, signToken, decrypt, agreeKey }
+  return { id, publicKey, signToken, agreeKey }
 }
 
 // --- Legacy ES256 path ---

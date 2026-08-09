@@ -1,15 +1,34 @@
+/**
+ * JWE encryption for kokuin tokens.
+ *
+ * ## Installation
+ *
+ * ```sh
+ * npm install @kokuin/jwe
+ * ```
+ *
+ * @module jwe
+ */
+
+import {
+  createUnsignedToken,
+  decodePeer4,
+  getAgreementKey,
+  getPeer4ShortForm,
+  getSignatureInfo,
+  isPeer4,
+  isUnsignedToken,
+  type KeyAgreementIdentity,
+  type SigningIdentity,
+  stringifyToken,
+  type Verifiers,
+  verifyToken,
+} from '@kokuin/token'
 import { gcm } from '@noble/ciphers/aes.js'
 import { randomBytes } from '@noble/ciphers/utils.js'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { b64uFromJSON, b64uToJSON, fromB64U, toB64U } from '@sozai/codec'
-
-import { getAgreementKey, getSignatureInfo } from './did.js'
-import type { DecryptingIdentity, SigningIdentity } from './identity.js'
-import { decodePeer4, getPeer4ShortForm, isPeer4 } from './peer4.js'
-import { createUnsignedToken, isUnsignedToken, verifyToken } from './token.js'
-import { stringifyToken } from './utils.js'
-import type { Verifiers } from './verifier.js'
 
 export type ConcatKDFParams = {
   sharedSecret: Uint8Array
@@ -248,7 +267,7 @@ export async function encryptToken(
  * Decrypt a JWE compact serialization string.
  */
 export async function decryptToken(
-  decrypter: DecryptingIdentity,
+  decrypter: KeyAgreementIdentity,
   jwe: string,
 ): Promise<Uint8Array> {
   const parts = jwe.split('.')
@@ -315,7 +334,7 @@ export type WrapOptions = {
 }
 
 export type UnwrapOptions = {
-  decrypter?: DecryptingIdentity
+  decrypter?: KeyAgreementIdentity
   verifiers?: Verifiers
 }
 

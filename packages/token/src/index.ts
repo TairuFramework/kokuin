@@ -30,19 +30,19 @@ export {
 } from './did.js'
 export {
   type CreateIdentityInput,
-  createDecryptingIdentity,
   createFullIdentity,
   createIdentity,
+  createKeyAgreementIdentity,
   createSigningIdentity,
-  type DecryptingIdentity,
   type FullIdentity,
   type Identity,
   type IdentityKeySpec,
   type IdentityProvider,
-  isDecryptingIdentity,
   isFullIdentity,
+  isKeyAgreementIdentity,
   isOwnIdentity,
   isSigningIdentity,
+  type KeyAgreementIdentity,
   type KeyAlg,
   type KeyPurpose,
   type MultiKeyIdentity,
@@ -52,26 +52,6 @@ export {
   type SigningIdentity,
   type SignTokenOptions,
 } from './identity.js'
-export type {
-  ConcatKDFParams,
-  EncryptOptions,
-  EnvelopeMode,
-  JWEHeader,
-  SharedSecretResult,
-  TokenEncrypter,
-  UnwrapOptions,
-  UnwrappedEnvelope,
-  WrapOptions,
-} from './jwe.js'
-export {
-  concatKDF,
-  createTokenEncrypter,
-  decryptToken,
-  deriveSharedSecret,
-  encryptToken,
-  unwrapEnvelope,
-  wrapEnvelope,
-} from './jwe.js'
 export type { KeyEntry, KeyStore, MutableKeyEntry } from './keystore.js'
 export {
   type DIDMethodResolver,

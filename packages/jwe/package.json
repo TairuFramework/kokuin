@@ -1,18 +1,17 @@
 {
-  "name": "@kokuin/token",
-  "version": "0.4.0",
-  "description": "JWT signing and verification",
+  "name": "@kokuin/jwe",
+  "version": "0.1.0",
+  "description": "JWE encryption for kokuin tokens",
   "keywords": [
     "json",
     "web",
-    "token",
-    "jwt",
-    "signature"
+    "encryption",
+    "jwe"
   ],
   "repository": {
     "type": "git",
     "url": "https://github.com/TairuFramework/kokuin",
-    "directory": "packages/token"
+    "directory": "packages/jwe"
   },
   "license": "MIT",
   "sideEffects": false,
@@ -36,19 +35,11 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
-    "@kokuin/otel": "workspace:^",
+    "@kokuin/token": "workspace:^",
+    "@noble/ciphers": "catalog:",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
-    "@scure/base": "catalog:",
-    "@sozai/codec": "catalog:",
-    "@sozai/otel": "catalog:",
-    "@sozai/schema": "catalog:"
-  },
-  "devDependencies": {
-    "@kokuin/jwe": "workspace:^",
-    "@opentelemetry/sdk-trace-base": "catalog:",
-    "@opentelemetry/sdk-trace-node": "catalog:",
-    "uint8arrays": "catalog:"
+    "@sozai/codec": "catalog:"
   },
   "publishConfig": {
     "access": "public"

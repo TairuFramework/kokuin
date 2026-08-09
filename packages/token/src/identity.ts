@@ -4,7 +4,6 @@ import { b64uFromJSON, fromUTF, toB64U } from '@sozai/codec'
 import { withSpan } from '@sozai/otel'
 
 import { CODECS, getDID, normalizeDID } from './did.js'
-import { decryptToken } from './jwe.js'
 import { encodeMultibase } from './multibase.js'
 import { type DIDDoc, encodePeer4, isPeer4 } from './peer4.js'
 import type { SignedHeader } from './schemas.js'
@@ -40,12 +39,11 @@ export type SigningIdentity = Identity & {
   ) => Promise<SignedToken<Payload>>
 }
 
-export type DecryptingIdentity = Identity & {
-  decrypt(jwe: string): Promise<Uint8Array>
+export type KeyAgreementIdentity = Identity & {
   agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array>
 }
 
-export type FullIdentity = SigningIdentity & DecryptingIdentity
+export type FullIdentity = SigningIdentity & KeyAgreementIdentity
 
 export type OwnIdentity = FullIdentity & { privateKey: Uint8Array }
 
@@ -61,17 +59,12 @@ export function isSigningIdentity(identity: Identity): identity is SigningIdenti
   )
 }
 
-export function isDecryptingIdentity(identity: Identity): identity is DecryptingIdentity {
-  return (
-    'decrypt' in identity &&
-    typeof (identity as DecryptingIdentity).decrypt === 'function' &&
-    'agreeKey' in identity &&
-    typeof (identity as DecryptingIdentity).agreeKey === 'function'
-  )
+export function isKeyAgreementIdentity(identity: Identity): identity is KeyAgreementIdentity {
+  return 'agreeKey' in identity && typeof (identity as KeyAgreementIdentity).agreeKey === 'function'
 }
 
 export function isFullIdentity(identity: Identity): identity is FullIdentity {
-  return isSigningIdentity(identity) && isDecryptingIdentity(identity)
+  return isSigningIdentity(identity) && isKeyAgreementIdentity(identity)
 }
 
 export function isOwnIdentity(identity: Identity): identity is OwnIdentity {
@@ -125,32 +118,28 @@ export function createSigningIdentity(privateKey: Uint8Array): SigningIdentity {
 }
 
 /**
- * Create a decrypting identity from an Ed25519 private key.
+ * Create a key-agreement identity from an Ed25519 private key.
  * Uses X25519 key derivation for ECDH key agreement.
  */
-export function createDecryptingIdentity(privateKey: Uint8Array): DecryptingIdentity {
+export function createKeyAgreementIdentity(privateKey: Uint8Array): KeyAgreementIdentity {
   const publicKey = ed25519.getPublicKey(privateKey)
   const id = getDID(CODECS.EdDSA, publicKey)
   const x25519Private = ed25519.utils.toMontgomerySecret(privateKey)
-
-  async function decrypt(jwe: string): Promise<Uint8Array> {
-    return decryptToken({ id, decrypt, agreeKey }, jwe)
-  }
 
   async function agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array> {
     return x25519.getSharedSecret(x25519Private, ephemeralPublicKey)
   }
 
-  return { id, decrypt, agreeKey }
+  return { id, agreeKey }
 }
 
 /**
- * Create a full identity (signing + decrypting) from an Ed25519 private key.
+ * Create a full identity (signing + key agreement) from an Ed25519 private key.
  */
 export function createFullIdentity(privateKey: Uint8Array): FullIdentity {
   const signing = createSigningIdentity(privateKey)
-  const decrypting = createDecryptingIdentity(privateKey)
-  return { ...signing, ...decrypting }
+  const keyAgreement = createKeyAgreementIdentity(privateKey)
+  return { ...signing, ...keyAgreement }
 }
 
 /**
@@ -208,7 +197,6 @@ export type MultiKeyIdentity = {
     payload: Payload,
     options?: SignTokenOptions,
   ): Promise<SignedToken<Payload>>
-  decrypt(jwe: string): Promise<Uint8Array>
   agreeKey(ephemeralPublicKey: Uint8Array, kid?: string): Promise<Uint8Array>
 }
 
@@ -325,15 +313,16 @@ function signWith(key: ResolvedKey, data: Uint8Array): Uint8Array {
  *
  * A peer:4 identity uses its published `keyAgreement` key. A `did:key` EdDSA identity has no
  * published agreement key — a sender derives one from its signing key via the birational map —
- * so it must derive the matching secret the same way, exactly as `createDecryptingIdentity` does.
+ * so it must derive the matching secret the same way, exactly as `createKeyAgreementIdentity` does.
  */
 function pickAgreementSecret(keys: Array<ResolvedKey>, isPeer: boolean, kid?: string): Uint8Array {
   if (kid != null) {
     // No birational fallback here, unlike the no-kid branch below: a kid names one specific
     // key, so falling back to a *different*, derived key would silently agree with the wrong
     // secret. This means a did:key identity's agreeKey(epk, '#key-0') throws where
-    // agreeKey(epk) succeeds — a known asymmetry, currently unreachable: decryptToken (jwe.ts)
-    // never passes a kid, and DecryptingIdentity#agreeKey has no kid parameter at all.
+    // agreeKey(epk) succeeds — a known asymmetry, currently unreachable: decryptToken
+    // (@kokuin/jwe) never passes a kid, and KeyAgreementIdentity#agreeKey has no kid parameter
+    // at all.
     const found = keys.find((key) => key.fragment === kid)
     if (found == null) throw new Error(`KidNotFound: ${kid}`)
     if (found.purpose !== 'kem' || found.alg !== 'X25519') {
@@ -411,11 +400,6 @@ function buildIdentity(
     return x25519.getSharedSecret(pickAgreementSecret(keys, isPeer, kid), ephemeralPublicKey)
   }
 
-  async function decrypt(jwe: string): Promise<Uint8Array> {
-    pickAgreementSecret(keys, isPeer) // fail fast when this identity cannot agree at all
-    return decryptToken({ id, decrypt, agreeKey }, jwe)
-  }
-
   return {
     id,
     longForm,
@@ -424,7 +408,6 @@ function buildIdentity(
     publicKey: primarySig.publicKey,
     privateKey: primarySig.privateKey,
     signToken,
-    decrypt,
     agreeKey,
   }
 }
