@@ -19,6 +19,8 @@ export type KeyState = {
   /** Sequence at which the current `keys` were established — see Amendment A. */
   keySeq: number
   keys: Array<string>
+  /** Key agreement keys — an OR set. Established by icp/rot, carried forward across rev. */
+  agreement: Array<string>
   next: Array<string>
   recovery: string
   deny: ReadonlySet<string>
@@ -104,6 +106,7 @@ function stepEvent(
         keyGen: rot.event.g,
         keySeq: rot.event.s,
         keys: rot.event.k,
+        agreement: rot.event.ka,
         next: rot.event.n,
         recovery: rot.event.r ?? prior.recovery,
         deny: rot.event.d == null ? prior.deny : new Set(rot.event.d),
@@ -179,6 +182,7 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
         keyGen: first.event.g,
         keySeq: first.event.s,
         keys: first.event.k,
+        agreement: first.event.ka,
         next: first.event.n,
         recovery: first.event.r,
         deny: new Set<string>(),

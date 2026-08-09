@@ -92,6 +92,34 @@ describe('foldLog()', () => {
     expect(result.states[3].seq).toBe(0)
     expect(result.states[3].deny.size).toBe(0)
   })
+
+  test('the inception seeds the agreement set', () => {
+    const { did, icp } = build()
+    const result = foldLog(did, [icp])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.states[0].agreement).toEqual(icp.event.ka)
+  })
+
+  test('a rotate replaces the agreement set', () => {
+    const { did, icp, rot } = build()
+    const result = foldLog(did, [icp, rot])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.states[1].agreement).toEqual(rot.event.ka)
+    // Load-bearing: without it, a fold that ignored `ka` on rotate and carried the inception's
+    // set forward would still pass every other assertion here.
+    expect(result.states[1].agreement).not.toEqual(icp.event.ka)
+  })
+
+  test('a revoke carries the agreement set forward unchanged', () => {
+    const { did, icp, rot, rev } = build()
+    const result = foldLog(did, [icp, rot, rev])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The revoke establishes no agreement key, so the set is still the rotate's — Amendment A.
+    expect(result.states[2].agreement).toEqual(rot.event.ka)
+  })
 })
 
 describe('keyStateAt()', () => {
