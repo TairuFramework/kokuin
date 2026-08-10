@@ -4207,36 +4207,112 @@ and signing tokens is the primary one for a DID whose key set rotates. Task 25 c
 
 ---
 
-## Task 25: Thread `methods` through token and capability verification
+## Task 25: Issue and verify tokens as a `did:kokuin:` DID
+
+**Both halves are required.** Verification alone would be provable only by a test that
+hand-rolls a `SigningIdentity` no consumer could reproduce — a passing test over an unusable
+feature.
+
+**The signer side is missing too.** `createSigningIdentity` derives its `id` from the private key
+(`packages/token/src/identity.ts:79`), hardcodes `iss: id` when signing (`:104`), and rejects a
+payload whose `iss` differs (`:95-97`). `@kokuin/controller` exports no identity helper. So no
+public API can produce a token whose `iss` is a `did:kokuin:` DID.
 
 **Files:**
+- Create: `packages/controller/src/identity.ts`
+- Modify: `packages/controller/src/index.ts` (export the new helper)
 - Modify: `packages/token/src/token.ts` (`VerifyTokenOptions`, `verifySignedPayload`,
   `verifyTokenInner`)
 - Modify: `packages/capability/src/index.ts` (`DelegationChainOptions` and the two `verifyToken`
   call sites at `:401-405` and `:456-460`)
-- Test: `packages/token/test/method.test.ts` (extend), `packages/controller/test/verify-token.test.ts`
-  (create)
+- Test: `packages/controller/test/identity.test.ts` (create),
+  `packages/controller/test/verify-token.test.ts` (create)
 
 **Interfaces:**
-- Consumes: `MethodRegistry` and `findMethodResolver` from `packages/token/src/method.ts`;
-  `resolveIssuerWithDoc`'s existing fourth parameter.
-- Produces: `VerifyTokenOptions.methods?: MethodRegistry` and
-  `DelegationChainOptions.methods?: MethodRegistry`. Both optional — this is additive, not a
-  breaking change.
+- Consumes: `MethodRegistry` from `packages/token/src/method.ts`; `resolveIssuerWithDoc`'s
+  existing fourth parameter; `foldLog`, `authorityPath`, `deriveKeyPair`.
+- Produces: `createControllerIdentity(seed: Uint8Array, profile: number, log: Array<SignedEvent>):
+  SigningIdentity`; `VerifyTokenOptions.methods?: MethodRegistry`;
+  `DelegationChainOptions.methods?: MethodRegistry`. The two options fields are optional, so this
+  is additive rather than breaking.
 
 The end-to-end test lives in `packages/controller` because that is the only package that can
-build a real folded log, and it already has `@kokuin/jwe` as a devDependency under the same
-reasoning (`@kokuin/token` is already a runtime dependency there, so no new edge is created).
+build a real folded log. `@kokuin/token` is already a runtime dependency there, so no new
+dependency edge is created.
 
-- [ ] **Step 1: Write the failing end-to-end test**
+- [ ] **Step 1: Write the failing signer test**
+
+```ts
+// packages/controller/test/identity.test.ts
+import { describe, expect, test } from 'vitest'
+
+import { createInception, createRotate, didFromInception } from '../src/events.js'
+import { createControllerIdentity } from '../src/identity.js'
+
+const seed = new Uint8Array(32).fill(7)
+
+describe('createControllerIdentity()', () => {
+  test('binds the identity to the did:kokuin: DID, not a did:key:', async () => {
+    const inception = createInception(seed, 0)
+    const did = didFromInception(inception.event)
+    const identity = createControllerIdentity(seed, 0, [inception])
+
+    expect(identity.id).toBe(did)
+
+    const signed = await identity.signToken({ hello: 'world' })
+    expect(signed.payload.iss).toBe(did)
+  })
+
+  test('signs with the rotated key after a rotation, not the inception key', async () => {
+    // Fold [inception, rotate] and confirm identity.publicKey is the rotated authority key
+    // and NOT the inception's. This is the whole reason the helper takes the log.
+  })
+
+  test('refuses to sign for a revoked controller', async () => {
+    // A revoke leaves the folded state with no signing key. Building an identity from that
+    // log must throw rather than return one that signs with a retired key.
+  })
+})
+```
+
+Write the second and third tests in full. Both are mandatory.
+
+- [ ] **Step 2: Implement `createControllerIdentity`**
+
+Fold the log, take the last state, and derive the authority key for the position **at which the
+current keys were established**:
+
+```ts
+authorityPath(profile, state.keyGen, state.keySeq)
+```
+
+**Use `keyGen`/`keySeq`, not `gen`/`seq`.** They differ: `gen`/`seq` is the position of the last
+*event*, while `keyGen`/`keySeq` is where the current keys were established. A revoke advances
+`seq` but establishes no key (Amendment A), so `authorityPath(profile, state.gen, state.seq)`
+would derive a key that was never in `k` and produce tokens nothing can verify. `KeyState` is at
+`packages/controller/src/fold.ts:13-29`.
+
+Throw when the fold fails, and throw when `state.keys.length === 0` (a revoked controller —
+`packages/controller/src/resolver.ts:41-42` throws for the same reason on the resolve side).
+
+Return a `SigningIdentity` — `{ id, publicKey, signToken }`, the shape at
+`packages/token/src/identity.ts:34-40`. Model `signToken` on `createSigningIdentity`
+(`packages/token/src/identity.ts:77-118`), with one deliberate difference: `id` is the
+`did:kokuin:` DID rather than a `did:key:`, so the `iss` it stamps is the profile DID. Keep its
+`payload.iss` mismatch guard.
+
+Do not duplicate the whole body if a shared helper is cleaner — but do not refactor
+`createSigningIdentity`'s public behaviour to get one.
+
+- [ ] **Step 3: Write the failing end-to-end verification test**
 
 ```ts
 // packages/controller/test/verify-token.test.ts
-import { createSigningIdentity, signToken, verifyToken } from '@kokuin/token'
+import { signToken, verifyToken } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
-import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import { createInception, createRotate, didFromInception } from '../src/events.js'
+import { createControllerIdentity } from '../src/identity.js'
 import { createControllerResolver } from '../src/resolver.js'
 
 const seed = new Uint8Array(32).fill(7)
@@ -4244,41 +4320,41 @@ const seed = new Uint8Array(32).fill(7)
 describe('verifying a token issued by a did:kokuin: profile', () => {
   test('verifyToken accepts a token signed by the current authority key', async () => {
     const inception = createInception(seed, 0)
+    const log = [inception]
     const did = didFromInception(inception.event)
-    const resolver = createControllerResolver({ loadLog: async () => [inception] })
+    const resolver = createControllerResolver({ loadLog: async () => log })
 
-    const authority = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
-    const token = await signToken(identityFor(did, authority.privateKey), { hello: 'world' })
+    const identity = createControllerIdentity(seed, 0, log)
+    const token = await signToken(identity, { payload: { hello: 'world' } })
 
     const verified = await verifyToken(token, { methods: [resolver] })
     expect(verified.payload.hello).toBe('world')
+    expect(verified.payload.iss).toBe(did)
   })
 
   test('without the registry the same token is unresolvable', async () => {
     // Same token, no `methods`. Proves the registry is what makes verification work,
-    // rather than the token verifying for some unrelated reason.
+    // rather than the token verifying for some unrelated reason. Expect /Unknown DID/.
   })
 
-  test('after a rotation the rotated key verifies and the inception key does not', async () => {
-    // Build [inception, rotate]. A token signed by authorityPath(0, 0, 1) verifies;
-    // a token signed by authorityPath(0, 0, 0) is rejected.
+  test('a token signed by the pre-rotation key is rejected once the log has rotated', async () => {
+    // Sign with an identity built from [inception], then rotate and verify against a resolver
+    // whose log is [inception, rotate]. Without this negative half, an implementation that
+    // resolved the signing key off the inception would pass.
   })
 })
 ```
 
-Write the second and third tests in full following the first's shape. `identityFor` is whatever
-the repo's existing helper for building a `SigningIdentity` from a raw private key is — find it
-rather than inventing one; `packages/token/test/` has precedent. The third test's negative half
-is mandatory: without it, an implementation that resolved the signing key off the inception
-would pass.
+Write the second and third tests in full. Note `signToken`'s second parameter is a token object —
+`{ payload }` — not a bare payload (`packages/token/src/token.ts:189-192`).
 
-- [ ] **Step 2: Run to verify it fails**
+- [ ] **Step 4: Run to verify it fails**
 
 Run: `pnpm --filter @kokuin/controller exec vitest run test/verify-token.test.ts`
 Expected: FAIL — `methods` is not a `VerifyTokenOptions` field, so this fails to type-check, and
 at runtime verification fails with `Unknown DID`.
 
-- [ ] **Step 3: Thread `methods` through token**
+- [ ] **Step 5: Thread `methods` through token**
 
 In `packages/token/src/token.ts`:
 
@@ -4290,7 +4366,7 @@ In `packages/token/src/token.ts`:
 - Add `methods` to `VerifySignedPayloadInput` and pass it as the fourth argument of
   `resolveIssuerWithDoc`.
 
-- [ ] **Step 4: Thread `methods` through capability**
+- [ ] **Step 6: Thread `methods` through capability**
 
 In `packages/capability/src/index.ts`, add `methods?: MethodRegistry` to
 `DelegationChainOptions` and pass `methods: options?.methods` in both `verifyToken` calls
@@ -4302,18 +4378,18 @@ them means changing their public signatures: `createCapability`'s parent check a
 `packages/capability/src/revocation.ts:37` and `:63`. Note them in the report — a `did:kokuin:`
 issuer cannot yet delegate through `createCapability` or have its revocation records verified.
 
-- [ ] **Step 5: Verify**
+- [ ] **Step 7: Verify**
 
 Run `pnpm --filter @kokuin/token test`, `pnpm --filter @kokuin/capability test`,
 `pnpm --filter @kokuin/controller test`, then the full workspace suite. No cold build is needed:
 this adds no dependency edge.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 pnpm exec biome check --write ./packages
 git add packages/token packages/capability packages/controller
-git commit -m "feat(token)!: accept a DID method registry in verifyToken"
+git commit -m "feat: issue and verify tokens as a did:kokuin: DID"
 ```
 
 ---
