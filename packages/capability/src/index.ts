@@ -503,6 +503,8 @@ export {
   UnresolvableIssuerError,
 } from '@kokuin/token'
 
+export type { ControllerCapabilityVerifier } from './controller.js'
+export { createControllerCapabilityVerifier } from './controller.js'
 export type { RevocationBackend, RevocationOptions, RevocationRecord } from './revocation.js'
 export {
   createMemoryRevocationBackend,

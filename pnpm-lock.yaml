@@ -168,6 +168,10 @@ importers:
       '@kokuin/token':
         specifier: workspace:^
         version: link:../token
+    devDependencies:
+      '@kokuin/controller':
+        specifier: workspace:^
+        version: link:../controller
 
   packages/controller:
     dependencies:
