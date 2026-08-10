@@ -223,6 +223,51 @@ describe('createControllerCapabilityVerifier()', () => {
     })
   })
 
+  test('the verifyToken hook runs on the capability the event names', async () => {
+    // Where a revocation check goes. `checkCapability` only runs the hook on the parents of the
+    // capability it is given, so an undelegated management capability — the common shape — would
+    // never be checked at all if this call site did not run it.
+    const cap = await mintCapability()
+    const seen: Array<string> = []
+    const revoke = createRevoke(
+      delegateSeed,
+      0,
+      controller.did,
+      controller.inception.event,
+      target,
+      inceptionKeyPosition,
+      { cap },
+    )
+    const events = [controller.inception, revoke]
+
+    const observed = await foldLogAsync(controller.did, events, {
+      verifyCapability: createControllerCapabilityVerifier({
+        methods,
+        verifyToken: (_token, raw) => {
+          seen.push(raw)
+        },
+      }),
+    })
+    expect(observed.ok).toBe(true)
+    expect(seen).toEqual([cap])
+
+    // A hook that throws — a revoked capability — denies the revoke rather than being swallowed
+    // somewhere that leaves the log folding.
+    const rejected = await foldLogAsync(controller.did, events, {
+      verifyCapability: createControllerCapabilityVerifier({
+        methods,
+        verifyToken: () => {
+          throw new Error('revoked')
+        },
+      }),
+    })
+    expect(rejected).toEqual({
+      ok: false,
+      reason: 'capability does not authorise this revoke',
+      index: 1,
+    })
+  })
+
   test('an audience that itself needs resolving is resolved through the registry', async () => {
     // The audience need not be a `did:key` carrying its own key. Here it is another profile — the
     // shape a delegation between two `did:kokuin:` identities takes — so the audience side of the

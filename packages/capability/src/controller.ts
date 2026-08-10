@@ -48,9 +48,17 @@ export type ControllerCapabilityVerifier = (
  * into an exception on the caller's resolve path, and the fold's own contract is that a `null`
  * means `capability does not authorise this revoke`.
  *
+ * **The registry must not resolve the controller from the log being folded.** The capability is
+ * issued by the very profile whose log carries the revoke, so a `loadLog` that answers with the
+ * whole log would resolve the issuer by folding it, reach the same capability-authorised revoke,
+ * and call this verifier again — without end. Answer with the log up to the event that carries the
+ * capability, which is also the state the capability has to be checked against: a key set the log
+ * rotated away afterwards must not verify a grant made under it.
+ *
  * @param options forwarded to `verifyToken`, `checkCapability` and the audience resolution.
  * `methods` is effectively required — see above. `resolver` and `cache` travel with it for a
- * `did:peer:4` link in the chain, and `verifyToken` (the hook) is where a revocation check goes.
+ * `did:peer:4` link in the chain, and `verifyToken` (the hook) runs on every capability including
+ * the one named in the event, which is where a revocation check goes.
  */
 export function createControllerCapabilityVerifier(
   options: DelegationChainOptions = {},
@@ -68,6 +76,11 @@ export function createControllerCapabilityVerifier(
         methods: options.methods,
       })
       assertCapabilityToken(capability)
+      // `checkCapability` runs the hook on every capability it verifies, but it verifies the
+      // *parents* of the one handed to it — this one it takes as already established. Running it
+      // here is what keeps a revocation check from having a hole exactly at the capability the
+      // event names, which is the only one present when the grant is not delegated further.
+      await options.verifyToken?.(capability, cap)
 
       if (normalizeDID(capability.payload.sub) !== normalizeDID(subject)) {
         return null
