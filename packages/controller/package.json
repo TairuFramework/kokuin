@@ -42,7 +42,8 @@
     "micro-key-producer": "catalog:"
   },
   "devDependencies": {
-    "@kokuin/controller-conformance": "workspace:^"
+    "@kokuin/controller-conformance": "workspace:^",
+    "@kokuin/jwe": "workspace:^"
   },
   "publishConfig": {
     "access": "public"

@@ -190,6 +190,9 @@ importers:
       '@kokuin/controller-conformance':
         specifier: workspace:^
         version: link:../controller-conformance
+      '@kokuin/jwe':
+        specifier: workspace:^
+        version: link:../jwe
 
   packages/controller-conformance: {}
 
