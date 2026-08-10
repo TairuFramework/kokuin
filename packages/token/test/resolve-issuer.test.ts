@@ -5,11 +5,14 @@ import { createInMemoryDIDCache } from '../src/cache.js'
 import {
   CODECS,
   getDID,
+  IssuerKeyNotFoundError,
+  isIssuerKeyNotFoundError,
   isUnresolvableIssuerError,
   resolveIssuer,
   resolveIssuerWithDoc,
   UnresolvableIssuerError,
 } from '../src/did.js'
+import type { DIDMethodResolver } from '../src/method.js'
 import { encodeMultibase } from '../src/multibase.js'
 import { encodePeer4 } from '../src/peer4.js'
 
@@ -293,6 +296,49 @@ describe('resolveIssuerWithDoc', () => {
     )
     expect(isUnresolvableIssuerError(thrown)).toBe(true)
     expect((thrown as Error).message).toMatch(/too many verification methods/i)
+  })
+
+  it("does not type a method resolver's key-not-found as unresolvable", async () => {
+    // A method that has the issuer and does not have the named key is reporting the same thing
+    // `resolveKidOrAuth` reports for a did:peer:4 document — the issuer resolved, the token is
+    // bad. Wrapping it as unresolvable would let `kid`, an unauthenticated header field, decide
+    // whether a caller that fails closed on that type denies.
+    const did = 'did:kokuin:zTestProfile'
+    const methods: Array<DIDMethodResolver> = [
+      {
+        method: 'kokuin',
+        resolve: async (_did: string, header: { kid?: string }) => {
+          if (header.kid != null) {
+            throw new IssuerKeyNotFoundError(`no such key: ${header.kid}`)
+          }
+          throw new Error(`Unknown DID: ${did}`)
+        },
+      },
+    ]
+
+    const keyNotFound = await resolveIssuer(did, { kid: '#nope' }, undefined, methods).catch(
+      (error: unknown) => error,
+    )
+    expect(isIssuerKeyNotFoundError(keyNotFound)).toBe(true)
+    expect(isUnresolvableIssuerError(keyNotFound)).toBe(false)
+    // Rethrown as thrown, so the message a caller reads is the method's own.
+    expect((keyNotFound as Error).message).toBe('no such key: #nope')
+
+    // Control: everything else the same resolver throws is still unresolvable, so the assertion
+    // above is the classification and not this path having stopped wrapping altogether.
+    const unresolvable = await resolveIssuer(did, {}, undefined, methods).catch(
+      (error: unknown) => error,
+    )
+    expect(isUnresolvableIssuerError(unresolvable)).toBe(true)
+    expect(isIssuerKeyNotFoundError(unresolvable)).toBe(false)
+  })
+
+  it('brands the key-not-found error too, and keeps the two guards disjoint', async () => {
+    expect(new IssuerKeyNotFoundError('x').brand).toBe(IssuerKeyNotFoundError.brand)
+    expect(isIssuerKeyNotFoundError(new Error('Invalid signature'))).toBe(false)
+    // Neither guard may fire on the other's error, or the two classifications collapse.
+    expect(isUnresolvableIssuerError(new IssuerKeyNotFoundError('x'))).toBe(false)
+    expect(isIssuerKeyNotFoundError(new UnresolvableIssuerError('x'))).toBe(false)
   })
 
   it('brands the error so a duplicated copy of this package still matches', async () => {

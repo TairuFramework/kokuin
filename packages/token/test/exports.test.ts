@@ -16,6 +16,11 @@ describe('package exports', () => {
     'validateDIDDoc',
     'createInMemoryDIDCache',
     'resolveIssuer',
+    // The two error classifications a fail-closed caller discriminates on, and their guards.
+    'UnresolvableIssuerError',
+    'isUnresolvableIssuerError',
+    'IssuerKeyNotFoundError',
+    'isIssuerKeyNotFoundError',
     'createIdentity',
     'createKeyAgreementIdentity',
     'isKeyAgreementIdentity',

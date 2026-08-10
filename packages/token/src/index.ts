@@ -22,6 +22,8 @@ export {
   getAlgorithmAndPublicKey,
   getDID,
   getSignatureInfo,
+  IssuerKeyNotFoundError,
+  isIssuerKeyNotFoundError,
   isUnresolvableIssuerError,
   normalizeDID,
   type ResolveIssuerHeader,

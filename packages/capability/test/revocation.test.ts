@@ -6,6 +6,7 @@ import {
   type DIDMethodResolver,
   type DIDString,
   decodePeer4,
+  IssuerKeyNotFoundError,
   randomIdentity,
   randomPrivateKey,
   type SigningIdentity,
@@ -540,5 +541,128 @@ describe('revocation', () => {
 
     const checker = createRevocationChecker(backend, { methods: [resolver] })
     await expect(checker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
+  })
+
+  // A profile resolver that honours `kid` the way `@kokuin/controller`'s does: it holds one key,
+  // and a `kid` naming anything else is `IssuerKeyNotFoundError` — the issuer resolved, the token
+  // named a key it does not have. Hand-built for the reason `buildProfile` is: this package must
+  // not depend on `@kokuin/controller`.
+  const currentKid = '#zCurrentKey'
+
+  function buildKidProfile(identity: SigningIdentity): DIDMethodResolver {
+    return {
+      method: 'kokuin',
+      resolve: async (did: string, header: { kid?: string }) => {
+        if (did !== profileDID) {
+          throw new Error(`Unknown DID: ${did}`)
+        }
+        if (header.kid != null && header.kid !== currentKid) {
+          throw new IssuerKeyNotFoundError(
+            `Controller ${did} kid names a key outside the current set: ${header.kid}`,
+          )
+        }
+        return { alg: 'EdDSA' as const, publicKey: identity.publicKey }
+      },
+    }
+  }
+
+  test('a fabricated record with an invented kid does not deny the capability', async () => {
+    const root = createSigningIdentityForDID(profileDID, randomPrivateKey())
+    const resolver = buildKidProfile(root)
+    const capability = await createCapability(root, {
+      sub: root.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-kid-dos',
+    })
+
+    // Nothing here is signed by anyone. The backend is an untrusted extension point, so `iss` and
+    // `header.kid` are both attacker-chosen, and naming the capability's own issuer is all the
+    // fail-closed gate requires. If an invented `kid` made the issuer read as unresolvable, this
+    // fabrication would deny every capability this profile ever issued.
+    const fabricated = {
+      header: { typ: 'JWT', alg: 'EdDSA', kid: '#zInventedByTheBackend' },
+      payload: {
+        iss: profileDID,
+        jti: 'cap-kid-dos',
+        rev: true,
+        iat: Math.floor(Date.now() / 1000),
+      },
+      signature: 'AAAA',
+    } as unknown as RevocationRecord
+    const hostile = (record: RevocationRecord) => ({
+      async add() {},
+      async get() {
+        return record
+      },
+    })
+
+    const checker = createRevocationChecker(hostile(fabricated), { methods: [resolver] })
+    await expect(checker(capability, stringifyToken(capability))).resolves.toBeUndefined()
+
+    // Control 1: the identical fabrication *without* a `kid` is ignored too. Both halves are
+    // needed — if only the second held, resolvability would still be a property of an
+    // unauthenticated header field rather than of the DID.
+    const noKid = { ...fabricated, header: { typ: 'JWT', alg: 'EdDSA' } } as RevocationRecord
+    const noKidChecker = createRevocationChecker(hostile(noKid), { methods: [resolver] })
+    await expect(noKidChecker(capability, stringifyToken(capability))).resolves.toBeUndefined()
+
+    // Control 2: the fail-closed gate is intact. The same fabrication, against a checker with no
+    // registry, still denies — the issuer genuinely cannot be resolved there.
+    const blind = createRevocationChecker(hostile(fabricated))
+    await expect(blind(capability, stringifyToken(capability))).rejects.toThrow(
+      UnresolvableIssuerError,
+    )
+  })
+
+  test('a genuine record under a retired key does not deny a capability reusing its jti', async () => {
+    // The narrow version of the same defect: no forgery, just a rotation. The record is real and
+    // was signed under the key of the day; the profile has since rotated, so the `kid` it stamped
+    // is no longer in the key set. That is "this record is stale", not "this issuer is unknown".
+    const retired = createSigningIdentityForDID(profileDID, randomPrivateKey())
+    const current = createSigningIdentityForDID(profileDID, randomPrivateKey())
+    const resolver = buildKidProfile(current)
+    const iat = Math.floor(Date.now() / 1000)
+
+    const capability = await createCapability(current, {
+      sub: profileDID,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-reused-jti',
+    })
+    const stale = (await retired.signToken(
+      { jti: 'cap-reused-jti', rev: true, iat },
+      { header: { kid: '#zRetiredKey' } },
+    )) as RevocationRecord
+
+    const checker = createRevocationChecker(
+      {
+        async add() {},
+        async get() {
+          return stale
+        },
+      },
+      { methods: [resolver] },
+    )
+    await expect(checker(capability, stringifyToken(capability))).resolves.toBeUndefined()
+
+    // Control: a record naming the *current* key over the same jti still revokes, so the pass
+    // above is the retired `kid` being ignored and not the checker having stopped working.
+    const live = (await current.signToken(
+      { jti: 'cap-reused-jti', rev: true, iat },
+      { header: { kid: currentKid } },
+    )) as RevocationRecord
+    const liveChecker = createRevocationChecker(
+      {
+        async add() {},
+        async get() {
+          return live
+        },
+      },
+      { methods: [resolver] },
+    )
+    await expect(liveChecker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
   })
 })

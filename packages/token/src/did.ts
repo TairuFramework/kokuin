@@ -139,6 +139,52 @@ export function isUnresolvableIssuerError(value: unknown): value is Unresolvable
   )
 }
 
+const ISSUER_KEY_NOT_FOUND_BRAND = '@kokuin/token/IssuerKeyNotFoundError'
+
+/**
+ * A DID method resolved the issuer, and the token then named a key that issuer does not have.
+ *
+ * The exact counterpart of {@link UnresolvableIssuerError}, and the reason it exists: the rule
+ * stated there — a `kid` naming no known key means the issuer *was* resolved and the token is bad,
+ * which is positive evidence — has to be expressible by a `DIDMethodResolver` too. Without it
+ * `resolveIssuerWithDoc` can only wrap everything a method throws as unresolvable, and then an
+ * *unauthenticated* header field decides whether a caller that fails closed on that type denies:
+ * a forged token naming a real DID and an invented key would read as "could not check" rather than
+ * "checked, and bad". `did:peer:4`'s own `KidNotFound` is an ordinary error for this reason, and a
+ * method resolver throwing this gets the same classification.
+ *
+ * Throw it only for that condition. Not knowing the DID at all, or being unable to obtain its key
+ * material, is {@link UnresolvableIssuerError}.
+ */
+export class IssuerKeyNotFoundError extends Error {
+  /** @see UnresolvableIssuerError.brand — same reasoning, across the same package boundary. */
+  static get brand(): string {
+    return ISSUER_KEY_NOT_FOUND_BRAND
+  }
+
+  /** The brand, readable from an instance — what `isIssuerKeyNotFoundError` matches on. */
+  get brand(): string {
+    return ISSUER_KEY_NOT_FOUND_BRAND
+  }
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'IssuerKeyNotFoundError'
+  }
+}
+
+/**
+ * Whether a thrown value means the issuer resolved but does not have the key the token named.
+ *
+ * Prefer this to `instanceof IssuerKeyNotFoundError` across a package boundary, for the same
+ * reason as {@link isUnresolvableIssuerError}.
+ */
+export function isIssuerKeyNotFoundError(value: unknown): value is IssuerKeyNotFoundError {
+  return (
+    value instanceof Error && (value as { brand?: unknown }).brand === ISSUER_KEY_NOT_FOUND_BRAND
+  )
+}
+
 export type ResolveIssuerHeader = { kid?: string }
 
 export type ResolveIssuerWithDocResult = {
@@ -170,6 +216,14 @@ export async function resolveIssuerWithDoc(
       try {
         resolved = await methodResolver.resolve(iss, header)
       } catch (cause) {
+        // Except for the one failure that is not a failure to resolve. A method saying "I have
+        // this issuer, it has no such key" is reporting what the `kid` branches below report for
+        // `did:peer:4`, and those are ordinary errors — see IssuerKeyNotFoundError. Wrapping it
+        // would hand an unauthenticated header field the power to make any issuer read as
+        // unresolvable, which is precisely what callers fail closed on.
+        if (isIssuerKeyNotFoundError(cause)) {
+          throw cause
+        }
         throw new UnresolvableIssuerError(
           cause instanceof Error ? cause.message : `Unknown DID: ${iss}`,
           { cause },

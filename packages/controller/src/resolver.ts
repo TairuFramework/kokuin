@@ -1,8 +1,9 @@
-import type {
-  DIDMethodResolver,
-  ResolvedAgreementKey,
-  ResolvedSigningKey,
-  ResolveIssuerHeader,
+import {
+  type DIDMethodResolver,
+  IssuerKeyNotFoundError,
+  type ResolvedAgreementKey,
+  type ResolvedSigningKey,
+  type ResolveIssuerHeader,
 } from '@kokuin/token'
 
 import { DID_PREFIX, decodeKey, type SignedEvent } from './events.js'
@@ -26,17 +27,27 @@ const CONTEXT = 'Controller resolver'
  *
  * The bare key without the leading `#` is rejected rather than accepted as a second spelling: the
  * fragment form is wire-visible and effectively permanent, so it has exactly one spelling.
+ *
+ * Both rejections are an `IssuerKeyNotFoundError`, not the plain error the rest of this file
+ * throws: the DID *was* resolved and its log *did* fold — what failed is the key the token named.
+ * The distinction is load-bearing, not cosmetic. `resolveIssuerWithDoc` retypes everything else a
+ * method resolver throws as `UnresolvableIssuerError`, and `@kokuin/capability`'s revocation
+ * checker denies a capability on that type; since `kid` is an unauthenticated header field, a
+ * fabricated record naming this DID and any invented key would otherwise deny every capability
+ * this controller ever issued.
  */
 function selectSigningKey(did: string, keys: Array<string>, kid?: string): string {
   if (kid == null) {
     return keys[0]
   }
   if (!kid.startsWith('#')) {
-    throw new Error(`Controller ${did} kid is not a key fragment: ${kid}`)
+    throw new IssuerKeyNotFoundError(`Controller ${did} kid is not a key fragment: ${kid}`)
   }
   const key = kid.slice(1)
   if (!keys.includes(key)) {
-    throw new Error(`Controller ${did} kid names a key outside the current set: ${kid}`)
+    throw new IssuerKeyNotFoundError(
+      `Controller ${did} kid names a key outside the current set: ${kid}`,
+    )
   }
   return key
 }

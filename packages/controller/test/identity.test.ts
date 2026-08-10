@@ -183,6 +183,17 @@ describe('createControllerIdentity() kid', () => {
     expect(signed.header.kid).toBe(`#${inception.event.k[0]}`)
   })
 
+  test('an explicit undefined kid in the caller header does not erase the stamp', async () => {
+    const inception = createInception(seed, 0)
+    const identity = createControllerIdentity(seed, 0, [inception])
+
+    // Pins the spread order: under `{ kid, ...options.header }` a header carrying an explicit
+    // `undefined` kid overwrites the stamp — and the mismatch guard does not fire, since
+    // `undefined != null` is false — so the token would name no key at all.
+    const signed = await identity.signToken({ hello: 'world' }, { header: { kid: undefined } })
+    expect(signed.header.kid).toBe(`#${inception.event.k[0]}`)
+  })
+
   test('accepts a caller kid that names the key it signs with', async () => {
     const inception = createInception(seed, 0)
     const identity = createControllerIdentity(seed, 0, [inception])

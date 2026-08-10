@@ -433,12 +433,20 @@ any claim whose subject is the profile rather than a device
   and forward it to every `verifyToken` in the chain, as do `createCapability` (for its
   parent-capability check) and `createRevocationChecker` / `createMemoryRevocationBackend` (for the
   record's issuer). A `did:kokuin:` issuer needs `methods` at each of those call sites: without it
-  delegation fails, and an unresolvable revocation record now fails the verification closed
+  delegation fails, and a revocation record whose issuer cannot be resolved *at all* fails the
+  verification closed. A record the registry can resolve but whose signature or `kid` does not check
+  out is ignored instead — it is evidence about the record, not about revocation
 - **Key selection**: a controller's `k` is a *set*. Every token `createControllerIdentity` signs
   carries `kid: "#<the multibase key exactly as it appears in `k`>"`, and the resolver matches that
   against the folded set by membership. A header with no `kid` still resolves to `k[0]`, so
   single-key profiles are unaffected. A `kid` naming a key outside the current set — a retired one,
   most often — is an error, never a fall back to `k[0]`
+- That error is an `IssuerKeyNotFoundError` (`@kokuin/token`, guard `isIssuerKeyNotFoundError`),
+  **not** an `UnresolvableIssuerError`: the DID resolved and its log folded; only the key the token
+  named was missing. The classification matters because fail-closed callers key on the second type —
+  and `kid` is an unauthenticated header field, so a fabricated record naming a real `did:kokuin:`
+  DID and an invented key would otherwise deny every capability that issuer holds. `did:peer:4`
+  answers the same condition with a plain `KidNotFound`; the two methods agree
 - The identity takes no `kid`: it derives exactly one key pair, so the `kid` is a fact about the
   signature. Passing a `kid` naming another key to `signToken` is rejected rather than ignored
 
