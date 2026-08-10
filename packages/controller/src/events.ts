@@ -1,3 +1,4 @@
+import type { DIDString } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { base64urlnopad } from '@scure/base'
 
@@ -144,7 +145,7 @@ export function createInception(seed: Uint8Array, profile: number): SignedEvent<
   return { event, sigs: signEvent(event, [current.privateKey]) }
 }
 
-export function didFromInception(event: InceptionEvent): string {
+export function didFromInception(event: InceptionEvent): DIDString {
   return `${DID_PREFIX}${digestOf(event)}`
 }
 

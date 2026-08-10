@@ -22,7 +22,7 @@ describe('encrypting to a did:kokuin: profile', () => {
     // The recipient side: the profile holder derives the same agreement key from the seed.
     const agreement = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
     const recipient = {
-      id: did as `did:${string}:${string}`,
+      id: did,
       agreeKey: async (ephemeralPublicKey: Uint8Array) =>
         x25519.getSharedSecret(agreement.privateKey, ephemeralPublicKey),
     }
@@ -43,7 +43,7 @@ describe('encrypting to a did:kokuin: profile', () => {
     // The rotated agreement key opens the ciphertext.
     const rotatedAgreement = deriveKeyPair(seed, agreementPath(0, 0, 1), 'X25519')
     const rotatedRecipient = {
-      id: did as `did:${string}:${string}`,
+      id: did,
       agreeKey: async (ephemeralPublicKey: Uint8Array) =>
         x25519.getSharedSecret(rotatedAgreement.privateKey, ephemeralPublicKey),
     }
@@ -53,10 +53,10 @@ describe('encrypting to a did:kokuin: profile', () => {
     // resolved `ka` off the inception rather than the folded state would pass without this.
     const inceptionAgreement = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
     const inceptionRecipient = {
-      id: did as `did:${string}:${string}`,
+      id: did,
       agreeKey: async (ephemeralPublicKey: Uint8Array) =>
         x25519.getSharedSecret(inceptionAgreement.privateKey, ephemeralPublicKey),
     }
-    await expect(decryptToken(inceptionRecipient, jwe)).rejects.toThrow()
+    await expect(decryptToken(inceptionRecipient, jwe)).rejects.toThrow(/invalid ghash tag/)
   })
 })
