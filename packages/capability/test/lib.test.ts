@@ -3,7 +3,9 @@ import {
   createInMemoryDIDCache,
   createSigningIdentityForDID,
   type DIDMethodResolver,
+  type DIDResolver,
   type DIDString,
+  decodePeer4,
   randomIdentity,
   randomPrivateKey,
   stringifyToken,
@@ -1101,6 +1103,9 @@ describe('createCapability() - delegation validation (C-03)', () => {
     const cache = createInMemoryDIDCache()
     await cache.set(alice.id, alice.doc)
 
+    // Note: no `resolver` anywhere in this test -- this isolates `cache` from `resolver`, so a
+    // future implementation that forwards `resolver` but not `cache` cannot pass this test by
+    // accident.
     const delegated = await createCapability(
       bob,
       { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
@@ -1114,6 +1119,47 @@ describe('createCapability() - delegation validation (C-03)', () => {
 
     // Without the cache, an implementation that ignores it here would pass the assertion above
     // but not this one.
+    await expect(
+      createCapability(
+        bob,
+        { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+        undefined,
+        { parentCapability: stringifyToken(rootCap) },
+      ),
+    ).rejects.toThrow(`Unknown DID: ${alice.id}`)
+  })
+
+  test('delegates from a did:peer:4 short-form root when resolver is provided, and fails without it', async () => {
+    // Isolates `resolver` from `cache`: no `cache` anywhere in this test, on either call, so a
+    // resolver-only path is the only way the short-form root capability's issuer can resolve.
+    // Models the sibling resolver-only case in `test/revocation.test.ts` (Task 26).
+    const alice = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    const bob = randomIdentity()
+    const carol = randomIdentity()
+
+    // Alice signs with her short form: without a resolver (or a cache entry), nothing can turn
+    // that short form back into her signing key.
+    const rootCap = await alice.signToken(
+      { sub: alice.id, aud: bob.id, act: '*', res: 'foo/*' },
+      { embedLongForm: false },
+    )
+    const doc = decodePeer4(alice.longForm).doc
+    const resolver: DIDResolver = (did: string) => (did === alice.id ? doc : undefined)
+
+    const delegated = await createCapability(
+      bob,
+      { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+      undefined,
+      { parentCapability: stringifyToken(rootCap), resolver },
+    )
+    expect(delegated.payload.iss).toBe(bob.id)
+    expect(delegated.payload.sub).toBe(alice.id)
+
+    // Without the resolver, an implementation that ignores it here would pass the assertion
+    // above but not this one.
     await expect(
       createCapability(
         bob,
