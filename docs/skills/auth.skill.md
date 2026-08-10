@@ -374,6 +374,57 @@ message was addressed
 - The recipient side never touches the resolver: it re-derives the same agreement key pair from
   the seed and the profile's `agreementPath`, and implements `KeyAgreementIdentity` (`{ id, agreeKey }`)
 
+### Pattern 10: Issuing and Verifying Tokens as a `did:kokuin:` Controller
+
+A `did:kokuin:` profile can be the `iss` of a token in both directions: `createControllerIdentity`
+produces a `SigningIdentity` whose `id` is the profile DID, and `verifyToken` resolves that `iss`
+when the same `DIDMethodResolver` is passed as `methods`.
+
+```typescript
+import {
+  createControllerIdentity,
+  createControllerResolver,
+  createInception,
+  createRotate,
+  didFromInception,
+} from '@kokuin/controller'
+import { createUnsignedToken, signToken, verifyToken } from '@kokuin/token'
+
+const seed = new Uint8Array(32).fill(7)
+const inception = createInception(seed, 0)
+const did = didFromInception(inception.event)
+const log = [inception, createRotate(seed, 0, did, inception.event)]
+
+// Folds the log and derives the authority key the *current* state establishes.
+const identity = createControllerIdentity(seed, 0, log)
+identity.id // the did:kokuin: DID, not a did:key:
+
+const token = await signToken(identity, createUnsignedToken({ hello: 'world' }))
+
+const resolver = createControllerResolver({ loadLog: async () => log })
+const verified = await verifyToken(token, { methods: [resolver] })
+verified.payload.iss // === did
+```
+
+**Use case**: a profile acting as a token issuer — self-issued capabilities, service tokens, or
+any claim whose subject is the profile rather than a device
+
+**Key points**:
+- `createControllerIdentity(seed, profile, log)` takes the **log**, not a `{ gen, seq }` position:
+  it folds the log itself so signing with a superseded key is not reachable through the API. It
+  throws when the log does not fold, when the log publishes no signing key, and when the derived
+  key is not the current authority key (a wrong `seed` or `profile` for that log)
+- The key it derives sits at the fold's `keyGen`/`keySeq` — where the current keys were
+  *established* — not at `gen`/`seq`, which is the position of the last event. A revoke advances
+  the sequence without establishing a key, so the two diverge
+- Without `methods`, `verifyToken` fails with `Unknown DID` — the identifier carries no key.
+  `did:key` and `did:peer:4` need no entry
+- `checkCapability` / `checkDelegationChain` (`@kokuin/capability`) take the same `methods` option
+  and forward it to every `verifyToken` in the chain
+- **Not yet supported**: `createCapability`'s parent-capability check and
+  `@kokuin/capability`'s revocation-record verification take no options, so a `did:kokuin:` issuer
+  cannot yet delegate through `createCapability` or have its revocation records verified
+
 ## When to Use What
 
 **Use `@kokuin/token`** when:
@@ -392,6 +443,8 @@ message was addressed
   identifier
 - Building or resolving a folded key event log (inception, rotation, reset, revocation)
 - Encrypting to a `did:kokuin:` recipient through a registered `DIDMethodResolver`
+- Issuing tokens whose `iss` is a `did:kokuin:` profile (`createControllerIdentity`), or verifying
+  them (`verifyToken`/`checkCapability` with `methods`)
 
 **Use `@kokuin/node`** when:
 - Building Node.js servers or CLI tools
