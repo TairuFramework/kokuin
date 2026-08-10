@@ -1,8 +1,10 @@
 import {
   createIdentity,
   createSigningIdentityForDID,
+  type DIDDoc,
   type DIDMethodResolver,
   type DIDString,
+  decodePeer4,
   randomIdentity,
   randomPrivateKey,
   type SigningIdentity,
@@ -233,6 +235,111 @@ describe('revocation', () => {
       { embedLongForm: false },
     )) as typeof record
     await expect(backend.add(shortFormRecord)).rejects.toThrow(/Unknown DID/)
+  })
+
+  // A short-form did:peer:4 record carries no document, so it needs a resolver. Fail-closed makes
+  // that a hard rejection rather than a silent pass, so `RevocationOptions` has to offer a way in.
+  async function buildShortFormRecord(jti: string): Promise<{
+    signer: Awaited<ReturnType<typeof createIdentity>>
+    record: RevocationRecord
+    doc: DIDDoc
+  }> {
+    const signer = await createIdentity({
+      keys: [
+        { purpose: 'sig', alg: 'EdDSA' },
+        { purpose: 'kem', alg: 'X25519' },
+      ],
+    })
+    const record = (await signer.signToken(
+      { jti, rev: true, iat: Math.floor(Date.now() / 1000) },
+      { embedLongForm: false },
+    )) as RevocationRecord
+    // Pinned: without this the record would carry its own document and need no resolver at all,
+    // and the three tests below would not be exercising the resolver option.
+    expect(record.payload.iss).toBe(signer.id)
+    return { signer, record, doc: decodePeer4(signer.longForm).doc }
+  }
+
+  test('a short-form did:peer:4 record revokes when the checker is given a resolver', async () => {
+    const { signer, record, doc } = await buildShortFormRecord('cap-shortform')
+    const capability = await createCapability(signer, {
+      sub: signer.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-shortform',
+    })
+    const resolver = (did: string) => (did === signer.id ? doc : undefined)
+
+    const backend = createMemoryRevocationBackend({ resolver })
+    await backend.add(record)
+    const checker = createRevocationChecker(backend, { resolver })
+    await expect(checker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
+
+    // Control: the same record and the same backend contents, with no resolver on the checker,
+    // fail closed instead — so the revocation above is the resolver option doing its job.
+    const blind = createRevocationChecker(backend)
+    await expect(checker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
+    await expect(blind(capability, stringifyToken(capability))).rejects.toThrow(
+      UnresolvableIssuerError,
+    )
+  })
+
+  test('a resolver answering with a mismatched doc denies rather than silently passing', async () => {
+    // The resolver answers, but with a document that does not hash to the DID asked for. No key
+    // is obtained, so revocation is unknown — and a broken or lying resolver must not be able to
+    // suppress a revocation by reading as "not revoked".
+    const { signer, record, doc } = await buildShortFormRecord('cap-mismatch')
+    const capability = await createCapability(signer, {
+      sub: signer.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-mismatch',
+    })
+    const backend = createMemoryRevocationBackend({ resolver: () => doc })
+    await backend.add(record)
+
+    // Some other identity's document, returned for this signer's short form.
+    const other = await createIdentity({
+      keys: [
+        { purpose: 'sig', alg: 'EdDSA' },
+        { purpose: 'kem', alg: 'X25519' },
+      ],
+    })
+    const lying = createRevocationChecker(backend, {
+      resolver: () => decodePeer4(other.longForm).doc,
+    })
+    await expect(lying(capability, stringifyToken(capability))).rejects.toThrow(
+      UnresolvableIssuerError,
+    )
+  })
+
+  test('a resolver answering with an oversized doc denies rather than silently passing', async () => {
+    const { signer, record, doc } = await buildShortFormRecord('cap-oversized')
+    const capability = await createCapability(signer, {
+      sub: signer.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-oversized',
+    })
+    const backend = createMemoryRevocationBackend({ resolver: () => doc })
+    await backend.add(record)
+
+    // Same document, inflated past the size bound. The bound rejects the answer, so no key is
+    // obtained — identical outcome to the mismatch above.
+    const oversized = {
+      ...doc,
+      verificationMethod: Array.from({ length: 500 }, (_, index) => ({
+        ...doc.verificationMethod[0],
+        id: `#key-${index}`,
+      })),
+    }
+    const flooding = createRevocationChecker(backend, { resolver: () => oversized })
+    await expect(flooding(capability, stringifyToken(capability))).rejects.toThrow(
+      UnresolvableIssuerError,
+    )
   })
 
   test('a revocation record whose issuer cannot be resolved fails closed', async () => {

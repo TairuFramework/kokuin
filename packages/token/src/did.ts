@@ -91,8 +91,10 @@ export function getSignatureInfo(did: string): [SignatureAlgorithm, Uint8Array] 
 const UNRESOLVABLE_ISSUER_BRAND = '@kokuin/token/UnresolvableIssuerError'
 
 /**
- * The issuer of a token could not be resolved to a signing key at all: no built-in method, no
- * `DIDResolver` and no `MethodRegistry` entry could turn the `iss` value into a key.
+ * The issuer of a token could not be resolved to a usable signing key: no built-in method, no
+ * `DIDResolver` and no `MethodRegistry` entry could turn the `iss` value into one. That covers a
+ * resolver that has no answer, one that throws, and one whose answer is unusable — an oversized
+ * document, or a document that does not hash to the DID that was asked for.
  *
  * Kept distinct from every other verification failure on purpose. `Invalid signature`, a missing
  * `kid`, a `kid` that is not an authentication method — those mean the issuer *was* resolved and
@@ -202,17 +204,28 @@ export async function resolveIssuerWithDoc(
     if (doc == null) {
       throw new UnresolvableIssuerError(`Unknown DID: ${shortForm}`)
     }
-    // The two checks below stay ordinary errors: the resolver *answered*, and its answer is
-    // provably wrong — an oversized document, or one that does not hash to the DID that was
-    // asked for. That is a fault in the resolver, not an unreachable issuer, and it reads
-    // differently to a caller. Note the consequence honestly: a caller like the revocation
-    // checker, which only fails closed on `UnresolvableIssuerError`, treats a lying resolver as
-    // non-revoking. Typing them would close that, at the cost of letting any resolver that
-    // returns junk force every revocation check to fail.
-    assertDocWithinMaxSize(doc)
+    // A resolver that answers with something unusable — an oversized document, or one that does
+    // not hash to the DID that was asked for — counts as unresolvable, not as an ordinary fault.
+    // On a security boundary that is the only safe reading: a caller that fails closed solely on
+    // `UnresolvableIssuerError` would otherwise take a broken or lying resolver as "not revoked",
+    // which is the same fail-open this type exists to remove, one layer out.
+    //
+    // The availability objection does not survive inspection. A resolver willing to lie about
+    // documents already controls resolution completely — it can hand back an attacker's key and
+    // forge anything — so it has strictly stronger powers than a denial of service and never
+    // needs one. A bounded availability cost to a party that already holds the keys is the right
+    // trade against a real bypass.
+    try {
+      assertDocWithinMaxSize(doc)
+    } catch (cause) {
+      throw new UnresolvableIssuerError(
+        cause instanceof Error ? cause.message : `Unknown DID: ${shortForm}`,
+        { cause },
+      )
+    }
     const expected = encodePeer4(doc).shortForm
     if (expected !== shortForm) {
-      throw new Error('DIDResolver: short form/doc hash mismatch')
+      throw new UnresolvableIssuerError('DIDResolver: short form/doc hash mismatch')
     }
     const [alg, publicKey] = resolveKidOrAuth(doc, header.kid)
     return { alg, publicKey, peer4Doc: { shortForm, doc } }

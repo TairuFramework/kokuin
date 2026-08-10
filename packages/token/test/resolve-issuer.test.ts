@@ -234,9 +234,11 @@ describe('resolveIssuerWithDoc', () => {
     expect(isUnresolvableIssuerError(empty)).toBe(true)
   })
 
-  it('leaves a resolver that answers with a mismatched doc an ordinary error', async () => {
-    // Control for the test above, and the boundary of the type: this resolver *answered*, and
-    // its answer is provably wrong. That is a fault in the resolver, not an unreachable issuer.
+  it('types a resolver that answers with a mismatched doc as unresolvable', async () => {
+    // The resolver answered, but its answer does not hash to the DID that was asked for, so no
+    // key was obtained. Left an ordinary error this would read as "not revoked" to a caller that
+    // fails closed only on this type — a broken or lying resolver silently suppressing
+    // revocation, which is the fail-open this type exists to remove.
     const priv = ed25519.utils.randomSecretKey()
     const pub = ed25519.getPublicKey(priv)
     const ed25519Codec = new Uint8Array([0xed, 0x01])
@@ -255,8 +257,42 @@ describe('resolveIssuerWithDoc', () => {
       { kid: '#key-0' },
       resolver,
     ).catch((error: unknown) => error)
-    expect(thrown).toBeInstanceOf(Error)
-    expect(isUnresolvableIssuerError(thrown)).toBe(false)
+    expect(isUnresolvableIssuerError(thrown)).toBe(true)
+    // The message is unchanged, so a caller reading it still learns what went wrong.
+    expect((thrown as Error).message).toMatch(/hash mismatch/i)
+  })
+
+  it('types a resolver that answers with an oversized doc as unresolvable', async () => {
+    // Same reasoning as the mismatch above: the size bound rejects the answer, so no key was
+    // obtained, so the issuer is unresolved. The entry-count arm is used here because it trips
+    // in O(1) without building a 4KB document.
+    const priv = ed25519.utils.randomSecretKey()
+    const pub = ed25519.getPublicKey(priv)
+    const ed25519Codec = new Uint8Array([0xed, 0x01])
+    const taggedPub = new Uint8Array(ed25519Codec.length + pub.length)
+    taggedPub.set(ed25519Codec, 0)
+    taggedPub.set(pub, ed25519Codec.length)
+    const publicKeyMultibase = encodeMultibase(taggedPub)
+    const { shortForm } = encodePeer4({
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase }],
+      authentication: ['#key-0'],
+    })
+    // Resolves the *correct* short form, so the hash check is not what rejects this.
+    const resolver = () => ({
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: Array.from({ length: 500 }, (_, i) => ({
+        id: `#key-${i}`,
+        type: 'Multikey',
+        publicKeyMultibase,
+      })),
+      authentication: ['#key-0'],
+    })
+    const thrown = await resolveIssuerWithDoc(shortForm, { kid: '#key-0' }, resolver).catch(
+      (error: unknown) => error,
+    )
+    expect(isUnresolvableIssuerError(thrown)).toBe(true)
+    expect((thrown as Error).message).toMatch(/too many verification methods/i)
   })
 
   it('brands the error so a duplicated copy of this package still matches', async () => {

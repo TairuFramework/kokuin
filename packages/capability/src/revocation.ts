@@ -1,4 +1,10 @@
-import type { MethodRegistry, SignedToken, SigningIdentity } from '@kokuin/token'
+import type {
+  DIDCache,
+  DIDResolver,
+  MethodRegistry,
+  SignedToken,
+  SigningIdentity,
+} from '@kokuin/token'
 import { isUnresolvableIssuerError, normalizeDID, verifyToken } from '@kokuin/token'
 
 import type { CapabilityToken, VerifyTokenHook } from './index.js'
@@ -29,12 +35,33 @@ export type RevocationBackend = {
 }
 
 /**
- * How a revocation record's issuer is resolved. A record signed by a DID whose keys are not
- * recoverable from the identifier — `did:kokuin:` — cannot be verified without the registry that
- * resolves its method, so both the backend and the checker need it.
+ * How a revocation record's issuer is resolved, mirroring the three resolution inputs
+ * `DelegationChainOptions` already carries.
+ *
+ * All three matter now that an unresolvable issuer is a hard rejection rather than a silent pass:
+ * a record this cannot resolve denies the capability, so every issuer shape a deployment uses
+ * must have a way in. Both the backend and the checker take these, since each verifies
+ * independently.
  */
 export type RevocationOptions = {
+  /**
+   * DID method registry. Required when a record is signed by a method that cannot be resolved
+   * from the identifier alone, such as `did:kokuin:`.
+   */
   methods?: MethodRegistry
+  /** Resolver for `did:peer:4` short forms not in `cache`. */
+  resolver?: DIDResolver
+  /** DID cache for `did:peer:4` issuers. Populated on long-form first contact. */
+  cache?: DIDCache
+}
+
+// Spread into both `verifyToken` calls, so the two paths cannot drift apart.
+function verifyOptions(options?: RevocationOptions): {
+  methods?: MethodRegistry
+  resolver?: DIDResolver
+  cache?: DIDCache
+} {
+  return { methods: options?.methods, resolver: options?.resolver, cache: options?.cache }
 }
 
 export function createMemoryRevocationBackend(options?: RevocationOptions): RevocationBackend {
@@ -43,7 +70,7 @@ export function createMemoryRevocationBackend(options?: RevocationOptions): Revo
     async add(record: RevocationRecord): Promise<void> {
       // Verify the record's signature before trusting it. Without this, a forged record could
       // be stored and later used to revoke another issuer's token.
-      const verified = await verifyToken<RevocationClaims>(record, { methods: options?.methods })
+      const verified = await verifyToken<RevocationClaims>(record, verifyOptions(options))
       if (verified.payload.rev !== true || typeof verified.payload.jti !== 'string') {
         throw new Error('Invalid revocation record')
       }
@@ -72,7 +99,7 @@ export function createRevocationChecker(
     // unverified record. A record with an invalid signature does not revoke anything.
     let verified: RevocationRecord
     try {
-      verified = await verifyToken<RevocationClaims>(record, { methods: options?.methods })
+      verified = await verifyToken<RevocationClaims>(record, verifyOptions(options))
     } catch (error) {
       // The two failures are not symmetric, and collapsing them is a fail-open.
       //
