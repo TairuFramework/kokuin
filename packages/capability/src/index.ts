@@ -77,6 +77,19 @@ export type CreateCapabilityOptions = {
    * The signer must be the audience of the parent capability.
    */
   parentCapability?: string
+  /** Optional DID cache for resolving did:peer:4 issuers. Populated on long-form first contact. */
+  cache?: DIDCache
+  /** Optional resolver for did:peer:4 short forms not in cache. */
+  resolver?: DIDResolver
+  /**
+   * Optional DID method registry, forwarded to `verifyToken` when verifying the parent
+   * capability. Required when the parent is issued by a method that cannot be resolved from the
+   * identifier alone, such as `did:kokuin:` — the same reason `DelegationChainOptions` carries
+   * it for every other link in a chain. A parent issued by a `did:peer:4` short form has the
+   * identical resolution problem, so `cache` and `resolver` travel with it here too, rather than
+   * leaving this one call site one option short of its neighbours.
+   */
+  methods?: MethodRegistry
 }
 
 export type Permission = {
@@ -229,7 +242,11 @@ export async function createCapability<
   }
 
   // Verify and validate the parent capability
-  const parent = await verifyToken<CapabilityPayload>(options.parentCapability)
+  const parent = await verifyToken<CapabilityPayload>(options.parentCapability, {
+    cache: options.cache,
+    resolver: options.resolver,
+    methods: options.methods,
+  })
   assertCapabilityToken(parent)
 
   if (normalizeDID(parent.payload.aud) !== normalizeDID(signerID)) {

@@ -1,4 +1,14 @@
-import { randomIdentity, stringifyToken, verifyToken } from '@kokuin/token'
+import {
+  createIdentity,
+  createInMemoryDIDCache,
+  createSigningIdentityForDID,
+  type DIDMethodResolver,
+  type DIDString,
+  randomIdentity,
+  randomPrivateKey,
+  stringifyToken,
+  verifyToken,
+} from '@kokuin/token'
 import { describe, expect, test, vi } from 'vitest'
 
 import {
@@ -1009,6 +1019,109 @@ describe('createCapability() - delegation validation (C-03)', () => {
         { parentCapability: stringifyToken(rootCap) },
       ),
     ).rejects.toThrow('audience')
+  })
+
+  test('delegates from a did:kokuin: root when methods is provided, and fails without it', async () => {
+    // A DID whose keys cannot be recovered from the identifier -- the shape `did:kokuin:` has.
+    // The resolver here is a hand-built fake: this package must not depend on
+    // `@kokuin/controller`, and a real folded log would prove nothing extra about the option
+    // threading. Mirrors the idiom in `test/method-registry.test.ts`.
+    const profileDID = 'did:kokuin:zTestProfile' as DIDString
+    const root = createSigningIdentityForDID(profileDID, randomPrivateKey())
+    const resolver: DIDMethodResolver = {
+      method: 'kokuin',
+      resolve: async (did: string) => {
+        if (did !== profileDID) {
+          throw new Error(`Unknown DID: ${did}`)
+        }
+        return { alg: 'EdDSA', publicKey: root.publicKey }
+      },
+    }
+    const bob = randomIdentity()
+    const carol = randomIdentity()
+
+    const rootCap = await createCapability(root, {
+      sub: profileDID,
+      aud: bob.id,
+      act: '*',
+      res: 'foo/*',
+    })
+
+    const delegated = await createCapability(
+      bob,
+      {
+        sub: profileDID,
+        aud: carol.id,
+        act: 'test/read',
+        res: 'foo/bar',
+      },
+      undefined,
+      { parentCapability: stringifyToken(rootCap), methods: [resolver] },
+    )
+    expect(delegated.payload.iss).toBe(bob.id)
+    expect(delegated.payload.sub).toBe(profileDID)
+
+    // Without the registry, the did:kokuin: parent capability cannot be verified at all -- an
+    // implementation that ignores `methods` here would pass the assertion above but not this one.
+    await expect(
+      createCapability(
+        bob,
+        {
+          sub: profileDID,
+          aud: carol.id,
+          act: 'test/read',
+          res: 'foo/bar',
+        },
+        undefined,
+        { parentCapability: stringifyToken(rootCap) },
+      ),
+    ).rejects.toThrow(`Unknown DID: ${profileDID}`)
+  })
+
+  test('delegates from a did:peer:4 short-form root when cache is provided, and fails without it', async () => {
+    // The same resolution gap `methods` closes for did:kokuin: exists for a did:peer:4 short
+    // form the verifier has not seen yet -- `cache` and `resolver` travel with `methods` on
+    // `CreateCapabilityOptions` for that reason.
+    const alice = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    const bob = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    const carol = randomIdentity()
+
+    // Alice signs with her short form: without a cache entry or resolver, nothing can turn that
+    // short form back into her signing key.
+    const rootCap = await alice.signToken(
+      { sub: alice.id, aud: bob.id, act: '*', res: 'foo/*' },
+      { embedLongForm: false },
+    )
+    const cache = createInMemoryDIDCache()
+    await cache.set(alice.id, alice.doc)
+
+    const delegated = await createCapability(
+      bob,
+      { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+      undefined,
+      { parentCapability: stringifyToken(rootCap), cache },
+    )
+    // First contact with carol: bob's own signer embeds his long form, unrelated to the option
+    // under test.
+    expect(delegated.payload.iss).toBe(bob.longForm)
+    expect(delegated.payload.sub).toBe(alice.id)
+
+    // Without the cache, an implementation that ignores it here would pass the assertion above
+    // but not this one.
+    await expect(
+      createCapability(
+        bob,
+        { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+        undefined,
+        { parentCapability: stringifyToken(rootCap) },
+      ),
+    ).rejects.toThrow(`Unknown DID: ${alice.id}`)
   })
 })
 
