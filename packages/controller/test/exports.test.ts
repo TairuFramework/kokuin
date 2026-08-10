@@ -28,6 +28,7 @@ describe('public surface', () => {
       'verifyReset',
       'verifyRevoke',
       'verifySignatures',
+      'verifyEventSignedBy',
       'foldLog',
       'foldLogAsync',
       'keyStateAt',

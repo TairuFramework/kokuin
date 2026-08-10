@@ -1,9 +1,12 @@
+import type { ResolvedSigningKey } from '@kokuin/token'
+
 import { digestOf } from './canonical.js'
 import {
   type InceptionEvent,
   type RevokeEvent,
   type RotateEvent,
   type SignedEvent,
+  verifyEventSignedBy,
   verifyInception,
   verifyReset,
   verifyRevoke,
@@ -39,8 +42,23 @@ export type FoldOptions = {
    *
    * Receives the serialized capability, the controller DID (which must be the capability `sub`),
    * and the DID being denied.
+   *
+   * Returns the signing key of the party the capability authorises — its `aud`, resolved — or
+   * `null` when the capability does not authorise this revoke. It returns a key rather than a
+   * boolean because the fold, not the verifier, must be the one that binds the answer to the event
+   * in hand: the log is public, so the serialized capability inside a revoke is readable by
+   * everyone who can resolve the DID, and a boolean would make every such reader able to lift it
+   * out and author their own revoke of anything its `res` covers — a wildcard `res`, which is the
+   * shape a management capability actually has, covers every device on the profile. Resolving the
+   * audience needs a DID resolver, which the fold does not have; checking a signature over the
+   * canonical event bytes needs the event, which the verifier does not have. Splitting it this way
+   * is the only division where neither side can leave the binding out.
    */
-  verifyCapability?: (cap: string, subject: string, target: string) => Promise<boolean>
+  verifyCapability?: (
+    cap: string,
+    subject: string,
+    target: string,
+  ) => Promise<ResolvedSigningKey | null>
 }
 
 function fail(reason: string, index: number): FoldResult {
@@ -50,8 +68,17 @@ function fail(reason: string, index: number): FoldResult {
 type StepOutcome =
   | { status: 'ok'; state: KeyState }
   | { status: 'fail'; reason: string }
-  /** A cap-bearing revoke: `state` is what to apply *if* the capability verifies. */
-  | { status: 'capability'; cap: string; target: string; state: KeyState }
+  /**
+   * A cap-bearing revoke: `state` is what to apply *if* the capability verifies, and `signed` is
+   * the event itself, whose signature must be checked against the key the capability authorises.
+   */
+  | {
+      status: 'capability'
+      cap: string
+      target: string
+      state: KeyState
+      signed: SignedEvent<RevokeEvent>
+    }
 
 /**
  * Validate one event against the state so far and produce the next state. Pure and total — every
@@ -131,7 +158,7 @@ function stepEvent(
     const state: KeyState = { ...prior, seq: rev.event.s, deny, digest: digestOf(rev.event) }
 
     if (rev.event.cap != null) {
-      return { status: 'capability', cap: rev.event.cap, target: rev.event.x, state }
+      return { status: 'capability', cap: rev.event.cap, target: rev.event.x, state, signed: rev }
     }
     if (!verifyRevoke(rev, { digest: prior.digest, keys: prior.keys })) {
       return { status: 'fail', reason: 'invalid revoke' }
@@ -249,8 +276,15 @@ export async function foldLogAsync(
       if (options.verifyCapability == null) {
         return fail(`capability-authorised revoke needs a verifier: ${outcome.cap}`, i)
       }
-      if (!(await options.verifyCapability(outcome.cap, did, outcome.target))) {
+      const author = await options.verifyCapability(outcome.cap, did, outcome.target)
+      if (author == null) {
         return fail('capability does not authorise this revoke', i)
+      }
+      // The capability authorises its audience, not its bearer. Checked here rather than left to
+      // the verifier so that a verifier which simply forgot cannot make the fold accept a revoke
+      // from anyone who read the log — see `FoldOptions.verifyCapability`.
+      if (!verifyEventSignedBy(outcome.signed, author)) {
+        return fail('revoke is not signed by the capability audience', i)
       }
     }
     states.push(outcome.state)

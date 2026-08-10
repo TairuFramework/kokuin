@@ -34,6 +34,7 @@ export {
   type RevokeEvent,
   type RotateEvent,
   type SignedEvent,
+  verifyEventSignedBy,
   verifyInception,
   verifyReset,
   verifyRevoke,

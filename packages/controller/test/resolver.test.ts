@@ -1,5 +1,7 @@
+import type { ResolvedSigningKey } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
+import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
   createRevoke,
@@ -16,6 +18,11 @@ const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 // carries can authorise it.
 const delegateSeed = new Uint8Array(32).fill(3)
 const cap = 'eyJ.delegated.revoke'
+/** What the capability's `aud` resolves to: the key the delegate signs the revoke with. */
+const delegateKey: ResolvedSigningKey = {
+  alg: 'EdDSA',
+  publicKey: deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
+}
 
 function build() {
   const icp = createInception(seed, 0)
@@ -140,7 +147,7 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
       loadLog: async () => log,
       verifyCapability: async (capability, subject, target) => {
         seen.push([capability, subject, target])
-        return true
+        return delegateKey
       },
     })
 
@@ -156,7 +163,7 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
     const { did, log } = capLog()
     const resolver = createControllerResolver({
       loadLog: async () => log,
-      verifyCapability: async () => false,
+      verifyCapability: async () => null,
     })
     await expect(resolver.resolve(did, {})).rejects.toThrow(
       /capability does not authorise this revoke/,
@@ -167,13 +174,13 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
     const { icp, did, log } = capLog()
     const declining = createControllerResolver({
       loadLog: async () => log,
-      verifyCapability: async () => false,
+      verifyCapability: async () => null,
     })
     await expect(declining.resolveAgreementKey?.(did)).rejects.toThrow(/capability/)
 
     const accepting = createControllerResolver({
       loadLog: async () => log,
-      verifyCapability: async () => true,
+      verifyCapability: async () => delegateKey,
     })
     const keys = await accepting.resolveAgreementKey?.(did)
     // A revoke carries the agreement set forward, so it is still the inception's.

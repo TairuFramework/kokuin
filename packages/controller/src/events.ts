@@ -1,4 +1,4 @@
-import type { DIDString } from '@kokuin/token'
+import type { DIDString, ResolvedSigningKey } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { base64urlnopad } from '@scure/base'
 
@@ -112,6 +112,34 @@ export function verifySignatures(
     }
   }
   return true
+}
+
+/**
+ * Whether one of an event's signatures was made by `key`.
+ *
+ * The counterpart of {@link verifySignatures} for a signer the *event* does not name: that one
+ * checks signatures positionally against a published key set, this one asks whether a particular
+ * key — resolved from a DID elsewhere — is among the authors. A capability-authorised revoke needs
+ * exactly this and nothing more: its author is the capability's `aud`, which the fold cannot
+ * resolve, so it is handed the key and checks the signature itself.
+ *
+ * Total: a malformed signature, or an algorithm this log's events cannot be signed with, yields
+ * `false`. Only EdDSA is accepted, because that is all {@link signEvent} produces — an ES256
+ * audience therefore cannot author a revoke, which fails closed and is the honest answer until
+ * events grow a second signature algorithm.
+ */
+export function verifyEventSignedBy(signed: SignedEvent, key: ResolvedSigningKey): boolean {
+  if (key.alg !== 'EdDSA' || signed.sigs.length === 0) {
+    return false
+  }
+  const bytes = canonicalBytes(signed.event)
+  return signed.sigs.some((sig) => {
+    try {
+      return ed25519.verify(base64urlnopad.decode(sig), bytes, key.publicKey)
+    } catch {
+      return false
+    }
+  })
 }
 
 /**
