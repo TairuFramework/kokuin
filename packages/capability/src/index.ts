@@ -477,6 +477,15 @@ export async function checkCapability(
   await checkDelegationChain(capability.payload, tail, { ...options, atTime: time })
 }
 
+// Re-exported so catching the fail-closed throw needs nothing but this package. `@kokuin/token`
+// is a plain dependency here, not a peer, so a consumer without it would otherwise have to add a
+// direct dependency on token to name the error — the very duplication that makes a cross-copy
+// `instanceof` unreliable.
+export {
+  isUnresolvableIssuerError,
+  UnresolvableIssuerError,
+} from '@kokuin/token'
+
 export type { RevocationBackend, RevocationOptions, RevocationRecord } from './revocation.js'
 export {
   createMemoryRevocationBackend,

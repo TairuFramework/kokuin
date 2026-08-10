@@ -2,7 +2,14 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, it } from 'vitest'
 
 import { createInMemoryDIDCache } from '../src/cache.js'
-import { CODECS, getDID, resolveIssuer, resolveIssuerWithDoc } from '../src/did.js'
+import {
+  CODECS,
+  getDID,
+  isUnresolvableIssuerError,
+  resolveIssuer,
+  resolveIssuerWithDoc,
+  UnresolvableIssuerError,
+} from '../src/did.js'
 import { encodeMultibase } from '../src/multibase.js'
 import { encodePeer4 } from '../src/peer4.js'
 
@@ -209,5 +216,55 @@ describe('resolveIssuerWithDoc', () => {
     await expect(resolveIssuerWithDoc(fakeShortForm, { kid: '#key-0' }, resolver)).rejects.toThrow(
       /hash mismatch/i,
     )
+  })
+
+  it('classifies a resolver that throws exactly like one that returns nothing', async () => {
+    // Throwing is the normal style for a network-backed resolver, so a caller that fails closed
+    // on `UnresolvableIssuerError` must see both the same way — otherwise the guarantee holds
+    // only for resolvers that signal failure by returning `undefined`.
+    const thrown = await resolveIssuer('did:peer:4zAAAAA', { kid: '#key-0' }, () => {
+      throw new Error('ECONNREFUSED')
+    }).catch((error: unknown) => error)
+    expect(isUnresolvableIssuerError(thrown)).toBe(true)
+    expect((thrown as UnresolvableIssuerError).cause).toBeInstanceOf(Error)
+
+    const empty = await resolveIssuer('did:peer:4zAAAAA', { kid: '#key-0' }, () => undefined).catch(
+      (error: unknown) => error,
+    )
+    expect(isUnresolvableIssuerError(empty)).toBe(true)
+  })
+
+  it('leaves a resolver that answers with a mismatched doc an ordinary error', async () => {
+    // Control for the test above, and the boundary of the type: this resolver *answered*, and
+    // its answer is provably wrong. That is a fault in the resolver, not an unreachable issuer.
+    const priv = ed25519.utils.randomSecretKey()
+    const pub = ed25519.getPublicKey(priv)
+    const ed25519Codec = new Uint8Array([0xed, 0x01])
+    const taggedPub = new Uint8Array(ed25519Codec.length + pub.length)
+    taggedPub.set(ed25519Codec, 0)
+    taggedPub.set(pub, ed25519Codec.length)
+    const resolver = () => ({
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [
+        { id: '#key-0', type: 'Multikey', publicKeyMultibase: encodeMultibase(taggedPub) },
+      ],
+      authentication: ['#key-0'],
+    })
+    const thrown = await resolveIssuerWithDoc(
+      'did:peer:4zAAAAAAAAAAAAAAAAAAAAAA',
+      { kid: '#key-0' },
+      resolver,
+    ).catch((error: unknown) => error)
+    expect(thrown).toBeInstanceOf(Error)
+    expect(isUnresolvableIssuerError(thrown)).toBe(false)
+  })
+
+  it('brands the error so a duplicated copy of this package still matches', async () => {
+    const thrown = await resolveIssuer('did:example:nobody').catch((error: unknown) => error)
+    expect(isUnresolvableIssuerError(thrown)).toBe(true)
+    // What a second copy of the class would compare against — a string, not an identity.
+    expect((thrown as UnresolvableIssuerError).brand).toBe(UnresolvableIssuerError.brand)
+    // The guard must not fire on an unrelated error that merely happens to be an Error.
+    expect(isUnresolvableIssuerError(new Error('Invalid signature'))).toBe(false)
   })
 })

@@ -22,6 +22,7 @@ export {
   getAlgorithmAndPublicKey,
   getDID,
   getSignatureInfo,
+  isUnresolvableIssuerError,
   normalizeDID,
   type ResolveIssuerHeader,
   type ResolveIssuerWithDocResult,

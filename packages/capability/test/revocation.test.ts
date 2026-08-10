@@ -4,11 +4,11 @@ import {
   type DIDMethodResolver,
   type DIDString,
   randomIdentity,
+  randomPrivateKey,
   type SigningIdentity,
   stringifyToken,
   UnresolvableIssuerError,
 } from '@kokuin/token'
-import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
 import { checkDelegationChain, createCapability } from '../src/index.js'
@@ -16,6 +16,7 @@ import {
   createMemoryRevocationBackend,
   createRevocationChecker,
   createRevocationRecord,
+  type RevocationRecord,
 } from '../src/revocation.js'
 
 // A DID whose keys cannot be recovered from the identifier — the shape `did:kokuin:` has. The
@@ -25,7 +26,7 @@ import {
 const profileDID = 'did:kokuin:zTestProfile' as DIDString
 
 function buildProfile(): { identity: SigningIdentity; resolver: DIDMethodResolver } {
-  const identity = createSigningIdentityForDID(profileDID, ed25519.utils.randomSecretKey())
+  const identity = createSigningIdentityForDID(profileDID, randomPrivateKey())
   const resolver: DIDMethodResolver = {
     method: 'kokuin',
     resolve: async (did: string) => {
@@ -283,6 +284,63 @@ describe('revocation', () => {
     // everything would fail there.
     const checker = createRevocationChecker(untrustingBackend, { methods: [resolver] })
     await expect(checker(capability, stringifyToken(capability))).resolves.toBeUndefined()
+  })
+
+  test('a record naming an unrelated unresolvable issuer does not deny the capability', async () => {
+    // The backend is an untrusted extension point — that is why the checker re-verifies at all —
+    // so it can return a record naming any DID it likes. If the fail-closed throw were not gated
+    // on the issuer matching, that record would deny *any* capability, including one issued by a
+    // plain did:key with no connection to the named DID. That is a denial of service reachable
+    // by design, so the gate is load-bearing.
+    const madeUpDID = 'did:kokuin:zAttackerMadeThisUp' as DIDString
+    const issuer = randomIdentity()
+    const capability = await createCapability(issuer, {
+      sub: issuer.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-unrelated',
+    })
+
+    const genuine = await createRevocationRecord(issuer, 'cap-unrelated')
+    const tampered = {
+      ...genuine,
+      payload: { ...genuine.payload, iss: madeUpDID },
+      signature: 'AAAA',
+    }
+    // `data` must be re-derived to match the tampered header+payload. Left stale it would fail
+    // verification on a data mismatch — an ordinary Error — and the record would never reach
+    // issuer resolution, so the test would pass without exercising the gate at all.
+    const hostile: RevocationRecord = {
+      ...tampered,
+      data: stringifyToken(tampered).split('.').slice(0, 2).join('.'),
+    }
+    const hostileBackend = {
+      async add() {},
+      async get() {
+        return hostile
+      },
+    }
+    const checker = createRevocationChecker(hostileBackend)
+
+    // A record claiming some other issuer could not revoke this token even with a perfect
+    // signature, so being unable to verify it costs nothing.
+    await expect(checker(capability, stringifyToken(capability))).resolves.toBeUndefined()
+
+    // Control isolating the gate: the very same unverifiable record, against a capability that
+    // *does* claim the made-up DID as its issuer, must fail closed. The only difference between
+    // this assertion and the one above is whether the issuers match.
+    const madeUpIdentity = createSigningIdentityForDID(madeUpDID, randomPrivateKey())
+    const targeted = await createCapability(madeUpIdentity, {
+      sub: madeUpDID,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-unrelated',
+    })
+    await expect(checker(targeted, stringifyToken(targeted))).rejects.toThrow(
+      UnresolvableIssuerError,
+    )
   })
 
   test('a did:kokuin: revocation record revokes when the registry is supplied', async () => {

@@ -3,10 +3,10 @@ import {
   type DIDMethodResolver,
   type DIDString,
   randomIdentity,
+  randomPrivateKey,
   type SigningIdentity,
   stringifyToken,
 } from '@kokuin/token'
-import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
 import { checkCapability, checkDelegationChain } from '../src/index.js'
@@ -17,7 +17,7 @@ import { checkCapability, checkDelegationChain } from '../src/index.js'
 const profileDID = 'did:kokuin:zTestProfile' as DIDString
 
 function buildProfile(): { identity: SigningIdentity; resolver: DIDMethodResolver } {
-  const identity = createSigningIdentityForDID(profileDID, ed25519.utils.randomSecretKey())
+  const identity = createSigningIdentityForDID(profileDID, randomPrivateKey())
   const resolver: DIDMethodResolver = {
     method: 'kokuin',
     resolve: async (did: string) => {

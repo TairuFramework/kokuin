@@ -88,6 +88,8 @@ export function getSignatureInfo(did: string): [SignatureAlgorithm, Uint8Array] 
   return info
 }
 
+const UNRESOLVABLE_ISSUER_BRAND = '@kokuin/token/UnresolvableIssuerError'
+
 /**
  * The issuer of a token could not be resolved to a signing key at all: no built-in method, no
  * `DIDResolver` and no `MethodRegistry` entry could turn the `iss` value into a key.
@@ -101,10 +103,38 @@ export function getSignatureInfo(did: string): [SignatureAlgorithm, Uint8Array] 
  * matching is how such a check regresses silently.
  */
 export class UnresolvableIssuerError extends Error {
+  /**
+   * Identifies the error by value rather than by identity. Within this package the throwing and
+   * checking modules are the same copy by construction, so `instanceof` is exact; the brand is
+   * for consumers, where a duplicated `@kokuin/token` in the tree would make a cross-copy
+   * `instanceof` false. That direction fails closed rather than open, so this is hardening, not
+   * a hole — but a consumer discriminating this error should use `isUnresolvableIssuerError`.
+   */
+  static get brand(): string {
+    return UNRESOLVABLE_ISSUER_BRAND
+  }
+
+  /** The brand, readable from an instance — what `isUnresolvableIssuerError` matches on. */
+  get brand(): string {
+    return UNRESOLVABLE_ISSUER_BRAND
+  }
+
   constructor(message: string, options?: ErrorOptions) {
     super(message, options)
     this.name = 'UnresolvableIssuerError'
   }
+}
+
+/**
+ * Whether a thrown value means the issuer could not be resolved.
+ *
+ * Prefer this to `instanceof UnresolvableIssuerError` across a package boundary: it matches on the
+ * brand, so it holds even if the thrower and the checker resolved different copies of this package.
+ */
+export function isUnresolvableIssuerError(value: unknown): value is UnresolvableIssuerError {
+  return (
+    value instanceof Error && (value as { brand?: unknown }).brand === UNRESOLVABLE_ISSUER_BRAND
+  )
 }
 
 export type ResolveIssuerHeader = { kid?: string }
@@ -159,10 +189,26 @@ export async function resolveIssuerWithDoc(
     if (resolver == null) {
       throw new UnresolvableIssuerError(`Unknown DID: ${shortForm}`)
     }
-    const doc = await resolver(shortForm)
+    // Throwing is the normal style for a network-backed resolver — and `verifyToken` routes a
+    // `DIDCache` lookup through this same call — so a resolver that throws must be
+    // indistinguishable from one that returns nothing. Without this, the fail-closed guarantee
+    // would hold only for resolvers that happen to signal failure by returning `undefined`.
+    let doc: DIDDoc | undefined
+    try {
+      doc = await resolver(shortForm)
+    } catch (cause) {
+      throw new UnresolvableIssuerError(`Unknown DID: ${shortForm}`, { cause })
+    }
     if (doc == null) {
       throw new UnresolvableIssuerError(`Unknown DID: ${shortForm}`)
     }
+    // The two checks below stay ordinary errors: the resolver *answered*, and its answer is
+    // provably wrong — an oversized document, or one that does not hash to the DID that was
+    // asked for. That is a fault in the resolver, not an unreachable issuer, and it reads
+    // differently to a caller. Note the consequence honestly: a caller like the revocation
+    // checker, which only fails closed on `UnresolvableIssuerError`, treats a lying resolver as
+    // non-revoking. Typing them would close that, at the cost of letting any resolver that
+    // returns junk force every revocation check to fail.
     assertDocWithinMaxSize(doc)
     const expected = encodePeer4(doc).shortForm
     if (expected !== shortForm) {

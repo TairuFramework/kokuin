@@ -119,15 +119,23 @@ import {
 } from '@kokuin/capability'
 import type {
   RevocationBackend,
+  RevocationOptions,
   RevocationRecord,
   VerifyTokenHook,
 } from '@kokuin/capability'
 
-// In-memory backend — suitable for single-process use; does not survive restarts
-const backend: RevocationBackend = createMemoryRevocationBackend()
+// In-memory backend — suitable for single-process use; does not survive restarts.
+// `methods` is required to verify a record signed by a DID whose keys are not recoverable from
+// the identifier (`did:kokuin:`); omit it when every issuer is a `did:key` or long-form
+// `did:peer:4`.
+const backend: RevocationBackend = createMemoryRevocationBackend({
+  methods: [controllerResolver],
+} satisfies RevocationOptions)
 
-// Wrap it as a VerifyTokenHook
-const revocationHook: VerifyTokenHook = createRevocationChecker(backend)
+// Wrap it as a VerifyTokenHook — pass the same registry, the checker re-verifies on use
+const revocationHook: VerifyTokenHook = createRevocationChecker(backend, {
+  methods: [controllerResolver],
+})
 
 // To revoke a token by its jti:
 // `jtiToRevoke` is the `jti` claim of the token being revoked (from its payload)
@@ -144,8 +152,11 @@ await checkCapability(requested, consumerPayload, {
 **Key points**:
 - `createRevocationRecord(signer, jti)` is `async` and returns `Promise<RevocationRecord>` — always `await` it before calling `backend.add`
 - `VerifyTokenHook` signature: `(token: CapabilityToken, raw: string) => void | Promise<void>` — throw to reject
-- `createMemoryRevocationBackend` is backed by an in-memory `Set`; for persistence, implement `RevocationBackend` (`add` + `isRevoked`)
+- `createMemoryRevocationBackend` is backed by an in-memory `Map` keyed by `jti`; for persistence, implement `RevocationBackend` (`add` + `get`)
 - Revocation plugs in via `DelegationChainOptions.verifyToken` and applies to every link in the chain
+- Both `createMemoryRevocationBackend` and `createRevocationChecker` take an optional `RevocationOptions` (`{ methods?: MethodRegistry }`). Without it a record signed by a `did:kokuin:` issuer cannot be verified at all
+- **The checker fails closed on an unresolvable issuer.** When the record's `iss` matches the token's but cannot be resolved to a key, it throws `UnresolvableIssuerError` (re-exported from `@kokuin/capability`, with an `isUnresolvableIssuerError()` guard) rather than treating the token as un-revoked — "I could not check" is not evidence of non-revocation. A record with an invalid signature, or one naming a *different* issuer, is still ignored: neither could revoke this token anyway
+- Because of that, forgetting `methods` on the checker turns every `did:kokuin:`-issued capability with a stored revocation record into a hard verification failure — it does not silently pass
 
 ## When to Use What
 

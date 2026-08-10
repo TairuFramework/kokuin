@@ -1,5 +1,5 @@
 import type { MethodRegistry, SignedToken, SigningIdentity } from '@kokuin/token'
-import { normalizeDID, UnresolvableIssuerError, verifyToken } from '@kokuin/token'
+import { isUnresolvableIssuerError, normalizeDID, verifyToken } from '@kokuin/token'
 
 import type { CapabilityToken, VerifyTokenHook } from './index.js'
 import { now } from './index.js'
@@ -84,7 +84,18 @@ export function createRevocationChecker(
       // token, and we simply cannot tell. "I could not check" is not evidence of non-revocation,
       // so it must propagate and fail the verification rather than pass it. For a `did:kokuin:`
       // issuer this is every record until `options.methods` carries its resolver.
-      if (error instanceof UnresolvableIssuerError) {
+      //
+      // Gate that on the record's *unverified* `iss` naming this token's issuer. Reading an
+      // unverified claim is sound here because of which way it decides: a record claiming some
+      // *other* issuer could not revoke this token even with a perfect signature, so swallowing
+      // it loses nothing; only a record claiming *this token's* issuer leaves revocation
+      // genuinely unknown. Without the gate, the backend — an untrusted extension point, which
+      // is why this re-verifies at all — could deny any capability by returning a record naming
+      // an unresolvable DID it invented.
+      if (
+        isUnresolvableIssuerError(error) &&
+        normalizeDID(record.payload.iss) === normalizeDID(token.payload.iss)
+      ) {
         throw error
       }
       return
