@@ -4,6 +4,7 @@ import type {
   MethodRegistry,
   SignedToken,
   SigningIdentity,
+  VerifyTokenOptions,
 } from '@kokuin/token'
 import { isUnresolvableIssuerError, normalizeDID, verifyToken } from '@kokuin/token'
 
@@ -55,12 +56,14 @@ export type RevocationOptions = {
   cache?: DIDCache
 }
 
-// Spread into both `verifyToken` calls, so the two paths cannot drift apart.
-function verifyOptions(options?: RevocationOptions): {
-  methods?: MethodRegistry
-  resolver?: DIDResolver
-  cache?: DIDCache
-} {
+// Spread into both `verifyToken` calls, so the two paths cannot drift apart. Typed as a `Pick` of
+// `VerifyTokenOptions` rather than re-spelled inline: it keeps the three names tied to the source
+// of truth, and makes the set this forwards legible next to the set `verifyToken` accepts. It does
+// not force a future field on `VerifyTokenOptions` to be considered here — nothing in the type
+// system can — but it puts the two lists side by side for whoever adds one.
+function verifyOptions(
+  options?: RevocationOptions,
+): Pick<VerifyTokenOptions, 'methods' | 'resolver' | 'cache'> {
   return { methods: options?.methods, resolver: options?.resolver, cache: options?.cache }
 }
 

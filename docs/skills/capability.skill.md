@@ -108,7 +108,7 @@ await checkDelegationChain(consumerPayload, [delegatedCapStr, rootCapStr], {
 
 ### Pattern 4: Revocation
 
-Wire a `RevocationBackend` into `DelegationChainOptions.verifyToken` using `createRevocationChecker`. The hook is called for every token in the chain after signature verification; throwing rejects the chain.
+Wire a `RevocationBackend` into `DelegationChainOptions.verifyToken` using `createRevocationChecker`. The hook is called for every capability in the `cap` chain after its signature is verified; throwing rejects the chain.
 
 ```typescript
 import {
@@ -148,9 +148,13 @@ const revocationHook: VerifyTokenHook = createRevocationChecker(backend, resolut
 const record: RevocationRecord = await createRevocationRecord(revokerIdentity, jtiToRevoke)
 await backend.add(record)
 
-// Check with revocation enabled — any revoked token in the chain causes rejection
+// Check with revocation enabled — any revoked capability in the chain causes rejection.
+// The same resolution inputs are needed here: chain verification resolves each link's issuer
+// itself, and does so *before* the hook runs. Passing only `verifyToken` would throw on the
+// first `did:kokuin:` link and never reach the revocation check at all.
 const requested: Permission = { act: 'read', res: 'docs/report' }
 await checkCapability(requested, consumerPayload, {
+  ...resolution,
   verifyToken: revocationHook,
 })
 ```
@@ -159,7 +163,8 @@ await checkCapability(requested, consumerPayload, {
 - `createRevocationRecord(signer, jti)` is `async` and returns `Promise<RevocationRecord>` — always `await` it before calling `backend.add`
 - `VerifyTokenHook` signature: `(token: CapabilityToken, raw: string) => void | Promise<void>` — throw to reject
 - `createMemoryRevocationBackend` is backed by an in-memory `Map` keyed by `jti`; for persistence, implement `RevocationBackend` (`add` + `get`)
-- Revocation plugs in via `DelegationChainOptions.verifyToken` and applies to every link in the chain
+- Revocation plugs in via `DelegationChainOptions.verifyToken` and applies to every capability in the `cap` chain — but **not** to the invocation payload you pass as `checkCapability`'s second argument. A self-issued token with an empty chain is never passed to the hook, so its own `jti` is never revocation-checked; revoke the capability it rests on, or check the leaf yourself
+- `DelegationChainOptions` carries `methods` / `resolver` / `cache` too, and uses them to verify each link before the hook runs. Pass them there as well as to the checker — omitting them fails the chain before revocation is ever consulted
 - Both `createMemoryRevocationBackend` and `createRevocationChecker` take an optional `RevocationOptions` (`{ methods?, resolver?, cache? }`) — the same three resolution inputs `DelegationChainOptions` carries. Each verifies independently, so pass the same options to both
 - **The checker fails closed on an unresolvable issuer.** When the record's `iss` matches the token's but cannot be resolved to a key, it throws `UnresolvableIssuerError` (re-exported from `@kokuin/capability`, with an `isUnresolvableIssuerError()` guard) rather than treating the token as un-revoked — "I could not check" is not evidence of non-revocation. A record with an invalid signature, or one naming a *different* issuer, is still ignored: neither could revoke this token anyway
 - "Unresolvable" includes a resolver that throws, one that returns nothing, and one whose answer is unusable — an oversized document, or a document that does not hash to the DID requested. A broken or lying resolver must not be able to suppress a revocation by reading as "not revoked"

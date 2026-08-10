@@ -1,5 +1,6 @@
 import {
   createIdentity,
+  createInMemoryDIDCache,
   createSigningIdentityForDID,
   type DIDDoc,
   type DIDMethodResolver,
@@ -283,6 +284,80 @@ describe('revocation', () => {
     await expect(blind(capability, stringifyToken(capability))).rejects.toThrow(
       UnresolvableIssuerError,
     )
+  })
+
+  test('a short-form did:peer:4 record revokes when resolution comes only from the cache', async () => {
+    // `cache` is the third resolution input and the only one with no resolver behind it here:
+    // `verifyToken` composes the cache into its effective resolver, so a pre-populated cache is
+    // sufficient on its own. Without `cache` forwarded there is nothing to resolve the short form
+    // and this fails closed instead of revoking.
+    const { signer, record, doc } = await buildShortFormRecord('cap-cached')
+    const capability = await createCapability(signer, {
+      sub: signer.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-cached',
+    })
+    const cache = createInMemoryDIDCache()
+    await cache.set(signer.id, doc)
+
+    // Note: no `resolver` anywhere in this test, on either the backend or the checker.
+    const backend = createMemoryRevocationBackend({ cache })
+    await backend.add(record)
+    const checker = createRevocationChecker(backend, { cache })
+    await expect(checker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
+
+    // Control: an empty cache, everything else identical, fails closed — so the revocation above
+    // is the cache being consulted and not some other path resolving the issuer.
+    const blind = createRevocationChecker(backend, { cache: createInMemoryDIDCache() })
+    await expect(blind(capability, stringifyToken(capability))).rejects.toThrow(
+      UnresolvableIssuerError,
+    )
+  })
+
+  test('a resolver that throws denies rather than silently passing', async () => {
+    // The counterpart at the checker to the token-level classification test. This is the likeliest
+    // real-world failure of the three — a network-backed resolver that is down — and if the throw
+    // escaped as an ordinary error the checker would swallow it and report "not revoked".
+    const { signer, record, doc } = await buildShortFormRecord('cap-throwing')
+    const capability = await createCapability(signer, {
+      sub: signer.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-throwing',
+    })
+    const backend = createMemoryRevocationBackend({ resolver: () => doc })
+    await backend.add(record)
+
+    const down = createRevocationChecker(backend, {
+      resolver: () => {
+        throw new Error('ECONNREFUSED')
+      },
+    })
+    await expect(down(capability, stringifyToken(capability))).rejects.toThrow(
+      UnresolvableIssuerError,
+    )
+
+    // The same path reached through the cache: `verifyToken` composes `cache.get` into the
+    // effective resolver, so a cache that throws surfaces here identically.
+    const brokenCache = createRevocationChecker(backend, {
+      cache: {
+        get: async () => {
+          throw new Error('cache backend unavailable')
+        },
+        set: async () => {},
+      },
+    })
+    await expect(brokenCache(capability, stringifyToken(capability))).rejects.toThrow(
+      UnresolvableIssuerError,
+    )
+
+    // Control: a working resolver over the same record revokes, so the two denials above are the
+    // failure being surfaced and not the record being unverifiable for some other reason.
+    const up = createRevocationChecker(backend, { resolver: () => doc })
+    await expect(up(capability, stringifyToken(capability))).rejects.toThrow('revoked')
   })
 
   test('a resolver answering with a mismatched doc denies rather than silently passing', async () => {
