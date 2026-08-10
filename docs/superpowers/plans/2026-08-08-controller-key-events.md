@@ -4180,6 +4180,144 @@ git commit -m "test(controller): end-to-end encryption to a did:kokuin: recipien
 
 ---
 
+## Amendment D — thread the method registry into signature verification (decided after Task 18)
+
+**This amendment is authoritative over the Self-review notes below, which claim the injected
+resolver is covered by Tasks 4, 14 and 21. The interface is built; nothing calls it.**
+
+Task 4 added `DIDMethodResolver` and a `MethodRegistry`, and `resolveIssuerWithDoc` dispatches on
+it (`packages/token/src/did.ts:109`, used at `:111-117`). Task 14 built
+`createControllerResolver`. But no caller ever passes `methods`:
+
+- `verifySignedPayload` calls `resolveIssuerWithDoc(payload.iss, { kid }, effectiveResolver)` at
+  `packages/token/src/token.ts:116-120` — the fourth argument is omitted.
+- `VerifyTokenOptions` (`packages/token/src/token.ts:34-56`) has no `methods` field, so a caller
+  could not supply one if it wanted to.
+- `@kokuin/capability` never passes one either.
+
+Encryption to a `did:kokuin:` recipient works only because `@kokuin/jwe` carries its own separate
+`ResolveRecipientOptions.methods`. A token whose `iss` is a `did:kokuin:` DID fails verification
+with `Unknown DID`, and capability chains inherit that failure. Task 14's own plan text imports
+`verifyToken` into its test file and never calls it — the tell that this wiring was intended and
+never written.
+
+The user's ruling is that `did:kokuin:` must work for all its intended purposes before release,
+and signing tokens is the primary one for a DID whose key set rotates. Task 25 closes it, in both
+`@kokuin/token` and `@kokuin/capability`.
+
+---
+
+## Task 25: Thread `methods` through token and capability verification
+
+**Files:**
+- Modify: `packages/token/src/token.ts` (`VerifyTokenOptions`, `verifySignedPayload`,
+  `verifyTokenInner`)
+- Modify: `packages/capability/src/index.ts` (`DelegationChainOptions` and the two `verifyToken`
+  call sites at `:401-405` and `:456-460`)
+- Test: `packages/token/test/method.test.ts` (extend), `packages/controller/test/verify-token.test.ts`
+  (create)
+
+**Interfaces:**
+- Consumes: `MethodRegistry` and `findMethodResolver` from `packages/token/src/method.ts`;
+  `resolveIssuerWithDoc`'s existing fourth parameter.
+- Produces: `VerifyTokenOptions.methods?: MethodRegistry` and
+  `DelegationChainOptions.methods?: MethodRegistry`. Both optional — this is additive, not a
+  breaking change.
+
+The end-to-end test lives in `packages/controller` because that is the only package that can
+build a real folded log, and it already has `@kokuin/jwe` as a devDependency under the same
+reasoning (`@kokuin/token` is already a runtime dependency there, so no new edge is created).
+
+- [ ] **Step 1: Write the failing end-to-end test**
+
+```ts
+// packages/controller/test/verify-token.test.ts
+import { createSigningIdentity, signToken, verifyToken } from '@kokuin/token'
+import { describe, expect, test } from 'vitest'
+
+import { authorityPath, deriveKeyPair } from '../src/derivation.js'
+import { createInception, createRotate, didFromInception } from '../src/events.js'
+import { createControllerResolver } from '../src/resolver.js'
+
+const seed = new Uint8Array(32).fill(7)
+
+describe('verifying a token issued by a did:kokuin: profile', () => {
+  test('verifyToken accepts a token signed by the current authority key', async () => {
+    const inception = createInception(seed, 0)
+    const did = didFromInception(inception.event)
+    const resolver = createControllerResolver({ loadLog: async () => [inception] })
+
+    const authority = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
+    const token = await signToken(identityFor(did, authority.privateKey), { hello: 'world' })
+
+    const verified = await verifyToken(token, { methods: [resolver] })
+    expect(verified.payload.hello).toBe('world')
+  })
+
+  test('without the registry the same token is unresolvable', async () => {
+    // Same token, no `methods`. Proves the registry is what makes verification work,
+    // rather than the token verifying for some unrelated reason.
+  })
+
+  test('after a rotation the rotated key verifies and the inception key does not', async () => {
+    // Build [inception, rotate]. A token signed by authorityPath(0, 0, 1) verifies;
+    // a token signed by authorityPath(0, 0, 0) is rejected.
+  })
+})
+```
+
+Write the second and third tests in full following the first's shape. `identityFor` is whatever
+the repo's existing helper for building a `SigningIdentity` from a raw private key is — find it
+rather than inventing one; `packages/token/test/` has precedent. The third test's negative half
+is mandatory: without it, an implementation that resolved the signing key off the inception
+would pass.
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `pnpm --filter @kokuin/controller exec vitest run test/verify-token.test.ts`
+Expected: FAIL — `methods` is not a `VerifyTokenOptions` field, so this fails to type-check, and
+at runtime verification fails with `Unknown DID`.
+
+- [ ] **Step 3: Thread `methods` through token**
+
+In `packages/token/src/token.ts`:
+
+- Add `methods?: MethodRegistry` to `VerifyTokenOptions` with a doc comment saying it is how a
+  DID method that needs external resolution (`did:kokuin:`) is verified, and that `did:key` and
+  `did:peer:4` need no entry.
+- Destructure `methods` in `verifyTokenInner` alongside `resolver` and `cache`, and pass it into
+  every `verifySignedPayload` call.
+- Add `methods` to `VerifySignedPayloadInput` and pass it as the fourth argument of
+  `resolveIssuerWithDoc`.
+
+- [ ] **Step 4: Thread `methods` through capability**
+
+In `packages/capability/src/index.ts`, add `methods?: MethodRegistry` to
+`DelegationChainOptions` and pass `methods: options?.methods` in both `verifyToken` calls
+(`:401-405`, `:456-460`), beside the existing `cache` and `resolver`.
+
+Two call sites take no options at all and are deliberately **out of scope**, because changing
+them means changing their public signatures: `createCapability`'s parent check at
+`packages/capability/src/index.ts:225`, and the revocation record verifications at
+`packages/capability/src/revocation.ts:37` and `:63`. Note them in the report — a `did:kokuin:`
+issuer cannot yet delegate through `createCapability` or have its revocation records verified.
+
+- [ ] **Step 5: Verify**
+
+Run `pnpm --filter @kokuin/token test`, `pnpm --filter @kokuin/capability test`,
+`pnpm --filter @kokuin/controller test`, then the full workspace suite. No cold build is needed:
+this adds no dependency edge.
+
+- [ ] **Step 6: Commit**
+
+```bash
+pnpm exec biome check --write ./packages
+git add packages/token packages/capability packages/controller
+git commit -m "feat(token)!: accept a DID method registry in verifyToken"
+```
+
+---
+
 ## Self-review notes
 
 **Spec coverage.** Every spec section maps to a task: identifier and no-version-segment (5), derivation with HKDF and the root-retained branch (3), the three event types (5, 6, 8) with reset as a rotate variant (7), criticality (11), fold precedence and superseding recovery (9, 10), deny-set position-dependence (9, 10), key state at position (9, 20), duplicity (10), enumeration and handles (12), the conformance suite (13, 23), the injected resolver (4, 14, 21), the depth cap and mandated `exp` (15), the JWE split (16), the `rotation.ts` removal (17), key agreement and key encoding (19, 20), the async recipient path (22), packaging and `versioning.ignore` (1, 13, 18).
