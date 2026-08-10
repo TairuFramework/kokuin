@@ -313,8 +313,8 @@ console.log(payload)       // { hello: 'world' }
 - `jws-in-jwe` hides sender identity; `jwe-in-jws` allows routing by sender
 - Ed25519 keys are auto-converted to X25519 for ECDH
 - Need the shared secret itself, not a JWE (e.g. as one HKDF input among several)?
-  `deriveSharedSecret(did)` returns `{ sharedSecret, ephemeralPublicKey }` raw — see
-  `docs/reference/auth.md`'s "Raw key agreement" section for the KDF-context and
+  `@kokuin/jwe`'s `deriveSharedSecret(did)` returns `{ sharedSecret, ephemeralPublicKey }` raw —
+  see `docs/reference/auth.md`'s "Raw key agreement" section for the KDF-context and
   sender-anonymity caveats before using it
 
 ### Pattern 9: Encrypting to a `did:kokuin:` Controller
@@ -365,8 +365,11 @@ message was addressed
   hashes it into the DID — same seed and profile index always produce the same DID
 - `createControllerResolver({ loadLog })` adapts a folded event log into a `DIDMethodResolver`;
   `loadLog(did)` returns the DID's full signed-event log, or `undefined` for an unknown DID
-- A rotation moves the encryption target: `encryptToken` always resolves the *current* folded
-  key agreement key (`ka`), never a superseded one — see
+- Resolution happens once, inside `createTokenEncrypterAsync` — the resolved agreement key is
+  closed over by the returned encrypter, and `encryptToken` itself resolves nothing (it just
+  calls `encrypter.encrypt`). So an encrypter snapshots whatever `ka` was current in the folded
+  log *at construction time*: build it after a rotation and it targets the rotated key; keep an
+  encrypter around across a later rotation and it keeps encrypting to the now-superseded key. See
   `packages/controller/test/encrypt-to-profile.test.ts` for the round trip through a rotate
 - The recipient side never touches the resolver: it re-derives the same agreement key pair from
   the seed and the profile's `agreementPath`, and implements `KeyAgreementIdentity` (`{ id, agreeKey }`)
