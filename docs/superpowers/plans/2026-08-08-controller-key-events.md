@@ -4394,6 +4394,239 @@ git commit -m "feat: issue and verify tokens as a did:kokuin: DID"
 
 ---
 
+## Amendment E — close the rest of the `did:kokuin:` token story (decided after Task 25)
+
+Task 25's review executed every path and found the production code correct, but listed what a
+consumer would still reasonably expect and not get. The user ruled that all of it lands on this
+branch. Four tasks, in this order — 26 first because it is a security fix.
+
+1. **Revocation fails open.** A `did:kokuin:`-issued revocation record cannot be verified
+   (`createRevocationChecker` passes no registry), and the checker's `catch` treats *any* failure
+   as "not revoked". So revocation silently does not apply. The `catch` predates this branch and
+   its intent is right — a forged record must not revoke — but it conflates *bad signature* with
+   *issuer unresolvable*, and for `did:kokuin:` the second case is universal.
+2. **`createCapability` cannot delegate.** Its parent check passes no options, so `did:kokuin:` is
+   single-hop in practice.
+3. **No async fold path** in either `createControllerIdentity` or `createControllerResolver`, so a
+   log containing a capability-authorised revoke can neither sign nor resolve.
+4. **No `kid` support.** A controller publishing more than one key in `k` can neither select among
+   them when signing nor be verified against anything but `keys[0]`.
+
+**`kid` format (user decision, wire-visible and effectively permanent):** `#<the multibase key
+exactly as it appears in `k`>` — a fragment whose body is the key itself. The verifier matches it
+against the folded key set by membership. Rejected: `#k-<index>`, because an index's meaning
+changes at every rotation while a token outlives the state that gave its `kid` meaning.
+
+---
+
+## Task 26: Fail closed when a revocation record's issuer cannot be resolved
+
+**Files:**
+- Modify: `packages/token/src/did.ts` (add and throw a typed error)
+- Modify: `packages/token/src/index.ts` (export it)
+- Modify: `packages/capability/src/revocation.ts`
+- Test: `packages/capability/test/revocation.test.ts` (extend)
+
+**Interfaces:**
+- Produces: `class UnresolvableIssuerError extends Error`, exported from `@kokuin/token`;
+  `createRevocationChecker(backend, options?: { methods?: MethodRegistry })`.
+
+The distinction cannot be made on error messages — `Unknown DID:`, `KidNotFound:`, `Invalid
+signature` and the controller resolver's own strings are all plain `Error`s today, and matching
+text is how this breaks silently later. Introduce a typed error instead.
+
+- [ ] **Step 1: Write the failing test**
+
+Three cases in `packages/capability/test/revocation.test.ts`, using a hand-built fake
+`DIDMethodResolver` (the idiom Task 25 established in `packages/capability/test/`):
+
+```ts
+test('a revocation record whose issuer cannot be resolved fails closed', async () => {
+  // Capability issued by the registry-only DID, revocation record signed by the same DID,
+  // checker built with NO registry. checkCapability must REJECT, not silently pass.
+})
+
+test('a revocation record with a bad signature still does not revoke', async () => {
+  // The pre-existing behaviour, and the reason the catch exists. Tamper with the record's
+  // signature; the capability must still verify. If this test and the one above cannot both
+  // pass, the two failures are not being distinguished.
+})
+
+test('a did:kokuin: revocation record revokes when the registry is supplied', async () => {
+  // Same as the first case but with `methods` passed to createRevocationChecker.
+})
+```
+
+Write all three in full. The second is the one that proves the fix did not simply turn the
+`catch` into a rethrow.
+
+- [ ] **Step 2: Add the typed error**
+
+In `packages/token/src/did.ts`, define `UnresolvableIssuerError` and throw it in place of the
+bare `Error` wherever `resolveIssuerWithDoc` fails because the issuer could not be resolved —
+the `Unknown DID` throws at `:129`, `:133` and `:148`. Do **not** convert `Invalid signature`
+(`packages/token/src/token.ts:125`) or the `kid`-related throws: those mean the issuer resolved
+and something else was wrong. Export the class from `packages/token/src/index.ts`.
+
+A `did:kokuin:` resolver failure surfaces through `DIDMethodResolver.resolve`, which throws its
+own errors (`packages/controller/src/resolver.ts:23,27,31,41`). Wrap what `resolveIssuerWithDoc`
+catches from a method resolver in `UnresolvableIssuerError` so method-backed and built-in
+failures are indistinguishable to callers.
+
+- [ ] **Step 3: Fix the checker**
+
+`packages/capability/src/revocation.ts:62-66` becomes: rethrow when the failure is an
+`UnresolvableIssuerError`, return otherwise. Add the `options` parameter and pass
+`{ methods: options?.methods }` into both `verifyToken` calls — `:37` in
+`createMemoryRevocationBackend` and `:63` in `createRevocationChecker`.
+
+Document the asymmetry in a comment: an unverifiable revocation is not evidence of
+non-revocation, while an invalidly-signed one is evidence of nothing at all.
+
+- [ ] **Step 4: Verify**
+
+Build first (`@kokuin/token` resolves through its built `lib`), then
+`pnpm --filter @kokuin/capability test`, `pnpm --filter @kokuin/token test`, then the full
+workspace suite. Mutate: revert the rethrow to a bare `return` and confirm the first test fails.
+
+- [ ] **Step 5: Commit**
+
+```bash
+pnpm exec biome check --write ./packages
+git add packages/token packages/capability
+git commit -m "fix(capability)!: fail closed when a revocation record's issuer is unresolvable"
+```
+
+---
+
+## Task 27: Let a `did:kokuin:` root delegate through `createCapability`
+
+**Files:**
+- Modify: `packages/capability/src/index.ts` (`CreateCapabilityOptions` at `:66`, the parent
+  verification at `:232`)
+- Test: `packages/capability/test/lib.test.ts` (extend)
+
+**Interfaces:**
+- Produces: `CreateCapabilityOptions.methods?: MethodRegistry`.
+
+- [ ] **Step 1: Write the failing test**
+
+A delegation where the parent capability is issued by a registry-only DID. Without `methods` it
+throws `Unknown DID`; with `methods` it succeeds and the resulting capability chains. Use the
+same fake `DIDMethodResolver` idiom. Assert the negative half too — that omitting `methods`
+still throws — so the test cannot pass against an implementation that ignores the option.
+
+- [ ] **Step 2: Implement**
+
+Add `methods?: MethodRegistry` to `CreateCapabilityOptions` and pass it at `:232`.
+
+- [ ] **Step 3: Verify and commit**
+
+Build, run the capability suite, then the workspace suite. Mutate by dropping the option at
+`:232` and confirm the test fails.
+
+```bash
+git commit -m "feat(capability): accept a DID method registry when creating a capability"
+```
+
+---
+
+## Task 28: Async fold path for the identity and the resolver
+
+**Files:**
+- Modify: `packages/controller/src/identity.ts`, `packages/controller/src/resolver.ts`
+- Modify: `packages/controller/src/index.ts`
+- Test: `packages/controller/test/identity.test.ts`, `packages/controller/test/resolver.test.ts`
+
+**Interfaces:**
+- Produces: `createControllerIdentityAsync(seed, profile, log, options?: FoldOptions):
+  Promise<SigningIdentity>`; `createControllerResolver` gains an option selecting the async fold.
+
+Both `createControllerIdentity` (`packages/controller/src/identity.ts:39`) and
+`createControllerResolver`'s `loadState` (`packages/controller/src/resolver.ts:29`) call the sync
+`foldLog`. A revoke carrying a `cap` needs `foldLogAsync` (`packages/controller/src/fold.ts:232`)
+and its `FoldOptions.verifyCapability`. Today such a log fails to fold, so the controller can
+neither sign nor be resolved.
+
+**Do not make the existing sync entry points async** — that is a breaking change for kubun's
+apply path, which the plan's Task 11 notes depends on `foldLog` being sync. Add siblings, the
+same pattern Task 22 used for the JWE entry points.
+
+- [ ] **Step 1: Write the failing tests**
+
+For each of the identity and the resolver: a log whose last event is a capability-authorised
+revoke. The sync entry point must fail with a clear error; the async one must succeed given a
+`verifyCapability` that accepts. Add the negative half — a `verifyCapability` that rejects must
+make the fold fail — so the option is not merely being ignored.
+
+- [ ] **Step 2: Implement, verify, commit**
+
+Factor the shared fold-then-take-last-state logic rather than copying it; the two files already
+duplicate that sequence. Build, run the controller suite, then the workspace suite.
+
+```bash
+git commit -m "feat(controller): async fold entry points for capability-authorised revokes"
+```
+
+---
+
+## Task 29: `kid` support for multi-key controllers
+
+**Files:**
+- Modify: `packages/controller/src/resolver.ts` (honour `header.kid`)
+- Modify: `packages/controller/src/identity.ts` (select a key, stamp `kid`)
+- Test: `packages/controller/test/resolver.test.ts`, `packages/controller/test/identity.test.ts`,
+  `packages/controller/test/verify-token.test.ts`
+
+**Interfaces:**
+- Produces: `createControllerIdentity(seed, profile, log, options?: { kid?: string })`;
+  `DIDMethodResolver.resolve` honouring `header.kid` for `did:kokuin:`.
+
+**Format (user decision):** `kid` is `#<the multibase key exactly as it appears in `k`>`. The
+resolver strips the leading `#` and requires membership in `state.keys`; a `kid` naming a key not
+in the current set is an error, never a fallback to `keys[0]`. An absent `kid` keeps today's
+behaviour — `keys[0]`.
+
+`resolve(did, header)` already receives the header (`packages/token/src/method.ts:30`); the
+controller resolver currently ignores it and returns `state.keys[0]`
+(`packages/controller/src/resolver.ts:43`).
+
+- [ ] **Step 1: Write the failing tests**
+
+```ts
+test('resolves the key named by kid, not the first key', async () => {
+  // A state whose `k` holds two keys. Resolve with kid naming the SECOND. Assert the returned
+  // key is the second AND that it differs from keys[0] — without the second assertion the test
+  // passes against an implementation that ignores kid entirely.
+})
+
+test('a kid naming a key outside the current set is rejected', async () => {
+  // Not a fallback to keys[0]. Assert the throw.
+})
+
+test('a token signed under a kid verifies end to end', async () => {
+  // In verify-token.test.ts: sign with an identity given that kid, verify through the resolver.
+})
+```
+
+Write all three in full, plus the identity-side selection test.
+
+Note: `createInception` and `createRotate` publish exactly one key in `k` today, so a two-key
+state must be constructed directly rather than derived. Build it explicitly in the test and say
+so in a comment — a hand-built state is the honest way to cover a shape the generators cannot
+yet produce.
+
+- [ ] **Step 2: Implement, verify, commit**
+
+Mutate to confirm: make the resolver ignore `kid` and confirm the first test fails; make an
+out-of-set `kid` fall back to `keys[0]` and confirm the second fails.
+
+```bash
+git commit -m "feat(controller): honour kid when selecting a controller signing key"
+```
+
+---
+
 ## Self-review notes
 
 **Spec coverage.** Every spec section maps to a task: identifier and no-version-segment (5), derivation with HKDF and the root-retained branch (3), the three event types (5, 6, 8) with reset as a rotate variant (7), criticality (11), fold precedence and superseding recovery (9, 10), deny-set position-dependence (9, 10), key state at position (9, 20), duplicity (10), enumeration and handles (12), the conformance suite (13, 23), the injected resolver (4, 14, 21), the depth cap and mandated `exp` (15), the JWE split (16), the `rotation.ts` removal (17), key agreement and key encoding (19, 20), the async recipient path (22), packaging and `versioning.ignore` (1, 13, 18).
