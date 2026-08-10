@@ -4627,6 +4627,120 @@ git commit -m "feat(controller): honour kid when selecting a controller signing 
 
 ---
 
+## Amendment F — the capability-authorised revoke was never proven (decided after Task 28)
+
+`foldLogAsync` takes an injected `verifyCapability(cap, subject, target)` callback so
+`@kokuin/controller` never imports `@kokuin/capability` (Task 11's cycle avoidance). The
+consequence, unnoticed until Task 28's review: **every test of that path passes a stub**. Nothing
+in the repo mints a real capability, signs a revoke with it, and folds it. A stub agrees with a
+broken implementation, so the callback contract — argument shape, `sub` binding, error behaviour —
+is unverified.
+
+The dependency direction permits a fix. `@kokuin/capability` depends only on `@kokuin/token`;
+`@kokuin/controller` depends on `token` and devDepends on `controller-conformance` and `jwe`,
+none of which touch `capability`. So `capability → controller` closes no loop, and it is needed
+only as a **devDependency**, only for the test — the adapter itself imports nothing from
+`controller`.
+
+Two user decisions bind Task 30:
+
+1. **The adapter is public API in `@kokuin/capability`**, not a test-local helper. Downstream
+   (`kubun`, `kumiai`) must get one correct implementation rather than each inventing its own.
+2. **The permission is `{ act: 'revoke', res: <the target DID> }`** — the capability names exactly
+   which device it may deny. `sub` is the controller DID, `aud` is the delegate. A management
+   capability covering every device uses a wildcard `res`, which `assertValidPattern` already
+   supports.
+
+---
+
+## Task 30: a real capability end to end through the fold
+
+**Files:**
+- Create: `packages/capability/src/controller.ts`
+- Modify: `packages/capability/src/index.ts` (re-export the new surface)
+- Modify: `packages/capability/package.json` (add `@kokuin/controller` as a **devDependency**)
+- Test: `packages/capability/test/controller-revoke.test.ts`
+
+**Interfaces:**
+- Consumes: `verifyToken` and `checkCapability` from this package; the fold's callback type
+  `(cap: string, subject: string, target: string) => Promise<boolean>`
+  (`packages/controller/src/fold.ts:43`).
+- Produces: `createControllerCapabilityVerifier(options?)`, returning a function of exactly that
+  shape, suitable to pass as `FoldOptions.verifyCapability` and as
+  `ControllerResolverOptions.verifyCapability`.
+
+**The contract the adapter must enforce**, in this order:
+
+1. Verify the serialized capability as a token. It is issued by a `did:kokuin:` DID, so the
+   `methods` registry must be forwarded — without it the verify cannot resolve the issuer at all.
+2. Require `sub` to equal the `subject` argument, compared with `normalizeDID`. This is the binding
+   that stops a capability minted for one profile from authorising a revoke on another. It is the
+   single most important line in the adapter.
+3. `checkCapability({ act: 'revoke', res: target }, payload, options)`.
+4. Return `true` only if all three pass. A verification failure returns `false`; it must not throw
+   past the fold, which treats any rejection as `capability does not authorise this revoke`.
+
+- [ ] **Step 1: Write the failing test**
+
+`packages/capability/test/controller-revoke.test.ts`. Build the whole path with real objects — no
+stubs anywhere:
+
+```ts
+// 1. An inception log for a profile, and a controller resolver over it.
+// 2. A delegate identity (its own DID) — the device that will author the revoke.
+// 3. A REAL capability: createCapability(controllerIdentity, {
+//      sub: <controller DID>, aud: <delegate DID>, act: 'revoke', res: <target DID>, exp: <future>
+//    })
+// 4. A revoke event denying <target DID>, signed by the DELEGATE seed, carrying that capability
+//    in `cap`.
+// 5. foldLogAsync(did, events, { verifyCapability: createControllerCapabilityVerifier({ methods }) })
+//    => ok: true, and the folded deny set contains the target.
+```
+
+Then the negative cases, each its own test, each asserting the fold fails **and** on the right
+reason:
+
+- a capability whose `res` names a **different** DID than the revoke's target,
+- a capability whose `sub` is a **different** controller DID (the binding in step 2),
+- an **expired** capability,
+- a capability whose `aud` is not the delegate that signed the revoke.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `pnpm --filter @kokuin/capability test:unit -- controller-revoke`
+Expected: FAIL — `createControllerCapabilityVerifier` does not exist.
+
+- [ ] **Step 3: Add the devDependency and implement**
+
+`@kokuin/controller` goes in `devDependencies` as `workspace:^`. It must NOT appear in
+`dependencies` — `packages/capability/src/controller.ts` imports nothing from it; the file is named
+for what it serves, not what it imports.
+
+- [ ] **Step 4: Verify no cycle, cold**
+
+Run: `rm -rf packages/*/lib && rtk proxy pnpm run build`
+Expected: PASS. A cycle can leave every test green and still break a cold build — this is the only
+check that catches it.
+
+- [ ] **Step 5: Mutate**
+
+Each alone, each must kill a **distinct** test, for the right reason — read the error:
+
+- drop the `sub === subject` check,
+- drop the `methods` forward to `verifyToken`,
+- pass `res: subject` instead of `res: target` to `checkCapability`,
+- return `true` on a caught verification error instead of `false`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+pnpm exec biome check --write ./packages
+git add packages/capability
+git commit -m "feat(capability): controller revoke capability verifier"
+```
+
+---
+
 ## Self-review notes
 
 **Spec coverage.** Every spec section maps to a task: identifier and no-version-segment (5), derivation with HKDF and the root-retained branch (3), the three event types (5, 6, 8) with reset as a rotate variant (7), criticality (11), fold precedence and superseding recovery (9, 10), deny-set position-dependence (9, 10), key state at position (9, 20), duplicity (10), enumeration and handles (12), the conformance suite (13, 23), the injected resolver (4, 14, 21), the depth cap and mandated `exp` (15), the JWE split (16), the `rotation.ts` removal (17), key agreement and key encoding (19, 20), the async recipient path (22), packaging and `versioning.ignore` (1, 13, 18).
