@@ -34,6 +34,7 @@ export {
   createIdentity,
   createKeyAgreementIdentity,
   createSigningIdentity,
+  createSigningIdentityForDID,
   type FullIdentity,
   type Identity,
   type IdentityKeySpec,

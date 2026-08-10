@@ -6,6 +6,7 @@ import { assertType, isType } from '@sozai/schema'
 import type { DIDCache, DIDResolver } from './cache.js'
 import { resolveIssuerWithDoc } from './did.js'
 import type { SigningIdentity } from './identity.js'
+import type { MethodRegistry } from './method.js'
 import {
   type SignedPayload,
   validateAlgorithm,
@@ -35,6 +36,15 @@ export type VerifyTokenOptions = TimeValidationOptions & {
   verifiers?: Verifiers
   resolver?: DIDResolver
   cache?: DIDCache
+  /**
+   * DID methods that need external resolution to verify an issuer.
+   *
+   * `did:key` and `did:peer:4` need no entry — the first carries its key in the identifier, the
+   * second in its document. A method whose key set is a projection of state held elsewhere —
+   * `did:kokuin:`, whose keys come from folding a key event log — cannot be verified without one,
+   * and a token issued by such a DID fails with `Unknown DID` when no registry is passed.
+   */
+  methods?: MethodRegistry
   /**
    * Expected audience(s) for the token. When set, verification rejects a token whose `aud`
    * claim is not among the given value(s), and rejects unsigned / `alg:none` tokens outright
@@ -95,6 +105,7 @@ export type VerifySignedPayloadInput<
   verifiers?: Verifiers
   resolver?: DIDResolver
   cache?: DIDCache
+  methods?: MethodRegistry
 }
 
 /**
@@ -103,7 +114,7 @@ export type VerifySignedPayloadInput<
 export async function verifySignedPayload<
   Payload extends Record<string, unknown> = Record<string, unknown>,
 >(input: VerifySignedPayloadInput<Payload>): Promise<Uint8Array> {
-  const { signature, payload, header, data, verifiers, resolver, cache } = input
+  const { signature, payload, header, data, verifiers, resolver, cache, methods } = input
   assertType(validateSignedPayload, payload)
   const effectiveResolver: DIDResolver | undefined =
     cache == null
@@ -117,6 +128,7 @@ export async function verifySignedPayload<
     payload.iss,
     { kid: header.kid },
     effectiveResolver,
+    methods,
   )
   const verify = getVerifier(alg, verifiers)
   const message = typeof data === 'string' ? fromUTF(data) : data
@@ -245,7 +257,15 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
   token: Token<Payload> | string,
   options: VerifyTokenOptions = {},
 ): Promise<Token<Payload>> {
-  const { verifiers, resolver, cache, audience, allowUnsigned = false, ...timeOptions } = options
+  const {
+    verifiers,
+    resolver,
+    cache,
+    methods,
+    audience,
+    allowUnsigned = false,
+    ...timeOptions
+  } = options
   if (typeof token !== 'string') {
     if (isUnsignedToken(token)) {
       assertSignedForAudience(audience)
@@ -272,6 +292,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
         verifiers,
         resolver,
         cache,
+        methods,
       })
       assertTimeClaimsValid(token.payload as Record<string, unknown>, timeOptions)
       assertAudienceValid(token.payload as Record<string, unknown>, audience)
@@ -316,6 +337,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
       verifiers,
       resolver,
       cache,
+      methods,
     })
     assertTimeClaimsValid(payload as Record<string, unknown>, timeOptions)
     assertAudienceValid(payload as Record<string, unknown>, audience)

@@ -35,6 +35,7 @@ describe('public surface', () => {
       'enumerateProfiles',
       'handleForDID',
       'createControllerResolver',
+      'createControllerIdentity',
     ]) {
       expect(controller).toHaveProperty(name)
     }

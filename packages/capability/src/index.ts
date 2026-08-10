@@ -14,6 +14,7 @@ import {
   type DIDCache,
   type DIDResolver,
   isVerifiedToken,
+  type MethodRegistry,
   normalizeDID,
   type SignedHeader,
   type SignedPayload,
@@ -60,6 +61,12 @@ export type DelegationChainOptions = {
   cache?: DIDCache
   /** Optional resolver for did:peer:4 short forms not in cache. */
   resolver?: DIDResolver
+  /**
+   * Optional DID method registry, forwarded to `verifyToken` for every capability in the chain.
+   * Required when any link is issued by a method that cannot be resolved from the identifier
+   * alone, such as `did:kokuin:`.
+   */
+  methods?: MethodRegistry
 }
 
 /** Options for capability creation */
@@ -402,6 +409,7 @@ export async function checkDelegationChain(
     atTime,
     cache: options?.cache,
     resolver: options?.resolver,
+    methods: options?.methods,
   })
   assertCapabilityToken(next)
   if (options?.verifyToken != null) {
@@ -457,6 +465,7 @@ export async function checkCapability(
     atTime: time,
     cache: options?.cache,
     resolver: options?.resolver,
+    methods: options?.methods,
   })
   assertCapabilityToken(capability)
   if (options?.verifyToken != null) {

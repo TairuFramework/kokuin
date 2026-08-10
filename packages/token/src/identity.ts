@@ -72,11 +72,22 @@ export function isOwnIdentity(identity: Identity): identity is OwnIdentity {
 }
 
 /**
- * Create a signing identity from an Ed25519 private key.
+ * Create a signing identity for an Ed25519 private key under a caller-supplied DID.
+ *
+ * `createSigningIdentity` derives the DID *from* the key, which only works for `did:key`. A method
+ * whose identifier is not a function of the current key — `did:kokuin:`, where the identifier is
+ * the inception digest and the signing key rotates underneath it — must supply its own `id`, so
+ * that the `iss` stamped on every payload is the method's DID rather than the signing key's
+ * `did:key`.
+ *
+ * The caller owns the pairing: nothing here can check that `id` resolves to `privateKey`'s public
+ * key, and a mismatched pair produces tokens that verify nowhere.
  */
-export function createSigningIdentity(privateKey: Uint8Array): SigningIdentity {
+export function createSigningIdentityForDID(
+  id: DIDString,
+  privateKey: Uint8Array,
+): SigningIdentity {
   const publicKey = ed25519.getPublicKey(privateKey)
-  const id = getDID(CODECS.EdDSA, publicKey)
 
   async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
     payload: Payload,
@@ -115,6 +126,16 @@ export function createSigningIdentity(privateKey: Uint8Array): SigningIdentity {
   }
 
   return { id, publicKey, signToken }
+}
+
+/**
+ * Create a signing identity from an Ed25519 private key.
+ */
+export function createSigningIdentity(privateKey: Uint8Array): SigningIdentity {
+  return createSigningIdentityForDID(
+    getDID(CODECS.EdDSA, ed25519.getPublicKey(privateKey)),
+    privateKey,
+  )
 }
 
 /**

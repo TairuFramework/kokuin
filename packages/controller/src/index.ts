@@ -48,6 +48,7 @@ export {
   type KeyState,
   keyStateAt,
 } from './fold.js'
+export { createControllerIdentity } from './identity.js'
 export {
   type KeyAlgorithm,
   type TaggedKey,
