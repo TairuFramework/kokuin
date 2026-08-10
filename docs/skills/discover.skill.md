@@ -11,7 +11,7 @@ Kokuin is the identity layer — DID-based keys, signed tokens, JWE encryption, 
 
 ### Authentication & Keys
 
-Tokens, identities, encryption, keystores. Covers the full identity lifecycle: generating DID-based key pairs, signing and verifying JWT-like tokens, ECDH-ES message encryption (JWE), and per-environment keystore implementations (Node.js, browser, Expo, Electron, HD derivation, Ledger hardware).
+Tokens, identities, encryption, keystores. Covers the full identity lifecycle: generating DID-based key pairs, signing and verifying JWT-like tokens, ECDH-ES message encryption (JWE), rotating a `did:kokuin:` controller's keys through a folded event log, and per-environment keystore implementations (Node.js, browser, Expo, Electron, HD derivation, Ledger hardware).
 
 → `/kokuin:auth`
 
@@ -23,7 +23,9 @@ Scoped permissions, delegation chains, revocation. Covers capability tokens buil
 
 ## Package Overview
 
-- **@kokuin/token** — Core identity and token primitives: `randomIdentity`, `createFullIdentity`, `signToken`, `verifyToken`, `encryptToken`, `decryptToken`, `wrapEnvelope`, `unwrapEnvelope`. The contract types also live here: `KeyStore`, `KeyEntry` (read/provide) and `MutableKeyEntry` (adds write/delete), plus `IdentityProvider`.
+- **@kokuin/token** — Core identity and token primitives: `randomIdentity`, `createFullIdentity`, `signToken`, `verifyToken`, `stringifyToken`. The contract types also live here: `KeyStore`, `KeyEntry` (read/provide) and `MutableKeyEntry` (adds write/delete), plus `IdentityProvider`.
+- **@kokuin/jwe** — JWE message encryption split out of `@kokuin/token`: `createTokenEncrypter`, `createTokenEncrypterAsync`, `encryptToken`, `decryptToken`, `deriveSharedSecret`, `deriveSharedSecretAsync`, `wrapEnvelope`, `unwrapEnvelope`. The async siblings resolve recipients through a registered `DIDMethodResolver` (e.g. `did:kokuin:`); the sync entry points only handle self-contained DIDs (`did:key`, `did:peer:4`).
+- **@kokuin/controller** — `did:kokuin:` controller key event log: `createInception`, `createRotate`, `createReset`, `createRevoke`, `foldLog`/`foldLogAsync`, `createControllerResolver` (a `DIDMethodResolver`, injected into `@kokuin/jwe`'s async entry points or `@kokuin/token`'s `resolveIssuer`/`resolveIssuerWithDoc`), `enumerateProfiles`, `handleForDID`.
 - **@kokuin/capability** — Capability-based authorization built on `@kokuin/token`: `createCapability`, `checkCapability`, `checkDelegationChain`, revocation helpers.
 - **@kokuin/node** — Node.js keystore backed by OS credential storage (macOS Keychain, Windows Credential Manager, Linux Secret Service). Exports `NodeKeyStore`; call `store.provideIdentity(keyID)` for a `FullIdentity`.
 - **@kokuin/browser** — Browser keystore backed by IndexedDB / Web Crypto (non-extractable Ed25519 + derived X25519). Exports `BrowserKeyStore`; `store.provideIdentity(keyID)` returns a `FullIdentity`, `store.provideSigningIdentity(keyID)` accepts legacy ES256 records signing-only.

@@ -9,6 +9,10 @@ description: Identity & key patterns — token generation, verification, encrypt
 
 **Token System**: `@kokuin/token`
 
+**Message Encryption**: `@kokuin/jwe`
+
+**Controller / DID Method**: `@kokuin/controller`
+
 **Platform Keystores**: `@kokuin/node`, `@kokuin/browser`, `@kokuin/expo`, `@kokuin/electron`, `@kokuin/deterministic`, `@kokuin/ledger-device`
 
 ## Key Patterns
@@ -261,15 +265,15 @@ const token = await signToken(identity, createUnsignedToken({
 ### Pattern 8: Message-Level Encryption with JWE
 
 ```typescript
+import { randomIdentity } from '@kokuin/token'
 import {
-  randomIdentity,
   createTokenEncrypter,
   encryptToken,
   decryptToken,
   wrapEnvelope,
   unwrapEnvelope,
-} from '@kokuin/token'
-import type { EnvelopeMode } from '@kokuin/token'
+} from '@kokuin/jwe'
+import type { EnvelopeMode } from '@kokuin/jwe'
 
 // Sender and recipient identities
 const sender = randomIdentity()
@@ -313,6 +317,60 @@ console.log(payload)       // { hello: 'world' }
   `docs/reference/auth.md`'s "Raw key agreement" section for the KDF-context and
   sender-anonymity caveats before using it
 
+### Pattern 9: Encrypting to a `did:kokuin:` Controller
+
+`did:kokuin:` is a self-certifying DID whose key set lives in a folded key event log rather than
+in the identifier itself, so resolving it needs a registered `DIDMethodResolver` — the sync JWE
+entry points (`createTokenEncrypter`, `deriveSharedSecret`) cannot reach it; use the async
+siblings with `createControllerResolver` registered.
+
+```typescript
+import { createTokenEncrypterAsync, decryptToken, encryptToken } from '@kokuin/jwe'
+import { x25519 } from '@noble/curves/ed25519.js'
+import {
+  agreementPath,
+  createControllerResolver,
+  createInception,
+  deriveKeyPair,
+  didFromInception,
+} from '@kokuin/controller'
+
+const seed = new Uint8Array(32).fill(3)
+const inception = createInception(seed, 0)
+const did = didFromInception(inception.event)
+
+// Any log loader works — this one is a fixed in-memory log.
+const resolver = createControllerResolver({ loadLog: async () => [inception] })
+
+const encrypter = await createTokenEncrypterAsync(did, { methods: [resolver] })
+const jwe = await encryptToken(encrypter, new TextEncoder().encode('hello'))
+
+// The profile holder derives the same agreement key from the seed to decrypt.
+const agreement = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
+const recipient = {
+  id: did,
+  agreeKey: async (ephemeralPublicKey: Uint8Array) =>
+    x25519.getSharedSecret(agreement.privateKey, ephemeralPublicKey),
+}
+
+const decrypted = await decryptToken(recipient, jwe)
+new TextDecoder().decode(decrypted) // 'hello'
+```
+
+**Use case**: encrypting to a `did:kokuin:` recipient whose keys may have rotated since the
+message was addressed
+
+**Key points**:
+- `createInception(seed, profile)` derives a deterministic inception event; `didFromInception`
+  hashes it into the DID — same seed and profile index always produce the same DID
+- `createControllerResolver({ loadLog })` adapts a folded event log into a `DIDMethodResolver`;
+  `loadLog(did)` returns the DID's full signed-event log, or `undefined` for an unknown DID
+- A rotation moves the encryption target: `encryptToken` always resolves the *current* folded
+  key agreement key (`ka`), never a superseded one — see
+  `packages/controller/test/encrypt-to-profile.test.ts` for the round trip through a rotate
+- The recipient side never touches the resolver: it re-derives the same agreement key pair from
+  the seed and the profile's `agreementPath`, and implements `KeyAgreementIdentity` (`{ id, agreeKey }`)
+
 ## When to Use What
 
 **Use `@kokuin/token`** when:
@@ -320,8 +378,17 @@ console.log(payload)       // { hello: 'world' }
 - Implementing custom token signing logic
 - Working with DIDs and decentralized identity
 - Need low-level token operations
-- Need to encrypt payloads with JWE
+
+**Use `@kokuin/jwe`** when:
+- Need to encrypt payloads with JWE (ECDH-ES + A256GCM)
 - Working with envelope modes (`plain`, `jws`, `jws-in-jwe`, `jwe-in-jws`)
+- Need a raw ECDH shared secret rather than a full envelope
+
+**Use `@kokuin/controller`** when:
+- Need a self-certifying DID (`did:kokuin:`) whose key set can rotate without changing the
+  identifier
+- Building or resolving a folded key event log (inception, rotation, reset, revocation)
+- Encrypting to a `did:kokuin:` recipient through a registered `DIDMethodResolver`
 
 **Use `@kokuin/node`** when:
 - Building Node.js servers or CLI tools

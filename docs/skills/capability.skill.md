@@ -103,7 +103,7 @@ await checkDelegationChain(consumerPayload, [delegatedCapStr, rootCapStr], {
 **Key points**:
 - `checkCapability` handles both self-issued tokens (no chain) and delegated tokens (reads `payload.cap`)
 - `checkDelegationChain` takes the `capabilities` array explicitly — head is the immediate parent, tail leads toward the root
-- `DEFAULT_MAX_DELEGATION_DEPTH` is 20; override via `options.maxDepth`
+- `DEFAULT_MAX_DELEGATION_DEPTH` is 4; override via `options.maxDepth`
 - `assertNonExpired` and `assertValidIssuedAt` are called automatically on every link
 
 ### Pattern 4: Revocation

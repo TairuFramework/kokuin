@@ -148,7 +148,7 @@ import {
 import type { DelegationChainOptions } from '@kokuin/capability'
 ```
 
-**`DEFAULT_MAX_DELEGATION_DEPTH`** — `20`. The maximum number of links accepted by `checkDelegationChain`/`checkCapability` before rejecting the chain.
+**`DEFAULT_MAX_DELEGATION_DEPTH`** — `4`. The maximum number of links accepted by `checkDelegationChain`/`checkCapability` before rejecting the chain.
 
 **`DelegationChainOptions`**:
 
@@ -156,7 +156,7 @@ import type { DelegationChainOptions } from '@kokuin/capability'
 type DelegationChainOptions = {
   /** Reference time for expiry checks (seconds since epoch). Defaults to now(). */
   atTime?: number
-  /** Maximum chain depth. Defaults to DEFAULT_MAX_DELEGATION_DEPTH (20). */
+  /** Maximum chain depth. Defaults to DEFAULT_MAX_DELEGATION_DEPTH (4). */
   maxDepth?: number
   /** Hook called for each token after signature verification. Throw to reject. */
   verifyToken?: VerifyTokenHook
