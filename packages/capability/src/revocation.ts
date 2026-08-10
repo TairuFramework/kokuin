@@ -1,5 +1,5 @@
-import type { SignedToken, SigningIdentity } from '@kokuin/token'
-import { normalizeDID, verifyToken } from '@kokuin/token'
+import type { MethodRegistry, SignedToken, SigningIdentity } from '@kokuin/token'
+import { normalizeDID, UnresolvableIssuerError, verifyToken } from '@kokuin/token'
 
 import type { CapabilityToken, VerifyTokenHook } from './index.js'
 import { now } from './index.js'
@@ -28,13 +28,22 @@ export type RevocationBackend = {
   get(jti: string): Promise<RevocationRecord | undefined>
 }
 
-export function createMemoryRevocationBackend(): RevocationBackend {
+/**
+ * How a revocation record's issuer is resolved. A record signed by a DID whose keys are not
+ * recoverable from the identifier — `did:kokuin:` — cannot be verified without the registry that
+ * resolves its method, so both the backend and the checker need it.
+ */
+export type RevocationOptions = {
+  methods?: MethodRegistry
+}
+
+export function createMemoryRevocationBackend(options?: RevocationOptions): RevocationBackend {
   const revoked = new Map<string, RevocationRecord>()
   return {
     async add(record: RevocationRecord): Promise<void> {
       // Verify the record's signature before trusting it. Without this, a forged record could
       // be stored and later used to revoke another issuer's token.
-      const verified = await verifyToken<RevocationClaims>(record)
+      const verified = await verifyToken<RevocationClaims>(record, { methods: options?.methods })
       if (verified.payload.rev !== true || typeof verified.payload.jti !== 'string') {
         throw new Error('Invalid revocation record')
       }
@@ -46,7 +55,10 @@ export function createMemoryRevocationBackend(): RevocationBackend {
   }
 }
 
-export function createRevocationChecker(backend: RevocationBackend): VerifyTokenHook {
+export function createRevocationChecker(
+  backend: RevocationBackend,
+  options?: RevocationOptions,
+): VerifyTokenHook {
   return async (token: CapabilityToken, _raw: string): Promise<void> => {
     const jti = token.payload.jti
     if (jti == null) {
@@ -60,8 +72,21 @@ export function createRevocationChecker(backend: RevocationBackend): VerifyToken
     // unverified record. A record with an invalid signature does not revoke anything.
     let verified: RevocationRecord
     try {
-      verified = await verifyToken<RevocationClaims>(record)
-    } catch {
+      verified = await verifyToken<RevocationClaims>(record, { methods: options?.methods })
+    } catch (error) {
+      // The two failures are not symmetric, and collapsing them is a fail-open.
+      //
+      // An *invalidly signed* record is evidence of nothing: anyone can mint one for any `jti`,
+      // so ignoring it is the only safe reading — hence the `return` below, and the reason this
+      // catch exists at all.
+      //
+      // An *unresolvable issuer* is different: a record may well be genuine and revoke this
+      // token, and we simply cannot tell. "I could not check" is not evidence of non-revocation,
+      // so it must propagate and fail the verification rather than pass it. For a `did:kokuin:`
+      // issuer this is every record until `options.methods` carries its resolver.
+      if (error instanceof UnresolvableIssuerError) {
+        throw error
+      }
       return
     }
     // Only the issuer of a token may revoke it: the record's issuer must match the token's.

@@ -1,4 +1,14 @@
-import { createIdentity, randomIdentity, stringifyToken } from '@kokuin/token'
+import {
+  createIdentity,
+  createSigningIdentityForDID,
+  type DIDMethodResolver,
+  type DIDString,
+  randomIdentity,
+  type SigningIdentity,
+  stringifyToken,
+  UnresolvableIssuerError,
+} from '@kokuin/token'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
 import { checkDelegationChain, createCapability } from '../src/index.js'
@@ -7,6 +17,26 @@ import {
   createRevocationChecker,
   createRevocationRecord,
 } from '../src/revocation.js'
+
+// A DID whose keys cannot be recovered from the identifier — the shape `did:kokuin:` has. The
+// resolver is a hand-built fake, matching `test/method-registry.test.ts`: this package must not
+// depend on `@kokuin/controller`, and a real folded log would prove nothing extra about the
+// option threading.
+const profileDID = 'did:kokuin:zTestProfile' as DIDString
+
+function buildProfile(): { identity: SigningIdentity; resolver: DIDMethodResolver } {
+  const identity = createSigningIdentityForDID(profileDID, ed25519.utils.randomSecretKey())
+  const resolver: DIDMethodResolver = {
+    method: 'kokuin',
+    resolve: async (did: string) => {
+      if (did !== profileDID) {
+        throw new Error(`Unknown DID: ${did}`)
+      }
+      return { alg: 'EdDSA', publicKey: identity.publicKey }
+    },
+  }
+  return { identity, resolver }
+}
 
 describe('revocation', () => {
   test('createMemoryRevocationBackend stores signed records by jti', async () => {
@@ -202,5 +232,73 @@ describe('revocation', () => {
       { embedLongForm: false },
     )) as typeof record
     await expect(backend.add(shortFormRecord)).rejects.toThrow(/Unknown DID/)
+  })
+
+  test('a revocation record whose issuer cannot be resolved fails closed', async () => {
+    const { identity: root, resolver } = buildProfile()
+    const capability = await createCapability(root, {
+      sub: root.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-kokuin',
+    })
+
+    // The backend gets the registry, so the record it stores is a genuine, verified revocation.
+    const backend = createMemoryRevocationBackend({ methods: [resolver] })
+    await backend.add(await createRevocationRecord(root, 'cap-kokuin'))
+
+    // The checker does not. It cannot tell whether the stored record is genuine, so it must not
+    // answer "not revoked" — that would let a revoked capability verify normally.
+    const checker = createRevocationChecker(backend)
+    await expect(checker(capability, stringifyToken(capability))).rejects.toThrow(
+      UnresolvableIssuerError,
+    )
+  })
+
+  test('a revocation record with a bad signature still does not revoke', async () => {
+    const { identity: root, resolver } = buildProfile()
+    const capability = await createCapability(root, {
+      sub: root.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-kokuin-forged',
+    })
+
+    // A genuine record, tampered. A backend that stores without verifying would hand it back.
+    const genuine = await createRevocationRecord(root, 'cap-kokuin-forged')
+    const forged = { ...genuine, signature: 'AAAA' }
+    const untrustingBackend = {
+      async add() {},
+      async get() {
+        return forged
+      },
+    }
+
+    // The registry *is* supplied here, so the issuer resolves and the only failure left is the
+    // signature. Anyone can mint such a record for any jti, so it is evidence of nothing and the
+    // capability must still verify. Together with the test above this pins both failure modes:
+    // an implementation that rethrew unconditionally would fail here, one that swallowed
+    // everything would fail there.
+    const checker = createRevocationChecker(untrustingBackend, { methods: [resolver] })
+    await expect(checker(capability, stringifyToken(capability))).resolves.toBeUndefined()
+  })
+
+  test('a did:kokuin: revocation record revokes when the registry is supplied', async () => {
+    const { identity: root, resolver } = buildProfile()
+    const capability = await createCapability(root, {
+      sub: root.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-kokuin-revoked',
+    })
+
+    const backend = createMemoryRevocationBackend({ methods: [resolver] })
+    await backend.add(await createRevocationRecord(root, 'cap-kokuin-revoked'))
+
+    const checker = createRevocationChecker(backend, { methods: [resolver] })
+    await expect(checker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
   })
 })

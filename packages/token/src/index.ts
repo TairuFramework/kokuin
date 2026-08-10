@@ -27,6 +27,7 @@ export {
   type ResolveIssuerWithDocResult,
   resolveIssuer,
   resolveIssuerWithDoc,
+  UnresolvableIssuerError,
 } from './did.js'
 export {
   type CreateIdentityInput,

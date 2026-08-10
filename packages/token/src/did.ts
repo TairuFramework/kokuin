@@ -1,7 +1,7 @@
 import { base58 } from '@scure/base'
 
 import type { DIDResolver } from './cache.js'
-import { findMethodResolver, type MethodRegistry } from './method.js'
+import { findMethodResolver, type MethodRegistry, type ResolvedSigningKey } from './method.js'
 import { decodeMultibase } from './multibase.js'
 import type { DIDDoc, VerificationMethod } from './peer4.js'
 import {
@@ -88,6 +88,25 @@ export function getSignatureInfo(did: string): [SignatureAlgorithm, Uint8Array] 
   return info
 }
 
+/**
+ * The issuer of a token could not be resolved to a signing key at all: no built-in method, no
+ * `DIDResolver` and no `MethodRegistry` entry could turn the `iss` value into a key.
+ *
+ * Kept distinct from every other verification failure on purpose. `Invalid signature`, a missing
+ * `kid`, a `kid` that is not an authentication method — those mean the issuer *was* resolved and
+ * the token is bad, which is positive evidence. This error means nothing was learned about the
+ * token either way, and a caller that treats "could not check" as "checked and fine" fails open.
+ * `@kokuin/capability`'s revocation checker turns exactly on this distinction, so it must be a
+ * type rather than a message: every failure on the path is otherwise a plain `Error`, and text
+ * matching is how such a check regresses silently.
+ */
+export class UnresolvableIssuerError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'UnresolvableIssuerError'
+  }
+}
+
 export type ResolveIssuerHeader = { kid?: string }
 
 export type ResolveIssuerWithDocResult = {
@@ -111,8 +130,20 @@ export async function resolveIssuerWithDoc(
   if (methods != null) {
     const methodResolver = findMethodResolver(methods, iss)
     if (methodResolver != null) {
-      const { alg, publicKey } = await methodResolver.resolve(iss, header)
-      return { alg, publicKey }
+      // A method resolver throws its own error strings — `@kokuin/controller` alone has four.
+      // Re-type them so a method-backed failure to resolve is indistinguishable to callers from
+      // the built-in ones below. The original message is preserved so nothing loses detail, and
+      // the original error is kept as `cause`.
+      let resolved: ResolvedSigningKey
+      try {
+        resolved = await methodResolver.resolve(iss, header)
+      } catch (cause) {
+        throw new UnresolvableIssuerError(
+          cause instanceof Error ? cause.message : `Unknown DID: ${iss}`,
+          { cause },
+        )
+      }
+      return { alg: resolved.alg, publicKey: resolved.publicKey }
     }
   }
 
@@ -126,11 +157,11 @@ export async function resolveIssuerWithDoc(
     }
 
     if (resolver == null) {
-      throw new Error(`Unknown DID: ${shortForm}`)
+      throw new UnresolvableIssuerError(`Unknown DID: ${shortForm}`)
     }
     const doc = await resolver(shortForm)
     if (doc == null) {
-      throw new Error(`Unknown DID: ${shortForm}`)
+      throw new UnresolvableIssuerError(`Unknown DID: ${shortForm}`)
     }
     assertDocWithinMaxSize(doc)
     const expected = encodePeer4(doc).shortForm
@@ -145,7 +176,7 @@ export async function resolveIssuerWithDoc(
   // the false case since the parameter is already `string`), so route the prefix check through
   // a helper that takes an unnarrowed `string` rather than calling `.startsWith` on `iss` here.
   if (!hasKeyPrefix(iss)) {
-    throw new Error(`Unknown DID: ${iss}`)
+    throw new UnresolvableIssuerError(`Unknown DID: ${iss}`)
   }
   const [alg, publicKey] = getSignatureInfo(iss)
   return { alg, publicKey }
