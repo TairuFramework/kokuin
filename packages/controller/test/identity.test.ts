@@ -205,6 +205,20 @@ describe('createControllerIdentity() kid', () => {
       `Controller identity: cannot sign under kid #${cosignerKey}, this identity holds #${controllerKey}`,
     )
   })
+
+  test('refuses a caller kid passed as the key-selection option too', async () => {
+    const { log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
+    const identity = createControllerIdentity(seed, 0, log)
+
+    // `SignTokenOptions.kid` selects among a multi-key identity's keys, and the DID-bound identity
+    // underneath ignores it outright. Ignoring it here would be the same silent mis-selection as
+    // dropping a header kid, one spelling over.
+    await expect(
+      identity.signToken({ hello: 'world' }, { kid: `#${cosignerKey}` }),
+    ).rejects.toThrow(
+      `Controller identity: cannot sign under kid #${cosignerKey}, this identity holds #${controllerKey}`,
+    )
+  })
 })
 
 describe('createControllerIdentityAsync()', () => {

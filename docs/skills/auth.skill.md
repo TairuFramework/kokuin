@@ -414,10 +414,11 @@ any claim whose subject is the profile rather than a device
   What that buys is narrow but real: the caller cannot name a position, so the signing key always
   matches the log it was handed. **The log is still the caller's freshness contract** — build an
   identity from a stale or truncated log and it signs with a key that later events retired,
-  minting tokens a current verifier rejects with `Invalid signature`. Re-read the log and rebuild
-  the identity after any rotation; do not cache one across one
-- It throws when the log does not fold, and when the derived key is not the current authority key
-  — a wrong `seed` or a wrong `profile` for that log
+  minting tokens a current verifier rejects — with `kid names a key outside the current set`, since
+  the token names the key that signed it. Re-read the log and rebuild the identity after any
+  rotation; do not cache one across one
+- It throws when the log does not fold, and when the derived key is not one of the current
+  authority keys — a wrong `seed` or a wrong `profile` for that log
 - The key it derives sits at the fold's `keyGen`/`keySeq` — where the current keys were
   *established* — not at `gen`/`seq`, which is the position of the last event. A revoke advances
   the sequence without establishing a key, so the two diverge
@@ -429,10 +430,17 @@ any claim whose subject is the profile rather than a device
 - Without `methods`, `verifyToken` fails with `Unknown DID` — the identifier carries no key.
   `did:key` and `did:peer:4` need no entry
 - `checkCapability` / `checkDelegationChain` (`@kokuin/capability`) take the same `methods` option
-  and forward it to every `verifyToken` in the chain
-- **Not yet supported**: `createCapability`'s parent-capability check and
-  `@kokuin/capability`'s revocation-record verification take no options, so a `did:kokuin:` issuer
-  cannot yet delegate through `createCapability` or have its revocation records verified
+  and forward it to every `verifyToken` in the chain, as do `createCapability` (for its
+  parent-capability check) and `createRevocationChecker` / `createMemoryRevocationBackend` (for the
+  record's issuer). A `did:kokuin:` issuer needs `methods` at each of those call sites: without it
+  delegation fails, and an unresolvable revocation record now fails the verification closed
+- **Key selection**: a controller's `k` is a *set*. Every token `createControllerIdentity` signs
+  carries `kid: "#<the multibase key exactly as it appears in `k`>"`, and the resolver matches that
+  against the folded set by membership. A header with no `kid` still resolves to `k[0]`, so
+  single-key profiles are unaffected. A `kid` naming a key outside the current set — a retired one,
+  most often — is an error, never a fall back to `k[0]`
+- The identity takes no `kid`: it derives exactly one key pair, so the `kid` is a fact about the
+  signature. Passing a `kid` naming another key to `signToken` is rejected rather than ignored
 
 ## When to Use What
 

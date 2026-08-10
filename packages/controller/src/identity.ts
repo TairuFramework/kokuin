@@ -35,6 +35,10 @@ function didFromLog(log: Array<SignedEvent>): DIDString {
  * checked, never honoured — and dropping a mismatched one silently would mint a token whose header
  * names a key that did not sign it, which a resolver then answers with, failing verification for a
  * reason nothing in the token explains.
+ *
+ * Both spellings of "the caller named a key" are checked: `options.kid`, which selects among the
+ * keys of a multi-key identity and which the DID-bound identity underneath simply ignores, and
+ * `options.header.kid`, which is written straight into the signed header.
  */
 function withKid(identity: SigningIdentity, kid: string): SigningIdentity {
   return {
@@ -43,11 +47,12 @@ function withKid(identity: SigningIdentity, kid: string): SigningIdentity {
       payload: Payload,
       options: SignTokenOptions = {},
     ) {
-      const supplied = options.header?.kid
-      if (supplied != null && supplied !== kid) {
-        throw new Error(
-          `${CONTEXT}: cannot sign under kid ${String(supplied)}, this identity holds ${kid}`,
-        )
+      for (const supplied of [options.kid, options.header?.kid]) {
+        if (supplied != null && supplied !== kid) {
+          throw new Error(
+            `${CONTEXT}: cannot sign under kid ${String(supplied)}, this identity holds ${kid}`,
+          )
+        }
       }
       return identity.signToken(payload, { ...options, header: { ...options.header, kid } })
     },
@@ -110,8 +115,8 @@ function identityForState(
  * Every token it signs carries `kid: #<the key that signed it>`, which is what lets a verifier
  * pick this key out of a set publishing several. There is no `kid` parameter: the identity derives
  * exactly one key pair, so the `kid` is determined by the seed, the profile and the log, and one
- * naming any other key is a request it could not honour. A caller-supplied header `kid` is checked
- * against it and rejected on mismatch rather than dropped.
+ * naming any other key is a request it could not honour. A caller-supplied `kid` — in `options` or
+ * in `options.header` — is checked against it and rejected on mismatch rather than dropped.
  *
  * Synchronous, and stays so: kubun's apply path depends on it. A log whose revoke carries a
  * capability cannot fold without awaiting a verifier, so it throws here — use
