@@ -76,6 +76,24 @@ export type FoldOptions = {
   ) => Promise<CapabilityAuthorisation>
 }
 
+/**
+ * Whether a verifier's answer is one this fold can act on. Total, and deliberately strict about
+ * both arms: an `authorised: true` with no usable key would reach `verifyEventSignedBy` and throw,
+ * and an `authorised: false` with no reason would produce a `FoldResult` whose `reason` is not a
+ * string. Neither is reachable from typed code; both are reachable from a stale build.
+ */
+function isCapabilityAuthorisation(value: unknown): value is CapabilityAuthorisation {
+  if (value == null || typeof value !== 'object') {
+    return false
+  }
+  const answer = value as Partial<CapabilityAuthorisation & { audienceKey: unknown }>
+  if (answer.authorised === true) {
+    const key = answer.audienceKey as ResolvedSigningKey | undefined
+    return key != null && typeof key.alg === 'string' && key.publicKey instanceof Uint8Array
+  }
+  return answer.authorised === false && typeof answer.reason === 'string'
+}
+
 function fail(reason: string, index: number): FoldResult {
   return { ok: false, reason, index }
 }
@@ -292,6 +310,14 @@ export async function foldLogAsync(
         return fail(`capability-authorised revoke needs a verifier: ${outcome.cap}`, i)
       }
       const authorisation = await options.verifyCapability(outcome.cap, did, outcome.target)
+      // The fold is total by contract, and a verifier is caller-supplied code that TypeScript
+      // cannot police across a package boundary or a stale build. An answer of the wrong shape —
+      // the previous `null`/key-object contract, a rejection with no reason — must come back as a
+      // `FoldResult` with a real reason, not as a `TypeError` thrown out of the loop and not as a
+      // `reason` of `undefined`, which is a failure a caller cannot log or match on.
+      if (!isCapabilityAuthorisation(authorisation)) {
+        return fail('capability verifier returned a malformed answer', i)
+      }
       if (!authorisation.authorised) {
         return fail(authorisation.reason, i)
       }

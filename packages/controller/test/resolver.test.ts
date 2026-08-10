@@ -227,6 +227,70 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
     await expect(prefixed.resolve(did, {})).resolves.toBeDefined()
   })
 
+  test('two concurrent resolutions of one DID both succeed on a log with no capability', async () => {
+    // The guard tracks DIDs across awaits, so it cannot tell a resolution that re-entered itself
+    // from two independent ones in flight at once. A resolver with no verifier makes no outward
+    // call from `loadState` and so cannot re-enter, which is why the guard stays unarmed there.
+    // Without that, ordinary parallel verification of two tokens from one issuer fails — and the
+    // failure arrives as an `UnresolvableIssuerError`, which the revocation checker turns into a
+    // denial of a perfectly valid capability.
+    const { icp, did } = build()
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered = 0
+    const resolver = createControllerResolver({
+      loadLog: async () => {
+        // Hold the first call open until the second has entered, so the two really overlap rather
+        // than happening to serialise.
+        if (++entered === 1) await gate
+        else release()
+        return [icp]
+      },
+    })
+
+    const [first, second] = await Promise.all([
+      resolver.resolve(did, {}),
+      resolver.resolve(did, {}),
+    ])
+    expect(entered).toBe(2)
+    expect(first.publicKey).toEqual(decodeKey(icp.event.k[0]).publicKey)
+    expect(second.publicKey).toEqual(first.publicKey)
+  })
+
+  test('a cycle spanning two resolver instances is still caught', async () => {
+    // Any cycle that comes back to a resolver revisits one of that instance's own (instance, DID)
+    // pairs, so per-instance sets catch A → B → A. Only a chain minting a fresh resolver at every
+    // hop escapes, which nothing in this repo does.
+    const { did, log } = capLog()
+    // The second profile's log must itself carry a cap-bearing revoke, or its fold never calls
+    // outward and there is no cycle to catch.
+    const otherIcp = createInception(new Uint8Array(32).fill(23), 0)
+    const otherDID = didFromInception(otherIcp.event)
+    const otherLog = [
+      otherIcp,
+      createRevoke(delegateSeed, 0, otherDID, otherIcp.event, device, { gen: 0, seq: 0 }, { cap }),
+    ]
+
+    const a: DIDMethodResolver = createControllerResolver({
+      loadLog: async () => log,
+      verifyCapability: async () => {
+        await b.resolve(otherDID, {})
+        return authorised
+      },
+    })
+    const b: DIDMethodResolver = createControllerResolver({
+      loadLog: async () => otherLog,
+      verifyCapability: async () => {
+        await a.resolve(did, {})
+        return authorised
+      },
+    })
+
+    await expect(a.resolve(did, {})).rejects.toThrow(`cyclic resolution of ${did}`)
+  })
+
   test('the guard is per DID, so two profiles vouching for each other still resolve', async () => {
     // What the guard must not break: the audience is a *different* profile, so resolving it from
     // inside this fold is a legitimate nested resolution, not a cycle.

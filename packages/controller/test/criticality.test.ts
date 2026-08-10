@@ -127,6 +127,34 @@ describe('capability-authorised revoke', () => {
     expect(result.reason).toBe('revoke is not signed by the capability audience')
   })
 
+  test('a verifier answering with the wrong shape fails closed with a real reason', async () => {
+    // The fold is total by contract, and the verifier is caller-supplied code across a package
+    // boundary TypeScript cannot police — a stale build still holding the round-0 `null`/key
+    // contract is the realistic source. Each of these used to throw a `TypeError` out of
+    // `foldLogAsync`, or produce a `FoldResult` whose `reason` was `undefined`.
+    const { icp, did } = build()
+    const malformed = [
+      null,
+      undefined,
+      { alg: 'EdDSA', publicKey: new Uint8Array(32) },
+      { authorised: true },
+      { authorised: true, audienceKey: { alg: 'EdDSA' } },
+      { authorised: false },
+      'nope',
+    ]
+
+    for (const answer of malformed) {
+      const result = await foldLogAsync(did, [icp, capRevoke(did, icp)], {
+        verifyCapability: async () => answer as unknown as CapabilityAuthorisation,
+      })
+      expect(result).toEqual({
+        ok: false,
+        reason: 'capability verifier returned a malformed answer',
+        index: 1,
+      })
+    }
+  })
+
   test('the async fold rejects a cap-bearing revoke carrying no signature at all', async () => {
     // Before the audience binding, `sigs` was never read on this path: an event with an empty
     // signature list and a lifted capability folded cleanly.

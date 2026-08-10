@@ -11,6 +11,7 @@ import {
 import {
   assertCapabilityToken,
   type CapabilityPayload,
+  type ConfirmationClaim,
   checkCapability,
   type DelegationChainOptions,
 } from './index.js'
@@ -35,31 +36,38 @@ const NO_AUDIENCE_KEY = 'capability pins no audience key'
 const KEY_LENGTHS: Record<string, number> = { EdDSA: 32, ES256: 33 }
 
 /**
- * Encode an audience's signing key for a capability's `aky` claim.
+ * Build the `cnf` claim pinning an audience's signing key — see {@link ConfirmationClaim}.
  *
- * The same encoding a controller log uses for the keys in `k` — multicodec-tagged, then multibase.
- * Deliberately not a second spelling: the two are compared by a human reading a log next to a
- * capability, and `@kokuin/capability` cannot import the controller's encoder without a cycle, so
- * the format is shared rather than the code. A test asserts the two agree byte for byte.
+ * The key is encoded exactly as a controller log encodes the keys in `k` — multicodec-tagged, then
+ * multibase. Deliberately not a second spelling: the two get compared by a human reading a log next
+ * to a capability, and `@kokuin/capability` cannot import the controller's encoder without a cycle,
+ * so the format is shared rather than the code. A test asserts the two agree byte for byte.
  *
  * Call it at **mint** time, with the key the audience is known to hold — for a `did:key` audience
  * that key is in the identifier, and for anything else it is whatever `resolveIssuer` answers with
  * at that moment. That moment is the point: the pin is what the issuer saw when it granted, and it
  * never has to be looked up again.
  */
-export function encodeAudienceKey(key: ResolvedSigningKey): string {
+export function audienceConfirmation(key: ResolvedSigningKey): ConfirmationClaim {
   const codec = CODECS[key.alg]
   const bytes = new Uint8Array(codec.length + key.publicKey.length)
   bytes.set(codec, 0)
   bytes.set(key.publicKey, codec.length)
-  return encodeMultibase(bytes)
+  return { kid: encodeMultibase(bytes) }
 }
 
-/** Inverse of {@link encodeAudienceKey}. Throws on anything it does not recognise. */
-function decodeAudienceKey(value: string): ResolvedSigningKey {
-  const info = getAlgorithmAndPublicKey(decodeMultibase(value))
+/**
+ * The key a {@link ConfirmationClaim} names. Throws on anything it does not recognise — a missing
+ * or non-string `kid`, an unreadable multibase, an unknown codec, a wrong-length payload.
+ */
+function confirmedKey(cnf: ConfirmationClaim | undefined): ResolvedSigningKey {
+  const kid = cnf?.kid
+  if (typeof kid !== 'string') {
+    throw new Error('Confirmation claim has no kid')
+  }
+  const info = getAlgorithmAndPublicKey(decodeMultibase(kid))
   if (info == null) {
-    throw new Error(`Unrecognised audience key encoding: ${value}`)
+    throw new Error(`Unrecognised audience key encoding: ${kid}`)
   }
   const [alg, publicKey] = info
   if (publicKey.length !== KEY_LENGTHS[alg]) {
@@ -107,7 +115,7 @@ export type ControllerCapabilityVerifier = (
  *    capability must carry its parents in its own `cap` claim, since that is where
  *    `checkCapability` walks the chain from; naming a parent only at mint time leaves nothing for
  *    a verifier that sees the event alone;
- * 4. that it pins its audience's signing key in `aky`.
+ * 4. that it pins its audience's signing key in `cnf`.
  *
  * All four passing yields that pinned key. Handing it back rather than a bare `true` is what lets
  * the fold check the revoke event's own signature against it — the audience binding, which nothing
@@ -116,9 +124,10 @@ export type ControllerCapabilityVerifier = (
  * **The pin is mandatory here, and is never resolved.** Looking the audience up instead would make
  * the *audience's* routine key rotation stop the revoke from verifying, and a revoke that stops
  * verifying makes the whole log unfoldable and the profile's DID permanently unresolvable — a
- * third party bricking an identity by rotating their own key. A capability with no `aky` is
+ * third party bricking an identity by rotating their own key. A capability with no `cnf` is
  * rejected with {@link NO_AUDIENCE_KEY} rather than falling back to resolution, because the
- * fallback is the bug.
+ * fallback is the bug. So is a `cnf` that is present but unreadable — no member this understands,
+ * a non-string `kid`, an unknown codec, a wrong-length key.
  *
  * It never throws: a fold that rejected rather than returned would turn every verification failure
  * into an exception on the caller's resolve path.
@@ -144,7 +153,7 @@ export function createControllerCapabilityVerifier(
     subject: string,
     target: string,
   ): Promise<CapabilityAuthorisation> {
-    let pinned: string | undefined
+    let pinned: ConfirmationClaim | undefined
     try {
       const capability = await verifyToken<CapabilityPayload>(cap, {
         atTime: options.atTime,
@@ -164,7 +173,7 @@ export function createControllerCapabilityVerifier(
       }
 
       await checkCapability({ act: 'revoke', res: target }, capability.payload, options)
-      pinned = capability.payload.aky
+      pinned = capability.payload.cnf
     } catch {
       // Every failure is the same answer here, including the two `@kokuin/token` keeps apart:
       // `UnresolvableIssuerError` (nothing was learned about the capability) and
@@ -182,7 +191,7 @@ export function createControllerCapabilityVerifier(
       return { authorised: false, reason: NO_AUDIENCE_KEY }
     }
     try {
-      return { authorised: true, audienceKey: decodeAudienceKey(pinned) }
+      return { authorised: true, audienceKey: confirmedKey(pinned) }
     } catch {
       return { authorised: false, reason: NO_AUDIENCE_KEY }
     }

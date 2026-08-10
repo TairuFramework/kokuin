@@ -105,8 +105,8 @@ export type CapabilityPayload = Permission & {
   iat?: number
   jti?: string
   /**
-   * The audience's signing key, pinned at mint time — multicodec-tagged then multibase, the same
-   * encoding a `did:kokuin:` log uses for the keys in `k`. See `encodeAudienceKey`.
+   * Proof-of-possession key the audience must hold, pinned at mint time. See
+   * {@link ConfirmationClaim}.
    *
    * Optional in general: a capability whose holder proves itself by signing a token needs nothing
    * here, since the token names its own issuer. It is **required** by
@@ -114,8 +114,29 @@ export type CapabilityPayload = Permission & {
    * event that names nobody, and where resolving the audience instead would let that audience's
    * own key rotation make the profile unresolvable forever.
    */
-  aky?: string
+  cnf?: ConfirmationClaim
 }
+
+/**
+ * RFC 7800's `cnf` (confirmation) claim: the key the presenter of this token must prove possession
+ * of. The registered claim for exactly this job, so the wire format is a standard one rather than
+ * a house invention — worth getting right before anything publishes, since wire format is the
+ * hardest thing to change afterwards.
+ *
+ * The member is `kid` rather than `jwk`. RFC 7800 §3.4 leaves `kid`'s content application-specific
+ * and expects the recipient to be able to turn it into a key; here the identifier **is** the key —
+ * a multicodec-tagged, multibase-encoded public key, self-describing and requiring no lookup —
+ * which is the same `kid` convention `did:kokuin:` already fixed for token headers, and the same
+ * encoding a controller log uses for the keys in `k`. `cnf.jwk` is the strictly by-value member and
+ * would be defensible, but it would put a second encoding of the same key next to the one this
+ * stack already has, add JWK serialisation and canonical comparison to a package with neither, and
+ * buy nothing that the tagged multibase form does not already carry.
+ *
+ * Only `kid` is understood. Any other member — including a legitimate RFC 7800 `jwk`, `jwe` or
+ * `jku` — fails closed rather than being resolved, because resolving is the bug this claim exists
+ * to remove.
+ */
+export type ConfirmationClaim = { kid?: string }
 
 export type CapabilityToken<
   Payload extends CapabilityPayload = CapabilityPayload,
@@ -515,7 +536,7 @@ export {
 } from '@kokuin/token'
 
 export type { CapabilityAuthorisation, ControllerCapabilityVerifier } from './controller.js'
-export { createControllerCapabilityVerifier, encodeAudienceKey } from './controller.js'
+export { audienceConfirmation, createControllerCapabilityVerifier } from './controller.js'
 export type { RevocationBackend, RevocationOptions, RevocationRecord } from './revocation.js'
 export {
   createMemoryRevocationBackend,

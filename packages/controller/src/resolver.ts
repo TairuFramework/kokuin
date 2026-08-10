@@ -63,6 +63,14 @@ export type ControllerResolverOptions = {
    * prefix is also the state the capability has to be checked against: a key set the log rotated
    * away afterwards must not verify a grant made under it. A same-DID cycle is caught and turned
    * into an error rather than a hang, but the error is a diagnosis, not a fix.
+   *
+   * One limitation of that trap, and the reason this paragraph is here rather than only in a
+   * comment: it cannot tell a resolution that re-entered *itself* from two independent resolutions
+   * of the same DID running at once, because nothing carries chain identity across the callback.
+   * It is therefore armed only when `verifyCapability` is set, which is the only way `loadState`
+   * calls outward at all. **A resolver configured with a `verifyCapability` should not have two
+   * concurrent resolutions of one DID in flight** — the second is refused as cyclic. Serialise
+   * them, or use a separate instance per resolution, until the callback can carry chain context.
    */
   loadLog(did: string): Promise<Array<SignedEvent> | undefined>
   /**
@@ -87,12 +95,21 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
   // ordinarily this same profile — so a `loadLog` answering with the whole log re-enters `loadState`
   // for a DID already in flight and never returns. Left unguarded that is not a stack overflow but
   // an await-chained loop doing Ed25519 work forever, reachable from any DID string a peer hands to
-  // `resolve`. Failing closed with the fix in the message is the only outcome a deployment can act
-  // on. Per instance, and cleared in `finally`, so it constrains nothing else: two *different*
-  // profiles vouching for each other still resolve, which is the shape a `did:kokuin:` audience
-  // has. A cycle spanning two resolver instances is not caught — that would need the set to be
-  // shared through the options.
-  const inFlight = new Set<string>()
+  // `resolve`, and the await chain starves the timer queue, so a host-side timeout cannot catch it
+  // either. Failing closed with the fix in the message is the only outcome a deployment can act on.
+  //
+  // Armed only when a verifier is configured. The set spans awaits, so it cannot tell a resolution
+  // that re-entered itself from two independent ones running at once — and without a verifier
+  // `loadState` makes no outward call at all, so there is nothing to re-enter and the guard is pure
+  // cost. Unarmed, ordinary parallel verification of two tokens from one issuer works; armed, it
+  // does not, which is the residual documented on `loadLog`. Fixing that properly needs chain
+  // identity the callback signature cannot carry, and the one host facility that provides it
+  // (`AsyncLocalStorage`) is node-only, which this package is not.
+  //
+  // Per instance and cleared in `finally`, which still catches a cycle spanning two instances —
+  // any cycle that returns to a resolver must revisit one of its own (instance, DID) pairs. Only a
+  // chain minting a fresh resolver at every hop escapes.
+  const inFlight = options.verifyCapability == null ? null : new Set<string>()
 
   // Shared by both members: load the log, fold it, take the last state, throw `Unknown DID` when
   // absent. A second copy of this sequence would drift.
@@ -105,12 +122,12 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
     if (!did.startsWith(DID_PREFIX)) {
       throw new Error(`Unknown DID: ${did}`)
     }
-    if (inFlight.has(did)) {
+    if (inFlight?.has(did)) {
       throw new Error(
         `${CONTEXT}: cyclic resolution of ${did} — loadLog must answer with the log prefix up to the event carrying the capability`,
       )
     }
-    inFlight.add(did)
+    inFlight?.add(did)
     try {
       const events = await options.loadLog(did)
       if (events == null || events.length === 0) {
@@ -120,7 +137,7 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
         verifyCapability: options.verifyCapability,
       })
     } finally {
-      inFlight.delete(did)
+      inFlight?.delete(did)
     }
   }
 

@@ -22,9 +22,10 @@ import {
 import { describe, expect, test } from 'vitest'
 
 import {
+  audienceConfirmation,
+  type ConfirmationClaim,
   createCapability,
   createControllerCapabilityVerifier,
-  encodeAudienceKey,
   now,
 } from '../src/index.js'
 
@@ -53,8 +54,8 @@ function identityForSeed(seed: Uint8Array): SigningIdentity {
 }
 
 /** The public key `createRevoke(seed, …)` signs with — what a capability pins as its audience key. */
-function audienceKeyForSeed(seed: Uint8Array): string {
-  return encodeAudienceKey({
+function confirmationForSeed(seed: Uint8Array): ConfirmationClaim {
+  return audienceConfirmation({
     alg: 'EdDSA',
     publicKey: deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
   })
@@ -107,7 +108,7 @@ type CapabilityFields = {
   res?: string | Array<string>
   exp?: number
   /** Explicit `undefined` mints a capability with no pin at all — not the same as omitting it. */
-  aky?: string | undefined
+  cnf?: ConfirmationClaim | undefined
   /** The parent chain carried in the payload, which is where `checkCapability` walks it from. */
   cap?: Array<string>
   parentCapability?: string
@@ -123,7 +124,7 @@ async function mintCapability(fields: CapabilityFields = {}): Promise<string> {
       act: fields.act ?? 'revoke',
       res: fields.res ?? target,
       exp: fields.exp ?? now() + 3600,
-      aky: 'aky' in fields ? fields.aky : audienceKeyForSeed(delegateSeed),
+      cnf: 'cnf' in fields ? fields.cnf : confirmationForSeed(delegateSeed),
       cap: fields.cap,
     },
     undefined,
@@ -239,7 +240,7 @@ describe('createControllerCapabilityVerifier()', () => {
     // the log could lift a management capability out of it and revoke whatever its `res` covers.
     const cap = await mintCapability({
       aud: outsider.id,
-      aky: audienceKeyForSeed(outsiderSeed),
+      cnf: confirmationForSeed(outsiderSeed),
     })
     const result = await foldWithCapability(cap, { signerSeed: delegateSeed })
 
@@ -323,7 +324,7 @@ describe('createControllerCapabilityVerifier()', () => {
     // Mandatory on this path, and never filled in by resolving the audience — that fallback is the
     // bug the pin exists to remove. Its own reason, because a sound grant with a missing pin is a
     // minting fault, not a rejected delegation.
-    const result = await foldWithCapability(await mintCapability({ aky: undefined }))
+    const result = await foldWithCapability(await mintCapability({ cnf: undefined }))
 
     expect(result).toEqual({
       ok: false,
@@ -333,7 +334,9 @@ describe('createControllerCapabilityVerifier()', () => {
   })
 
   test('a capability whose pinned key is unreadable is rejected as a missing pin', async () => {
-    const result = await foldWithCapability(await mintCapability({ aky: 'not-a-multibase-key' }))
+    const result = await foldWithCapability(
+      await mintCapability({ cnf: { kid: 'not-a-multibase-key' } }),
+    )
 
     expect(result).toEqual({
       ok: false,
@@ -347,7 +350,7 @@ describe('createControllerCapabilityVerifier()', () => {
     // somebody else signed. The `aud` claim here still names the delegate — only the pin moves —
     // so this also shows the binding is to the pinned key rather than to the `aud` string.
     const result = await foldWithCapability(
-      await mintCapability({ aky: audienceKeyForSeed(outsiderSeed) }),
+      await mintCapability({ cnf: confirmationForSeed(outsiderSeed) }),
     )
 
     expect(result).toEqual({
@@ -364,7 +367,7 @@ describe('createControllerCapabilityVerifier()', () => {
     const root = await mintCapability({
       aud: manager.id,
       res: '*',
-      aky: audienceKeyForSeed(new Uint8Array(32).fill(17)),
+      cnf: confirmationForSeed(new Uint8Array(32).fill(17)),
     })
     const leaf = await mintCapability({
       signer: manager,
@@ -425,7 +428,7 @@ describe('createControllerCapabilityVerifier()', () => {
 
     const cap = await mintCapability({
       aud: otherController.did,
-      aky: audienceKeyForSeed(otherControllerSeed),
+      cnf: confirmationForSeed(otherControllerSeed),
     })
     const revoke = createRevoke(
       otherControllerSeed,
@@ -449,9 +452,42 @@ describe('createControllerCapabilityVerifier()', () => {
 
   test('the pinned key is encoded exactly as a controller log encodes the keys in `k`', async () => {
     // One format, two implementations — the packages cannot share code without a cycle. A drift
-    // here would only surface as a signature that mysteriously does not match.
+    // here would only surface as a signature that mysteriously does not match. This is also what
+    // makes `cnf.kid` honest as a key *identifier* rather than a reference needing resolution: the
+    // string is the same one the log publishes for that key.
     const { publicKey } = deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA')
-    expect(encodeAudienceKey({ alg: 'EdDSA', publicKey })).toBe(encodeKey(publicKey, 'EdDSA'))
+    expect(audienceConfirmation({ alg: 'EdDSA', publicKey })).toEqual({
+      kid: encodeKey(publicKey, 'EdDSA'),
+    })
+  })
+
+  test('a confirmation claim with no member this understands is rejected as a missing pin', async () => {
+    // RFC 7800 allows `jwk`, `jwe` and `jku` alongside `kid`. None is understood here: `jwk` would
+    // be a second encoding of a key this stack already encodes, and `jwe`/`jku` are references to
+    // resolve, which is the thing the pin exists to stop. All fail closed, and as a *missing* pin
+    // rather than as a rejected delegation.
+    for (const cnf of [
+      {},
+      { jwk: { kty: 'OKP', crv: 'Ed25519', x: 'abc' } },
+      { jku: 'https://example.com/keys' },
+      { kid: 42 },
+      { kid: confirmationForSeed(delegateSeed).kid?.slice(0, 12) },
+      // The delegate's real key, correctly encoded, under the wrong member. Only `kid` is read,
+      // so this authorises nothing — an implementation scanning `cnf` for any usable string would
+      // accept it and quietly widen the claim to members it does not implement.
+      { jwk: confirmationForSeed(delegateSeed).kid },
+    ] as Array<ConfirmationClaim>) {
+      const result = await foldWithCapability(await mintCapability({ cnf }))
+      expect(result).toEqual({
+        ok: false,
+        reason: 'capability pins no audience key',
+        index: 1,
+      })
+    }
+
+    // Control: the same shape with a readable `kid` folds, so the rejections above are the claim
+    // and not the surrounding capability.
+    await expect(foldWithCapability(await mintCapability())).resolves.toMatchObject({ ok: true })
   })
 
   test('without the method registry the capability cannot be verified at all', async () => {
