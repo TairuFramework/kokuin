@@ -1,10 +1,45 @@
-import type { DIDMethodResolver, ResolvedAgreementKey, ResolvedSigningKey } from '@kokuin/token'
+import type {
+  DIDMethodResolver,
+  ResolvedAgreementKey,
+  ResolvedSigningKey,
+  ResolveIssuerHeader,
+} from '@kokuin/token'
 
 import { DID_PREFIX, decodeKey, type SignedEvent } from './events.js'
 import type { FoldOptions, KeyState } from './fold.js'
 import { currentStateAsync } from './state.js'
 
 const CONTEXT = 'Controller resolver'
+
+/**
+ * The `k` entry a token's `kid` names, or the first published key when it carries none.
+ *
+ * The format is `#<the multibase key exactly as it appears in `k`>` — a fragment whose body is the
+ * key itself, matched against the folded key set by membership. An index-based fragment was
+ * rejected for this: an index means whatever the key set said at the time, and a token outlives
+ * the state that gave its `kid` meaning.
+ *
+ * A `kid` outside the current set is an error, never a fall back to `keys[0]`. Falling back would
+ * check the signature against a key the token never claimed — and for the common case of a key the
+ * log has since rotated away, "the signer named a retired key" is precisely the answer a verifier
+ * must not paper over.
+ *
+ * The bare key without the leading `#` is rejected rather than accepted as a second spelling: the
+ * fragment form is wire-visible and effectively permanent, so it has exactly one spelling.
+ */
+function selectSigningKey(did: string, keys: Array<string>, kid?: string): string {
+  if (kid == null) {
+    return keys[0]
+  }
+  if (!kid.startsWith('#')) {
+    throw new Error(`Controller ${did} kid is not a key fragment: ${kid}`)
+  }
+  const key = kid.slice(1)
+  if (!keys.includes(key)) {
+    throw new Error(`Controller ${did} kid names a key outside the current set: ${kid}`)
+  }
+  return key
+}
 
 export type ControllerResolverOptions = {
   /** Load a controller's event log. Returns undefined when the DID is unknown. */
@@ -46,12 +81,12 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
 
   return {
     method: 'kokuin',
-    async resolve(did: string): Promise<ResolvedSigningKey> {
+    async resolve(did: string, header: ResolveIssuerHeader = {}): Promise<ResolvedSigningKey> {
       const state = await loadState(did)
       if (state.keys.length === 0) {
         throw new Error(`Controller ${did} has no signing key`)
       }
-      const key = decodeKey(state.keys[0])
+      const key = decodeKey(selectSigningKey(did, state.keys, header.kid))
       if (key.alg === 'X25519') {
         throw new Error(`Controller ${did} signing key is not a signature algorithm: ${key.alg}`)
       }

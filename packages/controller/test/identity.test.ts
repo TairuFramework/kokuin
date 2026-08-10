@@ -9,6 +9,7 @@ import {
   encodeKey,
 } from '../src/events.js'
 import { createControllerIdentity, createControllerIdentityAsync } from '../src/identity.js'
+import { buildTwoKeyLog } from './two-key-log.js'
 
 const seed = new Uint8Array(32).fill(7)
 const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
@@ -117,7 +118,7 @@ describe('createControllerIdentity()', () => {
     const other = new Uint8Array(32).fill(9)
 
     expect(() => createControllerIdentity(other, 0, [inception])).toThrow(
-      /does not match the current authority key/,
+      /is not one of the current authority keys/,
     )
   })
 
@@ -125,7 +126,7 @@ describe('createControllerIdentity()', () => {
     const inception = createInception(seed, 0)
 
     expect(() => createControllerIdentity(seed, 1, [inception])).toThrow(
-      /does not match the current authority key/,
+      /is not one of the current authority keys/,
     )
   })
 
@@ -133,6 +134,76 @@ describe('createControllerIdentity()', () => {
     const { log } = capLog()
 
     expect(() => createControllerIdentity(seed, 0, log)).toThrow(/capability/)
+  })
+})
+
+describe('createControllerIdentity() kid', () => {
+  test('stamps the kid of the key it signs with', async () => {
+    const inception = createInception(seed, 0)
+    const identity = createControllerIdentity(seed, 0, [inception])
+
+    const signed = await identity.signToken({ hello: 'world' })
+    expect(signed.header.kid).toBe(`#${inception.event.k[0]}`)
+  })
+
+  test('stamps the rotated key after a rotation, not the retired one', async () => {
+    const inception = createInception(seed, 0)
+    const did = didFromInception(inception.event)
+    const rotate = createRotate(seed, 0, did, inception.event)
+
+    const identity = createControllerIdentity(seed, 0, [inception, rotate])
+    const signed = await identity.signToken({ hello: 'world' })
+
+    expect(signed.header.kid).toBe(`#${rotate.event.k[0]}`)
+    expect(signed.header.kid).not.toBe(`#${inception.event.k[0]}`)
+  })
+
+  test('signs with the seed-derived key when the set publishes another key first', async () => {
+    // A hand-built two-key inception — see `two-key-log.ts`. The controller's key is `k[1]`.
+    const { log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
+    const identity = createControllerIdentity(seed, 0, log)
+
+    expect(encodeKey(identity.publicKey, 'EdDSA')).toBe(controllerKey)
+    const signed = await identity.signToken({ hello: 'world' })
+    expect(signed.header.kid).toBe(`#${controllerKey}`)
+    // `keys[0]` is the co-signer's, whose private key this identity does not hold: stamping it
+    // would name a key the token was not signed with.
+    expect(signed.header.kid).not.toBe(`#${cosignerKey}`)
+  })
+
+  test('keeps caller header fields alongside the kid', async () => {
+    const inception = createInception(seed, 0)
+    const identity = createControllerIdentity(seed, 0, [inception])
+
+    const signed = await identity.signToken(
+      { hello: 'world' },
+      { header: { cty: 'application/x' } },
+    )
+    expect(signed.header.cty).toBe('application/x')
+    expect(signed.header.kid).toBe(`#${inception.event.k[0]}`)
+  })
+
+  test('accepts a caller kid that names the key it signs with', async () => {
+    const inception = createInception(seed, 0)
+    const identity = createControllerIdentity(seed, 0, [inception])
+    const kid = `#${inception.event.k[0]}`
+
+    const signed = await identity.signToken({ hello: 'world' }, { header: { kid } })
+    expect(signed.header.kid).toBe(kid)
+  })
+
+  test('refuses a caller kid naming any other key', async () => {
+    const { log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
+    const identity = createControllerIdentity(seed, 0, log)
+
+    // The co-signer's key is in the published set, so the resolver would accept it — but this
+    // identity cannot sign with it. Silently dropping the caller's kid would mint a token whose
+    // header names a key that did not produce the signature.
+    await expect(
+      identity.signToken({ hello: 'world' }, { header: { kid: `#${cosignerKey}` } }),
+    ).rejects.toThrow(
+      `Controller identity: cannot sign under kid #${cosignerKey}, this identity holds #${controllerKey}`,
+    )
   })
 })
 
@@ -182,6 +253,10 @@ describe('createControllerIdentityAsync()', () => {
 
     expect(identity.id).toBe(createControllerIdentity(seed, 0, log).id)
     expect(encodeKey(identity.publicKey, 'EdDSA')).toBe(rotate.event.k[0])
+
+    // Including the header it stamps: both entry points build the identity the same way.
+    const signed = await identity.signToken({ hello: 'world' })
+    expect(signed.header.kid).toBe(`#${rotate.event.k[0]}`)
   })
 
   test('keeps the sync guards — an empty log, a non-inception head, a foreign seed', async () => {
@@ -195,6 +270,6 @@ describe('createControllerIdentityAsync()', () => {
     ).rejects.toThrow(/must be an inception/)
     await expect(
       createControllerIdentityAsync(new Uint8Array(32).fill(9), 0, [inception]),
-    ).rejects.toThrow(/does not match the current authority key/)
+    ).rejects.toThrow(/is not one of the current authority keys/)
   })
 })

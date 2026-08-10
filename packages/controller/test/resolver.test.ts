@@ -8,6 +8,7 @@ import {
   didFromInception,
 } from '../src/events.js'
 import { createControllerResolver } from '../src/resolver.js'
+import { buildTwoKeyLog, strangerKey } from './two-key-log.js'
 
 const seed = new Uint8Array(32).fill(1)
 const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
@@ -61,6 +62,67 @@ describe('createControllerResolver()', () => {
     const resolved = await resolver.resolve(did, {})
     expect(resolved.publicKey).toEqual(decodeKey(rot.event.k[0]).publicKey)
     expect(resolved.publicKey).not.toEqual(decodeKey(icp.event.k[0]).publicKey)
+  })
+})
+
+describe('createControllerResolver().resolve() with a kid', () => {
+  test('resolves the key named by kid, not the first key', async () => {
+    const { did, log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
+    const resolver = createControllerResolver({ loadLog: async () => log })
+
+    const resolved = await resolver.resolve(did, { kid: `#${controllerKey}` })
+    expect(resolved.alg).toBe('EdDSA')
+    expect(resolved.publicKey).toEqual(decodeKey(controllerKey).publicKey)
+    // Without this second assertion an implementation that ignores `kid` entirely would pass:
+    // `keys[0]` is the co-signer's key, so the two must be observably different.
+    expect(resolved.publicKey).not.toEqual(decodeKey(cosignerKey).publicKey)
+  })
+
+  test('resolves keys[0] when the header carries no kid', async () => {
+    const { did, log, cosignerKey } = buildTwoKeyLog(seed)
+    const resolver = createControllerResolver({ loadLog: async () => log })
+
+    const resolved = await resolver.resolve(did, {})
+    expect(resolved.publicKey).toEqual(decodeKey(cosignerKey).publicKey)
+  })
+
+  test('a kid naming a key outside the current set is rejected', async () => {
+    const { did, log } = buildTwoKeyLog(seed)
+    const resolver = createControllerResolver({ loadLog: async () => log })
+    const stranger = strangerKey()
+
+    // Rejected, never answered with `keys[0]`: a verifier told which key signed must not fall
+    // back to a different one, which would accept a signature the token never claimed.
+    await expect(resolver.resolve(did, { kid: `#${stranger}` })).rejects.toThrow(
+      `Controller ${did} kid names a key outside the current set: #${stranger}`,
+    )
+  })
+
+  test('a kid naming a key the log has since rotated away is rejected', async () => {
+    const { icp, did } = build()
+    const rot = createRotate(seed, 0, did, icp.event)
+    const resolver = createControllerResolver({ loadLog: async () => [icp, rot] })
+    const retired = icp.event.k[0]
+
+    await expect(resolver.resolve(did, { kid: `#${retired}` })).rejects.toThrow(
+      /kid names a key outside the current set/,
+    )
+    // Control: the same kid resolves against a resolver whose log stops before the rotation, so
+    // the rejection is the key having been retired and not the kid form being unusable.
+    const preRotation = createControllerResolver({ loadLog: async () => [icp] })
+    const resolved = await preRotation.resolve(did, { kid: `#${retired}` })
+    expect(resolved.publicKey).toEqual(decodeKey(retired).publicKey)
+  })
+
+  test('a kid that is not a fragment is rejected rather than matched bare', async () => {
+    const { did, log, controllerKey } = buildTwoKeyLog(seed)
+    const resolver = createControllerResolver({ loadLog: async () => log })
+
+    // The format is `#<the multibase key exactly as it appears in `k`>`. Accepting the bare key
+    // as well would make two spellings valid forever on a wire-visible format.
+    await expect(resolver.resolve(did, { kid: controllerKey })).rejects.toThrow(
+      `Controller ${did} kid is not a key fragment: ${controllerKey}`,
+    )
   })
 })
 

@@ -1,4 +1,9 @@
-import { createSigningIdentityForDID, type DIDString, type SigningIdentity } from '@kokuin/token'
+import {
+  createSigningIdentityForDID,
+  type DIDString,
+  type SigningIdentity,
+  type SignTokenOptions,
+} from '@kokuin/token'
 
 import { authorityPath, deriveKeyPair } from './derivation.js'
 import { didFromInception, encodeKey, type InceptionEvent, type SignedEvent } from './events.js'
@@ -20,6 +25,33 @@ function didFromLog(log: Array<SignedEvent>): DIDString {
     throw new Error(`${CONTEXT}: first event must be an inception`)
   }
   return didFromInception(first.event)
+}
+
+/**
+ * Stamp `kid` on every token this identity signs, naming the key that produced the signature.
+ *
+ * The identity derives exactly one key pair, so there is nothing for a caller to select: the `kid`
+ * is a fact about the signature, not an input to it. A caller-supplied one is therefore only ever
+ * checked, never honoured — and dropping a mismatched one silently would mint a token whose header
+ * names a key that did not sign it, which a resolver then answers with, failing verification for a
+ * reason nothing in the token explains.
+ */
+function withKid(identity: SigningIdentity, kid: string): SigningIdentity {
+  return {
+    ...identity,
+    async signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
+      payload: Payload,
+      options: SignTokenOptions = {},
+    ) {
+      const supplied = options.header?.kid
+      if (supplied != null && supplied !== kid) {
+        throw new Error(
+          `${CONTEXT}: cannot sign under kid ${String(supplied)}, this identity holds ${kid}`,
+        )
+      }
+      return identity.signToken(payload, { ...options, header: { ...options.header, kid } })
+    },
+  }
 }
 
 /**
@@ -45,14 +77,19 @@ function identityForState(
     authorityPath(profile, state.keyGen, state.keySeq),
     'EdDSA',
   )
-  // The resolver answers with `keys[0]`, so anything else here signs tokens nothing can verify.
-  // Fail loudly at construction instead — the mismatch means the seed or profile is not this
-  // log's.
-  if (encodeKey(publicKey, 'EdDSA') !== state.keys[0]) {
-    throw new Error(`${CONTEXT}: derived key does not match the current authority key of ${did}`)
+  // Membership, not `keys[0]`: a key set may publish several keys and the seed-derived one need
+  // not come first — the co-signers' keys belong to holders this seed knows nothing about. What
+  // must hold is that the resolver can answer with this key, which membership is exactly. A key
+  // outside the set signs tokens nothing can verify, so fail loudly at construction instead — the
+  // mismatch means the seed or profile is not this log's.
+  const key = encodeKey(publicKey, 'EdDSA')
+  if (!state.keys.includes(key)) {
+    throw new Error(`${CONTEXT}: derived key is not one of the current authority keys of ${did}`)
   }
 
-  return createSigningIdentityForDID(did, privateKey)
+  // The resolver picks by `kid` and defaults to `keys[0]`, so a token from a controller whose key
+  // is not first is unverifiable unless the header names the key that signed it.
+  return withKid(createSigningIdentityForDID(did, privateKey), `#${key}`)
 }
 
 /**
@@ -70,12 +107,18 @@ function identityForState(
  * position where the current keys were established diverge as soon as a log carries one. Deriving
  * at `gen`/`seq` would produce a key that was never in `k` — an unverifiable token, silently.
  *
+ * Every token it signs carries `kid: #<the key that signed it>`, which is what lets a verifier
+ * pick this key out of a set publishing several. There is no `kid` parameter: the identity derives
+ * exactly one key pair, so the `kid` is determined by the seed, the profile and the log, and one
+ * naming any other key is a request it could not honour. A caller-supplied header `kid` is checked
+ * against it and rejected on mismatch rather than dropped.
+ *
  * Synchronous, and stays so: kubun's apply path depends on it. A log whose revoke carries a
  * capability cannot fold without awaiting a verifier, so it throws here — use
  * {@link createControllerIdentityAsync} for one.
  *
- * @throws when the log does not fold, or when the derived key is not the profile's current
- * authority key (a wrong `seed` or `profile` for this log).
+ * @throws when the log does not fold, or when the derived key is not one of the profile's current
+ * authority keys (a wrong `seed` or `profile` for this log).
  */
 export function createControllerIdentity(
   seed: Uint8Array,

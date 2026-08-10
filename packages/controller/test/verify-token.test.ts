@@ -1,9 +1,16 @@
 import { createUnsignedToken, signToken, verifyToken } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
-import { createInception, createRevoke, createRotate, didFromInception } from '../src/events.js'
+import {
+  createInception,
+  createRevoke,
+  createRotate,
+  decodeKey,
+  didFromInception,
+} from '../src/events.js'
 import { createControllerIdentity } from '../src/identity.js'
 import { createControllerResolver } from '../src/resolver.js'
+import { buildTwoKeyLog } from './two-key-log.js'
 
 const seed = new Uint8Array(32).fill(7)
 const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
@@ -50,7 +57,12 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     const token = await signToken(stale, createUnsignedToken({ hello: 'world' }))
 
     const rotated = createControllerResolver({ loadLog: async () => [inception, rotate] })
-    await expect(verifyToken(token, { methods: [rotated] })).rejects.toThrow(/Invalid signature/)
+    // The stale token names its own key in `kid`, and the rotation retired it, so the rejection
+    // now comes from key selection rather than from the signature check. Either way the token
+    // does not verify — which is the property this test exists for.
+    await expect(verifyToken(token, { methods: [rotated] })).rejects.toThrow(
+      /kid names a key outside the current set/,
+    )
 
     // Control: the same token still verifies against a resolver whose log stops at the inception,
     // so the rejection above is the rotation retiring the key and not a malformed token.
@@ -76,6 +88,26 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     const verified = await verifyToken(token, { methods: [resolver] })
     expect(verified.payload.iss).toBe(did)
     expect(verified.payload.hello).toBe('world')
+  })
+
+  test('a token signed under a kid verifies end to end', async () => {
+    // A hand-built two-key inception — see `two-key-log.ts`. The controller signs with `k[1]`.
+    const { did, log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
+    const resolver = createControllerResolver({ loadLog: async () => log })
+
+    const identity = createControllerIdentity(seed, 0, log)
+    const token = await signToken(identity, createUnsignedToken({ hello: 'world' }))
+    expect(token.header.kid).toBe(`#${controllerKey}`)
+
+    const verified = await verifyToken(token, { methods: [resolver] })
+    expect(verified.payload.iss).toBe(did)
+    expect(verified.payload.hello).toBe('world')
+    // What the kid bought: with no kid this resolver answers with the co-signer's key, so a
+    // verification that succeeded on `keys[0]` would have failed. The signature was checked
+    // against the key the header named.
+    expect(verified.verifiedPublicKey).toEqual(decodeKey(controllerKey).publicKey)
+    const withoutKid = await resolver.resolve(did, {})
+    expect(withoutKid.publicKey).toEqual(decodeKey(cosignerKey).publicKey)
   })
 
   test('a token signed after the rotation verifies against the rotated log', async () => {
