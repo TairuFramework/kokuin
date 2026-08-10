@@ -7,18 +7,20 @@ import { foldLog } from './fold.js'
 /**
  * A signing identity for a `did:kokuin:` profile, whose `iss` is the profile DID.
  *
- * Takes the log rather than a caller-supplied position, and folds it here. A rotation exists
- * precisely to retire the previous key, so an API that accepted `{ gen, seq }` would leave
- * signing with a superseded key reachable — the only position this can sign at is the one the
- * log's current state establishes.
+ * Takes the log rather than a caller-supplied position, and folds it here, so the signing key is
+ * always the one that log's current state establishes and never one the caller named. That is a
+ * narrower guarantee than "cannot sign with a superseded key": the log is the caller's freshness
+ * contract, and an identity built from a stale or truncated log signs with a key later events
+ * retired, minting tokens a current verifier rejects. Rebuild the identity from a re-read log
+ * after a rotation rather than holding one across it.
  *
  * The key derived is the one at `keyGen`/`keySeq`, not at `gen`/`seq`: a revoke advances the
  * sequence without establishing a key (Amendment A), so the last *event* position and the
  * position where the current keys were established diverge as soon as a log carries one. Deriving
  * at `gen`/`seq` would produce a key that was never in `k` — an unverifiable token, silently.
  *
- * @throws when the log does not fold, when it publishes no signing key, or when the derived key
- * is not the profile's current authority key (a wrong `seed` or `profile` for this log).
+ * @throws when the log does not fold, or when the derived key is not the profile's current
+ * authority key (a wrong `seed` or `profile` for this log).
  */
 export function createControllerIdentity(
   seed: Uint8Array,
@@ -43,8 +45,10 @@ export function createControllerIdentity(
 
   const state = result.states[result.states.length - 1]
   if (state.keys.length === 0) {
-    // Mirrors the resolve side (`resolver.ts`): a controller publishing no signing key must not
-    // yield an identity that signs with a retired one.
+    // Defensive, and unreachable through `foldLog` today: `verifySignatures` rejects an empty key
+    // set on every event that can establish one, and `rev` carries `keys` forward. Kept so that a
+    // future event type that can empty the set fails here rather than deriving a key for a
+    // controller that publishes none. `resolver.ts` holds the same guard for the same reason.
     throw new Error(`Controller ${did} has no signing key`)
   }
 

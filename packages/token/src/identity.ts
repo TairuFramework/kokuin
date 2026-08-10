@@ -87,8 +87,16 @@ export function createSigningIdentityForDID(
   id: DIDString,
   privateKey: Uint8Array,
 ): SigningIdentity {
-  const publicKey = ed25519.getPublicKey(privateKey)
+  return buildSigningIdentity(id, privateKey, ed25519.getPublicKey(privateKey))
+}
 
+// Shared body. Takes `publicKey` rather than deriving it, so `createSigningIdentity` — which
+// needs the public key anyway to build the `did:key` — derives it once instead of twice.
+function buildSigningIdentity(
+  id: DIDString,
+  privateKey: Uint8Array,
+  publicKey: Uint8Array,
+): SigningIdentity {
   async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
     payload: Payload,
     options: SignTokenOptions = {},
@@ -132,10 +140,8 @@ export function createSigningIdentityForDID(
  * Create a signing identity from an Ed25519 private key.
  */
 export function createSigningIdentity(privateKey: Uint8Array): SigningIdentity {
-  return createSigningIdentityForDID(
-    getDID(CODECS.EdDSA, ed25519.getPublicKey(privateKey)),
-    privateKey,
-  )
+  const publicKey = ed25519.getPublicKey(privateKey)
+  return buildSigningIdentity(getDID(CODECS.EdDSA, publicKey), privateKey, publicKey)
 }
 
 /**

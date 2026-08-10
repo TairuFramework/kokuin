@@ -410,10 +410,14 @@ verified.payload.iss // === did
 any claim whose subject is the profile rather than a device
 
 **Key points**:
-- `createControllerIdentity(seed, profile, log)` takes the **log**, not a `{ gen, seq }` position:
-  it folds the log itself so signing with a superseded key is not reachable through the API. It
-  throws when the log does not fold, when the log publishes no signing key, and when the derived
-  key is not the current authority key (a wrong `seed` or `profile` for that log)
+- `createControllerIdentity(seed, profile, log)` takes the **log**, not a `{ gen, seq }` position.
+  What that buys is narrow but real: the caller cannot name a position, so the signing key always
+  matches the log it was handed. **The log is still the caller's freshness contract** — build an
+  identity from a stale or truncated log and it signs with a key that later events retired,
+  minting tokens a current verifier rejects with `Invalid signature`. Re-read the log and rebuild
+  the identity after any rotation; do not cache one across one
+- It throws when the log does not fold, and when the derived key is not the current authority key
+  — a wrong `seed` or a wrong `profile` for that log
 - The key it derives sits at the fold's `keyGen`/`keySeq` — where the current keys were
   *established* — not at `gen`/`seq`, which is the position of the last event. A revoke advances
   the sequence without establishing a key, so the two diverge

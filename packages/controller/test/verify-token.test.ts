@@ -1,11 +1,12 @@
 import { createUnsignedToken, signToken, verifyToken } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
-import { createInception, createRotate, didFromInception } from '../src/events.js'
+import { createInception, createRevoke, createRotate, didFromInception } from '../src/events.js'
 import { createControllerIdentity } from '../src/identity.js'
 import { createControllerResolver } from '../src/resolver.js'
 
 const seed = new Uint8Array(32).fill(7)
+const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
 describe('verifying a token issued by a did:kokuin: profile', () => {
   test('verifyToken accepts a token signed by the current authority key', async () => {
@@ -55,6 +56,26 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     // so the rejection above is the rotation retiring the key and not a malformed token.
     const preRotation = createControllerResolver({ loadLog: async () => [inception] })
     await expect(verifyToken(token, { methods: [preRotation] })).resolves.toBeDefined()
+  })
+
+  test('a token signed after a revoke verifies — the key position is not the event position', async () => {
+    const inception = createInception(seed, 0)
+    const did = didFromInception(inception.event)
+    // A revoke advances `seq` to 1 while establishing no key, so the fold's `gen`/`seq` and
+    // `keyGen`/`keySeq` diverge here for the first time. Deriving at `gen`/`seq` yields the
+    // pre-committed *next* key, which the resolver never answers with — the signature would not
+    // verify. This is the scenario the distinction exists for, checked end to end rather than at
+    // the key bytes.
+    const revoke = createRevoke(seed, 0, did, inception.event, device, { gen: 0, seq: 0 })
+    const log = [inception, revoke]
+    const resolver = createControllerResolver({ loadLog: async () => log })
+
+    const identity = createControllerIdentity(seed, 0, log)
+    const token = await signToken(identity, createUnsignedToken({ hello: 'world' }))
+
+    const verified = await verifyToken(token, { methods: [resolver] })
+    expect(verified.payload.iss).toBe(did)
+    expect(verified.payload.hello).toBe('world')
   })
 
   test('a token signed after the rotation verifies against the rotated log', async () => {
