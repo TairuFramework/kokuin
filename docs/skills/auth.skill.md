@@ -421,6 +421,11 @@ any claim whose subject is the profile rather than a device
 - The key it derives sits at the fold's `keyGen`/`keySeq` — where the current keys were
   *established* — not at `gen`/`seq`, which is the position of the last event. A revoke advances
   the sequence without establishing a key, so the two diverge
+- A revoke carrying a capability (`cap`) authorises a non-authority signer, and verifying that
+  capability is async. `createControllerIdentity` stays synchronous and throws on such a log; use
+  `createControllerIdentityAsync(seed, profile, log, { verifyCapability })` for one, and pass the
+  same `verifyCapability` to `createControllerResolver` so the verifier side folds it too.
+  Without a verifier both still fail closed rather than trusting the capability
 - Without `methods`, `verifyToken` fails with `Unknown DID` — the identifier carries no key.
   `did:key` and `did:peer:4` need no entry
 - `checkCapability` / `checkDelegationChain` (`@kokuin/capability`) take the same `methods` option

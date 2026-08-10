@@ -1,11 +1,21 @@
 import type { DIDMethodResolver, ResolvedAgreementKey, ResolvedSigningKey } from '@kokuin/token'
 
 import { DID_PREFIX, decodeKey, type SignedEvent } from './events.js'
-import { foldLog, type KeyState } from './fold.js'
+import type { FoldOptions, KeyState } from './fold.js'
+import { currentStateAsync } from './state.js'
+
+const CONTEXT = 'Controller resolver'
 
 export type ControllerResolverOptions = {
   /** Load a controller's event log. Returns undefined when the DID is unknown. */
   loadLog(did: string): Promise<Array<SignedEvent> | undefined>
+  /**
+   * Verify a capability authorising a non-authority signer to revoke, forwarded to the fold.
+   *
+   * Optional because most logs carry none: without it a log containing a capability-authorised
+   * revoke fails to fold rather than being trusted, exactly as the sync fold would have it.
+   */
+  verifyCapability?: FoldOptions['verifyCapability']
 }
 
 /**
@@ -18,6 +28,11 @@ export type ControllerResolverOptions = {
 export function createControllerResolver(options: ControllerResolverOptions): DIDMethodResolver {
   // Shared by both members: load the log, fold it, take the last state, throw `Unknown DID` when
   // absent. A second copy of this sequence would drift.
+  //
+  // Always the async fold. Both members are already async, and `foldLogAsync` differs from
+  // `foldLog` only in being able to await a capability-authorised revoke's verifier — every other
+  // log folds identically through either — so a mode-selecting option would choose nothing. The
+  // verifier itself is the only thing a caller has to supply.
   async function loadState(did: string): Promise<KeyState> {
     if (!did.startsWith(DID_PREFIX)) {
       throw new Error(`Unknown DID: ${did}`)
@@ -26,11 +41,7 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
     if (events == null || events.length === 0) {
       throw new Error(`Unknown DID: ${did}`)
     }
-    const result = foldLog(did, events)
-    if (!result.ok) {
-      throw new Error(`Invalid controller log for ${did}: ${result.reason}`)
-    }
-    return result.states[result.states.length - 1]
+    return currentStateAsync(did, events, CONTEXT, { verifyCapability: options.verifyCapability })
   }
 
   return {

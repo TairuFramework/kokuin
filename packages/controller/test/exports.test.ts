@@ -36,6 +36,7 @@ describe('public surface', () => {
       'handleForDID',
       'createControllerResolver',
       'createControllerIdentity',
+      'createControllerIdentityAsync',
     ]) {
       expect(controller).toHaveProperty(name)
     }

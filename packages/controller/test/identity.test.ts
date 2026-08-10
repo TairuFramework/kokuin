@@ -8,13 +8,33 @@ import {
   didFromInception,
   encodeKey,
 } from '../src/events.js'
-import { createControllerIdentity } from '../src/identity.js'
+import { createControllerIdentity, createControllerIdentityAsync } from '../src/identity.js'
 
 const seed = new Uint8Array(32).fill(7)
 const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+// Not the controller's seed: the revoke below is signed by a delegate, so only the capability it
+// carries can authorise it.
+const delegateSeed = new Uint8Array(32).fill(3)
+const cap = 'eyJ.delegated.revoke'
 
 function authorityKey(gen: number, seq: number): string {
   return encodeKey(deriveKeyPair(seed, authorityPath(0, gen, seq), 'EdDSA').publicKey, 'EdDSA')
+}
+
+/** A log whose last event is a capability-authorised revoke — foldable only asynchronously. */
+function capLog() {
+  const inception = createInception(seed, 0)
+  const did = didFromInception(inception.event)
+  const revoke = createRevoke(
+    delegateSeed,
+    0,
+    did,
+    inception.event,
+    device,
+    { gen: 0, seq: 0 },
+    { cap },
+  )
+  return { did, log: [inception, revoke], inception }
 }
 
 describe('createControllerIdentity()', () => {
@@ -107,5 +127,74 @@ describe('createControllerIdentity()', () => {
     expect(() => createControllerIdentity(seed, 1, [inception])).toThrow(
       /does not match the current authority key/,
     )
+  })
+
+  test('refuses a capability-authorised revoke it cannot verify inline', () => {
+    const { log } = capLog()
+
+    expect(() => createControllerIdentity(seed, 0, log)).toThrow(/capability/)
+  })
+})
+
+describe('createControllerIdentityAsync()', () => {
+  test('signs from a log whose revoke the injected verifier authorises', async () => {
+    const { did, log, inception } = capLog()
+    const seen: Array<Array<string>> = []
+
+    const identity = await createControllerIdentityAsync(seed, 0, log, {
+      verifyCapability: async (capability, subject, target) => {
+        seen.push([capability, subject, target])
+        return true
+      },
+    })
+
+    expect(identity.id).toBe(did)
+    // The revoke establishes no key, so the identity still signs at the inception's position.
+    expect(encodeKey(identity.publicKey, 'EdDSA')).toBe(inception.event.k[0])
+    // The verifier is handed the capability, the controller it must name as `sub`, and the DID
+    // being denied — passing anything else would authorise a revoke of the wrong device.
+    expect(seen).toEqual([[cap, did, device]])
+
+    const signed = await identity.signToken({ hello: 'world' })
+    expect(signed.payload.iss).toBe(did)
+  })
+
+  test('refuses the same log when the verifier declines the capability', async () => {
+    const { log } = capLog()
+
+    await expect(
+      createControllerIdentityAsync(seed, 0, log, { verifyCapability: async () => false }),
+    ).rejects.toThrow(/capability does not authorise this revoke/)
+  })
+
+  test('refuses the same log when no verifier is supplied', async () => {
+    const { log } = capLog()
+
+    await expect(createControllerIdentityAsync(seed, 0, log)).rejects.toThrow(/needs a verifier/)
+  })
+
+  test('produces the same identity as the sync entry point for a log with no capability', async () => {
+    const inception = createInception(seed, 0)
+    const rotate = createRotate(seed, 0, didFromInception(inception.event), inception.event)
+    const log = [inception, rotate]
+
+    const identity = await createControllerIdentityAsync(seed, 0, log)
+
+    expect(identity.id).toBe(createControllerIdentity(seed, 0, log).id)
+    expect(encodeKey(identity.publicKey, 'EdDSA')).toBe(rotate.event.k[0])
+  })
+
+  test('keeps the sync guards — an empty log, a non-inception head, a foreign seed', async () => {
+    const inception = createInception(seed, 0)
+
+    await expect(createControllerIdentityAsync(seed, 0, [])).rejects.toThrow(/empty log/)
+    await expect(
+      createControllerIdentityAsync(seed, 0, [
+        createRotate(seed, 0, didFromInception(inception.event), inception.event),
+      ]),
+    ).rejects.toThrow(/must be an inception/)
+    await expect(
+      createControllerIdentityAsync(new Uint8Array(32).fill(9), 0, [inception]),
+    ).rejects.toThrow(/does not match the current authority key/)
   })
 })
