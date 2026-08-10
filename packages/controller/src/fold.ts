@@ -35,30 +35,45 @@ export type FoldResult =
   | { ok: true; states: Array<KeyState> }
   | { ok: false; reason: string; index: number }
 
+/**
+ * What a capability verifier answers a cap-bearing revoke with.
+ *
+ * `audienceKey` is the signing key the capability names as its audience — pinned in the capability
+ * at mint time, never resolved at verification time. The fold checks the event's own signature
+ * against it, which is what binds the grant to the party it was issued to.
+ *
+ * A key rather than a boolean because the fold, not the verifier, must be the one that ties the
+ * answer to the event in hand. The log is public — resolving the DID means folding it — so the
+ * serialized capability inside a revoke is readable by everyone who can resolve the profile. With
+ * a boolean, any such reader could lift it out and chain a revoke of their own, with any bytes at
+ * all in `sigs`, covering whatever the capability's `res` covers; a management capability's `res`
+ * is a wildcard, so that is every device on the profile.
+ *
+ * Resolving an audience needs material the fold does not have, and checking a signature over the
+ * canonical event bytes needs the event, which the verifier must not be handed. Among divisions
+ * that keep a *single* callback, this is the only one where neither side can leave the binding
+ * out — a check passed to the verifier as a closure is fail-open the moment a verifier forgets to
+ * call it. A two-callback split has the property too, at the price of two answers that must agree
+ * about one capability.
+ */
+export type CapabilityAuthorisation =
+  | { authorised: true; audienceKey: ResolvedSigningKey }
+  /** `reason` becomes the fold's failure reason verbatim, so it must describe this rejection. */
+  | { authorised: false; reason: string }
+
 export type FoldOptions = {
   /**
    * Verify a capability authorising a non-authority signer to revoke. Injected rather than
    * imported so the fold stays free of a capability dependency on the sync path.
    *
    * Receives the serialized capability, the controller DID (which must be the capability `sub`),
-   * and the DID being denied.
-   *
-   * Returns the signing key of the party the capability authorises — its `aud`, resolved — or
-   * `null` when the capability does not authorise this revoke. It returns a key rather than a
-   * boolean because the fold, not the verifier, must be the one that binds the answer to the event
-   * in hand: the log is public, so the serialized capability inside a revoke is readable by
-   * everyone who can resolve the DID, and a boolean would make every such reader able to lift it
-   * out and author their own revoke of anything its `res` covers — a wildcard `res`, which is the
-   * shape a management capability actually has, covers every device on the profile. Resolving the
-   * audience needs a DID resolver, which the fold does not have; checking a signature over the
-   * canonical event bytes needs the event, which the verifier does not have. Splitting it this way
-   * is the only division where neither side can leave the binding out.
+   * and the DID being denied. See {@link CapabilityAuthorisation} for what it answers with.
    */
   verifyCapability?: (
     cap: string,
     subject: string,
     target: string,
-  ) => Promise<ResolvedSigningKey | null>
+  ) => Promise<CapabilityAuthorisation>
 }
 
 function fail(reason: string, index: number): FoldResult {
@@ -276,14 +291,14 @@ export async function foldLogAsync(
       if (options.verifyCapability == null) {
         return fail(`capability-authorised revoke needs a verifier: ${outcome.cap}`, i)
       }
-      const author = await options.verifyCapability(outcome.cap, did, outcome.target)
-      if (author == null) {
-        return fail('capability does not authorise this revoke', i)
+      const authorisation = await options.verifyCapability(outcome.cap, did, outcome.target)
+      if (!authorisation.authorised) {
+        return fail(authorisation.reason, i)
       }
       // The capability authorises its audience, not its bearer. Checked here rather than left to
       // the verifier so that a verifier which simply forgot cannot make the fold accept a revoke
-      // from anyone who read the log — see `FoldOptions.verifyCapability`.
-      if (!verifyEventSignedBy(outcome.signed, author)) {
+      // from anyone who read the log — see `CapabilityAuthorisation`.
+      if (!verifyEventSignedBy(outcome.signed, authorisation.audienceKey)) {
         return fail('revoke is not signed by the capability audience', i)
       }
     }

@@ -1,9 +1,8 @@
-import type { ResolvedSigningKey } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
 import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import { createInception, createRevoke, didFromInception } from '../src/events.js'
-import { foldLog, foldLogAsync } from '../src/fold.js'
+import { type CapabilityAuthorisation, foldLog, foldLogAsync } from '../src/fold.js'
 
 const seed = new Uint8Array(32).fill(1)
 const delegateSeed = new Uint8Array(32).fill(9)
@@ -11,11 +10,14 @@ const outsiderSeed = new Uint8Array(32).fill(10)
 const stolen = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 const cap = 'eyJ.fake.token'
 
-/** The key `createRevoke(<seed>, …)` signs with — what an authorising capability's `aud` resolves to. */
-function signingKeyFor(revokeSeed: Uint8Array): ResolvedSigningKey {
+/** An authorisation naming the key `createRevoke(<seed>, …)` signs with — a capability's pinned `aud` key. */
+function authorisedFor(revokeSeed: Uint8Array): CapabilityAuthorisation {
   return {
-    alg: 'EdDSA',
-    publicKey: deriveKeyPair(revokeSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
+    authorised: true,
+    audienceKey: {
+      alg: 'EdDSA',
+      publicKey: deriveKeyPair(revokeSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
+    },
   }
 }
 
@@ -89,7 +91,9 @@ describe('capability-authorised revoke', () => {
       verifyCapability: async (capability, subject, target) => {
         expect(subject).toBe(did)
         expect(target).toBe(stolen)
-        return capability === cap ? signingKeyFor(delegateSeed) : null
+        return capability === cap
+          ? authorisedFor(delegateSeed)
+          : { authorised: false, reason: 'not this capability' }
       },
     })
     expect(result.ok).toBe(true)
@@ -100,7 +104,10 @@ describe('capability-authorised revoke', () => {
   test('the async fold rejects one the verifier declines', async () => {
     const { icp, did } = build()
     const result = await foldLogAsync(did, [icp, capRevoke(did, icp)], {
-      verifyCapability: async () => null,
+      verifyCapability: async () => ({
+        authorised: false,
+        reason: 'capability does not authorise this revoke',
+      }),
     })
     expect(result.ok).toBe(false)
     if (result.ok) return
@@ -113,7 +120,7 @@ describe('capability-authorised revoke', () => {
     // it hands back the audience's key instead of a yes.
     const { icp, did } = build()
     const result = await foldLogAsync(did, [icp, capRevoke(did, icp)], {
-      verifyCapability: async () => signingKeyFor(outsiderSeed),
+      verifyCapability: async () => authorisedFor(outsiderSeed),
     })
     expect(result.ok).toBe(false)
     if (result.ok) return
@@ -126,7 +133,7 @@ describe('capability-authorised revoke', () => {
     const { icp, did } = build()
     const unsigned = { ...capRevoke(did, icp), sigs: [] }
     const result = await foldLogAsync(did, [icp, unsigned], {
-      verifyCapability: async () => signingKeyFor(delegateSeed),
+      verifyCapability: async () => authorisedFor(delegateSeed),
     })
     expect(result.ok).toBe(false)
     if (result.ok) return

@@ -34,7 +34,6 @@ export {
   type RevokeEvent,
   type RotateEvent,
   type SignedEvent,
-  verifyEventSignedBy,
   verifyInception,
   verifyReset,
   verifyRevoke,
@@ -42,6 +41,7 @@ export {
   verifySignatures,
 } from './events.js'
 export {
+  type CapabilityAuthorisation,
   type FoldOptions,
   type FoldResult,
   foldLog,

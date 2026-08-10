@@ -53,7 +53,17 @@ function selectSigningKey(did: string, keys: Array<string>, kid?: string): strin
 }
 
 export type ControllerResolverOptions = {
-  /** Load a controller's event log. Returns undefined when the DID is unknown. */
+  /**
+   * Load a controller's event log. Returns undefined when the DID is unknown.
+   *
+   * **Answer with the log up to the event being verified, not necessarily the whole log**, when a
+   * `verifyCapability` is configured. A capability authorising a revoke is issued by the very
+   * profile whose log carries that revoke, so verifying it resolves the issuer, which folds the
+   * log, which reaches the same revoke, which verifies the capability again — without end. The
+   * prefix is also the state the capability has to be checked against: a key set the log rotated
+   * away afterwards must not verify a grant made under it. A same-DID cycle is caught and turned
+   * into an error rather than a hang, but the error is a diagnosis, not a fix.
+   */
   loadLog(did: string): Promise<Array<SignedEvent> | undefined>
   /**
    * Verify a capability authorising a non-authority signer to revoke, forwarded to the fold.
@@ -72,6 +82,18 @@ export type ControllerResolverOptions = {
  * the fold exists.
  */
 export function createControllerResolver(options: ControllerResolverOptions): DIDMethodResolver {
+  // DIDs whose state this instance is in the middle of computing. A capability-authorised revoke
+  // sends the fold back through `verifyCapability`, which resolves the capability's issuer —
+  // ordinarily this same profile — so a `loadLog` answering with the whole log re-enters `loadState`
+  // for a DID already in flight and never returns. Left unguarded that is not a stack overflow but
+  // an await-chained loop doing Ed25519 work forever, reachable from any DID string a peer hands to
+  // `resolve`. Failing closed with the fix in the message is the only outcome a deployment can act
+  // on. Per instance, and cleared in `finally`, so it constrains nothing else: two *different*
+  // profiles vouching for each other still resolve, which is the shape a `did:kokuin:` audience
+  // has. A cycle spanning two resolver instances is not caught — that would need the set to be
+  // shared through the options.
+  const inFlight = new Set<string>()
+
   // Shared by both members: load the log, fold it, take the last state, throw `Unknown DID` when
   // absent. A second copy of this sequence would drift.
   //
@@ -83,11 +105,23 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
     if (!did.startsWith(DID_PREFIX)) {
       throw new Error(`Unknown DID: ${did}`)
     }
-    const events = await options.loadLog(did)
-    if (events == null || events.length === 0) {
-      throw new Error(`Unknown DID: ${did}`)
+    if (inFlight.has(did)) {
+      throw new Error(
+        `${CONTEXT}: cyclic resolution of ${did} — loadLog must answer with the log prefix up to the event carrying the capability`,
+      )
     }
-    return currentStateAsync(did, events, CONTEXT, { verifyCapability: options.verifyCapability })
+    inFlight.add(did)
+    try {
+      const events = await options.loadLog(did)
+      if (events == null || events.length === 0) {
+        throw new Error(`Unknown DID: ${did}`)
+      }
+      return await currentStateAsync(did, events, CONTEXT, {
+        verifyCapability: options.verifyCapability,
+      })
+    } finally {
+      inFlight.delete(did)
+    }
   }
 
   return {

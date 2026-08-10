@@ -28,7 +28,6 @@ describe('public surface', () => {
       'verifyReset',
       'verifyRevoke',
       'verifySignatures',
-      'verifyEventSignedBy',
       'foldLog',
       'foldLogAsync',
       'keyStateAt',
@@ -45,5 +44,9 @@ describe('public surface', () => {
 
   test('does not leak internal helpers', () => {
     expect(controller).not.toHaveProperty('signEvent')
+    // The audience-signature check the fold performs on a capability-authorised revoke. Only the
+    // fold calls it, and the package's API is already changing here — kept internal rather than
+    // widening the published surface for a helper nothing downstream needs.
+    expect(controller).not.toHaveProperty('verifyEventSignedBy')
   })
 })

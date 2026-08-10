@@ -1,4 +1,3 @@
-import type { ResolvedSigningKey } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
 import { authorityPath, deriveKeyPair } from '../src/derivation.js'
@@ -9,6 +8,7 @@ import {
   didFromInception,
   encodeKey,
 } from '../src/events.js'
+import type { CapabilityAuthorisation } from '../src/fold.js'
 import { createControllerIdentity, createControllerIdentityAsync } from '../src/identity.js'
 import { buildTwoKeyLog } from './two-key-log.js'
 
@@ -18,10 +18,13 @@ const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 // carries can authorise it.
 const delegateSeed = new Uint8Array(32).fill(3)
 const cap = 'eyJ.delegated.revoke'
-/** What the capability's `aud` resolves to: the key the delegate signs the revoke with. */
-const delegateKey: ResolvedSigningKey = {
-  alg: 'EdDSA',
-  publicKey: deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
+/** What the capability pins as its audience key: the key the delegate signs the revoke with. */
+const authorised: CapabilityAuthorisation = {
+  authorised: true,
+  audienceKey: {
+    alg: 'EdDSA',
+    publicKey: deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
+  },
 }
 
 function authorityKey(gen: number, seq: number): string {
@@ -246,7 +249,7 @@ describe('createControllerIdentityAsync()', () => {
     const identity = await createControllerIdentityAsync(seed, 0, log, {
       verifyCapability: async (capability, subject, target) => {
         seen.push([capability, subject, target])
-        return delegateKey
+        return authorised
       },
     })
 
@@ -265,7 +268,12 @@ describe('createControllerIdentityAsync()', () => {
     const { log } = capLog()
 
     await expect(
-      createControllerIdentityAsync(seed, 0, log, { verifyCapability: async () => null }),
+      createControllerIdentityAsync(seed, 0, log, {
+        verifyCapability: async () => ({
+          authorised: false,
+          reason: 'capability does not authorise this revoke',
+        }),
+      }),
     ).rejects.toThrow(/capability does not authorise this revoke/)
   })
 

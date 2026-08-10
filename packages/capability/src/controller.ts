@@ -1,4 +1,12 @@
-import { normalizeDID, type ResolvedSigningKey, resolveIssuer, verifyToken } from '@kokuin/token'
+import {
+  CODECS,
+  decodeMultibase,
+  encodeMultibase,
+  getAlgorithmAndPublicKey,
+  normalizeDID,
+  type ResolvedSigningKey,
+  verifyToken,
+} from '@kokuin/token'
 
 import {
   assertCapabilityToken,
@@ -8,22 +16,80 @@ import {
 } from './index.js'
 
 /**
+ * What the fold does when the capability does not authorise the revoke at all. Every rejection
+ * before the audience key is reached collapses into this one: the fold treats it as a failed log,
+ * so the difference between "expired" and "wrong resource" changes nothing a caller can act on.
+ */
+const NOT_AUTHORISED = 'capability does not authorise this revoke'
+
+/**
+ * What the fold does when the capability authorises the revoke but pins no audience key. Distinct
+ * from {@link NOT_AUTHORISED} on purpose: the grant is sound and the *capability* is malformed for
+ * this use, which is a minting bug in whoever issued it, not a rejected delegation. Distinct from
+ * the fold's `revoke is not signed by the capability audience` too — that one means a pin was
+ * present and the signature was somebody else's.
+ */
+const NO_AUDIENCE_KEY = 'capability pins no audience key'
+
+/** Payload length per signature algorithm, checked after the multicodec prefix is stripped. */
+const KEY_LENGTHS: Record<string, number> = { EdDSA: 32, ES256: 33 }
+
+/**
+ * Encode an audience's signing key for a capability's `aky` claim.
+ *
+ * The same encoding a controller log uses for the keys in `k` — multicodec-tagged, then multibase.
+ * Deliberately not a second spelling: the two are compared by a human reading a log next to a
+ * capability, and `@kokuin/capability` cannot import the controller's encoder without a cycle, so
+ * the format is shared rather than the code. A test asserts the two agree byte for byte.
+ *
+ * Call it at **mint** time, with the key the audience is known to hold — for a `did:key` audience
+ * that key is in the identifier, and for anything else it is whatever `resolveIssuer` answers with
+ * at that moment. That moment is the point: the pin is what the issuer saw when it granted, and it
+ * never has to be looked up again.
+ */
+export function encodeAudienceKey(key: ResolvedSigningKey): string {
+  const codec = CODECS[key.alg]
+  const bytes = new Uint8Array(codec.length + key.publicKey.length)
+  bytes.set(codec, 0)
+  bytes.set(key.publicKey, codec.length)
+  return encodeMultibase(bytes)
+}
+
+/** Inverse of {@link encodeAudienceKey}. Throws on anything it does not recognise. */
+function decodeAudienceKey(value: string): ResolvedSigningKey {
+  const info = getAlgorithmAndPublicKey(decodeMultibase(value))
+  if (info == null) {
+    throw new Error(`Unrecognised audience key encoding: ${value}`)
+  }
+  const [alg, publicKey] = info
+  if (publicKey.length !== KEY_LENGTHS[alg]) {
+    throw new Error(`Invalid audience key size for ${alg}: ${publicKey.length}`)
+  }
+  return { alg, publicKey }
+}
+
+/**
+ * What a capability verifier answers a cap-bearing revoke with — structurally the controller
+ * fold's `CapabilityAuthorisation`, which this package cannot import without a cycle. The test
+ * passes the built verifier straight into `foldLogAsync` and typechecks, so the two cannot drift.
+ */
+export type CapabilityAuthorisation =
+  | { authorised: true; audienceKey: ResolvedSigningKey }
+  | { authorised: false; reason: string }
+
+/**
  * A capability-authorised revoke verifier, in the shape a controller fold injects.
  *
  * Named for what it serves, not for what it imports: this file imports nothing from
  * `@kokuin/controller`, which depends on this package's siblings and would be a cycle. The fold
  * takes the callback as an option for exactly that reason, and this is the one real implementation
  * of it — kubun and kumiai must not each grow their own.
- *
- * Resolves to the signing key of the party the capability authorises, or `null` when it authorises
- * nothing here. The fold then checks the revoke's own signature against that key, which is what
- * binds the grant to its audience rather than to whoever copied it out of the public log.
  */
 export type ControllerCapabilityVerifier = (
   cap: string,
   subject: string,
   target: string,
-) => Promise<ResolvedSigningKey | null>
+) => Promise<CapabilityAuthorisation>
 
 /**
  * Build the `verifyCapability` callback a `did:kokuin:` fold needs for a revoke authorised by a
@@ -37,28 +103,38 @@ export type ControllerCapabilityVerifier = (
  *    capability minted for one profile from authorising a revoke on another: `act` and `res` say
  *    nothing about *whose* device is being denied;
  * 3. that it grants `{ act: 'revoke', res: <the target DID> }` — including through a delegation
- *    chain, and including a wildcard `res` such as the management capability's.
+ *    chain, and including a wildcard `res` such as the management capability's. A delegated
+ *    capability must carry its parents in its own `cap` claim, since that is where
+ *    `checkCapability` walks the chain from; naming a parent only at mint time leaves nothing for
+ *    a verifier that sees the event alone;
+ * 4. that it pins its audience's signing key in `aky`.
  *
- * All three passing yields the resolved signing key of the capability's `aud`. Handing that back
- * rather than a bare `true` is what lets the fold check the revoke event's own signature against
- * it — the audience binding, which nothing on this side of the split can do, because the event is
- * not an argument here and never should be.
+ * All four passing yields that pinned key. Handing it back rather than a bare `true` is what lets
+ * the fold check the revoke event's own signature against it — the audience binding, which nothing
+ * on this side of the split can do, because the event is not an argument here and never should be.
+ *
+ * **The pin is mandatory here, and is never resolved.** Looking the audience up instead would make
+ * the *audience's* routine key rotation stop the revoke from verifying, and a revoke that stops
+ * verifying makes the whole log unfoldable and the profile's DID permanently unresolvable — a
+ * third party bricking an identity by rotating their own key. A capability with no `aky` is
+ * rejected with {@link NO_AUDIENCE_KEY} rather than falling back to resolution, because the
+ * fallback is the bug.
  *
  * It never throws: a fold that rejected rather than returned would turn every verification failure
- * into an exception on the caller's resolve path, and the fold's own contract is that a `null`
- * means `capability does not authorise this revoke`.
+ * into an exception on the caller's resolve path.
  *
  * **The registry must not resolve the controller from the log being folded.** The capability is
  * issued by the very profile whose log carries the revoke, so a `loadLog` that answers with the
  * whole log would resolve the issuer by folding it, reach the same capability-authorised revoke,
  * and call this verifier again — without end. Answer with the log up to the event that carries the
  * capability, which is also the state the capability has to be checked against: a key set the log
- * rotated away afterwards must not verify a grant made under it.
+ * rotated away afterwards must not verify a grant made under it. `createControllerResolver` traps
+ * the same-DID case and reports it, but the trap is a diagnosis, not a fix.
  *
- * @param options forwarded to `verifyToken`, `checkCapability` and the audience resolution.
- * `methods` is effectively required — see above. `resolver` and `cache` travel with it for a
- * `did:peer:4` link in the chain, and `verifyToken` (the hook) runs on every capability including
- * the one named in the event, which is where a revocation check goes.
+ * @param options forwarded to `verifyToken` and `checkCapability`. `methods` is effectively
+ * required — see above. `resolver` and `cache` travel with it for a `did:peer:4` link in the
+ * chain, and `verifyToken` (the hook) runs on every capability including the one named in the
+ * event, which is where a revocation check goes.
  */
 export function createControllerCapabilityVerifier(
   options: DelegationChainOptions = {},
@@ -67,7 +143,8 @@ export function createControllerCapabilityVerifier(
     cap: string,
     subject: string,
     target: string,
-  ): Promise<ResolvedSigningKey | null> {
+  ): Promise<CapabilityAuthorisation> {
+    let pinned: string | undefined
     try {
       const capability = await verifyToken<CapabilityPayload>(cap, {
         atTime: options.atTime,
@@ -83,30 +160,31 @@ export function createControllerCapabilityVerifier(
       await options.verifyToken?.(capability, cap)
 
       if (normalizeDID(capability.payload.sub) !== normalizeDID(subject)) {
-        return null
+        return { authorised: false, reason: NOT_AUTHORISED }
       }
 
       await checkCapability({ act: 'revoke', res: target }, capability.payload, options)
-
-      // The audience may be any DID the deployment can resolve — a `did:key` device, a
-      // `did:peer:4` connector, or another profile — so it goes through the same resolution the
-      // capability's own issuer did, with the same three inputs.
-      const [alg, publicKey] = await resolveIssuer(
-        capability.payload.aud,
-        {},
-        options.resolver,
-        options.methods,
-      )
-      return { alg, publicKey }
+      pinned = capability.payload.aky
     } catch {
       // Every failure is the same answer here, including the two `@kokuin/token` keeps apart:
       // `UnresolvableIssuerError` (nothing was learned about the capability) and
       // `IssuerKeyNotFoundError` (the issuer resolved and the capability is bad). The distinction
       // exists because a caller that treats "could not check" as "checked and fine" fails open —
-      // and this caller does the opposite with both. A `null` makes the fold reject the whole
-      // log, so an unverifiable capability leaves the controller unresolvable rather than
-      // silently applying a revoke nobody could check.
-      return null
+      // and this caller does the opposite with both. A rejection makes the fold reject the whole
+      // log, so an unverifiable capability leaves the controller unresolvable rather than silently
+      // applying a revoke nobody could check.
+      return { authorised: false, reason: NOT_AUTHORISED }
+    }
+
+    // Outside the catch above so a malformed pin is reported as a malformed pin, rather than
+    // disappearing into the generic rejection that every other failure shares.
+    if (pinned == null) {
+      return { authorised: false, reason: NO_AUDIENCE_KEY }
+    }
+    try {
+      return { authorised: true, audienceKey: decodeAudienceKey(pinned) }
+    } catch {
+      return { authorised: false, reason: NO_AUDIENCE_KEY }
     }
   }
 }

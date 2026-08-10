@@ -104,6 +104,17 @@ export type CapabilityPayload = Permission & {
   exp?: number
   iat?: number
   jti?: string
+  /**
+   * The audience's signing key, pinned at mint time — multicodec-tagged then multibase, the same
+   * encoding a `did:kokuin:` log uses for the keys in `k`. See `encodeAudienceKey`.
+   *
+   * Optional in general: a capability whose holder proves itself by signing a token needs nothing
+   * here, since the token names its own issuer. It is **required** by
+   * `createControllerCapabilityVerifier`, where the holder proves itself by signing a raw key
+   * event that names nobody, and where resolving the audience instead would let that audience's
+   * own key rotation make the profile unresolvable forever.
+   */
+  aky?: string
 }
 
 export type CapabilityToken<
@@ -503,8 +514,8 @@ export {
   UnresolvableIssuerError,
 } from '@kokuin/token'
 
-export type { ControllerCapabilityVerifier } from './controller.js'
-export { createControllerCapabilityVerifier } from './controller.js'
+export type { CapabilityAuthorisation, ControllerCapabilityVerifier } from './controller.js'
+export { createControllerCapabilityVerifier, encodeAudienceKey } from './controller.js'
 export type { RevocationBackend, RevocationOptions, RevocationRecord } from './revocation.js'
 export {
   createMemoryRevocationBackend,
