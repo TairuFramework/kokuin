@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { canonicalBytes, digestOf, verifyDigest } from '../src/canonical.js'
+import { canonicalBytes, digestOf, MAX_CANONICAL_DEPTH, verifyDigest } from '../src/canonical.js'
 
 const decoder = new TextDecoder()
 
@@ -101,5 +101,26 @@ describe('verifyDigest()', () => {
 
   test('rejects a malformed digest instead of throwing', () => {
     expect(verifyDigest('not-multibase', { a: 1 })).toBe(false)
+  })
+
+  test('answers a value it cannot canonicalize with false rather than throwing', () => {
+    // The other half of "total", and the untrusted one: the digest is usually ours and the value is
+    // whatever arrived. A value nested past the bound matches no digest this package ever issued,
+    // because issuing one would have thrown.
+    let deep: unknown = 1
+    for (let i = 0; i < 5000; i++) {
+      deep = [deep]
+    }
+    let value: unknown
+    expect(() => {
+      value = verifyDigest(digestOf({ a: 1 }), deep)
+    }).not.toThrow()
+    expect(value).toBe(false)
+    // Control: the same call one level *inside* the bound answers on the merits.
+    let shallow: unknown = 1
+    for (let i = 0; i < MAX_CANONICAL_DEPTH - 2; i++) {
+      shallow = [shallow]
+    }
+    expect(verifyDigest(digestOf(shallow), shallow)).toBe(true)
   })
 })

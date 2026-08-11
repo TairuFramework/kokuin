@@ -105,12 +105,28 @@ export function digestOf(value: unknown): string {
   return encodeMultibase(multihashSHA256(canonicalBytes(value)))
 }
 
-/** Total: a malformed digest returns false rather than throwing. */
+/**
+ * Total: a malformed digest *or* a value this file cannot canonicalize returns false rather than
+ * throwing.
+ *
+ * Both halves matter, and only the digest half was total before. The value side is the untrusted
+ * one in every real use — "is this the body that digest names" is asked about bytes off the wire —
+ * so a value nested past {@link MAX_CANONICAL_DEPTH} has to be an answer, not an exception. `false`
+ * is the correct answer rather than a convenient one: a digest this package produced can only name
+ * a value it could canonicalize, so a value it cannot canonicalize matches no digest it ever
+ * issued.
+ *
+ * `canonicalBytes` keeps the throw. Its contract is "these exact bytes or nothing", and a caller
+ * asking for bytes has nothing useful to do with `false`.
+ */
 export function verifyDigest(digest: string, value: unknown): boolean {
   let expected: Uint8Array
   try {
     expected = decodeMultibase(digest)
   } catch {
+    return false
+  }
+  if (!withinCanonicalDepth(value)) {
     return false
   }
   return verifyMultihash(expected, canonicalBytes(value))
