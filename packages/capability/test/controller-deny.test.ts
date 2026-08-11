@@ -87,6 +87,34 @@ async function invoke(holder: SigningIdentity, ...chain: Array<string>): Promise
   )
 }
 
+const deviceX = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+const deviceY = 'did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
+
+/** The management capability: revoke anything, pinned to `holder`'s key. */
+async function manageCap(holder: { id: string; publicKey: Uint8Array }): Promise<string> {
+  const capability = await createCapability(
+    controller,
+    {
+      sub: did,
+      aud: holder.id,
+      act: 'revoke',
+      res: '*',
+      exp: now() + 3600,
+      cnf: audienceConfirmation({ alg: 'EdDSA', publicKey: holder.publicKey }),
+    },
+    undefined,
+    { methods },
+  )
+  return stringifyToken(capability)
+}
+
+/** A registry answering with a fixed log, whatever the fold is doing. */
+function registryFor(fixed: Array<SignedEvent>): MethodRegistry {
+  return [
+    createControllerResolver({ loadLog: async (asked) => (asked === did ? fixed : undefined) }),
+  ]
+}
+
 beforeEach(() => {
   log = [inception]
 })
@@ -293,34 +321,6 @@ describe('the deny set inside the fold: who may author a capability-authorised r
   // is `revoke` authors `rev` events for the profile. What stops a revoked manager from carrying on
   // is the deny set at the position of its own event — which nothing outside the fold can name, so
   // the fold hands the verifier a resolver for exactly that position.
-
-  const deviceX = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-  const deviceY = 'did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
-
-  /** The management capability: revoke anything, pinned to `holder`'s key. */
-  async function manageCap(holder: { id: string; publicKey: Uint8Array }): Promise<string> {
-    const capability = await createCapability(
-      controller,
-      {
-        sub: did,
-        aud: holder.id,
-        act: 'revoke',
-        res: '*',
-        exp: now() + 3600,
-        cnf: audienceConfirmation({ alg: 'EdDSA', publicKey: holder.publicKey }),
-      },
-      undefined,
-      { methods },
-    )
-    return stringifyToken(capability)
-  }
-
-  /** A registry answering with a fixed log, whatever the fold is doing. */
-  function registryFor(fixed: Array<SignedEvent>): MethodRegistry {
-    return [
-      createControllerResolver({ loadLog: async (asked) => (asked === did ? fixed : undefined) }),
-    ]
-  }
 
   test('a revoked manager cannot author one — at every prefix a caller could supply', async () => {
     const manager = randomIdentity()
@@ -559,6 +559,61 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
     await expect(verifyToken(stringifyToken(token), { methods })).resolves.toMatchObject({
       payload: { iss: device.id },
     })
+  })
+
+  test('a verifyToken hook that resolves this profile through this resolver wedges it', async () => {
+    // The one re-entry the R-2 fix does not remove. The fold no longer resolves the DID it is
+    // folding, so the hazard is now entirely in caller code — a revocation checker built over the
+    // same registry is the realistic shape — and it is a *quiet* deadlock rather than a spin: the
+    // hook joins the in-flight fold, which is waiting on the hook. Diagnosing it from inside would
+    // need chain identity across three packages, so it is documented
+    // (`ControllerResolverOptions.loadLog`, `auth.skill.md`) and pinned here.
+    const manager = randomIdentity()
+    const cap = await manageCap(manager)
+    log = [
+      inception,
+      createRevokeWithKey(manager.privateKey, did, inception.event, deviceX, { cap }),
+    ]
+
+    let hookCalls = 0
+    let wedged: DIDMethodResolver | undefined
+    wedged = createControllerResolver({
+      loadLog: async (asked) => (asked === did ? log : undefined),
+      verifyCapability: createControllerCapabilityVerifier({
+        verifyToken: async () => {
+          hookCalls++
+          // Re-entry: the profile this hook is being called *inside* the fold of.
+          await wedged?.resolve(did, {})
+        },
+      }),
+    })
+
+    const timeout = (label: string) =>
+      new Promise<string>((resolve) => setTimeout(() => resolve(label), 150))
+    expect(
+      await Promise.race([wedged.resolve(did, {}).then(() => 'settled'), timeout('wedged')]),
+    ).toBe('wedged')
+    expect(hookCalls).toBe(1)
+    // The instance is finished for that DID: a second resolution joins the fold that cannot settle,
+    // without calling `loadLog` or the hook again.
+    expect(
+      await Promise.race([wedged.resolve(did, {}).then(() => 'settled'), timeout('wedged')]),
+    ).toBe('wedged')
+    expect(hookCalls).toBe(1)
+    // The timer queue stayed live throughout — that is what makes a caller-side timeout the
+    // remedy — and the documented fix works: a hook with a resolver of its own settles.
+    const own = createControllerResolver({ loadLog: async () => [inception] })
+    const fine = createControllerResolver({
+      loadLog: async (asked) => (asked === did ? log : undefined),
+      verifyCapability: createControllerCapabilityVerifier({
+        verifyToken: async () => {
+          await own.resolve(did, {})
+        },
+      }),
+    })
+    expect(
+      await Promise.race([fine.resolve(did, {}).then(() => 'settled'), timeout('wedged')]),
+    ).toBe('settled')
   })
 })
 
