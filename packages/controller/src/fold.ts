@@ -1,6 +1,6 @@
 import type { ResolvedSigningKey } from '@kokuin/token'
 
-import { digestOf } from './canonical.js'
+import { digestOf, withinCanonicalDepth } from './canonical.js'
 import {
   type InceptionEvent,
   type RevokeEvent,
@@ -148,6 +148,13 @@ export const REVOKE_NOT_SIGNED_BY_AUDIENCE = 'revoke is not signed by the capabi
  *
  * Only the envelope is checked here. What the event *body* must contain depends on `t`, so that
  * stays with each verifier.
+ *
+ * The body's nesting *depth* is checked here too, and it is the one size question this guard asks.
+ * Every path out of this function canonicalizes the whole body — the signature check hashes it,
+ * `digestOf` chains it — and the canonicalizer recurses once per level, so an event carrying a
+ * member the fold never reads still decides how much stack it uses. `JSON.parse` accepts unbounded
+ * depth, so that is ordinary wire input. Shape and size are the same failure here: an event body
+ * this package could not have produced and cannot hash is a malformed event.
  */
 function isSignedEventShape(value: unknown): value is SignedEvent {
   if (value == null || typeof value !== 'object') {
@@ -160,7 +167,12 @@ function isSignedEventShape(value: unknown): value is SignedEvent {
   if (!Array.isArray(signed.sigs) || signed.sigs.some((sig) => typeof sig !== 'string')) {
     return false
   }
-  return signed.recoveryKey === undefined || typeof signed.recoveryKey === 'string'
+  if (signed.recoveryKey !== undefined && typeof signed.recoveryKey !== 'string') {
+    return false
+  }
+  // The body is what gets canonicalized, and it is canonicalized as the top-level value — so the
+  // depth counted here is the depth the canonicalizer will count.
+  return withinCanonicalDepth(signed.event)
 }
 
 type StepOutcome =

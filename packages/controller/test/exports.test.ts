@@ -9,6 +9,10 @@ describe('public surface', () => {
       'canonicalBytes',
       'digestOf',
       'verifyDigest',
+      // `canonicalBytes` throws above the bound, so a consumer canonicalizing untrusted input of
+      // its own needs both the limit and the total predicate the fold uses to stay off it.
+      'MAX_CANONICAL_DEPTH',
+      'withinCanonicalDepth',
       'authorityPath',
       'agreementPath',
       'recoveryPath',

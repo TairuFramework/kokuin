@@ -10,7 +10,13 @@
  * @module controller
  */
 
-export { canonicalBytes, digestOf, verifyDigest } from './canonical.js'
+export {
+  canonicalBytes,
+  digestOf,
+  MAX_CANONICAL_DEPTH,
+  verifyDigest,
+  withinCanonicalDepth,
+} from './canonical.js'
 export {
   agreementPath,
   authorityPath,

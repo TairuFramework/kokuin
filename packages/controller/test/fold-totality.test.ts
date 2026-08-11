@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
+import { canonicalBytes, MAX_CANONICAL_DEPTH, withinCanonicalDepth } from '../src/canonical.js'
 import { authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
 import {
   createInception,
@@ -316,6 +317,151 @@ describe('a malformed event its own author signed', () => {
     // Control for both rows above: the same re-signing path with nothing changed.
     const [forgedDid, forged] = signedInception('kt', 1)
     expect(foldLog(forgedDid, [forged]).ok).toBe(true)
+  })
+})
+
+describe('an event body nested deeper than the canonicalizer will go', () => {
+  // `canonicalize` recurses once per nesting level and every path out of the fold canonicalizes the
+  // whole body — the signature check hashes it, `digestOf` chains it — so before the bound a member
+  // the fold never reads decided how much stack the fold used. V8's `JSON.parse` is iterative and
+  // accepts arbitrary depth, so each shape below arrives from ordinary wire bytes.
+
+  const authority = (seq: number) => deriveKeyPair(seed, authorityPath(0, 0, seq), 'EdDSA')
+
+  /** `levels` nested arrays around a string, round-tripped through the wire. */
+  function nest(levels: number): unknown {
+    let json = '"seal"'
+    for (let i = 0; i < levels; i++) {
+      json = `[${json}]`
+    }
+    return JSON.parse(json)
+  }
+
+  /** The rotate carrying `a`, re-signed, so only the depth guard can reject it. */
+  function rotateWithSeal(seal: unknown): SignedEvent<RotateEvent> {
+    const event = { ...rot.event, a: seal } as unknown as RotateEvent
+    return JSON.parse(
+      JSON.stringify({ event, sigs: signEvent(event, [authority(1).privateKey]) }),
+    ) as SignedEvent<RotateEvent>
+  }
+
+  // The event body is the top-level value the canonicalizer sees, so it is depth 1 and the value of
+  // its `a` member is depth 2. `nest(n)` puts its string n levels below that.
+  const deepestAccepted = MAX_CANONICAL_DEPTH - 2
+  const shallowestRejected = MAX_CANONICAL_DEPTH - 1
+
+  test(`a body reaching exactly ${MAX_CANONICAL_DEPTH} levels folds`, () => {
+    // The control, and the reason the bound is a bound rather than a rejection of nesting: a log
+    // this deep is canonicalized, hashed and accepted like any other.
+    const result = foldLog(did, [icp, rotateWithSeal(nest(deepestAccepted))])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.states[1].keys).toEqual(rot.event.k)
+  })
+
+  test('one level further is rejected with a reason, by both folds', async () => {
+    // Unsigned, because this package cannot sign a body it cannot canonicalize — which is also why
+    // the depth guard has to run before the signature check rather than instead of it.
+    const log = [
+      icp,
+      { ...rot, event: { ...rot.event, a: nest(shallowestRejected) } },
+    ] as Array<SignedEvent>
+    expect(foldLog(did, log)).toEqual({ ok: false, reason: 'malformed event', index: 1 })
+    await expect(foldLogAsync(did, log)).resolves.toEqual({
+      ok: false,
+      reason: 'malformed event',
+      index: 1,
+    })
+  })
+
+  // 5000 is past the stack, not merely past the bound: before the guard each of these threw a
+  // `RangeError` out of the fold. The member is one no verifier reads, so nothing but the envelope
+  // guard has a reason to look at it.
+  const wire = (value: unknown) => JSON.parse(JSON.stringify(value)) as Array<SignedEvent>
+  const abyss = () => nest(5000)
+  const chasms: Array<[string, Array<SignedEvent>, FoldResult]> = [
+    [
+      'an inception carrying an unread member 5000 levels deep',
+      wire([{ ...icp, event: { ...icp.event, zz: abyss() } }]),
+      { ok: false, reason: 'malformed event', index: 0 },
+    ],
+    [
+      'a rotate whose seal is 5000 levels deep',
+      wire([icp, { ...rot, event: { ...rot.event, a: abyss() } }]),
+      { ok: false, reason: 'malformed event', index: 1 },
+    ],
+    [
+      'a revoke carrying an unread member 5000 levels deep',
+      wire([
+        icp,
+        {
+          ...createRevoke(seed, 0, did, icp.event, target, inceptionKeyPosition),
+          event: {
+            ...createRevoke(seed, 0, did, icp.event, target, inceptionKeyPosition).event,
+            zz: abyss(),
+          },
+        },
+      ]),
+      { ok: false, reason: 'malformed event', index: 1 },
+    ],
+  ]
+
+  for (const [name, log, expected] of chasms) {
+    test(`${name} is answered with a reason, not a RangeError`, async () => {
+      let sync: unknown
+      expect(() => {
+        sync = foldLog(did, log)
+      }).not.toThrow()
+      expect(sync).toEqual(expected)
+      await expect(foldLogAsync(did, log)).resolves.toEqual(expected)
+    })
+  }
+
+  test('one hostile branch no longer kills duplicity detection for the well-formed ones', () => {
+    // The denial of service `isSignedEventShape`'s docstring names: a thief who cannot produce a
+    // valid event crashing duplicity resolution for every well-formed branch beside it.
+    const forkA = [icp, createRevoke(seed, 0, did, icp.event, target, inceptionKeyPosition)]
+    const forkB = [icp, createRevoke(seed, 0, did, icp.event, other, inceptionKeyPosition)]
+    const hostile = wire([icp, { ...rot, event: { ...rot.event, a: abyss() } }])
+
+    const clean = resolveBranches(did, [forkA, forkB])
+    expect(clean.ok).toBe(false)
+    if (clean.ok) return
+    expect(clean.duplicity.seq).toBe(1)
+
+    let withHostile: unknown
+    expect(() => {
+      withHostile = resolveBranches(did, [forkA, hostile, forkB])
+    }).not.toThrow()
+    // Byte-identical to the clean pair: the hostile branch is filtered, not merged.
+    expect(withHostile).toEqual(clean)
+  })
+
+  test('canonicalBytes itself throws above the bound, for a caller holding its own input', () => {
+    // The guard above is what turns this into a reason on the fold's path. Direct callers —
+    // `digestOf`, `didFromInception` — still get the throw, which is why the fold checks first.
+    // A value nested at the top level is itself depth 1, so `nest(n)` reaches depth n + 1.
+    expect(() => canonicalBytes(nest(MAX_CANONICAL_DEPTH - 1))).not.toThrow()
+    expect(() => canonicalBytes(nest(MAX_CANONICAL_DEPTH))).toThrow(/nests deeper than/)
+    expect(() => canonicalBytes(abyss())).toThrow(/nests deeper than/)
+  })
+
+  test('withinCanonicalDepth agrees with canonicalBytes on the boundary', () => {
+    // The two are separate implementations of one rule, which is exactly how a guard drifts one
+    // level away from the thing it guards.
+    for (const levels of [0, 1, deepestAccepted, MAX_CANONICAL_DEPTH - 1]) {
+      expect(withinCanonicalDepth(nest(levels)), `${levels} levels`).toBe(true)
+      expect(() => canonicalBytes(nest(levels))).not.toThrow()
+    }
+    for (const levels of [MAX_CANONICAL_DEPTH, MAX_CANONICAL_DEPTH + 1, 5000]) {
+      expect(withinCanonicalDepth(nest(levels)), `${levels} levels`).toBe(false)
+      expect(() => canonicalBytes(nest(levels))).toThrow()
+    }
+    // A cycle is not reachable from `JSON.parse`, but it is reachable from a caller — and it is the
+    // one input where an unbounded recursion never returns at all.
+    const cyclic: Record<string, unknown> = {}
+    cyclic.self = cyclic
+    expect(withinCanonicalDepth(cyclic)).toBe(false)
   })
 })
 
