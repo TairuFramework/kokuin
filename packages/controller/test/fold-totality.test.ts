@@ -513,6 +513,15 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
     return JSON.parse(json)
   }
 
+  /** The same, nested through objects rather than arrays. */
+  function nestObjects(levels: number): unknown {
+    let json = '"seal"'
+    for (let i = 0; i < levels; i++) {
+      json = `{"a":${json}}`
+    }
+    return JSON.parse(json)
+  }
+
   /** The rotate carrying `a`, re-signed, so only the depth guard can reject it. */
   function rotateWithSeal(seal: unknown): SignedEvent<RotateEvent> {
     const event = { ...rot.event, a: seal } as unknown as RotateEvent
@@ -625,13 +634,17 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   test('withinCanonicalDepth agrees with canonicalBytes on the boundary', () => {
     // The two are separate implementations of one rule, which is exactly how a guard drifts one
     // level away from the thing it guards.
-    for (const levels of [0, 1, deepestAccepted, MAX_CANONICAL_DEPTH - 1]) {
-      expect(withinCanonicalDepth(nest(levels)), `${levels} levels`).toBe(true)
-      expect(() => canonicalBytes(nest(levels))).not.toThrow()
-    }
-    for (const levels of [MAX_CANONICAL_DEPTH, MAX_CANONICAL_DEPTH + 1, 5000]) {
-      expect(withinCanonicalDepth(nest(levels)), `${levels} levels`).toBe(false)
-      expect(() => canonicalBytes(nest(levels))).toThrow()
+    // Objects and arrays both count as a level, so both are checked: an event body is an object
+    // and its members are whatever the wire carried.
+    for (const build of [nest, nestObjects]) {
+      for (const levels of [0, 1, deepestAccepted, MAX_CANONICAL_DEPTH - 1]) {
+        expect(withinCanonicalDepth(build(levels)), `${levels} levels`).toBe(true)
+        expect(() => canonicalBytes(build(levels))).not.toThrow()
+      }
+      for (const levels of [MAX_CANONICAL_DEPTH, MAX_CANONICAL_DEPTH + 1, 5000]) {
+        expect(withinCanonicalDepth(build(levels)), `${levels} levels`).toBe(false)
+        expect(() => canonicalBytes(build(levels))).toThrow()
+      }
     }
     // A cycle is not reachable from `JSON.parse`, but it is reachable from a caller — and it is the
     // one input where an unbounded recursion never returns at all.

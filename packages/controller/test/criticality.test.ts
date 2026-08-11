@@ -1,4 +1,5 @@
 import { runInNewContext } from 'node:vm'
+import type { DIDMethodResolver } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
 import { authorityPath, deriveKeyPair } from '../src/derivation.js'
@@ -197,6 +198,47 @@ describe('capability-authorised revoke', () => {
       reason: 'capability verifier failed: nope',
       index: 1,
     })
+  })
+
+  test('the verifier is handed the profile at the position being verified', async () => {
+    // The fourth argument, and the whole of R-2: what a capability-authorised revoke is checked
+    // against is the log *before* it, which nothing outside the fold can name. Asserted here at the
+    // fold's own boundary, with a stub verifier, so it holds independently of what
+    // `@kokuin/capability` does with the answer.
+    const { icp, did } = build()
+    const first = createRevoke(seed, 0, did, icp.event, 'did:key:zEarlier', { gen: 0, seq: 0 })
+    const second = createRevoke(
+      delegateSeed,
+      0,
+      did,
+      first.event,
+      stolen,
+      { gen: 0, seq: 0 },
+      { cap },
+    )
+
+    let retained: DIDMethodResolver | undefined
+    const result = await foldLogAsync(did, [icp, first, second], {
+      verifyCapability: async (_cap, subject, _target, subjectAtPosition) => {
+        retained = subjectAtPosition
+        expect(subject).toBe(did)
+        // The state before event 2: `zEarlier` is denied, `stolen` is not — the revoke naming it
+        // is the event being verified.
+        await expect(subjectAtPosition.resolveDenySet?.(did)).resolves.toEqual(
+          new Set(['did:key:zEarlier']),
+        )
+        await expect(subjectAtPosition.resolve(did, {})).resolves.toEqual(signingKeyFor(seed))
+        return authorisedFor(delegateSeed)
+      },
+    })
+    expect(result.ok).toBe(true)
+
+    // Still the prefix afterwards. A verifier may resolve asynchronously and answer later, and the
+    // states array it was built from keeps growing as the fold proceeds — so the resolver has to
+    // hold a copy rather than a view of the fold's own array.
+    await expect(retained?.resolveDenySet?.(did)).resolves.toEqual(new Set(['did:key:zEarlier']))
+    if (!result.ok) return
+    expect(result.states[2].deny).toEqual(new Set(['did:key:zEarlier', stolen]))
   })
 
   test('an audience key from another realm is accepted, not rejected as malformed', async () => {
