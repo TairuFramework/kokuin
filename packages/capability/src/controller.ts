@@ -21,16 +21,16 @@ import {
  * before the audience key is reached collapses into this one: the fold treats it as a failed log,
  * so the difference between "expired" and "wrong resource" changes nothing a caller can act on.
  */
-const NOT_AUTHORISED = 'capability does not authorise this revoke'
+export const REVOKE_NOT_AUTHORISED = 'capability does not authorise this revoke'
 
 /**
  * What the fold does when the capability authorises the revoke but pins no audience key. Distinct
- * from {@link NOT_AUTHORISED} on purpose: the grant is sound and the *capability* is malformed for
+ * from {@link REVOKE_NOT_AUTHORISED} on purpose: the grant is sound and the *capability* is malformed for
  * this use, which is a minting bug in whoever issued it, not a rejected delegation. Distinct from
  * the fold's `revoke is not signed by the capability audience` too — that one means a pin was
  * present and the signature was somebody else's.
  */
-const NO_AUDIENCE_KEY = 'capability pins no audience key'
+export const REVOKE_NO_AUDIENCE_KEY = 'capability pins no audience key'
 
 /** Payload length per signature algorithm, checked after the multicodec prefix is stripped. */
 const KEY_LENGTHS: Record<string, number> = { EdDSA: 32, ES256: 33 }
@@ -125,7 +125,7 @@ export type ControllerCapabilityVerifier = (
  * the *audience's* routine key rotation stop the revoke from verifying, and a revoke that stops
  * verifying makes the whole log unfoldable and the profile's DID permanently unresolvable — a
  * third party bricking an identity by rotating their own key. A capability with no `cnf` is
- * rejected with {@link NO_AUDIENCE_KEY} rather than falling back to resolution, because the
+ * rejected with {@link REVOKE_NO_AUDIENCE_KEY} rather than falling back to resolution, because the
  * fallback is the bug. So is a `cnf` that is present but unreadable — no member this understands,
  * a non-string `kid`, an unknown codec, a wrong-length key.
  *
@@ -171,7 +171,7 @@ export function createControllerCapabilityVerifier(
       await options.verifyToken?.(capability, cap)
 
       if (normalizeDID(capability.payload.sub) !== normalizeDID(subject)) {
-        return { authorised: false, reason: NOT_AUTHORISED }
+        return { authorised: false, reason: REVOKE_NOT_AUTHORISED }
       }
 
       await checkCapability({ act: 'revoke', res: target }, capability.payload, options)
@@ -184,18 +184,18 @@ export function createControllerCapabilityVerifier(
       // and this caller does the opposite with both. A rejection makes the fold reject the whole
       // log, so an unverifiable capability leaves the controller unresolvable rather than silently
       // applying a revoke nobody could check.
-      return { authorised: false, reason: NOT_AUTHORISED }
+      return { authorised: false, reason: REVOKE_NOT_AUTHORISED }
     }
 
     // Outside the catch above so a malformed pin is reported as a malformed pin, rather than
     // disappearing into the generic rejection that every other failure shares.
     if (pinned == null) {
-      return { authorised: false, reason: NO_AUDIENCE_KEY }
+      return { authorised: false, reason: REVOKE_NO_AUDIENCE_KEY }
     }
     try {
       return { authorised: true, audienceKey: confirmedKey(pinned) }
     } catch {
-      return { authorised: false, reason: NO_AUDIENCE_KEY }
+      return { authorised: false, reason: REVOKE_NO_AUDIENCE_KEY }
     }
   }
 }

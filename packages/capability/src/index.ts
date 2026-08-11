@@ -593,7 +593,12 @@ export {
 } from '@kokuin/token'
 
 export type { CapabilityAuthorisation, ControllerCapabilityVerifier } from './controller.js'
-export { audienceConfirmation, createControllerCapabilityVerifier } from './controller.js'
+export {
+  audienceConfirmation,
+  createControllerCapabilityVerifier,
+  REVOKE_NO_AUDIENCE_KEY,
+  REVOKE_NOT_AUTHORISED,
+} from './controller.js'
 export type { RevocationBackend, RevocationOptions, RevocationRecord } from './revocation.js'
 export {
   createMemoryRevocationBackend,

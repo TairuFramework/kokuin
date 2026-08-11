@@ -38,6 +38,11 @@ describe('public surface', () => {
       'createControllerResolver',
       'createControllerIdentity',
       'createControllerIdentityAsync',
+      // The fold's capability-revoke failure reasons. `@kokuin/capability` asserts on these by
+      // string literal across the package boundary, so they are a contract either way.
+      'CAPABILITY_VERIFIER_FAILED',
+      'CAPABILITY_VERIFIER_MALFORMED_ANSWER',
+      'REVOKE_NOT_SIGNED_BY_AUDIENCE',
     ]) {
       expect(controller).toHaveProperty(name)
     }

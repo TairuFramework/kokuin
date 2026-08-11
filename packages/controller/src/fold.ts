@@ -116,6 +116,26 @@ function fail(reason: string, index: number): FoldResult {
 /** What a log entry that is not a {@link SignedEvent} at all fails with. */
 const MALFORMED_EVENT = 'malformed event'
 
+// The fold's failure reasons for a capability-authorised revoke. Exported because they already are
+// a contract: `@kokuin/capability` asserts on them by string literal across a package boundary,
+// which is what not exporting them looks like from the outside. Telling "the grant was rejected"
+// from "the capability is malformed for this use" from "your verifier is broken" should not mean
+// hardcoding English sentences. `FoldResult.reason` stays a plain string, so these name values
+// rather than widening the type.
+
+/** A verifier threw. The thrown message is appended after `: `, so match with `startsWith`. */
+export const CAPABILITY_VERIFIER_FAILED = 'capability verifier failed'
+
+/** A verifier answered with something that is not a {@link CapabilityAuthorisation}. */
+export const CAPABILITY_VERIFIER_MALFORMED_ANSWER =
+  'capability verifier returned a malformed answer'
+
+/**
+ * The capability authorised the revoke and pinned an audience key, and somebody else signed the
+ * event. Distinct from a rejected grant: the delegation is sound and the signature is not.
+ */
+export const REVOKE_NOT_SIGNED_BY_AUDIENCE = 'revoke is not signed by the capability audience'
+
 /**
  * Whether a log entry has the envelope shape everything downstream reads without checking.
  *
@@ -385,12 +405,12 @@ export async function foldLogAsync(
         authorisation = await options.verifyCapability(outcome.cap, did, outcome.target)
       } catch (cause) {
         return fail(
-          `capability verifier failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          `${CAPABILITY_VERIFIER_FAILED}: ${cause instanceof Error ? cause.message : String(cause)}`,
           i,
         )
       }
       if (!isCapabilityAuthorisation(authorisation)) {
-        return fail('capability verifier returned a malformed answer', i)
+        return fail(CAPABILITY_VERIFIER_MALFORMED_ANSWER, i)
       }
       if (!authorisation.authorised) {
         return fail(authorisation.reason, i)
@@ -399,7 +419,7 @@ export async function foldLogAsync(
       // the verifier so that a verifier which simply forgot cannot make the fold accept a revoke
       // from anyone who read the log — see `CapabilityAuthorisation`.
       if (!verifyEventSignedBy(outcome.signed, authorisation.audienceKey)) {
-        return fail('revoke is not signed by the capability audience', i)
+        return fail(REVOKE_NOT_SIGNED_BY_AUDIENCE, i)
       }
     }
     states.push(outcome.state)

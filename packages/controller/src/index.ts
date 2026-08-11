@@ -43,6 +43,8 @@ export {
   verifySignatures,
 } from './events.js'
 export {
+  CAPABILITY_VERIFIER_FAILED,
+  CAPABILITY_VERIFIER_MALFORMED_ANSWER,
   type CapabilityAuthorisation,
   type FoldOptions,
   type FoldResult,
@@ -50,6 +52,7 @@ export {
   foldLogAsync,
   type KeyState,
   keyStateAt,
+  REVOKE_NOT_SIGNED_BY_AUDIENCE,
 } from './fold.js'
 export { createControllerIdentity, createControllerIdentityAsync } from './identity.js'
 export {
