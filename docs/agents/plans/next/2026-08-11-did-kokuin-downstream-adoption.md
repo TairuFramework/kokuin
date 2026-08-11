@@ -22,13 +22,33 @@ the changes are breaking in ways a type check alone will not surface.
 - **Fail-closed changes read as regressions.** Several rounds of hardening turned former silent
   passes into hard failures. Denials that appear after upgrading are usually correct.
 
+## Who is exposed
+
+Measured 2026-08-11 from each repo's manifests and the symbols its sources import. **Three** repos
+depend on kokuin, not two: `kubun` (18 manifests — `token`, `capability`, `browser`, `expo`),
+`kumiai` (8 — `token`, `expo`), and `enkaku` (7 — `token`, `capability`, `electron`). None depends
+on `@kokuin/controller`, so all exposure is through `@kokuin/token` and `@kokuin/capability`.
+
+`kubun` is the heaviest consumer of what moved: `verifyToken`, `checkCapability`, `VerifyTokenHook`,
+`createRevocationRecord`, `createFullIdentity` / `isFullIdentity`.
+
+Two corrections to what the design notes carried:
+
+- **No `deriveSharedSecret` / `isDecryptingIdentity` migration is owed.** Neither symbol appears
+  anywhere in `kubun`. Kubun asked for `deriveSharedSecret` and never adopted it — see
+  `completed/2026-08-07-derive-shared-secret.complete.md`.
+- **The JWE split reaches nothing today.** No repo imports `encryptToken`, `decryptToken` or
+  `createTokenEncrypter` in source.
+
 ## Work
 
-1. Build `kubun` and `kumiai` against the shipped packages. Neither was read during development;
-   neither currently depends on `@kokuin/controller`, so the exposure is via `@kokuin/token` and
-   `@kokuin/capability`.
-2. Write the `kubun` migration note. `isDecryptingIdentity` and `deriveSharedSecret` both moved
-   under the `KeyAgreementIdentity` narrowing and the JWE split.
+1. Build `kubun`, `kumiai` and `enkaku` against the shipped packages. None was read during
+   development. This gates everything else here.
+2. Resolve `kumiai`'s dependency on an `@internal` export: `packages/mls/src/authentication.ts:5,76`
+   imports `getSignatureInfo` from `@kokuin/token`, which kokuin marks `@internal` and deliberately
+   kept marked when the neighbouring `CODECS` and `getAlgorithmAndPublicKey` were made public.
+   Either kumiai stops using it or kokuin publishes it — an internal export with an out-of-repo
+   consumer is neither, and it will be broken by a change nobody thinks is breaking.
 3. Fix `kubun`'s own fail-open at `packages/store-delegation/src/revocation-checker.ts:49-58`. It
    predates this work and is the same failure mode the controller spent three rounds closing: a
    revocation check that cannot answer should deny, not pass.

@@ -1,10 +1,12 @@
 # Profile DIDs with rotating keys
 
 **Scope:** kokuin (owner), kumiai (registry transport), kubun (ownership + apply-time checks).
-**Written:** 2026-08-07. **Revised:** 2026-08-08 after the design questions were resolved.
-**Status:** design agreed. The kokuin half is specified in
-`docs/superpowers/specs/2026-08-08-profile-did-key-events-design.md`, which is authoritative for
-every kokuin detail. This document is the cross-repo picture.
+**Written:** 2026-08-07. **Revised:** 2026-08-08 after the design questions were resolved, and
+2026-08-11 when the kokuin half shipped.
+**Status:** the kokuin half is **built** — see
+`completed/2026-08-11-controller-key-events.complete.md`, which carries the resolved design and is
+authoritative for every kokuin detail. kumiai and kubun are **not started**. This document is the
+cross-repo picture and tracks what each downstream repo still owes.
 
 One canonical, stable DID per user profile, whose key set rotates over time, held across multiple
 devices that never copy key material, verifiable inside and outside MLS groups, and able to gain
@@ -223,9 +225,10 @@ recovery-by-retrieval needs exactly the authenticated channel that device loss d
 
 ## Landing it on each repo
 
-### kokuin
+### kokuin — shipped 2026-08-11
 
-Specified in full at `docs/superpowers/specs/2026-08-08-profile-did-key-events-design.md`. Summary:
+Built on branch `key-events-design`. The resolved design and the decisions behind it are in
+`completed/2026-08-11-controller-key-events.complete.md`. Summary of what landed:
 
 - **`@kokuin/controller`** (new) — derivation, event schema, self-addressing digest, fold, key state
   at position, duplicity detection, handle derivation, profile enumeration. Named for DID Core's
@@ -234,17 +237,24 @@ Specified in full at `docs/superpowers/specs/2026-08-08-profile-did-key-events-d
   the `@kokuin/keystore-conformance` habit.
 - **`@kokuin/token`** — resolve `iss` through an injected `DIDMethodResolver` rather than the
   embedded document; built-in methods behind subpath exports; keep `embedLongForm` for genesis
-  bootstrap; deprecate `rotation.ts`. Add ML-DSA to `SUPPORTED_ALGORITHMS`
-  (`packages/token/src/schemas.ts:4`) per RFC 9964, optionally PQ/T composite once
-  `draft-ietf-jose-pq-composite-sigs` settles.
+  bootstrap.
 - **`@kokuin/jwe`** (new) — split out of token, its sole `@noble/ciphers` consumer.
-- **`@kokuin/capability`** — depth cap lowered; device capabilities mandate `exp`.
+- **`@kokuin/capability`** — depth cap lowered; device capabilities mandate `exp`; the
+  `createControllerCapabilityVerifier` bridge and deny-set enforcement.
 
 The resolver interface is not optional: `@kokuin/controller` depends on `@kokuin/token` for signing,
 so token importing the fold would be a cycle.
 
 Shipping the controller package and the `iss` change makes rotation work proof-carrying, with no
 group involved.
+
+**Two deltas from the text above, both deliberate.** `rotation.ts` and `createRotationAssertion`
+were **deleted rather than deprecated** — nothing in the workspace consumed them and the JWE split
+already made this a breaking `@kokuin/token` major, so a deprecation would have bought a cycle of
+dead code and a migration window nobody needed. And **ML-DSA was not added**: the post-quantum work
+stayed in `backlog/2026-06-30-post-quantum-algorithms.md`, because the format is ready (algorithms
+are multicodec-tagged and `ka` is an OR set) and only the wire standard is missing. Adding it here
+would have shipped an encoding ahead of the RFC.
 
 ### kumiai
 
@@ -325,6 +335,45 @@ Tracked in `kumiai/docs/agents/plans/backlog/2026-08-07-did-registry-ledger-entr
 - The deny set gives an authoritative revocation source alongside `kubun_revoked_capabilities`.
 
 Tracked in `kubun/docs/agents/plans/backlog/2026-08-07-profile-did-ownership.md`.
+
+## Downstream tracker
+
+Measured 2026-08-11 against the shipped branch, by reading each repo's `package.json` files and the
+symbols its sources import — not from the design notes, which were wrong about two of these.
+
+| Repo | Depends on | Adoption | Blocking work |
+| --- | --- | --- | --- |
+| **kubun** | `@kokuin/token`, `capability`, `browser`, `expo` (18 manifests) | not started | its own fail-open; the resolver interface; cut-off position |
+| **kumiai** | `@kokuin/token`, `expo` (8 manifests) | not started | ledger entry types, genesis, the two authority checks |
+| **enkaku** | `@kokuin/token`, `capability`, `electron` (7 manifests) | not started | none known — verify it builds |
+| sozai, tejika, mokei | — | n/a | none |
+
+**Nothing downstream has been built against the shipped packages.** That is the first task in
+`next/2026-08-11-did-kokuin-downstream-adoption.md` and it gates the rest.
+
+### What the shipped changes actually touch downstream
+
+- **The JWE split reaches nothing today.** No repo imports `encryptToken`, `decryptToken` or
+  `createTokenEncrypter` in source. The split is free until one does.
+- **`deriveSharedSecret` and `isDecryptingIdentity` have no downstream users.** The design notes
+  carried a "kubun needs a migration note" item for both; kubun references neither, anywhere. Kubun
+  asked for `deriveSharedSecret` (see `completed/2026-08-07-derive-shared-secret.complete.md`) and
+  has not adopted it. No migration note is owed unless that changes.
+- **kumiai depends on an `@internal` export.** `packages/mls/src/authentication.ts:5,76` imports
+  `getSignatureInfo` from `@kokuin/token`, which kokuin marks `@internal` and deliberately kept
+  marked. Either kumiai stops using it or kokuin makes it public — an internal export with an
+  out-of-repo consumer is neither.
+- **kubun is the heaviest consumer of the surfaces that moved**: `verifyToken`, `checkCapability`,
+  `VerifyTokenHook`, `createRevocationRecord`, `createFullIdentity` / `isFullIdentity`. The
+  `KeyAgreementIdentity` narrowing and the new hard denial on a revoked audience both land here.
+
+### Repo-owned work
+
+- **kumiai** — `kumiai/docs/agents/plans/backlog/2026-08-07-did-registry-ledger-entries.md`
+- **kubun** — `kubun/docs/agents/plans/backlog/2026-08-07-profile-did-ownership.md`
+- **kokuin** — `next/2026-08-11-did-kokuin-downstream-adoption.md` (the build-and-verify pass and
+  kubun's fail-open), `next/2026-08-11-deny-set-for-plain-tokens.md`,
+  `backlog/2026-08-11-controller-follow-ons.md`
 
 ## Costs and constraints
 
@@ -409,7 +458,10 @@ Recorded here so the reasoning is not re-litigated. Full arguments in the spec.
 
 ## Related
 
-- `docs/superpowers/specs/2026-08-08-profile-did-key-events-design.md` — the resolved kokuin design.
+- `completed/2026-08-11-controller-key-events.complete.md` — the resolved kokuin design, as built.
+- `next/2026-08-11-did-kokuin-downstream-adoption.md` — the downstream build-and-verify pass.
+- `next/2026-08-11-deny-set-for-plain-tokens.md` — revocation does not reach ordinary tokens.
+- `backlog/2026-08-11-controller-follow-ons.md` — the accepted limits, with their reasoning.
 - `backlog/2026-06-30-post-quantum-algorithms.md` — the algorithm work this design depends on.
 - `backlog/2026-06-30-ledger-root-identity.md` — multi-Ledger support, needed for one device to
   hold authority across several profiles.
