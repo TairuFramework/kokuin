@@ -447,7 +447,11 @@ any claim whose subject is the profile rather than a device
 
   The verifier needs no registry for the profile being folded. The fold hands it a resolver for
   that profile **at the position of the event being verified**, and that answer shadows anything
-  the caller configured for the same method. Two things depend on the position and neither can be
+  the caller configured for the same method — so inside the fold, a caller's own `resolve` and
+  `resolveDenySet` **for the subject** are not consulted at all. A policy resolver that denies a DID
+  out of band has no effect on who may author a `rev`; the lever that still works there is the
+  `verifyToken` hook, which runs on the capability the event names and rejects the revoke by
+  throwing. Two things depend on the position and neither can be
   answered from a DID alone, which is all `loadLog` receives: the key set that must verify the
   capability's signature (a key set the log rotated away afterwards must not verify a grant made
   under it) and the deny set that decides whether the *author* of this revoke is still allowed to

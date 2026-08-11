@@ -149,7 +149,10 @@ export function verifyEventSignedBy(signed: SignedEvent, key: ResolvedSigningKey
   // `sigs` needs no array check of its own, and this is the rule the whole file applies: **a guard
   // stays when the value it inspects can reach it in the shape it rejects, even if no test can
   // kill it; it is removed only when that value cannot reach it at all, and the unreachability is
-  // pinned by a test.** Here it cannot: this function is unexported, the fold is its only caller,
+  // pinned by a test.** Both arms of the check below are unkillable under it and stay: a
+  // non-EdDSA key would fail `ed25519.verify` inside the `catch` anyway, and `[].some()` is
+  // already `false`. They state what this function accepts rather than relying on what the code
+  // beneath them happens to do. Here it cannot: this function is unexported, the fold is its only caller,
   // and `isSignedEventShape` has already established that `sigs` is an array of strings —
   // `deleted-guards.test.ts` walks every non-array `sigs` shape to the envelope guard and shows it
   // stopping there. "Unkillable" alone is not the test: several guards below are unkillable and

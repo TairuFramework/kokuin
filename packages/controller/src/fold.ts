@@ -237,6 +237,12 @@ function stepEvent(
     if (isReset) {
       // A reset chains to the inception, not to the head — Amendment A. That is what lets a root
       // holding only its seed author one: `p` is recomputable without the log.
+      //
+      // This reason is unobservable and no test can elicit it: `verifyReset` on the next line
+      // rejects the same event with `invalid reset`, so removing the check changes the reason and
+      // nothing else. It stays because `s` is wire data and this is the check that says what a
+      // reset's sequence must be — see the rule at `verifyEventSignedBy` — but do not spend a round
+      // trying to reach it.
       if (rot.event.s !== 0) {
         return { status: 'fail', reason: 'reset must restart the sequence' }
       }
@@ -337,6 +343,10 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
     return { ok: false, result: fail(MALFORMED_EVENT, 0) }
   }
   const first = events[0] as SignedEvent<InceptionEvent>
+  // Unobservable, like `reset must restart the sequence`: `verifyInception` checks `t` too and
+  // rejects the same log with `invalid inception`. Kept for the same reason — `t` is wire data and
+  // this is the check that states what a log must open with — and recorded as unreachable so the
+  // next reader does not go looking for the test that elicits it.
   if (first.event.t !== 'icp') {
     return { ok: false, result: fail('first event must be an inception', 0) }
   }
