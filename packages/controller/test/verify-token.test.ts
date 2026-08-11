@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest'
 
 import {
   createInception,
+  createReset,
   createRevoke,
   createRotate,
   decodeKey,
@@ -47,27 +48,25 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     ).resolves.toBeDefined()
   })
 
-  test('a token signed by the pre-rotation key is rejected once the log has rotated', async () => {
+  test('a token signed by the pre-rotation key is rejected once the log has reset', async () => {
     const inception = createInception(seed, 0)
-    const did = didFromInception(inception.event)
-    const rotate = createRotate(seed, 0, did, inception.event)
+    const reset = createReset(seed, 0, 1)
 
-    // Signed before the rotation, by an identity that only ever saw the inception.
+    // Signed before the reset, by an identity that only ever saw the inception.
     const stale = createControllerIdentity(seed, 0, [inception])
     const token = await signToken(stale, createUnsignedToken({ hello: 'world' }))
 
-    const rotated = createControllerResolver({ loadLog: async () => [inception, rotate] })
-    // The stale token names its own key in `kid`, and the rotation retired it, so the rejection
-    // now comes from key selection rather than from the signature check. Either way the token
-    // does not verify — which is the property this test exists for.
-    await expect(verifyToken(token, { methods: [rotated] })).rejects.toThrow(
-      /kid names a key outside the current set/,
+    const recovered = createControllerResolver({ loadLog: async () => [inception, reset] })
+    // A reset is the one event that discards everything under the prior generation — a rotate is
+    // not, which `generation-lifecycle.test.ts` covers from the other side.
+    await expect(verifyToken(token, { methods: [recovered] })).rejects.toThrow(
+      /kid names a key outside the current generation/,
     )
 
     // Control: the same token still verifies against a resolver whose log stops at the inception,
-    // so the rejection above is the rotation retiring the key and not a malformed token.
-    const preRotation = createControllerResolver({ loadLog: async () => [inception] })
-    await expect(verifyToken(token, { methods: [preRotation] })).resolves.toBeDefined()
+    // so the rejection above is the generation bump and not a malformed token.
+    const preReset = createControllerResolver({ loadLog: async () => [inception] })
+    await expect(verifyToken(token, { methods: [preReset] })).resolves.toBeDefined()
   })
 
   test('a token signed after a revoke verifies — the key position is not the event position', async () => {

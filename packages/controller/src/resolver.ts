@@ -8,22 +8,32 @@ import {
 
 import { DID_PREFIX, decodeKey, type SignedEvent } from './events.js'
 import type { FoldOptions, KeyState } from './fold.js'
-import { currentStateAsync } from './state.js'
+import { allStatesAsync } from './state.js'
 
 const CONTEXT = 'Controller resolver'
 
 /**
- * The `k` entry a token's `kid` names, or the first published key when it carries none.
+ * The key a token's `kid` names, or the head's first published key when it carries none.
  *
  * The format is `#<the multibase key exactly as it appears in `k`>` — a fragment whose body is the
- * key itself, matched against the folded key set by membership. An index-based fragment was
+ * key itself, matched against the folded key sets by membership. An index-based fragment was
  * rejected for this: an index means whatever the key set said at the time, and a token outlives
  * the state that gave its `kid` meaning.
  *
- * A `kid` outside the current set is an error, never a fall back to `keys[0]`. Falling back would
- * check the signature against a key the token never claimed — and for the common case of a key the
- * log has since rotated away, "the signer named a retired key" is precisely the answer a verifier
- * must not paper over.
+ * **Any key that was authoritative at some position within the current generation resolves**, not
+ * only the head's. Answering from the head alone made a routine `rotate` invalidate every token,
+ * capability and revocation record the profile had ever issued — including ones held by third
+ * parties who cannot know a rotation happened. The spec reserves that blast radius for `reset`
+ * ("discards everything under the prior generation, including every capability minted there") and
+ * its remedy ladder — a cold rotate, with reset as the backstop — only means something if the two
+ * differ. So a generation bump is the thing that invalidates, and the scan stops dead at the first
+ * state from an earlier generation rather than continuing through it.
+ *
+ * Everything else stays as it was. A `kid` naming a key this profile never published, and one from
+ * a superseded generation, are errors — never a fall back to `keys[0]`, which would check the
+ * signature against a key the token never claimed. A `kid` absent still resolves to the head's
+ * first key: accepting an earlier key when a token *names* it is not the same as volunteering one
+ * when it names nothing, and `resolve` can only answer with one key.
  *
  * The bare key without the leading `#` is rejected rather than accepted as a second spelling: the
  * fragment form is wire-visible and effectively permanent, so it has exactly one spelling.
@@ -36,20 +46,27 @@ const CONTEXT = 'Controller resolver'
  * fabricated record naming this DID and any invented key would otherwise deny every capability
  * this controller ever issued.
  */
-function selectSigningKey(did: string, keys: Array<string>, kid?: string): string {
+function selectSigningKey(did: string, states: Array<KeyState>, kid?: string): string {
+  const head = states[states.length - 1]
   if (kid == null) {
-    return keys[0]
+    return head.keys[0]
   }
   if (!kid.startsWith('#')) {
     throw new IssuerKeyNotFoundError(`Controller ${did} kid is not a key fragment: ${kid}`)
   }
   const key = kid.slice(1)
-  if (!keys.includes(key)) {
-    throw new IssuerKeyNotFoundError(
-      `Controller ${did} kid names a key outside the current set: ${kid}`,
-    )
+  // Backwards from the head, because the head's own key set is the overwhelmingly common answer.
+  // `gen` never decreases across the fold, so the first state from another generation ends the
+  // search — everything before it is superseded material, and reaching into it would undo the one
+  // thing `reset` is for.
+  for (let i = states.length - 1; i >= 0 && states[i].gen === head.gen; i--) {
+    if (states[i].keys.includes(key)) {
+      return key
+    }
   }
-  return key
+  throw new IssuerKeyNotFoundError(
+    `Controller ${did} kid names a key outside the current generation: ${kid}`,
+  )
 }
 
 export type ControllerResolverOptions = {
@@ -105,7 +122,7 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
   //
   // Two problems meet here. A capability-authorised revoke sends the fold back out through
   // `verifyCapability`, which resolves the capability's issuer — ordinarily this same profile — so
-  // a `loadLog` answering with the whole log re-enters `loadState` for a DID already being folded.
+  // a `loadLog` answering with the whole log re-enters `loadStates` for a DID already being folded.
   // Unguarded that is not a stack overflow but an await-chained Ed25519 loop that never returns and
   // starves the timer queue, so no host-side timeout can catch it. Meanwhile two *independent*
   // resolutions of one DID — two tokens from one issuer verified in parallel, the ordinary shape,
@@ -124,26 +141,30 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
   //
   // Not a cache: the entry is removed as soon as the fold settles, so a later resolution re-folds
   // and never answers from stale state.
-  const inFlight = new Map<string, Promise<KeyState>>()
+  const inFlight = new Map<string, Promise<Array<KeyState>>>()
 
-  // Shared by both members: load the log, fold it, take the last state, throw `Unknown DID` when
-  // absent. A second copy of this sequence would drift.
+  // Shared by every member: load the log, fold it, throw `Unknown DID` when absent. A second copy
+  // of this sequence would drift.
+  //
+  // The whole state array rather than the head alone: `resolve` has to answer about keys the log
+  // has since rotated away, since a token outlives the state that gave its `kid` meaning. The
+  // members that want only the head take `states[states.length - 1]`.
   //
   // Always the async fold. Both members are already async, and `foldLogAsync` differs from
   // `foldLog` only in being able to await a capability-authorised revoke's verifier — every other
   // log folds identically through either — so a mode-selecting option would choose nothing. The
   // verifier itself is the only thing a caller has to supply.
-  async function computeState(did: string): Promise<KeyState> {
+  async function computeStates(did: string): Promise<Array<KeyState>> {
     const events = await options.loadLog(did)
     if (events == null || events.length === 0) {
       throw new Error(`Unknown DID: ${did}`)
     }
-    return await currentStateAsync(did, events, CONTEXT, {
+    return await allStatesAsync(did, events, CONTEXT, {
       verifyCapability: options.verifyCapability,
     })
   }
 
-  async function loadState(did: string): Promise<KeyState> {
+  async function loadStates(did: string): Promise<Array<KeyState>> {
     if (!did.startsWith(DID_PREFIX)) {
       throw new Error(`Unknown DID: ${did}`)
     }
@@ -154,10 +175,10 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
       return await pending
     }
     // Deferred by a microtask so the entry is registered *before* `loadLog` runs. Calling
-    // `computeState` first would leave a window in which a `loadLog` that re-enters `resolve`
+    // `computeStates` first would leave a window in which a `loadLog` that re-enters `resolve`
     // before its own first `await` recurses synchronously to a stack overflow, since the map is
     // still empty when it looks.
-    const fold = Promise.resolve().then(() => computeState(did))
+    const fold = Promise.resolve().then(() => computeStates(did))
     inFlight.set(did, fold)
     try {
       return await fold
@@ -173,19 +194,22 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
   return {
     method: 'kokuin',
     async resolve(did: string, header: ResolveIssuerHeader = {}): Promise<ResolvedSigningKey> {
-      const state = await loadState(did)
-      if (state.keys.length === 0) {
+      const states = await loadStates(did)
+      if (states[states.length - 1].keys.length === 0) {
         throw new Error(`Controller ${did} has no signing key`)
       }
-      const key = decodeKey(selectSigningKey(did, state.keys, header.kid))
+      const key = decodeKey(selectSigningKey(did, states, header.kid))
       if (key.alg === 'X25519') {
         throw new Error(`Controller ${did} signing key is not a signature algorithm: ${key.alg}`)
       }
       return { alg: key.alg, publicKey: key.publicKey }
     },
     async resolveAgreementKey(did: string): Promise<Array<ResolvedAgreementKey>> {
-      const state = await loadState(did)
-      return state.agreement.map((value) => {
+      // The head's set only, unlike `resolve`. These are the keys a *sender* encrypts to, and a
+      // retired agreement key is a downgrade rather than a grant the profile already made: the
+      // recipient decrypts old ciphertexts by re-deriving from the seed, never by resolution.
+      const states = await loadStates(did)
+      return states[states.length - 1].agreement.map((value) => {
         const key = decodeKey(value)
         if (key.alg !== 'X25519') {
           throw new Error(`Controller ${did} publishes an unsupported agreement key: ${key.alg}`)

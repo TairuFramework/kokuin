@@ -58,7 +58,7 @@ describe('classification of a kid naming a key the issuer does not have', () => 
     // disagreed here, a `did:kokuin:` issuer would have a denial switch that `did:peer:4` does not.
     expect((peer4 as Error).message).toMatch(/KidNotFound/)
     expect(isUnresolvableIssuerError(peer4)).toBe(false)
-    expect((kokuin as Error).message).toMatch(/kid names a key outside the current set/)
+    expect((kokuin as Error).message).toMatch(/kid names a key outside the current generation/)
     expect(isUnresolvableIssuerError(kokuin)).toBe(false)
     // The controller's is the branded signal, which is what carries it through
     // `resolveIssuerWithDoc` unwrapped; `did:peer:4` needs no brand since it never gets wrapped.

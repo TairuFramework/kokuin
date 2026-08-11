@@ -558,7 +558,7 @@ describe('revocation', () => {
         }
         if (header.kid != null && header.kid !== currentKid) {
           throw new IssuerKeyNotFoundError(
-            `Controller ${did} kid names a key outside the current set: ${header.kid}`,
+            `Controller ${did} kid names a key outside the current generation: `,
           )
         }
         return { alg: 'EdDSA' as const, publicKey: identity.publicKey }

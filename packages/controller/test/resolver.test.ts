@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest'
 import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
+  createReset,
   createRevoke,
   createRotate,
   decodeKey,
@@ -99,7 +100,7 @@ describe('createControllerResolver().resolve() with a kid', () => {
     expect(resolved.publicKey).toEqual(decodeKey(cosignerKey).publicKey)
   })
 
-  test('a kid naming a key outside the current set is rejected', async () => {
+  test('a kid naming a key this profile never published is rejected', async () => {
     const { did, log } = buildTwoKeyLog(seed)
     const resolver = createControllerResolver({ loadLog: async () => log })
     const stranger = strangerKey()
@@ -107,23 +108,38 @@ describe('createControllerResolver().resolve() with a kid', () => {
     // Rejected, never answered with `keys[0]`: a verifier told which key signed must not fall
     // back to a different one, which would accept a signature the token never claimed.
     await expect(resolver.resolve(did, { kid: `#${stranger}` })).rejects.toThrow(
-      `Controller ${did} kid names a key outside the current set: #${stranger}`,
+      `Controller ${did} kid names a key outside the current generation: #${stranger}`,
     )
   })
 
-  test('a kid naming a key the log has since rotated away is rejected', async () => {
+  test('a kid naming a key the log rotated away within the generation still resolves', async () => {
     const { icp, did } = build()
     const rot = createRotate(seed, 0, did, icp.event)
     const resolver = createControllerResolver({ loadLog: async () => [icp, rot] })
     const retired = icp.event.k[0]
 
+    // A rotate is routine hygiene, so it must not invalidate what the profile signed before it —
+    // see `generation-lifecycle.test.ts` for the token-level consequence.
+    const resolved = await resolver.resolve(did, { kid: `#${retired}` })
+    expect(resolved.publicKey).toEqual(decodeKey(retired).publicKey)
+    // The head answer is still the rotated key, so the resolution above really did reach back.
+    const head = await resolver.resolve(did, {})
+    expect(head.publicKey).toEqual(decodeKey(rot.event.k[0]).publicKey)
+  })
+
+  test('a kid naming a key from a superseded generation is rejected', async () => {
+    const { icp, did } = build()
+    const reset = createReset(seed, 0, 1)
+    const resolver = createControllerResolver({ loadLog: async () => [icp, reset] })
+    const retired = icp.event.k[0]
+
     await expect(resolver.resolve(did, { kid: `#${retired}` })).rejects.toThrow(
-      /kid names a key outside the current set/,
+      /kid names a key outside the current generation/,
     )
-    // Control: the same kid resolves against a resolver whose log stops before the rotation, so
-    // the rejection is the key having been retired and not the kid form being unusable.
-    const preRotation = createControllerResolver({ loadLog: async () => [icp] })
-    const resolved = await preRotation.resolve(did, { kid: `#${retired}` })
+    // Control: the same kid resolves against a resolver whose log stops before the reset, so the
+    // rejection is the generation bump and not the kid form being unusable.
+    const preReset = createControllerResolver({ loadLog: async () => [icp] })
+    const resolved = await preReset.resolve(did, { kid: `#${retired}` })
     expect(resolved.publicKey).toEqual(decodeKey(retired).publicKey)
   })
 

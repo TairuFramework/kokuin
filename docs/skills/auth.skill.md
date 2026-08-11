@@ -420,10 +420,11 @@ any claim whose subject is the profile rather than a device
 - `createControllerIdentity(seed, profile, log)` takes the **log**, not a `{ gen, seq }` position.
   What that buys is narrow but real: the caller cannot name a position, so the signing key always
   matches the log it was handed. **The log is still the caller's freshness contract** — build an
-  identity from a stale or truncated log and it signs with a key that later events retired,
-  minting tokens a current verifier rejects — with `kid names a key outside the current set`, since
-  the token names the key that signed it. Re-read the log and rebuild the identity after any
-  rotation; do not cache one across one
+  identity from a stale or truncated log and it signs with whatever key that log's head
+  established. That is survivable across a `rotate` (a verifier accepts any key that was
+  authoritative within the current generation) and fatal across a `reset`, which discards the prior
+  generation: those tokens fail with `kid names a key outside the current generation`. Re-read the
+  log and rebuild the identity after a reset; caching one across a rotate is merely stale
 - It throws when the log does not fold, and when the derived key is not one of the current
   authority keys — a wrong `seed` or a wrong `profile` for that log
 - The key it derives sits at the fold's `keyGen`/`keySeq` — where the current keys were
@@ -463,9 +464,14 @@ any claim whose subject is the profile rather than a device
   out is ignored instead — it is evidence about the record, not about revocation
 - **Key selection**: a controller's `k` is a *set*. Every token `createControllerIdentity` signs
   carries `kid: "#<the multibase key exactly as it appears in `k`>"`, and the resolver matches that
-  against the folded set by membership. A header with no `kid` still resolves to `k[0]`, so
-  single-key profiles are unaffected. A `kid` naming a key outside the current set — a retired one,
-  most often — is an error, never a fall back to `k[0]`
+  against the folded key sets by membership. A header with no `kid` still resolves to the head's
+  `k[0]`, so single-key profiles are unaffected
+- **A `kid` resolves against the whole current generation**, not only the head's `k`. A `rotate` is
+  routine hygiene, so it must not invalidate the tokens, capabilities and revocation records the
+  profile has already issued — including ones held by third parties who cannot know a rotation
+  happened. A `reset` is what invalidates: it bumps the generation, and every key from the prior one
+  stops resolving. A `kid` naming a key this profile never published, or one from a superseded
+  generation, is an error — never a fall back to `k[0]`
 - That error is an `IssuerKeyNotFoundError` (`@kokuin/token`, guard `isIssuerKeyNotFoundError`),
   **not** an `UnresolvableIssuerError`: the DID resolved and its log folded; only the key the token
   named was missing. The classification matters because fail-closed callers key on the second type —
