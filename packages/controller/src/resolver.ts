@@ -66,9 +66,17 @@ export type ControllerResolverOptions = {
    * Answering with the whole log instead **deadlocks that DID's resolution**, and nothing here can
    * diagnose it: the in-flight resolution ends up awaiting itself, which is indistinguishable from
    * awaiting an independent resolution already under way, because nothing carries chain identity
-   * across the callback. It is a quiet deadlock — one pending promise, one `loadLog` call, no CPU
-   * — so an ordinary caller-side timeout catches it. Only the caller knows how long its own
-   * `loadLog` may legitimately take, so the timeout belongs there and not here.
+   * across the callback. It is a quiet deadlock — one pending promise, one `loadLog` call, no CPU,
+   * other DIDs on the same instance unaffected — so a caller-side timeout ends the waiting. Only
+   * the caller knows how long its own `loadLog` may legitimately take, so that timeout belongs
+   * there and not here.
+   *
+   * It ends the *call*, not the wedge. The unsettleable fold stays in flight, so every later
+   * resolution of that DID on that instance joins it and waits forever too, without calling
+   * `loadLog` again. **A wedged instance is finished for that DID**: fix `loadLog` and build a new
+   * resolver. Evicting the entry on a timer was considered and rejected — it would put a timeout
+   * back inside this file, where the legitimate duration of `loadLog` is unknown, and make correct
+   * slow resolutions fail intermittently.
    *
    * **Reuse one resolver instance** rather than minting one per resolution or per hop. Concurrent
    * resolutions of one DID share a single in-flight fold, so reuse is both correct and cheaper;
@@ -145,11 +153,19 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
       // joiner cannot evict an entry a third caller is still about to join.
       return await pending
     }
-    const fold = computeState(did)
+    // Deferred by a microtask so the entry is registered *before* `loadLog` runs. Calling
+    // `computeState` first would leave a window in which a `loadLog` that re-enters `resolve`
+    // before its own first `await` recurses synchronously to a stack overflow, since the map is
+    // still empty when it looks.
+    const fold = Promise.resolve().then(() => computeState(did))
     inFlight.set(did, fold)
     try {
       return await fold
     } finally {
+      // Removal is what keeps this from being a cache: the next resolution re-reads the log and
+      // re-folds, so a log that has grown — a revoke landing between two resolutions — takes
+      // effect. A permanent entry would serve a superseded deny set forever, which on this branch
+      // means a revoked device continuing to verify. In `finally`, so a rejected fold clears too.
       inFlight.delete(did)
     }
   }

@@ -8,6 +8,7 @@ import {
   createRotate,
   decodeKey,
   didFromInception,
+  type SignedEvent,
 } from '../src/events.js'
 import type { CapabilityAuthorisation } from '../src/fold.js'
 import { createControllerResolver } from '../src/resolver.js'
@@ -265,6 +266,76 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
     expect(entered).toBe(1)
     expect(first.publicKey).toEqual(decodeKey(icp.event.k[0]).publicKey)
     expect(second.publicKey).toEqual(first.publicKey)
+  })
+
+  test('a later resolution refolds — the shared fold is not a cache', async () => {
+    // The one property keeping the in-flight map from serving superseded state forever. If the
+    // entry outlived its fold, every later resolution would answer from the first log this
+    // resolver ever saw — a rotated-away key still verifying, and a device revoked on the log
+    // still passing, for the life of the instance.
+    const { icp, did } = build()
+    let log: Array<SignedEvent> = [icp]
+    let calls = 0
+    const resolver = createControllerResolver({
+      loadLog: async () => {
+        calls++
+        return log
+      },
+    })
+
+    const before = await resolver.resolve(did, {})
+    expect(before.publicKey).toEqual(decodeKey(icp.event.k[0]).publicKey)
+
+    // The log grows between two sequential resolutions.
+    const rot = createRotate(seed, 0, did, icp.event)
+    log = [icp, rot]
+    const after = await resolver.resolve(did, {})
+
+    expect(calls).toBe(2)
+    expect(after.publicKey).toEqual(decodeKey(rot.event.k[0]).publicKey)
+    expect(after.publicKey).not.toEqual(before.publicKey)
+  })
+
+  test('a failed resolution does not stick — the next one retries', async () => {
+    // Removal is in `finally`, not on the success path. A `loadLog` that fails transiently — a
+    // network blip, a store not yet open — must not wedge the DID on this instance for good.
+    const { icp, did } = build()
+    let calls = 0
+    const resolver = createControllerResolver({
+      loadLog: async () => {
+        if (++calls === 1) throw new Error('store unavailable')
+        return [icp]
+      },
+    })
+
+    await expect(resolver.resolve(did, {})).rejects.toThrow('store unavailable')
+    const resolved = await resolver.resolve(did, {})
+    expect(calls).toBe(2)
+    expect(resolved.publicKey).toEqual(decodeKey(icp.event.k[0]).publicKey)
+  })
+
+  test('a loadLog that re-enters before its first await does not recurse', async () => {
+    // The entry is registered a microtask *before* `loadLog` runs, so a `loadLog` that calls back
+    // into `resolve` synchronously finds it. Registering after the call would leave the map empty
+    // at that moment and recurse until the stack overflows.
+    const { icp, did } = build()
+    let calls = 0
+    const resolver: DIDMethodResolver = createControllerResolver({
+      loadLog: async () => {
+        calls++
+        // Synchronous re-entry: no await before this line.
+        void resolver.resolve(did, {}).catch(() => undefined)
+        return [icp]
+      },
+    })
+
+    const outcome = await Promise.race([
+      resolver.resolve(did, {}).then(() => 'resolved'),
+      new Promise((resolve) => setTimeout(() => resolve('timer fired'), 50)),
+    ])
+    // Joining the in-flight fold, so the re-entrant call adds no work of its own.
+    expect(calls).toBe(1)
+    expect(outcome).toBe('resolved')
   })
 
   test('a self-re-entrant loadLog deadlocks quietly rather than spinning', async () => {

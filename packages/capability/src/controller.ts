@@ -137,8 +137,10 @@ export type ControllerCapabilityVerifier = (
  * whole log would resolve the issuer by folding it, reach the same capability-authorised revoke,
  * and call this verifier again — without end. Answer with the log up to the event that carries the
  * capability, which is also the state the capability has to be checked against: a key set the log
- * rotated away afterwards must not verify a grant made under it. `createControllerResolver` traps
- * the same-DID case and reports it, but the trap is a diagnosis, not a fix.
+ * rotated away afterwards must not verify a grant made under it. There is no diagnosis for getting
+ * this wrong: `createControllerResolver` cannot tell self-re-entry from two honest concurrent
+ * resolutions, so the misconfigured resolution deadlocks quietly and that resolver instance is
+ * finished for that DID. See `ControllerResolverOptions.loadLog`.
  *
  * @param options forwarded to `verifyToken` and `checkCapability`. `methods` is effectively
  * required — see above. `resolver` and `cache` travel with it for a `did:peer:4` link in the

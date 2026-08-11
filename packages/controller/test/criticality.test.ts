@@ -164,6 +164,34 @@ describe('capability-authorised revoke', () => {
     }
   })
 
+  test('a verifier that throws fails closed with a reason rather than escaping the fold', async () => {
+    // `foldLogAsync` is documented as total. Our own adapter never throws, but a third party's
+    // verifier is caller code — a revocation backend timing out, a resolver rejecting — and a
+    // throw is not evidence that the capability authorises anything.
+    const { icp, did } = build()
+
+    const thrown = await foldLogAsync(did, [icp, capRevoke(did, icp)], {
+      verifyCapability: async () => {
+        throw new Error('revocation backend unreachable')
+      },
+    })
+    expect(thrown).toEqual({
+      ok: false,
+      reason: 'capability verifier failed: revocation backend unreachable',
+      index: 1,
+    })
+
+    // A non-Error rejection carries no `message`, and must still produce a string reason.
+    const rejected = await foldLogAsync(did, [icp, capRevoke(did, icp)], {
+      verifyCapability: async () => Promise.reject('nope') as Promise<CapabilityAuthorisation>,
+    })
+    expect(rejected).toEqual({
+      ok: false,
+      reason: 'capability verifier failed: nope',
+      index: 1,
+    })
+  })
+
   test('an audience key from another realm is accepted, not rejected as malformed', async () => {
     // The shape check is the one place this fold can turn away a *correct* answer. `instanceof` is
     // per-realm, so a key that came from a worker, a `vm` context or across an Electron bridge is

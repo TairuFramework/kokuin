@@ -364,7 +364,14 @@ message was addressed
 - `createInception(seed, profile)` derives a deterministic inception event; `didFromInception`
   hashes it into the DID — same seed and profile index always produce the same DID
 - `createControllerResolver({ loadLog })` adapts a folded event log into a `DIDMethodResolver`;
-  `loadLog(did)` returns the DID's full signed-event log, or `undefined` for an unknown DID
+  `loadLog(did)` returns the DID's signed-event log, or `undefined` for an unknown DID. The whole
+  log is correct **only when no `verifyCapability` is configured** — with one, answer with the log
+  up to the event being verified, since verifying a capability resolves its issuer, which is the
+  same profile, which folds the log and reaches the same event again. That deadlocks the DID's
+  resolution on that resolver instance, quietly and unrecoverably; see Pattern 10 and
+  `ControllerResolverOptions.loadLog`
+- Reuse one resolver instance rather than building one per resolution: concurrent resolutions of
+  one DID share a single fold, and a fresh instance per hop shares nothing
 - Resolution happens once, inside `createTokenEncrypterAsync` — the resolved agreement key is
   closed over by the returned encrypter, and `encryptToken` itself resolves nothing (it just
   calls `encrypter.encrypt`). So an encrypter snapshots whatever `ka` was current in the folded
@@ -426,7 +433,25 @@ any claim whose subject is the profile rather than a device
   capability is async. `createControllerIdentity` stays synchronous and throws on such a log; use
   `createControllerIdentityAsync(seed, profile, log, { verifyCapability })` for one, and pass the
   same `verifyCapability` to `createControllerResolver` so the verifier side folds it too.
-  Without a verifier both still fail closed rather than trusting the capability
+  Without a verifier both still fail closed rather than trusting the capability.
+  `createControllerCapabilityVerifier` (`@kokuin/capability`) is the real implementation of that
+  callback — and once one is configured, its `methods` registry must resolve the issuer from the
+  **prefix** of the log, not from the log the outer resolver is folding:
+
+  ```typescript
+  import { createControllerCapabilityVerifier } from '@kokuin/capability'
+
+  // `prefix` is the log up to the event carrying the capability.
+  const issuers = [createControllerResolver({ loadLog: async () => prefix })]
+  const resolver = createControllerResolver({
+    loadLog: async () => log,
+    verifyCapability: createControllerCapabilityVerifier({ methods: issuers }),
+  })
+  ```
+
+  A capability authorising a revoke must also pin its audience's key in `cnf.kid`
+  (`audienceConfirmation(key)`); one without it is rejected rather than resolved, so that the
+  audience rotating its own key can never make this profile unresolvable
 - Without `methods`, `verifyToken` fails with `Unknown DID` — the identifier carries no key.
   `did:key` and `did:peer:4` need no entry
 - `checkCapability` / `checkDelegationChain` (`@kokuin/capability`) take the same `methods` option

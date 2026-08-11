@@ -315,12 +315,24 @@ export async function foldLogAsync(
       if (options.verifyCapability == null) {
         return fail(`capability-authorised revoke needs a verifier: ${outcome.cap}`, i)
       }
-      const authorisation = await options.verifyCapability(outcome.cap, did, outcome.target)
       // The fold is total by contract, and a verifier is caller-supplied code that TypeScript
-      // cannot police across a package boundary or a stale build. An answer of the wrong shape —
-      // the previous `null`/key-object contract, a rejection with no reason — must come back as a
-      // `FoldResult` with a real reason, not as a `TypeError` thrown out of the loop and not as a
-      // `reason` of `undefined`, which is a failure a caller cannot log or match on.
+      // cannot police across a package boundary or a stale build. Both ways it can break that
+      // contract are handled here: throwing, and answering with the wrong shape — the previous
+      // `null`/key-object contract, or a rejection carrying no reason. Each must come back as a
+      // `FoldResult` with a real reason, never as an exception escaping the loop and never as a
+      // `reason` of `undefined`, which is a failure a caller can neither log nor match on.
+      //
+      // Our own adapter documents that it never throws; a third party's need not, and a throw is
+      // not evidence that the capability authorises anything.
+      let authorisation: CapabilityAuthorisation
+      try {
+        authorisation = await options.verifyCapability(outcome.cap, did, outcome.target)
+      } catch (cause) {
+        return fail(
+          `capability verifier failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          i,
+        )
+      }
       if (!isCapabilityAuthorisation(authorisation)) {
         return fail('capability verifier returned a malformed answer', i)
       }
