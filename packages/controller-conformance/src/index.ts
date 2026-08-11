@@ -61,6 +61,11 @@ export type ConformanceProfileEntry = {
 export type CreateRotateOptions = {
   seal?: string
   deny?: Array<string>
+  /**
+   * Where the currently-active authority key lives — the last `icp`/`rot` position, i.e. the fold's
+   * `keyGen`/`keySeq`. Required once a revoke has intervened; see the `rotate after a revoke` case.
+   */
+  keyPosition?: { gen: number; seq: number }
 }
 
 export type CreateRevokeOptions = {
@@ -285,6 +290,38 @@ export function runControllerConformance(
         }
         expect(result.states[1].deny.has(deviceA)).toBe(false)
         expect(result.states[2].deny.has(deviceA)).toBe(true)
+      })
+    })
+
+    // 5b. A revoke advances `seq` without establishing a key, so the log position and the
+    // pre-rotation derivation index diverge from that point on. An implementation that conflates
+    // them cannot rotate after a revoke at all — which also puts the deny-set snapshot, the only
+    // way to clear a denial short of a reset, out of reach.
+    describe('rotate after a revoke', () => {
+      test('folds, and its deny snapshot clears the accumulated set', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const rev = impl.createRevoke(seedA, 0, did, icp.event, deviceA, { gen: 0, seq: 0 })
+        const denied = impl.foldLog(did, [icp, rev])
+        expect(denied.ok).toBe(true)
+        if (!denied.ok) {
+          return
+        }
+        expect(denied.states[1].deny.has(deviceA)).toBe(true)
+
+        const rot = impl.createRotate(seedA, 0, did, rev.event, {
+          keyPosition: { gen: denied.states[1].keyGen, seq: denied.states[1].keySeq },
+          deny: [],
+        })
+        const result = impl.foldLog(did, [icp, rev, rot])
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
+        expect(result.states[2].deny.has(deviceA)).toBe(false)
+        // The rotate established a key, so the derivation index advanced while `seq` ran ahead.
+        expect(result.states[2].seq).toBe(2)
+        expect(result.states[2].keySeq).toBe(1)
       })
     })
 
