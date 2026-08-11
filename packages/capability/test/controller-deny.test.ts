@@ -201,6 +201,36 @@ describe('a capability whose audience the profile has revoked', () => {
   })
 })
 
+describe('a payload whose `sub` or `aud` is not a string', () => {
+  test('is answered rather than crashing the deny check', async () => {
+    // `checkCapability` takes a `SignedPayload` and nothing upstream types its members: `verifyToken`
+    // does not require `sub` or `aud` to be strings, so a token carrying `"sub": 42` verifies and
+    // arrives here. A deny set holds strings, so neither member has anything to look up — but
+    // without the type guard the lookup runs anyway, and `findMethodResolver` splits `sub` on `:`.
+    // That is a `TypeError` out of a function whose only failure mode is supposed to be a denial.
+    log = [inception, revokeOf(delegate.id)]
+    const base = { act: 'write', res: 'doc/1' }
+
+    for (const payload of [
+      { iss: 42, sub: 42, aud: delegate.id, ...base },
+      { iss: did, sub: did, aud: 42, ...base },
+    ]) {
+      await expect(
+        checkCapability(base, payload as never, { methods }),
+        JSON.stringify(payload),
+      ).resolves.toBeUndefined()
+    }
+
+    // Control: the same payload with both members as strings, naming a revoked audience, is denied
+    // — so the rows above are the type guard and not a deny set that is never consulted.
+    await expect(
+      checkCapability(base, { iss: did, sub: did, aud: delegate.id, ...base } as never, {
+        methods,
+      }),
+    ).rejects.toThrow(/audience is revoked/)
+  })
+})
+
 describe('a revoked link in a delegation chain', () => {
   test('denies the leaf even when the leaf audience is not revoked', async () => {
     // controller → manager → delegate, with the *manager* revoked. Only a check that walks every

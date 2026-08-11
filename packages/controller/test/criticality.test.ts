@@ -150,6 +150,13 @@ describe('capability-authorised revoke', () => {
       { authorised: 1, audienceKey: signingKeyFor(delegateSeed) },
       // A well-formed answer whose reason is not a string would yield `reason: undefined`.
       { authorised: false, reason: 404 },
+      // A *present* key that is not key bytes. `publicKey != null` admits every one of these, and
+      // each then reaches `ed25519.verify`, where it is a caught throw reported as a signature
+      // that does not match — "somebody else signed this revoke" for what is actually a broken
+      // verifier. The `ArrayBuffer.isView` check is what keeps those two apart.
+      { authorised: true, audienceKey: { alg: 'EdDSA', publicKey: [...new Uint8Array(32)] } },
+      { authorised: true, audienceKey: { alg: 'EdDSA', publicKey: 'z6MkNotKeyBytes' } },
+      { authorised: true, audienceKey: { alg: 'EdDSA', publicKey: new ArrayBuffer(32) } },
     ]
 
     for (const answer of malformed) {

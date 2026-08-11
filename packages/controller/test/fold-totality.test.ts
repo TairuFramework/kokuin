@@ -114,6 +114,20 @@ const malformed: Array<[string, Array<unknown>, FoldResult]> = [
     [icp, withoutEventMember(capRevoke, 'x')],
     { ok: false, reason: 'revoke names no target', index: 1 },
   ],
+  // The envelope's third member, on an otherwise perfectly valid reset. Deleting `recoveryKey`
+  // proves nothing about the guard — an absent one is already `invalid reset` — so these two carry
+  // a *present* value of the wrong type, which only the envelope guard can tell apart from a
+  // recovery key that does not match the commitment.
+  [
+    'a reset whose `recoveryKey` is a number',
+    [icp, { ...reset, recoveryKey: 42 }],
+    { ok: false, reason: 'malformed event', index: 1 },
+  ],
+  [
+    'a reset whose `recoveryKey` is null',
+    [icp, { ...reset, recoveryKey: null }],
+    { ok: false, reason: 'malformed event', index: 1 },
+  ],
   ['an inception that is null', [null], { ok: false, reason: 'malformed event', index: 0 }],
   ['an inception carrying no `event`', [{}], { ok: false, reason: 'malformed event', index: 0 }],
   [
