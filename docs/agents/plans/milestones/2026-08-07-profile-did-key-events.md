@@ -359,10 +359,12 @@ symbols its sources import — not from the design notes, which were wrong about
   carried a "kubun needs a migration note" item for both; kubun references neither, anywhere. Kubun
   asked for `deriveSharedSecret` (see `completed/2026-08-07-derive-shared-secret.complete.md`) and
   has not adopted it. No migration note is owed unless that changes.
-- **kumiai depends on an `@internal` export.** `packages/mls/src/authentication.ts:5,76` imports
-  `getSignatureInfo` from `@kokuin/token`, which kokuin marks `@internal` and deliberately kept
-  marked. Either kumiai stops using it or kokuin makes it public — an internal export with an
-  out-of-repo consumer is neither.
+- **Five `@kokuin/token` exports were `@internal` with out-of-repo consumers — now published**
+  (2026-08-11). `signedHeaderSchema`, `unsignedHeaderSchema` and `signedPayloadSchema`, which
+  `@enkaku/protocol` composes into its own message schemas; `SignedPayload`, used in all three
+  repos; and `getSignatureInfo`, which `kumiai/packages/mls/src/authentication.ts` uses to check an
+  MLS credential's key against the key its DID names. An internal export with an out-of-repo
+  consumer is neither public nor protected: it breaks on a change nobody classifies as breaking.
 - **kubun is the heaviest consumer of the surfaces that moved**: `verifyToken`, `checkCapability`,
   `VerifyTokenHook`, `createRevocationRecord`, `createFullIdentity` / `isFullIdentity`. The
   `KeyAgreementIdentity` narrowing and the new hard denial on a revoked audience both land here.

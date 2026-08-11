@@ -32,6 +32,13 @@ on `@kokuin/controller`, so all exposure is through `@kokuin/token` and `@kokuin
 `kubun` is the heaviest consumer of what moved: `verifyToken`, `checkCapability`, `VerifyTokenHook`,
 `createRevocationRecord`, `createFullIdentity` / `isFullIdentity`.
 
+**Resolved 2026-08-11:** five `@kokuin/token` exports were tagged `@internal` while these repos
+imported them from the barrel — `signedHeaderSchema`, `unsignedHeaderSchema` and
+`signedPayloadSchema` (composed into `@enkaku/protocol`'s own message schemas), `SignedPayload`
+(used in all three), and `getSignatureInfo` (`kumiai/packages/mls/src/authentication.ts`, which
+checks an MLS credential's key against the key its DID names). All five are now documented public
+API. `getDID` keeps its tag — nothing outside the package uses it.
+
 Two corrections to what the design notes carried:
 
 - **No `deriveSharedSecret` / `isDecryptingIdentity` migration is owed.** Neither symbol appears
@@ -44,15 +51,10 @@ Two corrections to what the design notes carried:
 
 1. Build `kubun`, `kumiai` and `enkaku` against the shipped packages. None was read during
    development. This gates everything else here.
-2. Resolve `kumiai`'s dependency on an `@internal` export: `packages/mls/src/authentication.ts:5,76`
-   imports `getSignatureInfo` from `@kokuin/token`, which kokuin marks `@internal` and deliberately
-   kept marked when the neighbouring `CODECS` and `getAlgorithmAndPublicKey` were made public.
-   Either kumiai stops using it or kokuin publishes it — an internal export with an out-of-repo
-   consumer is neither, and it will be broken by a change nobody thinks is breaking.
-3. Fix `kubun`'s own fail-open at `packages/store-delegation/src/revocation-checker.ts:49-58`. It
+2. Fix `kubun`'s own fail-open at `packages/store-delegation/src/revocation-checker.ts:49-58`. It
    predates this work and is the same failure mode the controller spent three rounds closing: a
    revocation check that cannot answer should deny, not pass.
-4. Run the suites that never ran in the development environment: `tests/e2e-*`, `tests/ledger`, and
+3. Run the suites that never ran in the development environment: `tests/e2e-*`, `tests/ledger`, and
    the on-device firmware against the host-side `@kokuin/ledger-device`.
 
 ## Deferred with named owners
