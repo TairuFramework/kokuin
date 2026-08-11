@@ -75,7 +75,19 @@ export function getDID(codec: Uint8Array, publicKey: Uint8Array): DIDString {
   return `${PREFIX}${base58.encode(bytes)}`
 }
 
-/** @internal */
+/**
+ * The signature algorithm and raw public key a `did:key` identifier carries. Throws when the string
+ * is not a `did:key`, when its encoded form is implausibly long, or when the codec names no
+ * supported algorithm.
+ *
+ * Supported rather than internal: `@kumiai/mls` checks an MLS credential's key against the key its
+ * DID names, which is a comparison only this function can make correctly — the alternative is a
+ * second base58-and-multicodec decoder in another repo, on another release cadence, whose failure
+ * mode is accepting a credential for the wrong key.
+ *
+ * Resolving a DID of any other method goes through a `DIDMethodResolver`; this is the
+ * self-contained case, where the key is in the identifier.
+ */
 export function getSignatureInfo(did: string): [SignatureAlgorithm, Uint8Array] {
   if (!did.startsWith(PREFIX)) {
     throw new Error('Invalid DID format')
