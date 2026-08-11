@@ -13,6 +13,7 @@ import {
 import {
   createIdentity,
   createSigningIdentity,
+  type DIDMethodResolver,
   type MethodRegistry,
   randomIdentity,
   type SigningIdentity,
@@ -25,6 +26,7 @@ import {
   checkCapability,
   createCapability,
   createControllerCapabilityVerifier,
+  DEFAULT_MAX_DELEGATION_DEPTH,
   now,
 } from '../src/index.js'
 
@@ -395,6 +397,47 @@ describe('the deny set inside the fold: who may author a capability-authorised r
       reason: 'capability does not authorise this revoke',
       index: 1,
     })
+  })
+})
+
+describe('what the deny lookup costs a caller-supplied chain', () => {
+  test('an over-long chain throws the depth error before any deny set is folded', async () => {
+    // The lookup folds a log, so it has to sit *after* the depth bound: otherwise the length of an
+    // attacker-supplied `cap` array decides how much log-folding a verifier does before rejecting
+    // it. Exactly zero, not "at most maxDepth" — moving the lookup back above the bound yields one
+    // call, which every looser assertion admits.
+    let denyCalls = 0
+    const inner = createControllerResolver({ loadLog: async (asked) => (asked === did ? log : []) })
+    const counting: DIDMethodResolver = {
+      method: 'kokuin',
+      resolve: (asked, header) => inner.resolve(asked, header),
+      resolveDenySet: async (asked) => {
+        denyCalls++
+        return (await inner.resolveDenySet?.(asked)) ?? new Set<string>()
+      },
+    }
+    const cap = await mintFor(delegate)
+    const overlong = Array.from({ length: DEFAULT_MAX_DELEGATION_DEPTH + 40 }, () => 'not.a.token')
+
+    await expect(
+      checkCapability(
+        { act: 'write', res: 'doc/1' },
+        { iss: delegate.id, sub: did, cap: [cap, ...overlong] },
+        { methods: [counting] },
+      ),
+    ).rejects.toThrow(/exceeds maximum depth/)
+    expect(denyCalls).toBe(0)
+
+    // Control: the same registry does get asked when the chain is within the bound, so the zero
+    // above is the ordering and not a resolver that is never consulted.
+    await expect(
+      checkCapability(
+        { act: 'write', res: 'doc/1' },
+        { iss: delegate.id, sub: did, cap: [cap] },
+        { methods: [counting] },
+      ),
+    ).resolves.toBeUndefined()
+    expect(denyCalls).toBeGreaterThan(0)
   })
 })
 
