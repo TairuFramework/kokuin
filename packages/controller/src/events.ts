@@ -146,8 +146,15 @@ export function verifySignatures(
  * events grow a second signature algorithm.
  */
 export function verifyEventSignedBy(signed: SignedEvent, key: ResolvedSigningKey): boolean {
-  // `sigs` needs no array check of its own: this is unexported, and the fold's envelope guard is
-  // the only way in.
+  // `sigs` needs no array check of its own, and this is the rule the whole file applies: **a guard
+  // stays when the value it inspects can reach it in the shape it rejects, even if no test can
+  // kill it; it is removed only when that value cannot reach it at all, and the unreachability is
+  // pinned by a test.** Here it cannot: this function is unexported, the fold is its only caller,
+  // and `isSignedEventShape` has already established that `sigs` is an array of strings —
+  // `deleted-guards.test.ts` walks every non-array `sigs` shape to the envelope guard and shows it
+  // stopping there. "Unkillable" alone is not the test: several guards below are unkillable and
+  // stay, because the shapes they reject do arrive from `JSON.parse` and only reach a rejection at
+  // all because something checks.
   if (key.alg !== 'EdDSA' || signed.sigs.length === 0) {
     return false
   }
@@ -200,10 +207,19 @@ export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string
   if (signed.event.t !== 'icp' || signed.event.i !== undefined) {
     return false
   }
-  // `n` and `r` go straight into the folded state, where the *next* event reads them — a null `n`
-  // throws inside the following rotate, one event away from the log that caused it. `k` needs no
-  // check of its own: the `verifySignatures` below is what reads it, and it rejects a non-array.
-  if (!isKeyList(signed.event.n) || typeof signed.event.r !== 'string') {
+  // `k`, `n` and `r` go straight into the folded state, where the *next* event reads them — a null
+  // `n` throws inside the following rotate, one event away from the log that caused it.
+  //
+  // The `k` check is unkillable: `verifySignatures` below rejects the same shapes with the same
+  // `invalid inception`. It stays anyway, by the rule stated at {@link verifyEventSignedBy} — an
+  // inception is self-certifying, so *any* `k` an attacker writes is a body they can sign, and this
+  // is the guard that says what a published key list must be rather than the one that happens to
+  // read it next.
+  if (
+    !isKeyList(signed.event.k) ||
+    !isKeyList(signed.event.n) ||
+    typeof signed.event.r !== 'string'
+  ) {
     return false
   }
   if (didFromInception(signed.event) !== did) {
