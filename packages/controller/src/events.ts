@@ -241,6 +241,18 @@ export type RotateEvent = EventCommon & {
 export type CreateRotateOptions = {
   seal?: string
   deny?: Array<string>
+  /**
+   * Where the currently-active authority key lives — the position of the last `icp`/`rot`, which
+   * is the fold's `keyGen`/`keySeq`.
+   *
+   * Defaults to `prior`'s own position, which is right whenever `prior` established a key. A `rev`
+   * does not (Amendment A), so a rotate chained onto one must pass this. Without it the rotate
+   * reveals a key one past the *revoke*, which nothing ever pre-committed — the event cannot fold,
+   * and a log becomes permanently unrotatable after its first revoke. That also takes the deny-set
+   * snapshot with it, since the "cold rotate clearing the deny set" of the spec's remedy ladder is
+   * exactly a rotate chained onto revokes.
+   */
+  keyPosition?: { gen: number; seq: number }
 }
 
 /**
@@ -258,9 +270,15 @@ export function createRotate(
 ): SignedEvent<RotateEvent> {
   const gen = prior.g
   const seq = prior.s + 1
-  const current = deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA')
-  const next = deriveKeyPair(seed, authorityPath(profile, gen, seq + 1), 'EdDSA')
-  const agreement = deriveKeyPair(seed, agreementPath(profile, gen, seq), 'X25519')
+  // The log position and the derivation position are the same thing only until the first revoke —
+  // see `CreateRotateOptions.keyPosition`. The key this rotate reveals is the one the last icp/rot
+  // pre-committed, which sits one past *its* position, and the agreement key lands at the same
+  // index so that `KeyState.keyGen`/`keySeq` names it for a recipient re-deriving from the seed.
+  const keyGen = options.keyPosition?.gen ?? gen
+  const keySeq = (options.keyPosition?.seq ?? prior.s) + 1
+  const current = deriveKeyPair(seed, authorityPath(profile, keyGen, keySeq), 'EdDSA')
+  const next = deriveKeyPair(seed, authorityPath(profile, keyGen, keySeq + 1), 'EdDSA')
+  const agreement = deriveKeyPair(seed, agreementPath(profile, keyGen, keySeq), 'X25519')
 
   const event: RotateEvent = {
     v: 1,

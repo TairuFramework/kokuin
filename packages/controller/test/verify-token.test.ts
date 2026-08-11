@@ -89,6 +89,29 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     expect(verified.payload.hello).toBe('world')
   })
 
+  test('a token signed after a revoke *and* a rotate verifies', async () => {
+    // The other half of the same divergence. Once a revoke has advanced `s` past the derivation
+    // index, `createControllerIdentity` must derive at the index rather than at the position, and
+    // the rotate itself must reveal the key the log pre-committed — otherwise the log is
+    // unrotatable after its first revoke and every later token is unverifiable.
+    const inception = createInception(seed, 0)
+    const did = didFromInception(inception.event)
+    const revoke = createRevoke(seed, 0, did, inception.event, device, { gen: 0, seq: 0 })
+    const rotate = createRotate(seed, 0, did, revoke.event, { keyPosition: { gen: 0, seq: 0 } })
+    const log = [inception, revoke, rotate]
+    const resolver = createControllerResolver({ loadLog: async () => log })
+
+    const token = await signToken(
+      createControllerIdentity(seed, 0, log),
+      createUnsignedToken({ hello: 'world' }),
+    )
+    expect(token.header.kid).toBe(`#${rotate.event.k[0]}`)
+
+    const verified = await verifyToken(token, { methods: [resolver] })
+    expect(verified.payload.iss).toBe(did)
+    expect(verified.payload.hello).toBe('world')
+  })
+
   test('a token signed under a kid verifies end to end', async () => {
     // A hand-built two-key inception — see `two-key-log.ts`. The controller signs with `k[1]`.
     const { did, log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)

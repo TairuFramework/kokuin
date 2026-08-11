@@ -4,6 +4,7 @@ import { digestOf } from '../src/canonical.js'
 import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
+  createRevoke,
   createRotate,
   didFromInception,
   encodeKey,
@@ -11,6 +12,7 @@ import {
   verifyRotate,
   verifySignatures,
 } from '../src/events.js'
+import { foldLog, keyStateAt } from '../src/fold.js'
 
 const seed = new Uint8Array(32).fill(1)
 
@@ -61,6 +63,51 @@ describe('createRotate()', () => {
     const { inception, did } = setup()
     const deny = ['did:key:zStolen']
     expect(createRotate(seed, 0, did, inception.event, { deny }).event.d).toEqual(deny)
+  })
+
+  test('a rotate chained onto a revoke reveals the key the log actually pre-committed', () => {
+    // Amendment A, on the rotate side. A revoke advances `s` without establishing a key, so the
+    // committed next key still sits one past the last icp/rot — not one past the revoke. Deriving
+    // from `prior.s` reveals a key nothing ever committed, and the rotate cannot fold: after any
+    // revoke the log would be permanently unrotatable, which also makes the deny-set snapshot the
+    // spec's remedy ladder is built on unreachable.
+    const { inception, did } = setup()
+    const revoke = createRevoke(seed, 0, did, inception.event, 'did:key:zStolen', {
+      gen: 0,
+      seq: 0,
+    })
+    const state = keyStateAt(foldLog(did, [inception, revoke]), 1)
+    expect(state).toBeDefined()
+    if (state == null) return
+
+    const rotate = createRotate(seed, 0, did, revoke.event, {
+      keyPosition: { gen: state.keyGen, seq: state.keySeq },
+      deny: [],
+    })
+    expect(digestOf(rotate.event.k[0])).toBe(state.next[0])
+
+    const folded = foldLog(did, [inception, revoke, rotate])
+    expect(folded).toMatchObject({ ok: true })
+    if (!folded.ok) return
+    // The snapshot really replaced the accumulated set.
+    expect(folded.states[1].deny.has('did:key:zStolen')).toBe(true)
+    expect(folded.states[2].deny.size).toBe(0)
+    // And the log keeps rotating from there, now that the key positions have diverged for good.
+    const again = createRotate(seed, 0, did, rotate.event, {
+      keyPosition: { gen: folded.states[2].keyGen, seq: folded.states[2].keySeq },
+    })
+    expect(foldLog(did, [inception, revoke, rotate, again])).toMatchObject({ ok: true })
+  })
+
+  test('without a keyPosition it still rotates from an icp or rot, where the two coincide', () => {
+    // The default has to stay right for the overwhelmingly common case, which is every call site
+    // in this repo.
+    const { inception, did } = setup()
+    const rotate = createRotate(seed, 0, did, inception.event)
+    expect(foldLog(did, [inception, rotate])).toMatchObject({ ok: true })
+    expect(
+      createRotate(seed, 0, did, inception.event, { keyPosition: { gen: 0, seq: 0 } }),
+    ).toEqual(rotate)
   })
 })
 

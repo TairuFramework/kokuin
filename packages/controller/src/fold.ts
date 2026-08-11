@@ -17,9 +17,18 @@ export type KeyState = {
   did: string
   gen: number
   seq: number
-  /** Generation at which the current `keys` were established — see Amendment A. */
+  /** Generation in which the current `keys` were established — see Amendment A. */
   keyGen: number
-  /** Sequence at which the current `keys` were established — see Amendment A. */
+  /**
+   * Derivation index of the current `keys`: how many key-establishing events this generation has
+   * had, counting the `icp`/`rot` that opened it as 0 — see Amendment A.
+   *
+   * Equal to `seq` until a revoke intervenes, and deliberately not the same thing. A revoke
+   * advances `seq` while establishing no key, so the pre-rotation chain — which commits the digest
+   * of the *next* key, one derivation index on — stops tracking `seq` at that point. Deriving at
+   * `seq` after a revoke produces a key the log never pre-committed: an unverifiable token from
+   * `createControllerIdentity`, and a rotate that cannot fold at all.
+   */
   keySeq: number
   keys: Array<string>
   /** Key agreement keys — an OR set. Established by icp/rot, carried forward across rev. */
@@ -201,9 +210,11 @@ function stepEvent(
         did,
         gen: rot.event.g,
         seq: rot.event.s,
-        // A rotate (reset included) establishes new keys at its own position.
+        // A rotate establishes new keys one derivation index on from the last one that did — not
+        // at its own `s`, which any intervening revoke has already advanced. A reset opens a fresh
+        // generation, so its index restarts at 0 (which is also its `s`).
         keyGen: rot.event.g,
-        keySeq: rot.event.s,
+        keySeq: isReset ? 0 : prior.keySeq + 1,
         keys: rot.event.k,
         agreement: rot.event.ka,
         next: rot.event.n,
