@@ -38,6 +38,7 @@ const inceptionKeyPosition = { gen: 0, seq: 0 }
 const capRevoke = createRevoke(seed, 0, did, icp.event, target, inceptionKeyPosition, {
   cap: 'a-serialized-capability',
 })
+const revoke = createRevoke(seed, 0, did, icp.event, target, inceptionKeyPosition)
 
 /** A copy of `signed` with one member of its event removed — a field a peer simply did not send. */
 function withoutEventMember(signed: SignedEvent, member: string): unknown {
@@ -145,6 +146,66 @@ const malformed: Array<[string, Array<unknown>, FoldResult]> = [
     [withoutEventMember(icp, 'ka')],
     { ok: false, reason: 'invalid inception', index: 0 },
   ],
+  // --- envelopes that are the wrong *kind* of object ------------------------------------------
+  [
+    'an entry that is a nested array',
+    [icp, [rot]],
+    { ok: false, reason: 'malformed event', index: 1 },
+  ],
+  [
+    'an inception that is a nested array',
+    [[icp]],
+    { ok: false, reason: 'malformed event', index: 0 },
+  ],
+  [
+    'a log with an empty slot',
+    [icp, undefined],
+    { ok: false, reason: 'malformed event', index: 1 },
+  ],
+  [
+    'an entry whose `sigs` is an array-like object',
+    [icp, { event: rot.event, sigs: { 0: 'x', length: 1 } }],
+    { ok: false, reason: 'malformed event', index: 1 },
+  ],
+  [
+    // `typeof [] === 'object'`, so the envelope guard admits it and the controller-name check is
+    // what stops it. Total either way; recorded because the guard that catches it is not the one
+    // that appears to — and it is the only row that reaches that check with a hostile value.
+    'an entry whose `event` is an array',
+    [icp, { event: [], sigs: [] }],
+    { ok: false, reason: 'event names a different controller', index: 1 },
+  ],
+  // --- well-formed envelope, hostile body ------------------------------------------------------
+  [
+    'a rotate whose `g` is an object',
+    [icp, { event: { ...rot.event, g: {} }, sigs: rot.sigs }],
+    { ok: false, reason: 'sequence gap', index: 1 },
+  ],
+  [
+    'a rotate whose `g` is a fractional generation bump',
+    [icp, { event: { ...rot.event, g: 0.5, s: 0 }, sigs: rot.sigs }],
+    { ok: false, reason: 'invalid reset', index: 1 },
+  ],
+  [
+    'a rotate whose `g` is the string "1"',
+    [icp, { event: { ...rot.event, g: '1', s: 0 }, sigs: rot.sigs }],
+    { ok: false, reason: 'invalid reset', index: 1 },
+  ],
+  [
+    'a rotate whose `s` is an object',
+    [icp, { event: { ...rot.event, s: {} }, sigs: rot.sigs }],
+    { ok: false, reason: 'sequence gap', index: 1 },
+  ],
+  [
+    'an event whose `t` is an object',
+    [icp, { event: { ...revoke.event, t: { evil: true } }, sigs: revoke.sigs }],
+    { ok: false, reason: 'unknown critical event type: [object Object]', index: 1 },
+  ],
+  [
+    'an event whose `t` is an array and `crit` is a truthy string',
+    [icp, { event: { ...revoke.event, t: ['rev'], crit: 'no' }, sigs: revoke.sigs }],
+    { ok: false, reason: 'unknown critical event type: rev', index: 1 },
+  ],
 ]
 
 describe('foldLog() is total', () => {
@@ -237,6 +298,12 @@ describe('a malformed event its own author signed', () => {
     }
   }
 
+  /** The revoke, mutated and re-signed by the profile's own current authority key. */
+  function signedRevoke(member: string, value: unknown): SignedEvent {
+    const event = { ...revoke.event, [member]: value }
+    return { event, sigs: signEvent(event as EventCommon, [authority(0).privateKey]) }
+  }
+
   /**
    * An inception, mutated and re-signed. Self-certifying works against us here: the DID is the
    * hash of the event, so *any* body is a legitimate inception for the DID it hashes to.
@@ -290,6 +357,69 @@ describe('a malformed event its own author signed', () => {
       [icp, signedReset('d', 7)],
       { ok: false, reason: 'invalid reset', index: 1 },
     ],
+    [
+      'a rotate whose `k` holds a nested array',
+      [icp, signedRotate('k', [[]])],
+      { ok: false, reason: 'invalid rotate', index: 1 },
+    ],
+    [
+      'a rotate whose `n` holds a nested array',
+      [icp, signedRotate('n', [[icp.event.n[0]]])],
+      { ok: false, reason: 'invalid rotate', index: 1 },
+    ],
+    [
+      'a rotate whose `ka` holds a number',
+      [icp, signedRotate('ka', [7])],
+      { ok: false, reason: 'invalid rotate', index: 1 },
+    ],
+    [
+      'a rotate whose `ka` is an empty array',
+      [icp, signedRotate('ka', [])],
+      { ok: false, reason: 'invalid rotate', index: 1 },
+    ],
+    [
+      'a rotate whose deny snapshot holds a nested array',
+      [icp, signedRotate('d', [[target]])],
+      { ok: false, reason: 'invalid rotate', index: 1 },
+    ],
+    [
+      'a rotate whose recovery commitment is an object',
+      [icp, signedRotate('r', { evil: true })],
+      { ok: false, reason: 'invalid rotate', index: 1 },
+    ],
+    [
+      'a reset whose recovery commitment is an object',
+      [icp, signedReset('r', { evil: true })],
+      { ok: false, reason: 'invalid reset', index: 1 },
+    ],
+    [
+      'a reset whose `ka` holds a nested array',
+      [icp, signedReset('ka', [[]])],
+      { ok: false, reason: 'invalid reset', index: 1 },
+    ],
+    [
+      'a reset whose `n` holds a number',
+      [icp, signedReset('n', [7])],
+      { ok: false, reason: 'invalid reset', index: 1 },
+    ],
+    // The target goes into a `ReadonlySet<string>` and, for a capability-authorised revoke, into
+    // the verifier as the resource being asked for — where a wildcard grant would happily
+    // authorise denying an object.
+    [
+      'an authority-signed revoke naming an object as its target',
+      [icp, signedRevoke('x', { evil: true })],
+      { ok: false, reason: 'revoke names no target', index: 1 },
+    ],
+    [
+      'an authority-signed revoke naming an array as its target',
+      [icp, signedRevoke('x', [target])],
+      { ok: false, reason: 'revoke names no target', index: 1 },
+    ],
+    [
+      'an authority-signed revoke naming null as its target',
+      [icp, signedRevoke('x', null)],
+      { ok: false, reason: 'revoke names no target', index: 1 },
+    ],
   ]
 
   for (const [name, log, expected] of cases) {
@@ -326,6 +456,38 @@ describe('a malformed event its own author signed', () => {
       index: 0,
     })
   })
+
+  for (const value of [42, {}, [], ['a'], true]) {
+    test(`a revoke whose \`cap\` is ${JSON.stringify(value)} is rejected, not thrown`, async () => {
+      // `cap` is handed straight to the verifier, which is caller code: a non-string reaches
+      // `verifyToken` and throws there, and the fold has to turn that into a reason.
+      const evil = signedRevoke('cap', value)
+      let sync: unknown
+      expect(() => {
+        sync = foldLog(did, [icp, evil])
+      }).not.toThrow()
+      expect(sync).toEqual({
+        ok: false,
+        reason: `capability-authorised revoke needs an async fold: ${String(value)}`,
+        index: 1,
+      })
+
+      const seen: Array<unknown> = []
+      await expect(
+        foldLogAsync(did, [icp, evil], {
+          verifyCapability: async (cap) => {
+            seen.push(cap)
+            throw new Error(`cap is ${typeof cap}`)
+          },
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        reason: `capability verifier failed: cap is ${typeof value}`,
+        index: 1,
+      })
+      expect(seen).toEqual([value])
+    })
+  }
 
   test('an unmutated inception still folds', () => {
     // Control for both rows above: the same re-signing path with nothing changed.
@@ -508,5 +670,33 @@ describe('resolveBranches() survives a hostile branch', () => {
       ok: false,
       duplicity: { gen: -1, seq: -1, digests: ['', ''] },
     })
+  })
+
+  // One row per shape a branch can arrive in, each asserted equal to the clean pair's answer:
+  // filtering a hostile branch has to be indistinguishable from never having been handed it, or a
+  // thief can change what duplicity resolution reports by adding branches nobody can verify.
+  const clean = resolveBranches(did, [forkA, forkB])
+  const hostiles: Array<[string, unknown]> = [
+    ['a nested-array entry', [icp, [rot]]],
+    ['a rotate whose `g` is an object', [icp, { event: { ...rot.event, g: {} }, sigs: rot.sigs }]],
+    ['a branch that is not an array', 'nope'],
+    ['a branch that is null', null],
+    ['an empty branch', []],
+    ['a branch of one hostile entry', [null]],
+  ]
+
+  for (const [name, branch] of hostiles) {
+    test(`duplicity is still reported alongside ${name}`, () => {
+      let result: unknown
+      expect(() => {
+        result = resolveBranches(did, [forkA, branch as Array<SignedEvent>, forkB])
+      }).not.toThrow()
+      expect(result).toEqual(clean)
+    })
+  }
+
+  test('every branch hostile reports the no-valid-history sentinel', () => {
+    const result = resolveBranches(did, hostiles.map(([, h]) => h) as Array<Array<SignedEvent>>)
+    expect(result).toEqual({ ok: false, duplicity: { gen: -1, seq: -1, digests: ['', ''] } })
   })
 })
