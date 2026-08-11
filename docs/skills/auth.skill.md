@@ -432,12 +432,13 @@ any claim whose subject is the profile rather than a device
   the sequence without establishing a key, so the two diverge
 - A revoke carrying a capability (`cap`) authorises a non-authority signer, and verifying that
   capability is async. `createControllerIdentity` stays synchronous and throws on such a log; use
-  `createControllerIdentityAsync(seed, profile, log, { verifyCapability })` for one, and pass the
-  same `verifyCapability` to `createControllerResolver` so the verifier side folds it too.
+  `createControllerIdentityAsync(seed, profile, log, { verifyCapability })` for one, and give
+  `createControllerResolver` a `verifyCapability` too so the verifier side folds it.
   Without a verifier both still fail closed rather than trusting the capability.
   `createControllerCapabilityVerifier` (`@kokuin/capability`) is the real implementation of that
-  callback — and once one is configured, its `methods` registry must resolve the issuer from the
-  **prefix** of the log, not from the log the outer resolver is folding:
+  callback. **It takes two resolvers, not one.** The verifier's own `methods` registry must contain
+  a *separate* resolver whose `loadLog` answers with the **prefix** — the log up to the event
+  carrying the capability — never the resolver being configured and never one over the full log:
 
   ```typescript
   import { createControllerCapabilityVerifier } from '@kokuin/capability'
@@ -449,6 +450,15 @@ any claim whose subject is the profile rather than a device
     verifyCapability: createControllerCapabilityVerifier({ methods: issuers }),
   })
   ```
+
+  Reaching for a single shared resolver — the same instance in both places, or a second one over
+  the full log — is the natural-looking shape and it **never settles**: the capability is issued by
+  the very profile whose log carries the revoke, so resolving its issuer folds that log, reaches the
+  same revoke, and verifies the capability again. `verifyToken` then stays pending forever, and
+  because the unsettleable fold stays in flight, every later resolution of that DID on that instance
+  joins it. There is no error and no diagnosis — build a new resolver and fix the wiring. Reuse each
+  of the two instances rather than minting them per resolution: one resolver per role, not one per
+  process and not one per hop
 
   A capability authorising a revoke must also pin its audience's key in `cnf.kid`
   (`audienceConfirmation(key)`); one without it is rejected rather than resolved, so that the

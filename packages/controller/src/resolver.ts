@@ -95,10 +95,23 @@ export type ControllerResolverOptions = {
    * back inside this file, where the legitimate duration of `loadLog` is unknown, and make correct
    * slow resolutions fail intermittently.
    *
-   * **Reuse one resolver instance** rather than minting one per resolution or per hop. Concurrent
-   * resolutions of one DID share a single in-flight fold, so reuse is both correct and cheaper;
-   * a fresh instance at every hop shares nothing and turns the deadlock above into an unbounded
-   * Ed25519 loop that starves the timer queue, which no timeout can catch.
+   * **The supported topology is one resolver per role, reused — not one per process, and not one
+   * per resolution.** A `verifyCapability` needs a registry of its own, built over a *different*
+   * resolver whose `loadLog` answers with the prefix; passing it a registry containing the resolver
+   * being configured here is the deadlock above, and is the shape that reads as natural. Within a
+   * role, reuse the instance: concurrent resolutions of one DID share a single in-flight fold, so
+   * reuse is both correct and cheaper, while a fresh instance at every hop shares nothing and turns
+   * the deadlock into an unbounded Ed25519 loop that starves the timer queue, which no timeout can
+   * catch.
+   *
+   * ```ts
+   * // `prefix` is the log up to the event carrying the capability.
+   * const issuers = [createControllerResolver({ loadLog: async () => prefix })]
+   * const resolver = createControllerResolver({
+   *   loadLog: async () => log,
+   *   verifyCapability: createControllerCapabilityVerifier({ methods: issuers }),
+   * })
+   * ```
    */
   loadLog(did: string): Promise<Array<SignedEvent> | undefined>
   /**
