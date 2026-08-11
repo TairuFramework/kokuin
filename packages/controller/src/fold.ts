@@ -104,6 +104,36 @@ function fail(reason: string, index: number): FoldResult {
   return { ok: false, reason, index }
 }
 
+/** What a log entry that is not a {@link SignedEvent} at all fails with. */
+const MALFORMED_EVENT = 'malformed event'
+
+/**
+ * Whether a log entry has the envelope shape everything downstream reads without checking.
+ *
+ * The fold's input is untrusted by definition — a log arrives from a network peer or an untrusted
+ * store, and `JSON.parse` produces whatever was on the wire — so `signed.event` and `signed.sigs`
+ * are assumptions until something checks them. Unchecked they are several reachable `TypeError`s,
+ * and the worst consequence is not the throw: `resolveBranches` filters branches by folding them,
+ * so a thief who cannot produce a valid event could still crash duplicity resolution for every
+ * well-formed branch — a denial of service on the one mechanism that detects a key-takeover fork.
+ *
+ * Only the envelope is checked here. What the event *body* must contain depends on `t`, so that
+ * stays with each verifier.
+ */
+function isSignedEventShape(value: unknown): value is SignedEvent {
+  if (value == null || typeof value !== 'object') {
+    return false
+  }
+  const signed = value as Partial<SignedEvent>
+  if (signed.event == null || typeof signed.event !== 'object') {
+    return false
+  }
+  if (!Array.isArray(signed.sigs) || signed.sigs.some((sig) => typeof sig !== 'string')) {
+    return false
+  }
+  return signed.recoveryKey === undefined || typeof signed.recoveryKey === 'string'
+}
+
 type StepOutcome =
   | { status: 'ok'; state: KeyState }
   | { status: 'fail'; reason: string }
@@ -131,6 +161,9 @@ function stepEvent(
   signed: SignedEvent,
   prior: KeyState,
 ): StepOutcome {
+  if (!isSignedEventShape(signed)) {
+    return { status: 'fail', reason: MALFORMED_EVENT }
+  }
   const event = signed.event
 
   if (event.i !== did) {
@@ -190,6 +223,12 @@ function stepEvent(
     if (rev.event.g !== prior.gen || rev.event.s !== prior.seq + 1) {
       return { status: 'fail', reason: 'sequence gap' }
     }
+    // The one member of a revoke the fold reads rather than verifies. It goes into the deny set —
+    // a `ReadonlySet<string>` — and, for a capability-authorised revoke, into the verifier as the
+    // resource being asked for, where a wildcard grant would happily authorise denying `undefined`.
+    if (typeof rev.event.x !== 'string') {
+      return { status: 'fail', reason: 'revoke names no target' }
+    }
     const deny = new Set(prior.deny)
     deny.add(rev.event.x)
     // `keyGen`/`keySeq` ride along in the spread: a revoke establishes no key, so the active
@@ -225,10 +264,16 @@ type FoldInit =
  * the sync/async split begins only where the two loops actually differ.
  */
 function initFold(did: string, events: Array<SignedEvent>): FoldInit {
+  if (!Array.isArray(events)) {
+    return { ok: false, result: fail('malformed log', 0) }
+  }
   if (events.length === 0) {
     return { ok: false, result: fail('empty log', 0) }
   }
 
+  if (!isSignedEventShape(events[0])) {
+    return { ok: false, result: fail(MALFORMED_EVENT, 0) }
+  }
   const first = events[0] as SignedEvent<InceptionEvent>
   if (first.event.t !== 'icp') {
     return { ok: false, result: fail('first event must be an inception', 0) }

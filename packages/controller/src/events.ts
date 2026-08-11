@@ -71,12 +71,26 @@ export function signEvent(event: EventCommon, privateKeys: Array<Uint8Array>): A
 }
 
 /**
+ * A published key list: an array of strings.
+ *
+ * `k`, `n`, `ka` and the deny snapshot are read straight off a parsed event and carried into the
+ * folded state, so an absent or scalar member has to be rejected where it is published rather than
+ * where it is next read — a state holding a non-array `n` throws in the *next* rotate, one event
+ * away from the log that caused it, and a state holding a non-array `k` is a `KeyState` whose type
+ * lies. A log arrives from a network peer or an untrusted store, so none of these shapes is ruled
+ * out by TypeScript.
+ */
+function isKeyList(value: unknown): value is Array<string> {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+}
+
+/**
  * A key agreement set is valid when non-empty and every entry is a well-formed X25519-tagged key.
  * Shared by every event that carries `ka` — inception, rotate, and reset all publish or republish
  * the agreement key set, and a verifier must reject the same malformed shapes everywhere it appears.
  */
 function verifyAgreementKeys(ka: Array<string>): boolean {
-  if (ka.length === 0) {
+  if (!isKeyList(ka) || ka.length === 0) {
     return false
   }
   for (const entry of ka) {
@@ -94,6 +108,9 @@ export function verifySignatures(
   sigs: Array<string>,
   keys: Array<string>,
 ): boolean {
+  if (!Array.isArray(sigs) || !Array.isArray(keys)) {
+    return false
+  }
   if (sigs.length !== keys.length || sigs.length === 0) {
     return false
   }
@@ -129,6 +146,8 @@ export function verifySignatures(
  * events grow a second signature algorithm.
  */
 export function verifyEventSignedBy(signed: SignedEvent, key: ResolvedSigningKey): boolean {
+  // `sigs` needs no array check of its own: this is unexported, and the fold's envelope guard is
+  // the only way in.
   if (key.alg !== 'EdDSA' || signed.sigs.length === 0) {
     return false
   }
@@ -179,6 +198,12 @@ export function didFromInception(event: InceptionEvent): DIDString {
 
 export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string): boolean {
   if (signed.event.t !== 'icp' || signed.event.i !== undefined) {
+    return false
+  }
+  // `n` and `r` go straight into the folded state, where the *next* event reads them — a null `n`
+  // throws inside the following rotate, one event away from the log that caused it. `k` needs no
+  // check of its own: the `verifySignatures` below is what reads it, and it rejects a non-array.
+  if (!isKeyList(signed.event.n) || typeof signed.event.r !== 'string') {
     return false
   }
   if (didFromInception(signed.event) !== did) {
@@ -258,6 +283,25 @@ export function createRotate(
 }
 
 /**
+ * Whether the members a rotate publishes into the folded state have the shape the fold will carry.
+ *
+ * Shared by {@link verifyRotate} and {@link verifyReset}: the two verify different signatures over
+ * the same event body, and both hand `k`, `n`, `r` and `d` straight to the next `KeyState`. A reset
+ * in particular never verifies against `k` — it verifies against the revealed recovery key — so
+ * without this it is the one event that can publish a key set of any shape at all.
+ */
+function isPublishedRotate(event: RotateEvent): boolean {
+  return (
+    isKeyList(event.k) &&
+    isKeyList(event.n) &&
+    (event.r == null || typeof event.r === 'string') &&
+    // The deny snapshot replaces the accumulated set, so the fold builds a `Set` from it. A scalar
+    // `d` is not iterable and throws there; a string `d` would silently become a set of characters.
+    (event.d == null || isKeyList(event.d))
+  )
+}
+
+/**
  * A rotate is valid when it chains to the prior digest, its revealed keys match the prior
  * event's pre-rotation commitment, and its signatures verify against those keys.
  */
@@ -267,6 +311,9 @@ export function verifyRotate(
 ): boolean {
   const { event, sigs } = signed
   if (event.t !== 'rot' || event.p !== prior.digest) {
+    return false
+  }
+  if (!isPublishedRotate(event)) {
     return false
   }
   if (event.k.length !== prior.n.length) {
@@ -349,7 +396,10 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
   if (event.t !== 'rot' || event.p !== digestOf(inception) || event.s !== 0 || event.g < 1) {
     return false
   }
-  if (sigs.length !== 1) {
+  if (!isPublishedRotate(event)) {
+    return false
+  }
+  if (!Array.isArray(sigs) || sigs.length !== 1) {
     return false
   }
   if (!verifyAgreementKeys(event.ka)) {
