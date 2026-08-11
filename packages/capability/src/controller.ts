@@ -131,10 +131,16 @@ function registryForSubject(
       return await resolver.resolve(did, header)
     },
     async resolveDenySet(did) {
+      // Only ever asked about a capability's `sub`, which every capability on this path has already
+      // been checked to share with `subject` — so this is the fold's own deny set at the position
+      // being verified. The fallback arm exists for the type, not for a reachable case, and an
+      // empty set is what an absent member already means to `checkCapability`.
       return (await pick(did)?.resolveDenySet?.(did)) ?? new Set<string>()
     },
   }
-  return [entry, ...others.filter((other) => other.method !== entry.method)]
+  // First, so `findMethodResolver` — which answers with the first entry of a matching method —
+  // reaches it rather than the caller's.
+  return [entry, ...others]
 }
 
 /**

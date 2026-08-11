@@ -11,8 +11,9 @@ import {
   didFromInception,
   type SignedEvent,
 } from '../src/events.js'
-import type { CapabilityAuthorisation } from '../src/fold.js'
+import { type CapabilityAuthorisation, foldLog } from '../src/fold.js'
 import { createControllerResolver } from '../src/resolver.js'
+import { createStateResolver } from '../src/state-resolver.js'
 import { buildTwoKeyLog, strangerKey } from './two-key-log.js'
 
 const seed = new Uint8Array(32).fill(1)
@@ -426,5 +427,48 @@ describe('createControllerResolver().resolveAgreementKey()', () => {
     const { did } = build()
     const resolver = createControllerResolver({ loadLog: async () => undefined })
     await expect(resolver.resolveAgreementKey?.(did)).rejects.toThrow(/Unknown DID/)
+  })
+})
+
+describe('createStateResolver()', () => {
+  // What the fold hands a capability-authorised revoke's verifier: a resolver over the states
+  // *before* the event being verified. It answers for one profile only, so a verifier can merge it
+  // into a wider registry without one profile's key state ever standing in for another's.
+  test('answers for its own DID and refuses every other', async () => {
+    const { icp, did } = build()
+    const rot = createRotate(seed, 0, did, icp.event)
+    const result = foldLog(did, [icp, rot])
+    if (!result.ok) throw new Error('did not fold')
+    const resolver = createStateResolver(did, result.states)
+
+    expect(resolver.method).toBe('kokuin')
+    await expect(resolver.resolve(did, {})).resolves.toEqual({
+      alg: 'EdDSA',
+      publicKey: decodeKey(rot.event.k[0]).publicKey,
+    })
+    // A key from an earlier position of the same generation, exactly as the live resolver does.
+    await expect(resolver.resolve(did, { kid: `#${icp.event.k[0]}` })).resolves.toBeDefined()
+    await expect(resolver.resolveDenySet?.(did)).resolves.toEqual(new Set())
+    await expect(resolver.resolveAgreementKey?.(did)).resolves.toHaveLength(1)
+
+    const stranger = 'did:kokuin:zStranger'
+    await expect(resolver.resolve(stranger, {})).rejects.toThrow(`Unknown DID: ${stranger}`)
+    await expect(resolver.resolveDenySet?.(stranger)).rejects.toThrow(/Unknown DID/)
+    await expect(resolver.resolveAgreementKey?.(stranger)).rejects.toThrow(/Unknown DID/)
+  })
+
+  test('carries the deny set of the position it was built at', async () => {
+    const { icp, did } = build()
+    const rev = createRevoke(seed, 0, did, icp.event, device, { gen: 0, seq: 0 })
+    const result = foldLog(did, [icp, rev])
+    if (!result.ok) throw new Error('did not fold')
+
+    // Position 0 — before the revoke — and position 1, from the same fold.
+    await expect(
+      createStateResolver(did, result.states.slice(0, 1)).resolveDenySet?.(did),
+    ).resolves.toEqual(new Set())
+    await expect(createStateResolver(did, result.states).resolveDenySet?.(did)).resolves.toEqual(
+      new Set([device]),
+    )
   })
 })
