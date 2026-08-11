@@ -48,12 +48,18 @@ export type DIDMethodResolver = {
    * rather than answer with an empty set: to a caller those are opposites, and an empty set reads
    * as "nobody is revoked".
    *
-   * Optional, like `resolveAgreementKey`: a method with no revocation concept omits it and
-   * `@kokuin/capability` then has nothing to enforce. **A method that can revoke must implement
-   * it** — it is the only way the rule reaches a verifier, since `@kokuin/capability` cannot
-   * import a method's package without a cycle. It rides this registry rather than a second option
-   * of its own precisely so that a caller who wired resolution cannot separately forget to wire
-   * enforcement.
+   * Optional, like `resolveAgreementKey` — but the two absences do not mean the same thing.
+   * Omitting `resolveAgreementKey` says this method has no key agreement; omitting this one
+   * **disables enforcement** for every subject of this method, silently and in the direction that
+   * passes. So: a method with no revocation concept omits it, and **a method that can revoke must
+   * implement it** — including a *wrapper* around one that does. A wrapper that forwards `resolve`
+   * and stops there (caching, metrics, tracing) type-checks and turns every denial into a pass;
+   * forward this member with it.
+   *
+   * It rides this registry rather than a second option of its own precisely so that a caller who
+   * wired resolution cannot separately forget to wire enforcement — that much is unforgettable at
+   * the call site. Requiring it here instead would be a breaking change to every implementation of
+   * this interface, including hand-rolled test stubs, for a member most methods have no answer for.
    */
   resolveDenySet?(did: string): Promise<ReadonlySet<string>>
 }

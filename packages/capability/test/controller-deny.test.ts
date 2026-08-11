@@ -13,11 +13,14 @@ import {
 import {
   createIdentity,
   createSigningIdentity,
+  createUnsignedToken,
   type DIDMethodResolver,
   type MethodRegistry,
   randomIdentity,
   type SigningIdentity,
+  signToken,
   stringifyToken,
+  verifyToken,
 } from '@kokuin/token'
 import { beforeEach, describe, expect, test } from 'vitest'
 
@@ -468,6 +471,46 @@ describe('what the deny lookup costs a caller-supplied chain', () => {
       ),
     ).resolves.toBeUndefined()
     expect(denyCalls).toBeGreaterThan(0)
+  })
+})
+
+describe('accepted limits, pinned so that changing them has to be deliberate', () => {
+  test('a resolver that omits the optional `resolveDenySet` disables the rule', async () => {
+    // `resolveDenySet` is optional on `DIDMethodResolver`, and the plausible way to lose it is a
+    // wrapper — caching, metrics, tracing — around the one member its author knows about. Both
+    // calls below use the same revoked delegate and the same capability; only the registry differs.
+    // Making the member required would break every implementation of a published interface, so the
+    // obligation is documented (`method.ts`, `capability.skill.md`) rather than enforced.
+    log = [inception, revokeOf(delegate.id)]
+    const real = createControllerResolver({ loadLog: async (asked) => (asked === did ? log : []) })
+    const wrapped: DIDMethodResolver = {
+      method: 'kokuin',
+      resolve: (asked, header) => real.resolve(asked, header),
+    }
+    const cap = await mintFor(delegate)
+    const invocation = { iss: delegate.id, sub: did, cap: [cap] }
+
+    await expect(
+      checkCapability({ act: 'write', res: 'doc/1' }, invocation, { methods: [real] }),
+    ).rejects.toThrow(/audience is revoked/)
+    await expect(
+      checkCapability({ act: 'write', res: 'doc/1' }, invocation, { methods: [wrapped] }),
+    ).resolves.toBeUndefined()
+  })
+
+  test('a revoked device`s own plain token still verifies', async () => {
+    // The deny set answers "no capability whose `aud` is that DID is valid", which is what the spec
+    // says and all that is implemented. A plain token names no subject, so `verifyToken` has no
+    // `sub` to look a deny set up by — this cannot be closed inside `verifyToken` even in
+    // principle. A consumer authenticating a device by bare token gets no denial from a revoke.
+    const device = randomIdentity()
+    log = [inception, revokeOf(device.id)]
+    expect((await methods[0].resolveDenySet?.(did))?.has(device.id)).toBe(true)
+
+    const token = await signToken(device, createUnsignedToken({ hello: 'world' }))
+    await expect(verifyToken(stringifyToken(token), { methods })).resolves.toMatchObject({
+      payload: { iss: device.id },
+    })
   })
 })
 
