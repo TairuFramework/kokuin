@@ -5,11 +5,12 @@ import {
 } from '@kokuin/controller'
 import { describe, expect, test } from 'vitest'
 
-import { REVOKE_NO_AUDIENCE_KEY, REVOKE_NOT_AUTHORISED } from '../src/index.js'
+import { REVOKE_NO_AUDIENCE_KEY, REVOKE_NO_POSITION, REVOKE_NOT_AUTHORISED } from '../src/index.js'
 
-// These five reasons span two packages and are what a caller has to match on to tell "the grant was
-// rejected" from "the capability is malformed for this use" from "your verifier is broken". They
-// are frozen at publication either way; naming them is the part that is still cheap.
+// These six reasons span two packages and are what a caller has to match on to tell "the grant was
+// rejected" from "the capability is malformed for this use" from "your verifier is broken" from
+// "your fold is older than your capability package". They are frozen at publication either way;
+// naming them is the part that is still cheap.
 
 describe('the capability-revoke failure reasons are exported', () => {
   test('each names the string the fold and the adapter actually produce', () => {
@@ -22,15 +23,17 @@ describe('the capability-revoke failure reasons are exported', () => {
       'capability verifier returned a malformed answer',
     )
     expect(CAPABILITY_VERIFIER_FAILED).toBe('capability verifier failed')
+    expect(REVOKE_NO_POSITION).toBe('capability verifier was called without a log position')
   })
 
-  test('they are distinct, so a caller can tell the five cases apart', () => {
+  test('they are distinct, so a caller can tell the six cases apart', () => {
     const reasons = [
       REVOKE_NOT_AUTHORISED,
       REVOKE_NO_AUDIENCE_KEY,
       REVOKE_NOT_SIGNED_BY_AUDIENCE,
       CAPABILITY_VERIFIER_MALFORMED_ANSWER,
       CAPABILITY_VERIFIER_FAILED,
+      REVOKE_NO_POSITION,
     ]
     expect(new Set(reasons).size).toBe(reasons.length)
   })

@@ -35,6 +35,21 @@ export const REVOKE_NOT_AUTHORISED = 'capability does not authorise this revoke'
  */
 export const REVOKE_NO_AUDIENCE_KEY = 'capability pins no audience key'
 
+/**
+ * What a verifier answers when it is called without the log position it must verify at.
+ *
+ * The fourth argument is required, and this is the runtime half of that: a type cannot stop an
+ * *older* `@kokuin/controller` from calling with three arguments, and nothing in the package graph
+ * ties the two versions together — `@kokuin/capability` depends on `@kokuin/token` alone. Without
+ * this, that call falls back to whatever registry the caller configured, which is the pre-fix
+ * behaviour: a registry answering with an early prefix authorises a revoke by a device the log
+ * revoked later. Failing closed makes version skew a rejected log rather than a silent bypass.
+ *
+ * Its own reason rather than {@link REVOKE_NOT_AUTHORISED}, because it says nothing about the
+ * capability: the grant was never evaluated.
+ */
+export const REVOKE_NO_POSITION = 'capability verifier was called without a log position'
+
 /** Payload length per signature algorithm, checked after the multicodec prefix is stripped. */
 const KEY_LENGTHS: Record<string, number> = { EdDSA: 32, ES256: 33 }
 
@@ -104,6 +119,15 @@ export type CapabilityAuthorisation =
  * The subject's own entry only answers for the subject, so a delegate in the chain that happens to
  * be another profile of the same method still resolves through the caller's registry.
  *
+ * **What shadowing costs, stated plainly: inside the fold, a caller's own `resolve` and
+ * `resolveDenySet` for the subject are not consulted at all.** A policy resolver that denies a DID
+ * out of band, or one that refuses to answer for this profile, has no effect here — the fold's
+ * answer is derived from the very events it is authenticating on a self-certifying DID, which is
+ * strictly better authority than anything a registry can be configured with, and unlike a registry
+ * it knows which position is asking. A caller wanting a say on this path still has one: the
+ * `verifyToken` hook runs on the capability the event names, and throwing from it rejects the
+ * revoke.
+ *
  * `resolveAgreementKey` is deliberately absent: this registry exists for issuer resolution and the
  * deny set, and nothing on a capability path encrypts. A missing `resolveDenySet` on the fallback
  * side answers with the empty set, which is exactly what an absent member already means to
@@ -111,12 +135,9 @@ export type CapabilityAuthorisation =
  */
 function registryForSubject(
   subject: string,
-  subjectAtPosition: DIDMethodResolver | undefined,
+  subjectAtPosition: DIDMethodResolver,
   methods: MethodRegistry | undefined,
-): MethodRegistry | undefined {
-  if (subjectAtPosition == null) {
-    return methods
-  }
+): MethodRegistry {
   const others = methods ?? []
   const fallback = findMethodResolver(others, subject)
   const pick = (did: string): DIDMethodResolver | undefined =>
@@ -156,10 +177,14 @@ export type ControllerCapabilityVerifier = (
   subject: string,
   target: string,
   /**
-   * A resolver for `subject` at the log position being verified, supplied by the fold. Optional
-   * only so that a caller can invoke the verifier directly — every fold passes one.
+   * A resolver for `subject` at the log position being verified, supplied by the fold.
+   *
+   * **Required.** It is the whole of what makes a capability-authorised revoke checkable at the
+   * position it sits at, and there is no correct answer without it — a caller invoking this
+   * directly has to fold the log to obtain one, at which point the fold is calling it anyway. An
+   * implementation handed nothing here must refuse; see {@link REVOKE_NO_POSITION}.
    */
-  subjectAtPosition?: DIDMethodResolver,
+  subjectAtPosition: DIDMethodResolver,
 ) => Promise<CapabilityAuthorisation>
 
 /**
@@ -208,6 +233,14 @@ export type ControllerCapabilityVerifier = (
  * profile at all — the recursion that made a prefix necessary no longer exists, because verifying
  * the capability no longer resolves the DID being folded.
  *
+ * **The fourth argument is required, and its absence is refused rather than worked around.** There
+ * is no correct answer without it: falling back to the caller's registry is the pre-fix behaviour,
+ * where a registry answering with an early prefix authorises a revoke by a device the log revoked
+ * later. Every fold supplies one; an older `@kokuin/controller` calling with three arguments —
+ * nothing in the package graph ties the two versions together — gets {@link REVOKE_NO_POSITION} and
+ * an unfoldable log rather than a silent bypass. Invoking this directly is therefore not a
+ * supported shortcut around folding: obtaining the argument *is* folding.
+ *
  * @param options forwarded to `verifyToken` and `checkCapability`. `methods` is needed only for a
  * link in the chain whose own DID method cannot be resolved from the identifier alone — another
  * profile as an intermediate delegate, say. `resolver` and `cache` travel with it for a
@@ -221,8 +254,17 @@ export function createControllerCapabilityVerifier(
     cap: string,
     subject: string,
     target: string,
-    subjectAtPosition?: DIDMethodResolver,
+    subjectAtPosition: DIDMethodResolver,
   ): Promise<CapabilityAuthorisation> {
+    // Typed as required, and checked anyway. TypeScript cannot police this argument across a
+    // package boundary or a stale build, and `@kokuin/capability` has no runtime dependency on
+    // `@kokuin/controller` to keep the two versions in step — so an older fold calling with three
+    // arguments is a real shape. Falling back to `options.methods` for the subject would be exactly
+    // the bypass this parameter exists to close: a registry answering with an early prefix
+    // authorises a revoke by a device the log revoked later. Refuse instead.
+    if (subjectAtPosition == null) {
+      return { authorised: false, reason: REVOKE_NO_POSITION }
+    }
     // The subject is resolved at the position being verified, whatever the caller configured —
     // see {@link registryForSubject}.
     const methods = registryForSubject(subject, subjectAtPosition, options.methods)

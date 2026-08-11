@@ -600,6 +600,7 @@ export {
   audienceConfirmation,
   createControllerCapabilityVerifier,
   REVOKE_NO_AUDIENCE_KEY,
+  REVOKE_NO_POSITION,
   REVOKE_NOT_AUTHORISED,
 } from './controller.js'
 export type { RevocationBackend, RevocationOptions, RevocationRecord } from './revocation.js'

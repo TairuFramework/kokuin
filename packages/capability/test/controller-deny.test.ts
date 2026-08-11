@@ -31,6 +31,7 @@ import {
   createControllerCapabilityVerifier,
   DEFAULT_MAX_DELEGATION_DEPTH,
   now,
+  REVOKE_NO_POSITION,
 } from '../src/index.js'
 
 // The spec's definition of `revoke`: "Adds a DID to the profile's deny set: no capability whose
@@ -389,6 +390,53 @@ describe('the deny set inside the fold: who may author a capability-authorised r
         verifyCapability: createControllerCapabilityVerifier(),
       }),
     ).toMatchObject({ ok: true })
+  })
+
+  test('a verifier called without the position refuses, whatever the caller configured', async () => {
+    // The three-argument call: an older `@kokuin/controller` whose `foldLogAsync` predates the
+    // fourth argument, or a caller invoking the verifier directly. `@kokuin/capability` has no
+    // runtime dependency on the controller, so nothing ties the two versions together and the type
+    // cannot police the call. Falling back to the caller's registry — which is what this did — is
+    // the R-2 bypass verbatim: with a registry answering the earliest prefix, a manager the log
+    // revoked at event 1 was authorised to revoke `deviceX` at event 2.
+    const manager = randomIdentity()
+    const cap = await manageCap(manager)
+    const revokeManager = revokeOf(manager.id)
+
+    for (const [name, configured] of [
+      ['the earliest prefix', registryFor([inception])],
+      ['the whole log', registryFor([inception, revokeManager])],
+      ['no registry', undefined],
+    ] as Array<[string, MethodRegistry | undefined]>) {
+      const verify = createControllerCapabilityVerifier({ methods: configured })
+      const threeArgs = verify as unknown as (
+        cap: string,
+        subject: string,
+        target: string,
+      ) => Promise<unknown>
+      await expect(threeArgs(cap, did, deviceX), name).resolves.toEqual({
+        authorised: false,
+        reason: REVOKE_NO_POSITION,
+      })
+    }
+
+    // Unconditional rather than a denial that happens to coincide with this manager's revocation:
+    // the same capability, held by a manager nothing has revoked, refuses the same way through the
+    // three-argument call and folds through the four-argument one.
+    const clean = createRevokeWithKey(manager.privateKey, did, inception.event, deviceX, { cap })
+    const verify = createControllerCapabilityVerifier()
+    const threeArgs = verify as unknown as (
+      cap: string,
+      subject: string,
+      target: string,
+    ) => Promise<unknown>
+    await expect(threeArgs(cap, did, deviceX)).resolves.toEqual({
+      authorised: false,
+      reason: REVOKE_NO_POSITION,
+    })
+    await expect(
+      foldLogAsync(did, [inception, clean], { verifyCapability: verify }),
+    ).resolves.toMatchObject({ ok: true })
   })
 
   test('a capability minted for one profile cannot revoke on another', async () => {
