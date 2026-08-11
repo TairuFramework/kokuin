@@ -485,14 +485,17 @@ export async function checkDelegationChain(
   const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH
   const atTime = options?.atTime ?? now()
 
-  // Every link passes through here as `payload` — the leaf on the way in from `checkCapability`,
-  // and each parent as the recursion walks up — so one call covers the whole chain. A revoked
-  // *intermediate* is the case a per-leaf check would miss.
-  await assertAudienceNotRevoked(payload, options)
-
   if (capabilities.length > maxDepth) {
     throw new Error(`Invalid capability: delegation chain exceeds maximum depth of ${maxDepth}`)
   }
+
+  // Every link passes through here as `payload` — the leaf on the way in from `checkCapability`,
+  // and each parent as the recursion walks up — so one call covers the whole chain. A revoked
+  // *intermediate* is the case a per-leaf check would miss.
+  //
+  // After the depth bound, not before: this one may fold a log, and the bound is what stops a
+  // caller-supplied chain from deciding how much of that work happens.
+  await assertAudienceNotRevoked(payload, options)
 
   if (capabilities.length === 0) {
     if (normalizeDID(payload.iss) !== normalizeDID(payload.sub)) {
