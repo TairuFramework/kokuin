@@ -204,6 +204,18 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
       }
       return { alg: key.alg, publicKey: key.publicKey }
     },
+    async resolveDenySet(did: string): Promise<ReadonlySet<string>> {
+      // The head's set, deliberately, and not the state at any position a capability names: `iat`
+      // is author-supplied and backdatable, so anchoring to it would let a revoked holder choose a
+      // position at which it was not yet denied. The set is position-dependent *within the fold* —
+      // which is what stops a later clearing from retroactively validating earlier actions — and
+      // the question a verifier asks is "is this grant valid now".
+      //
+      // `loadStates` throws `Unknown DID` for a log this resolver cannot load, which is what keeps
+      // the answer honest: an empty set would read as "nobody is revoked".
+      const states = await loadStates(did)
+      return states[states.length - 1].deny
+    },
     async resolveAgreementKey(did: string): Promise<Array<ResolvedAgreementKey>> {
       // The head's set only, unlike `resolve`. These are the keys a *sender* encrypts to, and a
       // retired agreement key is a downgrade rather than a grant the profile already made: the

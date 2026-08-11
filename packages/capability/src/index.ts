@@ -13,6 +13,7 @@
 import {
   type DIDCache,
   type DIDResolver,
+  findMethodResolver,
   isVerifiedToken,
   type MethodRegistry,
   normalizeDID,
@@ -431,6 +432,51 @@ export function assertValidDelegation(
   }
 }
 
+/**
+ * What a capability the subject has revoked its audience is rejected with. The audience DID is
+ * appended, so a caller matching on this constant should use `startsWith` rather than equality.
+ */
+export const AUDIENCE_REVOKED = 'Invalid capability: audience is revoked by the subject'
+
+/**
+ * Reject a capability whose audience the subject has revoked.
+ *
+ * The subject of a capability is the party whose resources it grants, and a `did:kokuin:` subject
+ * publishes a deny set in its own key event log: "no capability whose `aud` is that DID is valid
+ * from this position onward". Nothing else in this stack turns that set into a denial — the log is
+ * a `@kokuin/controller` concern and this package cannot import it without a cycle — so the rule
+ * travels through `DIDMethodResolver.resolveDenySet` on the registry callers already pass for
+ * resolution.
+ *
+ * Evaluated against the subject's **current** state, never against a position the capability names:
+ * `iat` is author-supplied and backdatable, so a holder could otherwise choose a moment before it
+ * was revoked.
+ *
+ * Silent when the subject's method publishes no deny set, and when no registry was supplied at all
+ * — a subject that needs one is a subject `verifyToken` could not have resolved either, so the
+ * chain has already failed by then. A resolver that *has* a deny set and cannot produce it throws,
+ * which fails the chain closed.
+ */
+async function assertAudienceNotRevoked(
+  payload: { sub?: unknown; aud?: unknown },
+  options?: DelegationChainOptions,
+): Promise<void> {
+  const { sub, aud } = payload
+  if (options?.methods == null || typeof sub !== 'string' || typeof aud !== 'string') {
+    return
+  }
+  const resolveDenySet = findMethodResolver(options.methods, sub)?.resolveDenySet
+  if (resolveDenySet == null) {
+    return
+  }
+  const denied = await resolveDenySet(sub)
+  // Both spellings: a deny set names whatever the `rev` event wrote, which for a `did:peer:4`
+  // device may be either form, while `aud` may arrive as the other one.
+  if (denied.has(aud) || denied.has(normalizeDID(aud))) {
+    throw new Error(`${AUDIENCE_REVOKED}: ${aud}`)
+  }
+}
+
 export async function checkDelegationChain(
   payload: CapabilityPayload,
   capabilities: Array<string>,
@@ -438,6 +484,11 @@ export async function checkDelegationChain(
 ): Promise<void> {
   const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH
   const atTime = options?.atTime ?? now()
+
+  // Every link passes through here as `payload` — the leaf on the way in from `checkCapability`,
+  // and each parent as the recursion walks up — so one call covers the whole chain. A revoked
+  // *intermediate* is the case a per-leaf check would miss.
+  await assertAudienceNotRevoked(payload, options)
 
   if (capabilities.length > maxDepth) {
     throw new Error(`Invalid capability: delegation chain exceeds maximum depth of ${maxDepth}`)
@@ -485,6 +536,10 @@ export async function checkCapability(
     // But still need to validate the permission is granted
     assertNonExpired(payload, time)
     assertValidIssuedAt(payload as { iat?: number }, time)
+    // This branch never reaches `checkDelegationChain`, so it needs the audience check of its own.
+    // It is also the shape `createControllerCapabilityVerifier` takes: an undelegated management
+    // capability, minted by the profile for one of its own devices, is exactly `iss === sub`.
+    await assertAudienceNotRevoked(payload, options)
 
     // Validate that the token grants the requested permission
     const p = payload as Record<string, unknown>

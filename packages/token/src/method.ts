@@ -37,6 +37,25 @@ export type DIDMethodResolver = {
    * Optional: a method with no key agreement omits it.
    */
   resolveAgreementKey?(did: string): Promise<Array<ResolvedAgreementKey>>
+  /**
+   * The DIDs this subject has revoked: no capability whose `aud` is in the set is valid.
+   *
+   * Answer for **now** — the subject's current state — not for any position a token names. A
+   * capability's own claims are author-supplied and backdatable, so a check anchored to them would
+   * let the holder pick a moment before it was revoked.
+   *
+   * Answering means the set is authoritative, so a subject that cannot be resolved must reject
+   * rather than answer with an empty set: to a caller those are opposites, and an empty set reads
+   * as "nobody is revoked".
+   *
+   * Optional, like `resolveAgreementKey`: a method with no revocation concept omits it and
+   * `@kokuin/capability` then has nothing to enforce. **A method that can revoke must implement
+   * it** — it is the only way the rule reaches a verifier, since `@kokuin/capability` cannot
+   * import a method's package without a cycle. It rides this registry rather than a second option
+   * of its own precisely so that a caller who wired resolution cannot separately forget to wire
+   * enforcement.
+   */
+  resolveDenySet?(did: string): Promise<ReadonlySet<string>>
 }
 
 export type MethodRegistry = ReadonlyArray<DIDMethodResolver>

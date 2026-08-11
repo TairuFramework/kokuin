@@ -462,6 +462,14 @@ any claim whose subject is the profile rather than a device
   delegation fails, and a revocation record whose issuer cannot be resolved *at all* fails the
   verification closed. A record the registry can resolve but whose signature or `kid` does not check
   out is ignored instead — it is evidence about the record, not about revocation
+- **The deny set is enforced through the same `methods` registry.** A `rev` event adds a DID to the
+  profile's deny set, and `checkCapability` / `checkDelegationChain` reject any capability whose
+  `aud` is in the deny set of its `sub` — every link in the chain, not just the leaf. That check
+  reads `DIDMethodResolver.resolveDenySet`, which `createControllerResolver` implements, so a
+  registry wired for resolution is wired for enforcement; there is no second option to forget. It is
+  evaluated against the log's **current** head, never against a position the capability names —
+  `iat` is author-supplied and backdatable. A profile clears a denial with a deny-set snapshot
+  (`createRotate(…, { deny: [] })`) or with a `reset`
 - **Key selection**: a controller's `k` is a *set*. Every token `createControllerIdentity` signs
   carries `kid: "#<the multibase key exactly as it appears in `k`>"`, and the resolver matches that
   against the folded key sets by membership. A header with no `kid` still resolves to the head's
