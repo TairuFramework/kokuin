@@ -53,10 +53,17 @@ The `id` field on every identity is its DID (e.g. `did:key:z6Mk…`). Because th
 type Identity = { readonly id: string }
 
 type SigningIdentity = Identity & {
-  signToken<Payload, Header>(
+  publicKey: Uint8Array
+  signToken<Payload>(
     payload: Payload,
-    header?: Header,
-  ): Promise<SignedToken<Payload, Header>>
+    options?: SignTokenOptions,
+  ): Promise<SignedToken<Payload>>
+}
+
+type SignTokenOptions = {
+  header?: Record<string, unknown>  // extra fields merged into the signed JWS header
+  kid?: string                      // pick a non-primary signing key by fragment
+  embedLongForm?: boolean           // override the did:peer:4 long-form policy
 }
 
 type KeyAgreementIdentity = Identity & {

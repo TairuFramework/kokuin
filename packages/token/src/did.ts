@@ -14,7 +14,14 @@ import {
 import type { SignatureAlgorithm } from './schemas.js'
 import type { DIDString } from './types.js'
 
-/** @internal */
+/**
+ * Multicodec prefixes per signature algorithm, following the `did:key` convention.
+ *
+ * Supported rather than internal: `@kokuin/capability` builds the `cnf.kid` confirmation claim out
+ * of this and {@link getAlgorithmAndPublicKey}, and `cnf.kid` is a published wire format that third
+ * parties have to produce and read. Tagging it `@internal` hid the encoder and decoder for a claim
+ * this stack asks other implementations to interoperate with.
+ */
 export const CODECS: Record<SignatureAlgorithm, Uint8Array> = {
   ES256: new Uint8Array([128, 36]),
   EdDSA: new Uint8Array([0xed, 0x01]),
@@ -41,7 +48,12 @@ function isCodecMatch(codec: Uint8Array, bytes: Uint8Array): boolean {
   return true
 }
 
-/** @internal */
+/**
+ * Split multicodec-prefixed key bytes into their algorithm and the raw public key, or `null` when
+ * the prefix names no algorithm this package knows.
+ *
+ * The decoder half of the `cnf.kid` wire format — see {@link CODECS}.
+ */
 export function getAlgorithmAndPublicKey(
   bytes: Uint8Array,
 ): [SignatureAlgorithm, Uint8Array] | null {
