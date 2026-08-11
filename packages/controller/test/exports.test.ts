@@ -18,6 +18,7 @@ describe('public surface', () => {
       'createRotate',
       'createReset',
       'createRevoke',
+      'createRevokeWithKey',
       'didFromInception',
       'DID_PREFIX',
       'encodeKey',

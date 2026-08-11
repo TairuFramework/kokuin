@@ -4,6 +4,7 @@ import {
   createControllerResolver,
   createInception,
   createRevoke,
+  createRevokeWithKey,
   createRotate,
   deriveKeyPair,
   didFromInception,
@@ -16,6 +17,7 @@ import {
 import {
   createSigningIdentity,
   type MethodRegistry,
+  randomIdentity,
   type SigningIdentity,
   stringifyToken,
 } from '@kokuin/token'
@@ -448,6 +450,54 @@ describe('createControllerCapabilityVerifier()', () => {
     expect(result.states[1].deny.has(target)).toBe(true)
     // The rotation really happened: the audience profile no longer publishes the pinned key.
     expect(rotated.event.k[0]).not.toBe(otherController.inception.event.k[0])
+  })
+
+  test('a device holding the capability and no seed at all authors the revoke', async () => {
+    // The actor this whole feature exists for, and the one every other test in this file quietly
+    // avoids. Every delegate above is built from a *seed* and reads `authorityPath(0, 0, 0)` out of
+    // it — the shape of a controller root, which is precisely what handing a device a capability is
+    // meant to make unnecessary. This device holds one Ed25519 key and nothing else: no profile
+    // seed, no derivation path, no knowledge of the controller's key schedule.
+    const device = randomIdentity()
+    const cap = await mintCapability({
+      aud: device.id,
+      cnf: audienceConfirmation({ alg: 'EdDSA', publicKey: device.publicKey }),
+    })
+
+    const revoke = createRevokeWithKey(
+      device.privateKey,
+      controller.did,
+      controller.inception.event,
+      target,
+      { cap },
+    )
+    const result = await foldLogAsync(controller.did, [controller.inception, revoke], {
+      verifyCapability: createControllerCapabilityVerifier({ methods }),
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.states[1].deny.has(target)).toBe(true)
+
+    // Control: another seedless device, holding no capability naming it, cannot author the same
+    // revoke — so what folded above is the grant, not merely the new builder.
+    const outsiderDevice = randomIdentity()
+    const stolen = createRevokeWithKey(
+      outsiderDevice.privateKey,
+      controller.did,
+      controller.inception.event,
+      target,
+      { cap },
+    )
+    await expect(
+      foldLogAsync(controller.did, [controller.inception, stolen], {
+        verifyCapability: createControllerCapabilityVerifier({ methods }),
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      reason: 'revoke is not signed by the capability audience',
+      index: 1,
+    })
   })
 
   test('the pinned key is encoded exactly as a controller log encodes the keys in `k`', async () => {

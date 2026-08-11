@@ -19,10 +19,12 @@ export {
   recoveryPath,
 } from './derivation.js'
 export {
+  type CreateRevokeOptions,
   type CreateRotateOptions,
   createInception,
   createReset,
   createRevoke,
+  createRevokeWithKey,
   createRotate,
   DID_PREFIX,
   decodeKey,

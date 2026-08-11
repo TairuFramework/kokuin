@@ -461,14 +461,50 @@ export function createRevoke(
   prior: EventCommon,
   target: string,
   keyPosition: { gen: number; seq: number },
-  options: { cap?: string } = {},
+  options: CreateRevokeOptions = {},
 ): SignedEvent<RevokeEvent> {
   const current = deriveKeyPair(
     seed,
     authorityPath(profile, keyPosition.gen, keyPosition.seq),
     'EdDSA',
   )
+  return createRevokeWithKey(current.privateKey, did, prior, target, options)
+}
 
+export type CreateRevokeOptions = {
+  /** A serialized capability authorising this signer, when the signer is not an authority key. */
+  cap?: string
+}
+
+/**
+ * Revoke a DID, signing with an Ed25519 key the caller already holds rather than deriving one from
+ * the profile seed.
+ *
+ * This is the builder for the actor a capability-authorised revoke exists for: a device holding a
+ * management capability, whose whole point (spec, "authority tiers") is that it never receives the
+ * profile sub-seed. `createRevoke` can only sign as the profile itself, so without this the feature
+ * had no API — a consumer's only route was to re-implement the event's signing convention against
+ * `canonicalBytes`, per consumer, which is the duplication `createControllerCapabilityVerifier`
+ * exists to prevent on the verifying side.
+ *
+ * The key is the audience key the capability pins in `cnf`, and the fold checks the event's
+ * signature against exactly that — so the two must be the same key. Ed25519 only, because that is
+ * all the log's events can be signed with.
+ *
+ * Takes the private key rather than an identity because no identity type in this stack can sign
+ * raw bytes: `SigningIdentity` signs JWTs, `KeyAgreementIdentity` agrees keys, and a `KeyStore`
+ * entry hands back exactly this — the same shape `createSigningIdentity` takes.
+ *
+ * Produces byte-identical output to {@link createRevoke} given the same key, and there is no
+ * `keyPosition`: the position exists only to *derive* a key from a seed.
+ */
+export function createRevokeWithKey(
+  privateKey: Uint8Array,
+  did: string,
+  prior: EventCommon,
+  target: string,
+  options: CreateRevokeOptions = {},
+): SignedEvent<RevokeEvent> {
   const event: RevokeEvent = {
     v: 1,
     t: 'rev',
@@ -481,7 +517,7 @@ export function createRevoke(
     cap: options.cap,
   }
 
-  return { event, sigs: signEvent(event, [current.privateKey]) }
+  return { event, sigs: signEvent(event, [privateKey]) }
 }
 
 /** Authority-signed revoke. Capability-authorised revokes are checked in the fold. */

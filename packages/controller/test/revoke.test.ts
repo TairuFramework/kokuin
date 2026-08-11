@@ -1,7 +1,14 @@
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import { createInception, createRevoke, didFromInception, verifyRevoke } from '../src/events.js'
+import { authorityPath, deriveKeyPair } from '../src/derivation.js'
+import {
+  createInception,
+  createRevoke,
+  createRevokeWithKey,
+  didFromInception,
+  verifyRevoke,
+} from '../src/events.js'
 
 const seed = new Uint8Array(32).fill(1)
 const stolen = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
@@ -40,6 +47,43 @@ describe('createRevoke()', () => {
     const { event } = createRevoke(seed, 0, did, inception.event, stolen, activeKey)
     expect(event).not.toHaveProperty('k')
     expect(event).not.toHaveProperty('n')
+  })
+})
+
+describe('createRevokeWithKey()', () => {
+  test('produces the identical event to the seed-taking form for the same key', () => {
+    // The two builders must not drift: a capability holder's revoke and an authority's revoke are
+    // the same wire object, differing only in where the signing key came from. Comparing the whole
+    // signed event covers the canonical bytes, the base64url convention and the claim set at once.
+    const { inception, did } = setup()
+    const { privateKey } = deriveKeyPair(
+      seed,
+      authorityPath(0, activeKey.gen, activeKey.seq),
+      'EdDSA',
+    )
+
+    expect(createRevokeWithKey(privateKey, did, inception.event, stolen)).toEqual(
+      createRevoke(seed, 0, did, inception.event, stolen, activeKey),
+    )
+  })
+
+  test('carries the capability the same way', () => {
+    const { inception, did } = setup()
+    const { privateKey } = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
+    const signed = createRevokeWithKey(privateKey, did, inception.event, stolen, { cap: 'a-cap' })
+
+    expect(signed.event.cap).toBe('a-cap')
+    expect(signed.event.x).toBe(stolen)
+  })
+
+  test('signs with the key it was handed and nothing else', () => {
+    // A device holding a management capability signs with its own key, which is not — and must not
+    // have to be — one of the profile's authority keys.
+    const { inception, did, priorDigest } = setup()
+    const device = new Uint8Array(32).fill(77)
+    const signed = createRevokeWithKey(device, did, inception.event, stolen)
+
+    expect(verifyRevoke(signed, { digest: priorDigest, keys: inception.event.k })).toBe(false)
   })
 })
 
