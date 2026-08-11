@@ -134,9 +134,11 @@ export type CapabilityPayload = Permission & {
  *
  * Only `kid` is understood. Any other member — including a legitimate RFC 7800 `jwk`, `jwe` or
  * `jku` — fails closed rather than being resolved, because resolving is the bug this claim exists
- * to remove.
+ * to remove. The type stays open so that carrying one is a typing question rather than a cast: the
+ * claim's extensibility has to be real in the type, not only on the wire, or "add `jwk` alongside
+ * later" is a promise TypeScript will not let a caller keep.
  */
-export type ConfirmationClaim = { kid?: string }
+export type ConfirmationClaim = { kid?: string; [member: string]: unknown }
 
 export type CapabilityToken<
   Payload extends CapabilityPayload = CapabilityPayload,

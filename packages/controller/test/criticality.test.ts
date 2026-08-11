@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { describe, expect, test } from 'vitest'
 
 import { authorityPath, deriveKeyPair } from '../src/derivation.js'
@@ -10,15 +11,17 @@ const outsiderSeed = new Uint8Array(32).fill(10)
 const stolen = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 const cap = 'eyJ.fake.token'
 
-/** An authorisation naming the key `createRevoke(<seed>, …)` signs with — a capability's pinned `aud` key. */
-function authorisedFor(revokeSeed: Uint8Array): CapabilityAuthorisation {
+/** The key `createRevoke(<seed>, …)` signs with — what a capability pins as its audience key. */
+function signingKeyFor(revokeSeed: Uint8Array) {
   return {
-    authorised: true,
-    audienceKey: {
-      alg: 'EdDSA',
-      publicKey: deriveKeyPair(revokeSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
-    },
+    alg: 'EdDSA' as const,
+    publicKey: deriveKeyPair(revokeSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
   }
+}
+
+/** An authorisation naming that key — what a verifier answers when the capability grants. */
+function authorisedFor(revokeSeed: Uint8Array): CapabilityAuthorisation {
+  return { authorised: true, audienceKey: signingKeyFor(revokeSeed) }
 }
 
 function build() {
@@ -141,6 +144,12 @@ describe('capability-authorised revoke', () => {
       { authorised: true, audienceKey: { alg: 'EdDSA' } },
       { authorised: false },
       'nope',
+      // A truthy discriminant that is not `true` — the shape untyped code reaches for, and the
+      // only one whose key is perfectly well formed, so nothing downstream would catch it.
+      { authorised: 'true', audienceKey: signingKeyFor(delegateSeed) },
+      { authorised: 1, audienceKey: signingKeyFor(delegateSeed) },
+      // A well-formed answer whose reason is not a string would yield `reason: undefined`.
+      { authorised: false, reason: 404 },
     ]
 
     for (const answer of malformed) {
@@ -153,6 +162,26 @@ describe('capability-authorised revoke', () => {
         index: 1,
       })
     }
+  })
+
+  test('an audience key from another realm is accepted, not rejected as malformed', async () => {
+    // The shape check is the one place this fold can turn away a *correct* answer. `instanceof` is
+    // per-realm, so a key that came from a worker, a `vm` context or across an Electron bridge is
+    // not `instanceof Uint8Array` here even though it is one. `ArrayBuffer.isView` is realm-safe.
+    const { icp, did } = build()
+    const own = signingKeyFor(delegateSeed)
+    const foreign = runInNewContext('new Uint8Array(bytes)', { bytes: Array.from(own.publicKey) })
+    expect(foreign instanceof Uint8Array).toBe(false)
+
+    const result = await foldLogAsync(did, [icp, capRevoke(did, icp)], {
+      verifyCapability: async () => ({
+        authorised: true,
+        audienceKey: { alg: 'EdDSA', publicKey: foreign as Uint8Array },
+      }),
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.states[1].deny.has(stolen)).toBe(true)
   })
 
   test('the async fold rejects a cap-bearing revoke carrying no signature at all', async () => {

@@ -466,17 +466,23 @@ describe('createControllerCapabilityVerifier()', () => {
     // be a second encoding of a key this stack already encodes, and `jwe`/`jku` are references to
     // resolve, which is the thing the pin exists to stop. All fail closed, and as a *missing* pin
     // rather than as a rejected delegation.
-    for (const cnf of [
+    // Every RFC 7800 member below type-checks against `ConfirmationClaim` without a cast, which is
+    // the point of leaving it open — carrying a `jwk` alongside is a typing question, not a fight
+    // with excess-property checking. Only the non-string `kid` needs one, because the type is
+    // right to reject it.
+    const claims: Array<ConfirmationClaim> = [
       {},
       { jwk: { kty: 'OKP', crv: 'Ed25519', x: 'abc' } },
       { jku: 'https://example.com/keys' },
-      { kid: 42 },
+      { kid: 42 } as unknown as ConfirmationClaim,
       { kid: confirmationForSeed(delegateSeed).kid?.slice(0, 12) },
       // The delegate's real key, correctly encoded, under the wrong member. Only `kid` is read,
       // so this authorises nothing — an implementation scanning `cnf` for any usable string would
       // accept it and quietly widen the claim to members it does not implement.
       { jwk: confirmationForSeed(delegateSeed).kid },
-    ] as Array<ConfirmationClaim>) {
+    ]
+
+    for (const cnf of claims) {
       const result = await foldWithCapability(await mintCapability({ cnf }))
       expect(result).toEqual({
         ok: false,

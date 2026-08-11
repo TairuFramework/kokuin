@@ -192,31 +192,11 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
     expect(keys?.[0].publicKey).toEqual(decodeKey(icp.event.ka[0]).publicKey)
   })
 
-  test('a verifier that resolves the same DID again is stopped rather than looping', async () => {
-    // The natural wiring, and the wrong one: one resolver over the whole log, with a verifier that
-    // resolves the capability's issuer — which is this same profile. Each fold reaches the same
-    // cap-bearing revoke and asks again. Unguarded this never returns; it is not a stack overflow
-    // but an await-chained loop, reachable from any DID string a peer hands to `resolve`.
+  test('the prefix wiring the docs prescribe terminates and resolves', async () => {
+    // The correct shape: the outer resolver holds the whole log, and the verifier resolves the
+    // capability's issuer through a loader answering with the prefix up to the event carrying it.
+    // Nothing re-enters, so nothing stalls. The misconfigured shape is covered below.
     const { did, log } = capLog()
-    let calls = 0
-    const resolver: DIDMethodResolver = createControllerResolver({
-      loadLog: async () => {
-        calls++
-        return log
-      },
-      verifyCapability: async () => {
-        await resolver.resolve(did, {})
-        return authorised
-      },
-    })
-
-    await expect(resolver.resolve(did, {})).rejects.toThrow(
-      `Controller resolver: cyclic resolution of ${did} — loadLog must answer with the log prefix up to the event carrying the capability`,
-    )
-    // Bounded: the outer resolve loaded once, the re-entry was refused before loading again.
-    expect(calls).toBe(1)
-
-    // Control: the prefix wiring the error asks for terminates and resolves.
     const prefixed = createControllerResolver({
       loadLog: async () => log,
       verifyCapability: async () => {
@@ -227,13 +207,11 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
     await expect(prefixed.resolve(did, {})).resolves.toBeDefined()
   })
 
-  test('two concurrent resolutions of one DID both succeed on a log with no capability', async () => {
-    // The guard tracks DIDs across awaits, so it cannot tell a resolution that re-entered itself
-    // from two independent ones in flight at once. A resolver with no verifier makes no outward
-    // call from `loadState` and so cannot re-enter, which is why the guard stays unarmed there.
-    // Without that, ordinary parallel verification of two tokens from one issuer fails — and the
-    // failure arrives as an `UnresolvableIssuerError`, which the revocation checker turns into a
-    // denial of a perfectly valid capability.
+  test('two concurrent resolutions of one DID share a single fold', async () => {
+    // Ordinary parallel verification of two tokens from one issuer. `@kokuin/token` caches only
+    // `did:peer:4`, so nothing upstream dedupes `did:kokuin:` and both calls arrive here. They must
+    // both succeed — a rejection arrives as `UnresolvableIssuerError`, which the revocation checker
+    // rethrows when it names the token's own issuer, denying a perfectly valid capability.
     const { icp, did } = build()
     let release: () => void = () => {}
     const gate = new Promise<void>((resolve) => {
@@ -242,10 +220,11 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
     let entered = 0
     const resolver = createControllerResolver({
       loadLog: async () => {
-        // Hold the first call open until the second has entered, so the two really overlap rather
-        // than happening to serialise.
-        if (++entered === 1) await gate
-        else release()
+        // Hold the first call open, so if a second one were ever made the two would genuinely
+        // overlap rather than happening to serialise. It is never made — that is the assertion.
+        entered++
+        setTimeout(release, 0)
+        await gate
         return [icp]
       },
     })
@@ -254,41 +233,69 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
       resolver.resolve(did, {}),
       resolver.resolve(did, {}),
     ])
-    expect(entered).toBe(2)
+    // One fold, not two: the second resolution joined the first rather than starting its own.
+    expect(entered).toBe(1)
     expect(first.publicKey).toEqual(decodeKey(icp.event.k[0]).publicKey)
     expect(second.publicKey).toEqual(first.publicKey)
   })
 
-  test('a cycle spanning two resolver instances is still caught', async () => {
-    // Any cycle that comes back to a resolver revisits one of that instance's own (instance, DID)
-    // pairs, so per-instance sets catch A → B → A. Only a chain minting a fresh resolver at every
-    // hop escapes, which nothing in this repo does.
+  test('two concurrent resolutions succeed with a verifier and a cap-bearing log', async () => {
+    // The configuration this whole task exists to enable, and the one the round-2 guard broke: a
+    // verifier is configured, the log carries a capability-authorised revoke, `loadLog` answers
+    // with the prefix as documented, and two resolutions overlap.
+    const { icp, did, log } = capLog()
+    let entered = 0
+    const resolver = createControllerResolver({
+      loadLog: async (requested) => {
+        entered++
+        return requested === did ? log : undefined
+      },
+      verifyCapability: async () => {
+        // The prefix wiring the docs prescribe: a separate loader answering with the log up to the
+        // event carrying the capability.
+        await createControllerResolver({ loadLog: async () => [icp] }).resolve(did, {})
+        return authorised
+      },
+    })
+
+    const [first, second] = await Promise.all([
+      resolver.resolve(did, {}),
+      resolver.resolve(did, {}),
+    ])
+    expect(entered).toBe(1)
+    expect(first.publicKey).toEqual(decodeKey(icp.event.k[0]).publicKey)
+    expect(second.publicKey).toEqual(first.publicKey)
+  })
+
+  test('a self-re-entrant loadLog deadlocks quietly rather than spinning', async () => {
+    // The misconfiguration: `loadLog` answers with the whole log, so verifying the capability
+    // resolves the issuer, which folds the same log, which reaches the same revoke. Nothing can
+    // tell that apart from the legitimate concurrency above, so it is not diagnosed — it awaits a
+    // fold that cannot settle.
+    //
+    // What matters is *which kind* of stall it is. One `loadLog` call, no Ed25519 work, and the
+    // timer queue still live, so a caller-side timeout catches it. Without the shared fold this is
+    // an unbounded await chain that starves the timer queue, and the race below would never
+    // settle at all.
     const { did, log } = capLog()
-    // The second profile's log must itself carry a cap-bearing revoke, or its fold never calls
-    // outward and there is no cycle to catch.
-    const otherIcp = createInception(new Uint8Array(32).fill(23), 0)
-    const otherDID = didFromInception(otherIcp.event)
-    const otherLog = [
-      otherIcp,
-      createRevoke(delegateSeed, 0, otherDID, otherIcp.event, device, { gen: 0, seq: 0 }, { cap }),
-    ]
-
-    const a: DIDMethodResolver = createControllerResolver({
-      loadLog: async () => log,
-      verifyCapability: async () => {
-        await b.resolve(otherDID, {})
-        return authorised
+    let entered = 0
+    const resolver: DIDMethodResolver = createControllerResolver({
+      loadLog: async () => {
+        entered++
+        return log
       },
-    })
-    const b: DIDMethodResolver = createControllerResolver({
-      loadLog: async () => otherLog,
       verifyCapability: async () => {
-        await a.resolve(did, {})
+        await resolver.resolve(did, {})
         return authorised
       },
     })
 
-    await expect(a.resolve(did, {})).rejects.toThrow(`cyclic resolution of ${did}`)
+    const outcome = await Promise.race([
+      resolver.resolve(did, {}).then(() => 'resolved'),
+      new Promise((resolve) => setTimeout(() => resolve('timer fired'), 50)),
+    ])
+    expect(outcome).toBe('timer fired')
+    expect(entered).toBe(1)
   })
 
   test('the guard is per DID, so two profiles vouching for each other still resolve', async () => {

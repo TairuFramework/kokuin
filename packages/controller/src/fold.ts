@@ -81,6 +81,12 @@ export type FoldOptions = {
  * both arms: an `authorised: true` with no usable key would reach `verifyEventSignedBy` and throw,
  * and an `authorised: false` with no reason would produce a `FoldResult` whose `reason` is not a
  * string. Neither is reachable from typed code; both are reachable from a stale build.
+ *
+ * The discriminant is compared against the literals rather than tested for truthiness, so a
+ * `'true'` string — the shape an untyped caller reaches for — is malformed rather than authorising.
+ * The key bytes go through `ArrayBuffer.isView` instead of `instanceof Uint8Array`: `instanceof`
+ * is per-realm, so a correct answer built in a worker, a `vm` context or across an Electron bridge
+ * would otherwise be rejected as malformed — the one way this guard can turn away a good answer.
  */
 function isCapabilityAuthorisation(value: unknown): value is CapabilityAuthorisation {
   if (value == null || typeof value !== 'object') {
@@ -89,7 +95,7 @@ function isCapabilityAuthorisation(value: unknown): value is CapabilityAuthorisa
   const answer = value as Partial<CapabilityAuthorisation & { audienceKey: unknown }>
   if (answer.authorised === true) {
     const key = answer.audienceKey as ResolvedSigningKey | undefined
-    return key != null && typeof key.alg === 'string' && key.publicKey instanceof Uint8Array
+    return key != null && typeof key.alg === 'string' && ArrayBuffer.isView(key.publicKey)
   }
   return answer.authorised === false && typeof answer.reason === 'string'
 }
