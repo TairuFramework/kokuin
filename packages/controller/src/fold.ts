@@ -353,7 +353,12 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
         gen: first.event.g,
         seq: first.event.s,
         keyGen: first.event.g,
-        keySeq: first.event.s,
+        // The derivation index, not the event position — the two are the same number for every
+        // inception this package builds (`s` is 0), and `keySeq` means the index either way. An
+        // inception is self-certifying, so a body carrying any `s` at all is a valid log for the
+        // DID it hashes to; writing `s` here would hand such a log a `KeyState` naming a key it
+        // never committed, which is the conflation Amendment A removed everywhere else.
+        keySeq: 0,
         keys: first.event.k,
         agreement: first.event.ka,
         next: first.event.n,

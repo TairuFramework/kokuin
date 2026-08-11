@@ -1,16 +1,21 @@
 import { describe, expect, test } from 'vitest'
 
+import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
   createReset,
   createRevoke,
   createRotate,
   didFromInception,
+  encodeKey,
+  signEvent,
 } from '../src/events.js'
 import { foldLog, keyStateAt } from '../src/fold.js'
 
 const seed = new Uint8Array(32).fill(1)
 const stolen = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+/** The key an inception establishes: gen 0, derivation index 0. */
+const authorityKey = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
 
 function build() {
   const icp = createInception(seed, 0)
@@ -31,6 +36,24 @@ describe('foldLog()', () => {
     expect(result.states[0].keys).toEqual(icp.event.k)
     expect(result.states[0].gen).toBe(0)
     expect(result.states[0].seq).toBe(0)
+  })
+
+  test('an inception names the derivation index 0, whatever `s` it published', () => {
+    // `keySeq` is the derivation index, and an inception opens the schedule at 0. The two numbers
+    // coincide for every inception this package builds, so only a forged one can tell them apart —
+    // and a forged one is buildable, because an inception is self-certifying: the DID is the hash
+    // of the body, so a body with any `s` is a valid log for the DID it hashes to.
+    const event = { ...createInception(seed, 0).event, s: 3 }
+    const forgedDid = didFromInception(event)
+    const forged = { event, sigs: signEvent(event, [authorityKey.privateKey]) }
+
+    const result = foldLog(forgedDid, [forged])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.states[0].seq).toBe(3)
+    expect(result.states[0].keySeq).toBe(0)
+    // The index really does name the published key, which is what the identity derives from.
+    expect(result.states[0].keys).toEqual([encodeKey(authorityKey.publicKey, 'EdDSA')])
   })
 
   test('applies a rotate, replacing the key set', () => {
