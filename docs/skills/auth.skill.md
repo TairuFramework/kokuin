@@ -364,12 +364,10 @@ message was addressed
 - `createInception(seed, profile)` derives a deterministic inception event; `didFromInception`
   hashes it into the DID — same seed and profile index always produce the same DID
 - `createControllerResolver({ loadLog })` adapts a folded event log into a `DIDMethodResolver`;
-  `loadLog(did)` returns the DID's signed-event log, or `undefined` for an unknown DID. The whole
-  log is correct **only when no `verifyCapability` is configured** — with one, answer with the log
-  up to the event being verified, since verifying a capability resolves its issuer, which is the
-  same profile, which folds the log and reaches the same event again. That deadlocks the DID's
-  resolution on that resolver instance, quietly and unrecoverably; see Pattern 10 and
-  `ControllerResolverOptions.loadLog`
+  `loadLog(did)` returns the DID's signed-event log, or `undefined` for an unknown DID — **the
+  whole log, always**, including with a `verifyCapability` configured. A capability-authorised
+  revoke is verified against a resolver the fold builds from its own prefix, so verifying it never
+  resolves the DID being folded; see Pattern 10 and `ControllerResolverOptions.loadLog`
 - Reuse one resolver instance rather than building one per resolution: concurrent resolutions of
   one DID share a single fold, and a fresh instance per hop shares nothing
 - Resolution happens once, inside `createTokenEncrypterAsync` — the resolved agreement key is
@@ -436,29 +434,27 @@ any claim whose subject is the profile rather than a device
   `createControllerResolver` a `verifyCapability` too so the verifier side folds it.
   Without a verifier both still fail closed rather than trusting the capability.
   `createControllerCapabilityVerifier` (`@kokuin/capability`) is the real implementation of that
-  callback. **It takes two resolvers, not one.** The verifier's own `methods` registry must contain
-  a *separate* resolver whose `loadLog` answers with the **prefix** — the log up to the event
-  carrying the capability — never the resolver being configured and never one over the full log:
+  callback. **One resolver, and `loadLog` answers with the whole log:**
 
   ```typescript
   import { createControllerCapabilityVerifier } from '@kokuin/capability'
 
-  // `prefix` is the log up to the event carrying the capability.
-  const issuers = [createControllerResolver({ loadLog: async () => prefix })]
   const resolver = createControllerResolver({
     loadLog: async () => log,
-    verifyCapability: createControllerCapabilityVerifier({ methods: issuers }),
+    verifyCapability: createControllerCapabilityVerifier(),
   })
   ```
 
-  Reaching for a single shared resolver — the same instance in both places, or a second one over
-  the full log — is the natural-looking shape and it **never settles**: the capability is issued by
-  the very profile whose log carries the revoke, so resolving its issuer folds that log, reaches the
-  same revoke, and verifies the capability again. `verifyToken` then stays pending forever, and
-  because the unsettleable fold stays in flight, every later resolution of that DID on that instance
-  joins it. There is no error and no diagnosis — build a new resolver and fix the wiring. Reuse each
-  of the two instances rather than minting them per resolution: one resolver per role, not one per
-  process and not one per hop
+  The verifier needs no registry for the profile being folded. The fold hands it a resolver for
+  that profile **at the position of the event being verified**, and that answer shadows anything
+  the caller configured for the same method. Two things depend on the position and neither can be
+  answered from a DID alone, which is all `loadLog` receives: the key set that must verify the
+  capability's signature (a key set the log rotated away afterwards must not verify a grant made
+  under it) and the deny set that decides whether the *author* of this revoke is still allowed to
+  author one. A registry configured once per DID is right for at most one event of a log and
+  silently wrong for the rest — and wrong in the direction that applies a revoke a denied device
+  authored. Pass `methods` only for a link in the chain whose own DID method needs it, such as an
+  intermediate delegate that is itself a `did:kokuin:` profile
 
   A capability authorising a revoke must also pin its audience's key in `cnf.kid`
   (`audienceConfirmation(key)`); one without it is rejected rather than resolved, so that the

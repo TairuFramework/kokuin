@@ -546,10 +546,11 @@ describe('createControllerCapabilityVerifier()', () => {
     await expect(foldWithCapability(await mintCapability())).resolves.toMatchObject({ ok: true })
   })
 
-  test('without the method registry the capability cannot be verified at all', async () => {
-    // `did:kokuin:` cannot be resolved from the identifier alone, so a verifier built without
-    // `methods` can never authorise a revoke — it fails closed rather than accepting one it could
-    // not check.
+  test('with no registry at all, the profile is still resolved — by the fold', async () => {
+    // `did:kokuin:` cannot be resolved from the identifier alone, and the capability is issued by
+    // the very profile being folded. The fold hands the verifier a resolver for that profile at the
+    // position being verified, so the one DID a caller cannot configure correctly is the one it
+    // never has to.
     const revoke = createRevoke(
       delegateSeed,
       0,
@@ -563,10 +564,55 @@ describe('createControllerCapabilityVerifier()', () => {
       verifyCapability: createControllerCapabilityVerifier(),
     })
 
-    expect(result).toEqual({
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.states[1].deny.has(target)).toBe(true)
+  })
+
+  test('a chain link the registry cannot resolve still fails closed', async () => {
+    // The fold's resolver answers for the subject and for nothing else, so a delegation through a
+    // *second* profile is exactly as unresolvable as it always was. This is what the row above
+    // would otherwise quietly weaken.
+    const root = await mintCapability({
+      aud: otherController.did,
+      res: '*',
+      cnf: confirmationForSeed(otherControllerSeed),
+    })
+    const leaf = await mintCapability({
+      signer: otherController.identity,
+      sub: controller.did,
+      aud: delegate.id,
+      res: target,
+      parentCapability: root,
+      cap: [root],
+    })
+    const revoke = createRevoke(
+      delegateSeed,
+      0,
+      controller.did,
+      controller.inception.event,
+      target,
+      inceptionKeyPosition,
+      { cap: leaf },
+    )
+    const events = [controller.inception, revoke]
+
+    await expect(
+      foldLogAsync(controller.did, events, {
+        verifyCapability: createControllerCapabilityVerifier(),
+      }),
+    ).resolves.toEqual({
       ok: false,
       reason: 'capability does not authorise this revoke',
       index: 1,
     })
+
+    // Control: the same chain through a registry that can resolve the intermediate profile folds,
+    // so the rejection is the missing resolver and not the chain.
+    await expect(
+      foldLogAsync(controller.did, events, {
+        verifyCapability: createControllerCapabilityVerifier({ methods }),
+      }),
+    ).resolves.toMatchObject({ ok: true })
   })
 })

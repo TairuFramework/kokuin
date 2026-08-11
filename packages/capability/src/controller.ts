@@ -1,8 +1,11 @@
 import {
   CODECS,
+  type DIDMethodResolver,
   decodeMultibase,
   encodeMultibase,
+  findMethodResolver,
   getAlgorithmAndPublicKey,
+  type MethodRegistry,
   normalizeDID,
   type ResolvedSigningKey,
   verifyToken,
@@ -86,6 +89,55 @@ export type CapabilityAuthorisation =
   | { authorised: false; reason: string }
 
 /**
+ * The registry to verify this capability through: the subject answered by the fold's own resolver,
+ * everything else by the caller's.
+ *
+ * The subject's entry **shadows** any same-method entry the caller supplied, and that shadowing is
+ * the point. A capability authorising a revoke is issued by the profile whose log carries it, so
+ * both questions asked of the subject here — which key signed the capability, and whether the
+ * subject has revoked its audience — have to be answered at the log position being verified.
+ * `subjectAtPosition` is the only answer that is at that position: a caller's registry is
+ * configured once, per DID, with no way to know which event is asking, so it can only be right for
+ * one event of a log and is silently wrong for every other. The direction it is wrong in is the
+ * dangerous one — a stale prefix does not error, it applies a revoke a denied device authored.
+ *
+ * The subject's own entry only answers for the subject, so a delegate in the chain that happens to
+ * be another profile of the same method still resolves through the caller's registry.
+ *
+ * `resolveAgreementKey` is deliberately absent: this registry exists for issuer resolution and the
+ * deny set, and nothing on a capability path encrypts. A missing `resolveDenySet` on the fallback
+ * side answers with the empty set, which is exactly what an absent member already means to
+ * `checkCapability`.
+ */
+function registryForSubject(
+  subject: string,
+  subjectAtPosition: DIDMethodResolver | undefined,
+  methods: MethodRegistry | undefined,
+): MethodRegistry | undefined {
+  if (subjectAtPosition == null) {
+    return methods
+  }
+  const others = methods ?? []
+  const fallback = findMethodResolver(others, subject)
+  const pick = (did: string): DIDMethodResolver | undefined =>
+    did === subject ? subjectAtPosition : fallback
+  const entry: DIDMethodResolver = {
+    method: subjectAtPosition.method,
+    async resolve(did, header) {
+      const resolver = pick(did)
+      if (resolver == null) {
+        throw new Error(`Unknown DID: ${did}`)
+      }
+      return await resolver.resolve(did, header)
+    },
+    async resolveDenySet(did) {
+      return (await pick(did)?.resolveDenySet?.(did)) ?? new Set<string>()
+    },
+  }
+  return [entry, ...others.filter((other) => other.method !== entry.method)]
+}
+
+/**
  * A capability-authorised revoke verifier, in the shape a controller fold injects.
  *
  * Named for what it serves, not for what it imports: this file imports nothing from
@@ -97,6 +149,11 @@ export type ControllerCapabilityVerifier = (
   cap: string,
   subject: string,
   target: string,
+  /**
+   * A resolver for `subject` at the log position being verified, supplied by the fold. Optional
+   * only so that a caller can invoke the verifier directly — every fold passes one.
+   */
+  subjectAtPosition?: DIDMethodResolver,
 ) => Promise<CapabilityAuthorisation>
 
 /**
@@ -105,8 +162,8 @@ export type ControllerCapabilityVerifier = (
  *
  * The returned function checks, in order:
  *
- * 1. that the serialized capability verifies as a token — its issuer is a `did:kokuin:` DID, so
- *    `options.methods` must carry a controller resolver or nothing can resolve it at all;
+ * 1. that the serialized capability verifies as a token — against the profile's key state at the
+ *    log position being verified, which the fold supplies as the fourth argument;
  * 2. that its `sub` is the controller the fold is running for. This is the binding that stops a
  *    capability minted for one profile from authorising a revoke on another: `act` and `res` say
  *    nothing about *whose* device is being denied;
@@ -132,20 +189,24 @@ export type ControllerCapabilityVerifier = (
  * It never throws: a fold that rejected rather than returned would turn every verification failure
  * into an exception on the caller's resolve path.
  *
- * **The registry must not resolve the controller from the log being folded.** The capability is
- * issued by the very profile whose log carries the revoke, so a `loadLog` that answers with the
- * whole log would resolve the issuer by folding it, reach the same capability-authorised revoke,
- * and call this verifier again — without end. Answer with the log up to the event that carries the
- * capability, which is also the state the capability has to be checked against: a key set the log
- * rotated away afterwards must not verify a grant made under it. There is no diagnosis for getting
- * this wrong: `createControllerResolver` cannot tell self-re-entry from two honest concurrent
- * resolutions, so the misconfigured resolution deadlocks quietly and that resolver instance is
- * finished for that DID. See `ControllerResolverOptions.loadLog`.
+ * **The subject is never resolved through the caller's registry.** The capability is issued by the
+ * very profile whose log carries the revoke, and both questions asked of that profile — which key
+ * signed the capability, and whether it has revoked the capability's audience — have to be answered
+ * at the position of the event being verified. The fold hands that answer over as
+ * `subjectAtPosition` and it shadows any entry the caller supplied for the same method, because a
+ * registry configured once per DID cannot be right for more than one position of a log: it has no
+ * way to know which event is asking. See {@link registryForSubject}, and
+ * `FoldOptions.verifyCapability` in `@kokuin/controller`.
  *
- * @param options forwarded to `verifyToken` and `checkCapability`. `methods` is effectively
- * required — see above. `resolver` and `cache` travel with it for a `did:peer:4` link in the
- * chain, and `verifyToken` (the hook) runs on every capability including the one named in the
- * event, which is where a revocation check goes.
+ * That also means `loadLog` answers with the whole log and this verifier needs no resolver of the
+ * profile at all — the recursion that made a prefix necessary no longer exists, because verifying
+ * the capability no longer resolves the DID being folded.
+ *
+ * @param options forwarded to `verifyToken` and `checkCapability`. `methods` is needed only for a
+ * link in the chain whose own DID method cannot be resolved from the identifier alone — another
+ * profile as an intermediate delegate, say. `resolver` and `cache` travel with it for a
+ * `did:peer:4` link, and `verifyToken` (the hook) runs on every capability including the one named
+ * in the event, which is where a revocation check goes.
  */
 export function createControllerCapabilityVerifier(
   options: DelegationChainOptions = {},
@@ -154,14 +215,19 @@ export function createControllerCapabilityVerifier(
     cap: string,
     subject: string,
     target: string,
+    subjectAtPosition?: DIDMethodResolver,
   ): Promise<CapabilityAuthorisation> {
+    // The subject is resolved at the position being verified, whatever the caller configured —
+    // see {@link registryForSubject}.
+    const methods = registryForSubject(subject, subjectAtPosition, options.methods)
+    const chainOptions: DelegationChainOptions = { ...options, methods }
     let pinned: ConfirmationClaim | undefined
     try {
       const capability = await verifyToken<CapabilityPayload>(cap, {
         atTime: options.atTime,
         cache: options.cache,
         resolver: options.resolver,
-        methods: options.methods,
+        methods,
       })
       assertCapabilityToken(capability)
       // `checkCapability` runs the hook on every capability it verifies, but it verifies the
@@ -174,7 +240,7 @@ export function createControllerCapabilityVerifier(
         return { authorised: false, reason: REVOKE_NOT_AUTHORISED }
       }
 
-      await checkCapability({ act: 'revoke', res: target }, capability.payload, options)
+      await checkCapability({ act: 'revoke', res: target }, capability.payload, chainOptions)
       pinned = capability.payload.cnf
     } catch {
       // Every failure is the same answer here, including the two `@kokuin/token` keeps apart:

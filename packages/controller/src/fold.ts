@@ -1,4 +1,4 @@
-import type { ResolvedSigningKey } from '@kokuin/token'
+import type { DIDMethodResolver, ResolvedSigningKey } from '@kokuin/token'
 
 import { digestOf, withinCanonicalDepth } from './canonical.js'
 import {
@@ -12,6 +12,7 @@ import {
   verifyRevoke,
   verifyRotate,
 } from './events.js'
+import { createStateResolver } from './state-resolver.js'
 
 export type KeyState = {
   did: string
@@ -76,12 +77,30 @@ export type FoldOptions = {
    * imported so the fold stays free of a capability dependency on the sync path.
    *
    * Receives the serialized capability, the controller DID (which must be the capability `sub`),
-   * and the DID being denied. See {@link CapabilityAuthorisation} for what it answers with.
+   * the DID being denied, and a resolver for the controller **at the position being verified**.
+   * See {@link CapabilityAuthorisation} for what it answers with.
+   *
+   * The fourth argument is what makes the position contract keepable. A capability authorising a
+   * revoke is issued by the very profile whose log carries that revoke, so verifying it means
+   * resolving that profile — and the state to resolve it against is neither the head nor the whole
+   * log but the prefix before this event. The head would let a device the log revoked at event 1
+   * keep authoring revokes at event 2, since the deny set is only position-dependent inside the
+   * fold; the whole log would send resolution back into the fold that is asking. Nothing outside
+   * the fold knows which position is being verified — `loadLog` is handed a DID and nothing else —
+   * so the fold answers rather than asks: this resolver holds exactly `states[0..i-1]`, is
+   * complete for the profile (keys by `kid`, deny set, agreement keys), and answers `Unknown DID`
+   * for anything else, so a verifier can merge it into a wider registry for the delegates in a
+   * chain.
+   *
+   * A verifier that ignores it is back to resolving the profile some other way, which is the
+   * failure this argument exists to remove — `createControllerCapabilityVerifier` prefers it over
+   * its own registry for the subject.
    */
   verifyCapability?: (
     cap: string,
     subject: string,
     target: string,
+    subjectAtPosition: DIDMethodResolver,
   ) => Promise<CapabilityAuthorisation>
 }
 
@@ -414,7 +433,14 @@ export async function foldLogAsync(
       // not evidence that the capability authorises anything.
       let authorisation: CapabilityAuthorisation
       try {
-        authorisation = await options.verifyCapability(outcome.cap, did, outcome.target)
+        authorisation = await options.verifyCapability(
+          outcome.cap,
+          did,
+          outcome.target,
+          // A copy: `states` keeps growing as the fold proceeds, and this resolver must keep
+          // answering for the position it was built at even if the verifier holds on to it.
+          createStateResolver(did, [...states]),
+        )
       } catch (cause) {
         return fail(
           `${CAPABILITY_VERIFIER_FAILED}: ${cause instanceof Error ? cause.message : String(cause)}`,
