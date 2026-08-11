@@ -456,6 +456,11 @@ any claim whose subject is the profile rather than a device
   authored. Pass `methods` only for a link in the chain whose own DID method needs it, such as an
   intermediate delegate that is itself a `did:kokuin:` profile
 
+  One re-entry hazard remains and it is not `loadLog`'s: a `verifyToken` hook passed to the
+  verifier — a revocation checker over the same registry, say — that resolves *this* profile
+  through *this* resolver joins the fold that is calling it and waits on a promise that cannot
+  settle. Give such a hook a resolver of its own.
+
   A capability authorising a revoke must also pin its audience's key in `cnf.kid`
   (`audienceConfirmation(key)`); one without it is rejected rather than resolved, so that the
   audience rotating its own key can never make this profile unresolvable

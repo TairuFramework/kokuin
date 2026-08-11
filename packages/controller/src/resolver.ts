@@ -35,6 +35,12 @@ export type ControllerResolverOptions = {
    * Reuse the instance rather than building one per resolution: concurrent resolutions of one DID
    * share a single in-flight fold, so reuse is both correct and cheaper. It is not a cache — the
    * entry is dropped as soon as the fold settles, so a log that has grown since takes effect.
+   *
+   * One re-entry hazard remains, and it is not this callback's: a `verifyToken` hook or a
+   * `resolver` passed to the capability verifier that resolves *this* DID through *this* resolver
+   * — a revocation checker over the same registry, say — joins the fold that is calling it and
+   * waits for a promise that cannot settle. Give a hook that has to resolve the profile a resolver
+   * of its own.
    */
   loadLog(did: string): Promise<Array<SignedEvent> | undefined>
   /**
