@@ -608,20 +608,72 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
   return verifySignatures(event, sigs, [revealed])
 }
 
+/**
+ * How a `rev` target names a **key** rather than a DID: `#<the multibase key exactly as it appears
+ * in `k`>`, which is the same spelling a token's `kid` uses for the same key.
+ *
+ * One spelling for one thing. A `kid` already names a key this way, the form is unambiguous against
+ * `did:…` on sight, and both the fragment and the deny set are wire-visible and effectively
+ * permanent — so a bare multibase string is not a second accepted encoding here any more than it is
+ * for `kid`.
+ */
+export const KEY_TARGET_PREFIX = '#'
+
+/** The deny-set spelling of `key` — what {@link createRevoke} takes as its target to deny it. */
+export function keyTarget(key: string): string {
+  return `${KEY_TARGET_PREFIX}${key}`
+}
+
+/**
+ * The key a `rev` target names, or `null` when the target names a DID instead.
+ *
+ * Total on any string: a target that is neither form is simply not a key target, and lands in the
+ * deny set as the opaque identifier it is. The fold does not validate the body against multibase —
+ * a `#` followed by something no key set contains denies nothing, exactly as a `did:` naming nobody
+ * denies nobody, and rejecting it would only add a way for a well-formed log to stop folding.
+ */
+export function keyFromTarget(target: string): string | null {
+  return target.startsWith(KEY_TARGET_PREFIX) ? target.slice(KEY_TARGET_PREFIX.length) : null
+}
+
 export type RevokeEvent = EventCommon & {
   t: 'rev'
-  /** The DID to deny. A device DID, never a capability `jti`. */
+  /**
+   * What to deny, in one of two spellings, never a capability `jti`.
+   *
+   * A **DID** — `did:…` — denies a holder: no capability whose `aud` is that DID is valid from this
+   * position onward. A device DID, and one entry covers that device's life.
+   *
+   * A **key** — {@link keyTarget}, i.e. `#<the multibase key exactly as it appears in `k`>` — denies
+   * a signer: nothing this profile signed with that key verifies from this position onward. It
+   * names a key of *this* profile, since the deny set is the subject's own; denying somebody else
+   * is what the DID form is for.
+   *
+   * The two are enforced at opposite ends of the same set, which is why one field carries both: the
+   * DID form is read by `@kokuin/capability` against a capability's `aud`, and the key form by the
+   * resolver against the key a `kid` selects. Neither spelling can be mistaken for the other.
+   */
   x: string
   /** A serialized capability authorising a non-authority signer. Verified in the fold. */
   cap?: string
 }
 
 /**
- * Revoke a DID: no capability whose `aud` is that DID is valid from this position onward.
+ * Revoke a DID or a key — see {@link RevokeEvent.x} for the two spellings and what each denies.
  *
  * Naming the device DID rather than a `jti` makes this one entry per device for that device's
  * life — it covers capabilities the verifier has never seen and covers future re-mints, where
  * per-`jti` revocation would grow with every renewal.
+ *
+ * A key target is what retires a leaked key for material it already signed. `rotate` retires it for
+ * *new* issuance — `resolve` is head-only — but already-issued capabilities and revocation records
+ * are verified through `resolveHistoric`, which by design survives a rotate, so a thief holding a
+ * rotated-away key could still mint one that verified. Retirement is therefore explicit rather than
+ * a side effect of rotation: the design's promise that a routine rotate does not invalidate
+ * already-issued material is load-bearing and stays intact.
+ *
+ * **A key the profile currently publishes cannot be denied** — the fold rejects such an event; see
+ * the `rev` branch of `stepEvent`. Rotate first, then deny the key the rotate retired.
  *
  * `prior` answers "what is the next sequence number and what do I chain to"; `keyPosition`
  * separately answers "where does the currently-active authority key live". They coincide only

@@ -8,6 +8,7 @@ import {
   createRotate,
   didFromInception,
   encodeKey,
+  keyTarget,
   signEvent,
 } from '../src/events.js'
 import { foldLog, keyStateAt } from '../src/fold.js'
@@ -142,6 +143,106 @@ describe('foldLog()', () => {
     if (!result.ok) return
     // The revoke establishes no agreement key, so the set is still the rotate's — Amendment A.
     expect(result.states[2].agreement).toEqual(rot.event.ka)
+  })
+})
+
+describe('foldLog() and a revoke naming a key', () => {
+  test('a key target lands in the deny set at that position and not before', () => {
+    const { did, icp, rot } = build()
+    // The key the inception established, which the rotate has since retired.
+    const retired = keyTarget(icp.event.k[0])
+    const rev = createRevoke(seed, 0, did, rot.event, retired, { gen: 0, seq: 1 })
+    const result = foldLog(did, [icp, rot, rev])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.states[1].deny.has(retired)).toBe(false)
+    expect(result.states[2].deny.has(retired)).toBe(true)
+    // It denies a key, not a holder: the key set the log publishes is untouched.
+    expect(result.states[2].keys).toEqual(rot.event.k)
+  })
+
+  test('a key the profile currently publishes cannot be denied', () => {
+    const { did, icp, rot } = build()
+    // The rotate's own key — the head's `k` at the position the revoke sits at.
+    const current = keyTarget(rot.event.k[0])
+    const rev = createRevoke(seed, 0, did, rot.event, current, { gen: 0, seq: 1 })
+    const result = foldLog(did, [icp, rot, rev])
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toMatch(/key the profile publishes/)
+    expect(result.index).toBe(2)
+  })
+
+  test('nor one it currently publishes for key agreement', () => {
+    const { did, icp, rot } = build()
+    const current = keyTarget(rot.event.ka[0])
+    const rev = createRevoke(seed, 0, did, rot.event, current, { gen: 0, seq: 1 })
+    const result = foldLog(did, [icp, rot, rev])
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toMatch(/key the profile publishes/)
+  })
+
+  test('a retired agreement key can be, and the same event at the earlier position cannot', () => {
+    // The control for the two rows above: identical event shape, identical signer, and the only
+    // difference is whether the named key is still published. Without it, "rejected" could just as
+    // well mean the fold refuses every key target outright.
+    const { did, icp, rot } = build()
+    const retired = keyTarget(icp.event.ka[0])
+    const ok = createRevoke(seed, 0, did, rot.event, retired, { gen: 0, seq: 1 })
+    expect(foldLog(did, [icp, rot, ok]).ok).toBe(true)
+
+    const tooEarly = createRevoke(seed, 0, did, icp.event, retired, { gen: 0, seq: 0 })
+    expect(foldLog(did, [icp, tooEarly]).ok).toBe(false)
+  })
+
+  test('a rotate cannot establish a key its own deny snapshot names', () => {
+    // `d` is author-written wire data, so a rotate could otherwise publish a key set and deny it in
+    // the same event — leaving a head whose `k` resolves to nothing.
+    const { did, icp } = build()
+    const selfDenying = createRotate(seed, 0, did, icp.event, {
+      deny: [keyTarget(createRotate(seed, 0, did, icp.event).event.k[0])],
+    })
+    const result = foldLog(did, [icp, selfDenying])
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toMatch(/rotate establishes a denied key/)
+
+    // Control: the same rotate with the same snapshot mechanism, denying a key it does not
+    // establish, folds — so the rejection is the collision and not the presence of `d`.
+    const other = createRotate(seed, 0, did, icp.event, { deny: [keyTarget(icp.event.k[0])] })
+    expect(foldLog(did, [icp, other]).ok).toBe(true)
+  })
+
+  test('nor one carried forward from a denial made before the key was published', () => {
+    // The other route to the same collision, and the one that needs no hand-edited event: the
+    // inception *commits* to the next key without publishing it, so a revoke naming that key is
+    // accepted — it is in no key set yet — and the rotate that later reveals it walks into an
+    // accumulated deny set that already names it. Nothing here is forged; every event is one this
+    // package builds and signs.
+    const { did, icp, rot } = build()
+    const committed = keyTarget(rot.event.k[0])
+    const rev = createRevoke(seed, 0, did, icp.event, committed, { gen: 0, seq: 0 })
+    const denied = foldLog(did, [icp, rev])
+    expect(denied.ok).toBe(true)
+    if (!denied.ok) return
+    expect(denied.states[1].deny.has(committed)).toBe(true)
+
+    // The rotate reveals exactly the pre-committed key, so it is valid in every other respect.
+    const reveal = createRotate(seed, 0, did, rev.event, { keyPosition: { gen: 0, seq: 0 } })
+    expect(reveal.event.k).toEqual(rot.event.k)
+    const result = foldLog(did, [icp, rev, reveal])
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toMatch(/rotate establishes a denied key/)
+    expect(result.index).toBe(2)
+
+    // Control: the identical rotate at the identical position, over a log whose revoke named a
+    // device DID instead. Same signer, same commitment, same sequence — so the rejection above is
+    // the collision and not the revoke standing between the inception and the rotate.
+    const other = createRevoke(seed, 0, did, icp.event, stolen, { gen: 0, seq: 0 })
+    const control = createRotate(seed, 0, did, other.event, { keyPosition: { gen: 0, seq: 0 } })
+    expect(foldLog(did, [icp, other, control]).ok).toBe(true)
   })
 })
 

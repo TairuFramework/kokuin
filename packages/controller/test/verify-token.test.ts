@@ -136,6 +136,41 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     expect(withoutKid.publicKey).toEqual(decodeKey(cosignerKey).publicKey)
   })
 
+  test('a token signed by a revoked key is rejected under historic resolution too', async () => {
+    // The end-to-end shape of the escalation `packages/capability/test/zzown-historic-mint.test.ts`
+    // demonstrates, at the plain-token layer where there is no capability chain to blame. A leaked
+    // key that the profile has rotated away still verifies with `historic: true` — it must, or
+    // every already-issued capability dies at the next rotate. Denying the key is the event that
+    // ends that, and this is the whole point of the feature.
+    const inception = createInception(seed, 0)
+    const did = didFromInception(inception.event)
+    const rotate = createRotate(seed, 0, did, inception.event)
+    const leaked = inception.event.k[0]
+
+    const thief = createControllerIdentity(seed, 0, [inception])
+    const token = await signToken(thief, createUnsignedToken({ hello: 'world' }))
+    expect(token.header.kid).toBe(`#${leaked}`)
+
+    // Control: after the rotate alone, the historic question still answers yes.
+    const rotated = createControllerResolver({ loadLog: async () => [inception, rotate] })
+    await expect(verifyToken(token, { methods: [rotated], historic: true })).resolves.toBeDefined()
+
+    const revoke = createRevoke(seed, 0, did, rotate.event, `#${leaked}`, { gen: 0, seq: 1 })
+    const revoked = createControllerResolver({
+      loadLog: async () => [inception, rotate, revoke],
+    })
+    await expect(verifyToken(token, { methods: [revoked], historic: true })).rejects.toThrow(
+      /kid names a key the controller has revoked/,
+    )
+
+    // Second control: the same log, and a token signed by the key the profile actually holds,
+    // still verifies both ways — so the rejection is the denial, not the third event.
+    const owner = createControllerIdentity(seed, 0, [inception, rotate, revoke])
+    const live = await signToken(owner, createUnsignedToken({ hello: 'world' }))
+    await expect(verifyToken(live, { methods: [revoked] })).resolves.toBeDefined()
+    await expect(verifyToken(live, { methods: [revoked], historic: true })).resolves.toBeDefined()
+  })
+
   test('a token signed after the rotation verifies against the rotated log', async () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)

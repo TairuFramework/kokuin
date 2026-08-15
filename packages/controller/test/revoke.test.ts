@@ -7,6 +7,9 @@ import {
   createRevoke,
   createRevokeWithKey,
   didFromInception,
+  KEY_TARGET_PREFIX,
+  keyFromTarget,
+  keyTarget,
   verifyRevoke,
 } from '../src/events.js'
 
@@ -47,6 +50,36 @@ describe('createRevoke()', () => {
     const { event } = createRevoke(seed, 0, did, inception.event, stolen, activeKey)
     expect(event).not.toHaveProperty('k')
     expect(event).not.toHaveProperty('n')
+  })
+})
+
+describe('a key target', () => {
+  // The spelling is a wire format and the whole of the ambiguity argument rests on it, so it is
+  // asserted rather than left to the two call sites that build and read it.
+  test('is spelled exactly the way a kid names a key', () => {
+    const key = 'z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+    expect(keyTarget(key)).toBe(`#${key}`)
+    expect(KEY_TARGET_PREFIX).toBe('#')
+  })
+
+  test('round-trips, and reads a DID target back as no key at all', () => {
+    const key = 'z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+    expect(keyFromTarget(keyTarget(key))).toBe(key)
+    // The disambiguation that lets one field and one deny set carry both forms: a DID can never
+    // read as a key target, so a `did:` entry is never mistaken for a denied key and vice versa.
+    expect(keyFromTarget(stolen)).toBeNull()
+    expect(keyFromTarget('')).toBeNull()
+  })
+
+  test('rides in `x` like a DID does, and is covered by the signature', () => {
+    const { inception, did, priorDigest } = setup()
+    const target = keyTarget(inception.event.k[0])
+    const signed = createRevoke(seed, 0, did, inception.event, target, activeKey)
+    expect(signed.event.x).toBe(target)
+    expect(verifyRevoke(signed, { digest: priorDigest, keys: inception.event.k })).toBe(true)
+
+    const tampered = { ...signed, event: { ...signed.event, x: keyTarget('z6MkSomethingElse') } }
+    expect(verifyRevoke(tampered, { digest: priorDigest, keys: inception.event.k })).toBe(false)
   })
 })
 

@@ -155,6 +155,11 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
       // which is what stops a later clearing from retroactively validating earlier actions — and
       // the question a verifier asks is "is this grant valid now".
       //
+      // Both spellings a `rev` target may take ride in it — DIDs and `#<key>` fragments; see
+      // `KeyState.deny`. The key half is enforced by `signingKeyFrom` above rather than by anything
+      // that reads this member, so a caller matching entries against a DID needs no change and
+      // cannot be confused by one: the two forms cannot collide.
+      //
       // `loadStates` throws `Unknown DID` for a log this resolver cannot load, which is what keeps
       // the answer honest: an empty set would read as "nobody is revoked".
       const states = await loadStates(did)

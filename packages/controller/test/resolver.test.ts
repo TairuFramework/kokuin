@@ -166,6 +166,87 @@ describe('createControllerResolver().resolve() with a kid', () => {
   })
 })
 
+describe('createControllerResolver() and a revoked key', () => {
+  /** icp → rot → rev(`#<the inception key>`): the leaked key retired, then explicitly denied. */
+  function revokedKeyLog() {
+    const { icp, did } = build()
+    const rot = createRotate(seed, 0, did, icp.event)
+    const leaked = icp.event.k[0]
+    const rev = createRevoke(seed, 0, did, rot.event, `#${leaked}`, { gen: 0, seq: 1 })
+    return { did, leaked, rot, rev, rotated: [icp, rot], revoked: [icp, rot, rev] }
+  }
+
+  test('resolveHistoric refuses it — which the rotate alone does not', async () => {
+    const { did, leaked, rotated, revoked } = revokedKeyLog()
+
+    // Control, and the whole reason the feature exists: after the rotate the key is retired for
+    // new issuance but still answers the historic question, because an already-issued capability
+    // has to survive a routine rotate. Rotation is not what retires a key for what it has already
+    // signed.
+    const afterRotate = createControllerResolver({ loadLog: async () => rotated })
+    await expect(afterRotate.resolveHistoric?.(did, { kid: `#${leaked}` })).resolves.toEqual({
+      alg: 'EdDSA',
+      publicKey: decodeKey(leaked).publicKey,
+    })
+
+    // One more event — a `rev` naming the key — and the same question is refused.
+    const afterRevoke = createControllerResolver({ loadLog: async () => revoked })
+    await expect(afterRevoke.resolveHistoric?.(did, { kid: `#${leaked}` })).rejects.toThrow(
+      `Controller ${did} kid names a key the controller has revoked: #${leaked}`,
+    )
+  })
+
+  test('the denial is evaluated at the head, not at the position the key was found at', async () => {
+    // The key resolves at position 0, where nothing was denied yet. Anchoring the check there —
+    // the position an artefact's `kid` reaches back to — would let a thief be answered from before
+    // the revoke, which is the whole class of attack the `aud` rule already closes.
+    const { did, leaked, revoked } = revokedKeyLog()
+    const resolver = createControllerResolver({ loadLog: async () => revoked })
+    const folded = foldLog(did, revoked)
+    if (!folded.ok) throw new Error('did not fold')
+    expect(folded.states[0].keys).toContain(leaked)
+    expect(folded.states[0].deny.size).toBe(0)
+
+    await expect(resolver.resolveHistoric?.(did, { kid: `#${leaked}` })).rejects.toThrow(
+      /has revoked/,
+    )
+  })
+
+  test('the rest of the profile keeps resolving', async () => {
+    // The control every row above needs: the revoke must deny one key, not break the log. Without
+    // this, a fold that rejected the whole three-event log would look identical from the outside.
+    const { did, rot, revoked } = revokedKeyLog()
+    const resolver = createControllerResolver({ loadLog: async () => revoked })
+    const current = rot.event.k[0]
+
+    await expect(resolver.resolve(did, {})).resolves.toEqual({
+      alg: 'EdDSA',
+      publicKey: decodeKey(current).publicKey,
+    })
+    await expect(resolver.resolveHistoric?.(did, { kid: `#${current}` })).resolves.toBeDefined()
+    await expect(resolver.resolveAgreementKey?.(did)).resolves.toHaveLength(1)
+  })
+
+  test('a deny-set snapshot lifts it again', async () => {
+    // The denial is state, not a one-way door: `d` prunes the set, and the key resolves again.
+    // This is also what proves the check reads the head's set rather than remembering the event.
+    const { did, leaked, rev, revoked } = revokedKeyLog()
+    const folded = foldLog(did, revoked)
+    if (!folded.ok) throw new Error('did not fold')
+    const head = folded.states[folded.states.length - 1]
+    const cleared = createRotate(seed, 0, did, rev.event, {
+      keyPosition: { gen: head.keyGen, seq: head.keySeq },
+      deny: [],
+    })
+    const resolver = createControllerResolver({ loadLog: async () => [...revoked, cleared] })
+
+    await expect(resolver.resolveHistoric?.(did, { kid: `#${leaked}` })).resolves.toEqual({
+      alg: 'EdDSA',
+      publicKey: decodeKey(leaked).publicKey,
+    })
+  })
+})
+
 describe('createControllerResolver() with a capability-authorised revoke', () => {
   test('rejects the log when no verifier is configured', async () => {
     const { did, log } = capLog()
@@ -472,6 +553,45 @@ describe('createStateResolver()', () => {
     await expect(resolver.resolveHistoric?.(stranger, {})).rejects.toThrow(/Unknown DID/)
     await expect(resolver.resolveDenySet?.(stranger)).rejects.toThrow(/Unknown DID/)
     await expect(resolver.resolveAgreementKey?.(stranger)).rejects.toThrow(/Unknown DID/)
+  })
+
+  // The head arm of the deny check in `signingKeyFrom`. It is unreachable from a log this package
+  // folded — the fold refuses to deny a key the profile publishes — but `createStateResolver` is
+  // handed a `states` array, and the invariant is the fold's property, not the array's. A third
+  // party's fold, or a cached snapshot, can produce one.
+  test('refuses a head key the state it was handed also denies', async () => {
+    const { icp, did } = build()
+    const result = foldLog(did, [icp])
+    if (!result.ok) throw new Error('did not fold')
+    const [head] = result.states
+    const target = `#${head.keys[0]}`
+
+    // Control: the identical state, identical key, and an empty deny set — so what refuses below
+    // is the denial and not the hand-built state.
+    await expect(createStateResolver(did, [head]).resolve(did, { kid: target })).resolves.toEqual({
+      alg: 'EdDSA',
+      publicKey: decodeKey(head.keys[0]).publicKey,
+    })
+
+    const denying = createStateResolver(did, [{ ...head, deny: new Set([target]) }])
+    await expect(denying.resolve(did, { kid: target })).rejects.toThrow(/has revoked/)
+    // And with no `kid` at all, where the answer is volunteered rather than asked for.
+    await expect(denying.resolve(did, {})).rejects.toThrow(/has revoked/)
+  })
+
+  test('drops an agreement key the state it was handed denies', async () => {
+    const { icp, did } = build()
+    const result = foldLog(did, [icp])
+    if (!result.ok) throw new Error('did not fold')
+    const [head] = result.states
+
+    expect(await createStateResolver(did, [head]).resolveAgreementKey?.(did)).toHaveLength(1)
+    const denying = createStateResolver(did, [
+      { ...head, deny: new Set([`#${head.agreement[0]}`]) },
+    ])
+    // Empty rather than an error: to `@kokuin/jwe` that is "nothing to encrypt to", which is the
+    // fail-closed direction.
+    expect(await denying.resolveAgreementKey?.(did)).toEqual([])
   })
 
   test('carries the deny set of the position it was built at', async () => {

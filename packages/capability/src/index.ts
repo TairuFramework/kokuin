@@ -495,6 +495,12 @@ export const AUDIENCE_REVOKED = 'Invalid capability: audience is revoked by the 
  * — a subject that needs one is a subject `verifyToken` could not have resolved either, so the
  * chain has already failed by then. A resolver that *has* a deny set and cannot produce it throws,
  * which fails the chain closed.
+ *
+ * This is the *holder* half of the set. A `did:kokuin:` deny set also carries `#<multibase key>`
+ * entries denying the subject's own signing keys, which are enforced where a key is resolved rather
+ * than here — `verifyToken` on every link of the chain already refuses one, and this function could
+ * not: it sees `aud`, not the key that signed. The two forms cannot be mistaken for each other, so
+ * matching by membership stays exact; enumerating the set would not.
  */
 async function assertAudienceNotRevoked(
   payload: { sub?: unknown; aud?: unknown },

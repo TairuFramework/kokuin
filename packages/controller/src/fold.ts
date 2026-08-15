@@ -3,6 +3,8 @@ import type { DIDMethodResolver, ResolvedSigningKey } from '@kokuin/token'
 import { digestOf, isCanonicalizable } from './canonical.js'
 import {
   type InceptionEvent,
+  keyFromTarget,
+  keyTarget,
   type RevokeEvent,
   type RotateEvent,
   type SignedEvent,
@@ -45,6 +47,26 @@ export type KeyState = {
    * went unnamed. A state that disagrees with what the verifier enforces is worse than no state.
    */
   recovery: string
+  /**
+   * What this position denies, in the two spellings a `rev` target may take — see `RevokeEvent.x`.
+   *
+   * A `did:…` entry denies a *holder*: `@kokuin/capability` refuses a capability whose `aud` it
+   * names. A `#<multibase key>` entry denies a *signer*: `signingKeyFrom` refuses to resolve that
+   * key and `agreementKeysFrom` drops it, so nothing this profile signed or published under it is
+   * usable from here on.
+   *
+   * One heterogeneous set rather than two fields, because the two spellings cannot collide and
+   * every mechanism the set already has — position-dependence, the `d` snapshot on a rotate, the
+   * clearing a reset performs, `resolveDenySet` on the resolver interface, the wrapper in
+   * `@kokuin/capability` that must forward it — then covers keys with nothing new to wire and
+   * nothing new to forget. A second optional resolver member is a second thing a wrapper can drop,
+   * and dropping it fails open.
+   *
+   * **Invariant, enforced by both branches of `stepEvent`: no key in this state's `keys` or
+   * `agreement` is denied here.** A key the profile currently publishes cannot be revoked, and a
+   * rotate cannot establish a key its own resulting deny set names. Every reader may therefore take
+   * a folded head's key set at face value.
+   */
   deny: ReadonlySet<string>
   /** Digest of the event that produced this state — the `p` any successor must carry. */
   digest: string
@@ -292,6 +314,24 @@ function stepEvent(
       }
     }
 
+    // The deny set this rotate leaves behind: its own snapshot when it carries one — `d` is
+    // validated as a list of strings by `isPublishedRotate`, inside the verifier above — otherwise
+    // the accumulated set carried forward.
+    const denyAfter = rot.event.d == null ? prior.deny : new Set(rot.event.d)
+    // A key this event *establishes* must not be one the same event denies. `d` is author-written
+    // wire data and the carried-forward set is whatever the prefix accumulated, so without this a
+    // single rotate could publish a key set and deny it in the same breath — and the invariant every
+    // reader of `KeyState.deny` relies on (see that field) would hold only by the author's good
+    // manners. Failing the fold is the only answer available here: applying it would leave a head
+    // whose `k` resolves to nothing, and ignoring the denial would be the deny set switched off by
+    // the party it constrains.
+    const establishedButDenied = [...rot.event.k, ...rot.event.ka].find((key) =>
+      denyAfter.has(keyTarget(key)),
+    )
+    if (establishedButDenied != null) {
+      return { status: 'fail', reason: `rotate establishes a denied key: ${establishedButDenied}` }
+    }
+
     return {
       status: 'ok',
       state: {
@@ -309,7 +349,7 @@ function stepEvent(
         // Carried, never replaced — including across a reset, which opens a new generation under
         // the same root. See `KeyState.recovery` and `RotateEvent`.
         recovery: prior.recovery,
-        deny: rot.event.d == null ? prior.deny : new Set(rot.event.d),
+        deny: denyAfter,
         digest: digestOf(rot.event),
       },
     }
@@ -335,6 +375,29 @@ function stepEvent(
     // it. `x` immediately above was checked and this was not, which is the whole of the reason.
     if (rev.event.cap !== undefined && typeof rev.event.cap !== 'string') {
       return { status: 'fail', reason: 'revoke capability is not a serialized token' }
+    }
+    // A key target may not name a key this position currently publishes.
+    //
+    // Refused rather than allowed, and the choice is not about safety-in-the-large — a compromised
+    // current key is a real problem — but about which event fixes it. `resolve` is head-only, so a
+    // key still in `k` is one the profile is asserting it signs with *now*; the event that stops
+    // that is `rotate`, whose pre-rotation commitment authenticates the change and which the holder
+    // of the leaked key cannot forge. Denial is for what the rotate leaves behind: the historic
+    // resolution path, which by design survives a rotate. So the remedy is rotate-then-deny, two
+    // events in the order the ladder already describes, and nothing is out of reach.
+    //
+    // What allowing it would cost is concrete. A `rev` may be capability-authorised, and a
+    // management capability's `res` is normally a wildcard — so one event from a device that was
+    // never given the profile sub-seed would make the root tier unable to sign anything at all,
+    // straight across the tier boundary the spec draws. It would also leave a head whose own `k`
+    // the resolver must refuse, which every reader of `keys` would then have to intersect with
+    // `deny` for itself; see the invariant on `KeyState.deny`.
+    const deniedKey = keyFromTarget(rev.event.x)
+    if (
+      deniedKey != null &&
+      (prior.keys.includes(deniedKey) || prior.agreement.includes(deniedKey))
+    ) {
+      return { status: 'fail', reason: `revoke names a key the profile publishes: ${rev.event.x}` }
     }
     const deny = new Set(prior.deny)
     deny.add(rev.event.x)

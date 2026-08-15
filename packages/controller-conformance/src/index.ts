@@ -338,6 +338,59 @@ export function runControllerConformance(
       })
     })
 
+    // 5a. A `rev` target may name a KEY instead of a DID, spelled `#<the multibase key exactly as
+    // it appears in `k`>` — the same spelling a token's `kid` uses, which is what makes the two
+    // forms tellable apart on sight and needs no second field. It is what retires a leaked key for
+    // material it has *already* signed: a rotate retires a key for new issuance only, because
+    // historic resolution is designed to survive one, so retirement has to be an explicit event.
+    //
+    // Two properties, and the second is the one an implementation is most likely to skip. Denying a
+    // key the profile still publishes is refused rather than applied: it would leave a head whose
+    // own key set the resolver must turn away, and since a `rev` may be capability-authorised it
+    // would let a management-tier device stop the root tier from signing with one event.
+    describe('key revocation', () => {
+      test('a `#<key>` target lands in the deny set under that spelling', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const rot = impl.createRotate(seedA, 0, did, icp.event)
+        const before = impl.foldLog(did, [icp, rot])
+        expect(before.ok).toBe(true)
+        if (!before.ok) {
+          return
+        }
+        // The inception's key, which the rotate has since retired.
+        const retired = `#${before.states[0].keys[0]}`
+        const rev = impl.createRevoke(seedA, 0, did, rot.event, retired, { gen: 0, seq: 1 })
+        const result = impl.foldLog(did, [icp, rot, rev])
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
+        // Position-dependent like every other entry, and read at the same two positions.
+        expect(result.states[1].deny.has(retired)).toBe(false)
+        expect(result.states[2].deny.has(retired)).toBe(true)
+        // It denies a key, not a holder: the published key set is untouched.
+        expect(result.states[2].keys).toEqual(result.states[1].keys)
+      })
+
+      test('a key the profile currently publishes cannot be denied', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const rot = impl.createRotate(seedA, 0, did, icp.event)
+        const before = impl.foldLog(did, [icp, rot])
+        expect(before.ok).toBe(true)
+        if (!before.ok) {
+          return
+        }
+        // The rotate's own key — the head's `k` at the position this revoke sits at. Everything
+        // else about the event is identical to the accepted one above, so an implementation that
+        // fails this one is failing on the target and nothing else.
+        const current = `#${before.states[1].keys[0]}`
+        const rev = impl.createRevoke(seedA, 0, did, rot.event, current, { gen: 0, seq: 1 })
+        expect(impl.foldLog(did, [icp, rot, rev]).ok).toBe(false)
+      })
+    })
+
     // 5b. A revoke advances `seq` without establishing a key, so the log position and the
     // pre-rotation derivation index diverge from that point on. An implementation that conflates
     // them cannot rotate after a revoke at all — which also puts the deny-set snapshot, the only

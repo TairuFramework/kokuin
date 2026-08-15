@@ -68,7 +68,14 @@ export type DIDMethodResolver = {
    */
   resolveAgreementKey?(did: string): Promise<Array<ResolvedAgreementKey>>
   /**
-   * The DIDs this subject has revoked: no capability whose `aud` is in the set is valid.
+   * What this subject has revoked: no capability whose `aud` is in the set is valid.
+   *
+   * The entries are DIDs. A method whose revocation vocabulary is wider may put other identifiers
+   * in the same set — `did:kokuin:` also denies its own signing keys here, spelled `#<multibase
+   * key>` the way a `kid` names one — so a reader must **match, never enumerate**: ask whether the
+   * DID in hand is present, rather than treating the set as a list of revoked devices. A DID and a
+   * key fragment cannot collide, and a method's own resolver is what enforces the entries this
+   * package has no vocabulary for.
    *
    * Answer for **now** — the subject's current state — not for any position a token names. A
    * capability's own claims are author-supplied and backdatable, so a check anchored to them would

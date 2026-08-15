@@ -6,7 +6,7 @@ import {
   type ResolveIssuerHeader,
 } from '@kokuin/token'
 
-import { DID_PREFIX, decodeKey } from './events.js'
+import { DID_PREFIX, decodeKey, keyTarget } from './events.js'
 import type { KeyState } from './fold.js'
 
 /** The method segment of {@link DID_PREFIX}, so the two cannot drift. */
@@ -113,10 +113,47 @@ function historicSigningKey(did: string, states: Array<KeyState>, kid?: string):
 }
 
 /**
+ * What a token signed by a key the profile has revoked is rejected with. The `#`-prefixed key
+ * follows after `: `, so match with `startsWith`.
+ */
+export const KEY_REVOKED = 'kid names a key the controller has revoked'
+
+/**
  * The signing key `header` names, out of an already-folded log.
  *
  * `historic` picks which of the two questions above is being asked, and defaults to the safe one.
  * See {@link headSigningKey} and {@link historicSigningKey}.
+ *
+ * **A revoked key answers neither question.** A `rev` naming `#<key>` (see `RevokeEvent.x`) is what
+ * retires a key for material it has *already* signed, and this is where that bites — every
+ * `did:kokuin:` signature check in this stack reaches a resolved key through this function, so
+ * making the denial bite here covers `verifyToken` on both settings of `historic`, every capability
+ * and revocation record `@kokuin/capability` verifies, and the fold's own capability-authorised
+ * revoke, which resolves through `createStateResolver` below.
+ *
+ * The historic arm is the one the feature exists for, and the one that is live in ordinary use: a
+ * revoked key is never in the head's `k` — that is the invariant on `KeyState.deny` — so only the
+ * backwards scan can select one. Without this check, `resolveHistoric` would go on accepting a
+ * leaked key forever, because surviving a rotate is precisely what it promises; a `rotate` retires
+ * a key for new issuance and can retire it for nothing else.
+ *
+ * The head arm cannot be reached from a log this package folded, and is not therefore decoration:
+ * `createStateResolver` is handed a `states` array by its caller, and the invariant is the fold's
+ * property, not the array's. A caller-built or third-party-folded state whose head publishes a key
+ * it also denies resolves to nothing here rather than to the key.
+ *
+ * **Evaluated against the head's deny set, never against the position the key was selected at.** A
+ * denial is a statement about the key, not about one event, and the position an artefact carries is
+ * author-supplied — a thief would otherwise present a token whose `kid` resolves at a position
+ * before the revoke and be answered from there. This is the same reasoning
+ * `assertAudienceNotRevoked` documents for `aud`, and it is deliberately *not* how a DID denial
+ * behaves inside the fold: there `states[i]` is consulted at position `i`, because the position
+ * being verified is the whole question — an event is authored at one place in the log, and a later
+ * clearing must not retroactively validate it. Both rules coexist because they answer different
+ * questions: "was this author allowed to act here" versus "is this key usable now".
+ *
+ * Inside the fold the two coincide anyway: `createStateResolver` is handed the prefix
+ * `states[0..i-1]`, so its head *is* the position being verified.
  */
 export function signingKeyFrom(
   did: string,
@@ -124,12 +161,20 @@ export function signingKeyFrom(
   header: ResolveIssuerHeader,
   historic = false,
 ): ResolvedSigningKey {
-  if (states[states.length - 1].keys.length === 0) {
+  const head = states[states.length - 1]
+  if (head.keys.length === 0) {
     throw new Error(`Controller ${did} has no signing key`)
   }
   const selected = historic
     ? historicSigningKey(did, states, header.kid)
     : headSigningKey(did, states, header.kid)
+  // An `IssuerKeyNotFoundError` like every other rejection on this path, and for the same reason:
+  // the DID resolved and its log folded, and what failed is the key. Retyping it as unresolvable
+  // would let a `kid` — an unauthenticated header field — make this controller read as unresolvable
+  // to every fail-closed caller. See {@link keyFromKid}.
+  if (head.deny.has(keyTarget(selected))) {
+    throw new IssuerKeyNotFoundError(`Controller ${did} ${KEY_REVOKED}: ${keyTarget(selected)}`)
+  }
   const key = decodeKey(selected)
   if (key.alg === 'X25519') {
     throw new Error(`Controller ${did} signing key is not a signature algorithm: ${key.alg}`)
@@ -137,12 +182,28 @@ export function signingKeyFrom(
   return { alg: key.alg, publicKey: key.publicKey }
 }
 
-/** The head's key agreement set, out of an already-folded log. */
+/**
+ * The head's key agreement set, out of an already-folded log, minus anything it has revoked.
+ *
+ * A `rev` may name an agreement key as readily as a signing one — the target spelling is the key,
+ * not the key's purpose — so leaving this unfiltered would make exactly that denial inert while
+ * every other one bit. These are the keys a *sender* encrypts to, and encrypting to a key the
+ * recipient has revoked is the one outcome a denial must prevent.
+ *
+ * Like the signing side, this cannot be reached from a log this package folded — see the invariant
+ * on `KeyState.deny` — and, like it, `states` arrives from the caller. Filtering the set to empty is
+ * the honest answer for a state that denies everything it publishes; `@kokuin/jwe` reports "no
+ * supported key agreement algorithm" and encrypts nothing, which is the fail-closed direction.
+ */
 export function agreementKeysFrom(
   did: string,
   states: Array<KeyState>,
 ): Array<ResolvedAgreementKey> {
-  return states[states.length - 1].agreement.map((value) => {
+  const head = states[states.length - 1]
+  return head.agreement.flatMap((value) => {
+    if (head.deny.has(keyTarget(value))) {
+      return []
+    }
     const key = decodeKey(value)
     if (key.alg !== 'X25519') {
       throw new Error(`Controller ${did} publishes an unsupported agreement key: ${key.alg}`)

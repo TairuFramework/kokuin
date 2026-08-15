@@ -27,6 +27,12 @@ describe('public surface', () => {
       'createReset',
       'createRevoke',
       'createRevokeWithKey',
+      // A `rev` target may name a key instead of a DID. Downstream builds the target and reads it
+      // back out of a deny set, and neither should mean hardcoding `#` — the spelling is a wire
+      // format, so the one place that knows it publishes it.
+      'keyTarget',
+      'keyFromTarget',
+      'KEY_TARGET_PREFIX',
       'didFromInception',
       'DID_PREFIX',
       'encodeKey',
