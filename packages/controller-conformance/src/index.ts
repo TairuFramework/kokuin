@@ -381,6 +381,41 @@ export function runControllerConformance(
         expect(result.superseded).toBe(1)
       })
 
+      // The property above only ever presents branches of equal length, which is exactly the blind
+      // spot that let an implementation pass while deciding supersession by head position: a stolen
+      // current key cannot rotate, but it can sign an unlimited run of revokes, each advancing the
+      // sequence, until the owner's recovering rotate sits behind. Supersession is a claim about
+      // the divergence point — KERI's rule is that a rotation supersedes a non-establishment event
+      // at its sequence number *and every event after it on that branch* — so the losing branch
+      // here is longer than the winner, and its whole tail must be discarded.
+      test('a superseding rotate beats a longer run of current-key events', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const first = impl.createRevoke(seedA, 0, did, icp.event, deviceA, { gen: 0, seq: 0 })
+        const second = impl.createRevoke(seedA, 0, did, first.event, deviceB, { gen: 0, seq: 0 })
+        const third = impl.createRevoke(seedA, 0, did, second.event, deviceC, { gen: 0, seq: 0 })
+        const thief = [icp, first, second, third]
+        expect(impl.foldLog(did, thief).ok).toBe(true)
+
+        const owner = [icp, impl.createRotate(seedA, 0, did, icp.event)]
+        for (const order of [
+          [thief, owner],
+          [owner, thief],
+        ]) {
+          const result = impl.resolveBranches(did, order)
+          expect(result.ok).toBe(true)
+          if (!result.ok) {
+            continue
+          }
+          expect(result.winner).toHaveLength(2)
+          expect(result.winner[1].event.t).toBe('rot')
+          expect(result.superseded).toBe(3)
+          // Nothing the stolen key denied survives into the authoritative history.
+          const folded = impl.foldLog(did, result.winner)
+          expect(folded.ok && folded.states[folded.states.length - 1].deny.size).toBe(0)
+        }
+      })
+
       test('a superseding rotate wins a three-way tie regardless of presentation order', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)

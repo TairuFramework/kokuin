@@ -674,8 +674,11 @@ describe('resolveBranches() survives a hostile branch', () => {
   })
 
   test('still picks the winner when one exists', () => {
+    // `superseded` is 0, not 1: `[icp]` is a prefix of the winner, so it was extended rather than
+    // contradicted and none of its events were discarded. The hostile branch never folded, so
+    // nothing of it is counted either.
     const result = resolveBranches(did, [hostile, [icp, rot], [icp]])
-    expect(result).toEqual({ ok: true, winner: [icp, rot], superseded: 1 })
+    expect(result).toEqual({ ok: true, winner: [icp, rot], superseded: 0 })
   })
 
   test('reports no valid history when every branch is hostile', () => {

@@ -112,6 +112,107 @@ describe('resolveBranches()', () => {
     expect(result.superseded).toBe(0)
   })
 
+  // Regression: branches are compared at the point they diverge, not at their heads. A thief
+  // holding a current authority key cannot rotate — pre-rotation holds — but can sign an unlimited
+  // run of revokes, each advancing the sequence. Comparing heads made that run outrank the owner's
+  // recovering rotate outright, which is the one property superseding recovery exists to provide.
+  test('a recovering rotate beats an arbitrarily longer run of current-key events', () => {
+    const { did, icp } = build()
+    for (const length of [2, 3, 8]) {
+      const thief = [icp]
+      let prior = icp.event
+      for (let n = 0; n < length; n++) {
+        const rev = createRevoke(seed, 0, did, prior, `${victim}${n}`, { gen: 0, seq: 0 })
+        thief.push(rev)
+        prior = rev.event
+      }
+      const owner = [icp, createRotate(seed, 0, did, icp.event)]
+
+      const result = resolveBranches(did, [thief, owner])
+      expect(result.ok).toBe(true)
+      if (!result.ok) continue
+      expect(result.winner).toBe(owner)
+      // The rotate supersedes the event it forked from *and* everything the thief piled on after
+      // it — KERI's rule is "at that sequence number and every event after it on that branch".
+      expect(result.superseded).toBe(length)
+      // Nothing the thief denied survives into the authoritative history.
+      const folded = foldLog(did, result.winner)
+      expect(folded.ok && folded.states[folded.states.length - 1].deny.size).toBe(0)
+    }
+  })
+
+  // Duplicity is reported where the branches actually disagree, which for branches of unequal
+  // length is not their heads: the head digests would name events the other branch has no opinion
+  // about at all.
+  test('duplicity is reported at the divergence point, not at the heads', () => {
+    const { did, icp } = build()
+    const forkA = createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })
+    const forkB = createRevoke(seed, 0, did, icp.event, 'did:key:zOther', { gen: 0, seq: 0 })
+    const forkBNext = createRevoke(seed, 0, did, forkB.event, 'did:key:zThird', { gen: 0, seq: 0 })
+    const result = resolveBranches(did, [
+      [icp, forkA],
+      [icp, forkB, forkBNext],
+    ])
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.duplicity.gen).toBe(0)
+    expect(result.duplicity.seq).toBe(1)
+    expect(result.duplicity.digests).toEqual([digestOf(forkA.event), digestOf(forkB.event)].sort())
+  })
+
+  // A keyless attacker can still author one thing: an unknown, non-critical event, which the fold
+  // skips because it cannot know the type's rules. It establishes nothing and must not be able to
+  // contend for a position — otherwise appending one to a copy of the inception would turn every
+  // honest log into a duplicity report, which is a denial of service on the mechanism that detects
+  // a key-takeover fork.
+  test('a branch whose only extension is a skipped event cannot force duplicity', () => {
+    const { did, icp } = build()
+    const honest = [icp, createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })]
+    const noise = [
+      icp,
+      {
+        event: { v: 1, t: 'nop', i: did, g: 0, s: 1, p: digestOf(icp.event), crit: false },
+        sigs: [],
+      } as unknown as SignedEvent,
+    ]
+    expect(foldLog(did, noise).ok).toBe(true)
+
+    for (const order of [
+      [honest, noise],
+      [noise, honest],
+    ]) {
+      const result = resolveBranches(did, order)
+      expect(result.ok).toBe(true)
+      if (!result.ok) continue
+      expect(result.winner).toBe(honest)
+      // Nothing of substance was discarded: the skipped event was never state.
+      expect(result.superseded).toBe(0)
+    }
+  })
+
+  // Two branches padded with two *different* skipped events fold to the same head at the same
+  // length, so de-duplication has to break the tie on something other than arrival order.
+  test('the representative of a de-duplicated head does not depend on presentation order', () => {
+    const { did, icp } = build()
+    const noise = (tag: string) =>
+      [
+        icp,
+        {
+          event: { v: 1, t: tag, i: did, g: 0, s: 1, p: digestOf(icp.event), crit: false },
+          sigs: [],
+        } as unknown as SignedEvent,
+      ] as Array<SignedEvent>
+    const a = noise('nop')
+    const b = noise('pon')
+
+    const forward = resolveBranches(did, [a, b])
+    const backward = resolveBranches(did, [b, a])
+    expect(forward.ok && backward.ok).toBe(true)
+    if (!forward.ok || !backward.ok) return
+    expect(forward.winner).toBe(backward.winner)
+    expect(forward.superseded).toBe(backward.superseded)
+  })
+
   // Regression: precedence reads the folded position, never `branch[last].event.g`/`.s`. A skipped
   // event advances neither `gen` nor `seq` in the fold while carrying an `s` of its own on the
   // wire, so a branch padded with one used to read as a position ahead of the branch it is padding.
