@@ -676,6 +676,33 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
     ).resolves.not.toThrow()
   })
 
+  test('counts the capability checkCapability peels off against maxDepth', async () => {
+    // `checkCapability` splits `cap` into a head it verifies itself and a tail it hands to
+    // `checkDelegationChain`, so the bound applied to the tail alone admitted one more link than
+    // the default names. Five links must be refused at a default of four; four must pass.
+    const signers = Array.from({ length: 6 }, () => randomIdentity())
+    const capabilities = await buildDelegationChain(signers)
+    const invocation = {
+      iss: signers[signers.length - 1].id,
+      sub: signers[0].id,
+    } as CapabilityPayload
+
+    await expect(
+      checkCapability({ act: 'test', res: 'foo' }, {
+        ...invocation,
+        cap: [...capabilities].reverse(),
+      } as CapabilityPayload),
+    ).rejects.toThrow('delegation chain exceeds maximum depth of 4')
+
+    await expect(
+      checkCapability({ act: 'test', res: 'foo' }, {
+        ...invocation,
+        iss: signers[4].id,
+        cap: [...capabilities.slice(0, 4)].reverse(),
+      } as CapabilityPayload),
+    ).resolves.not.toThrow()
+  })
+
   test('respects custom maxDepth option', async () => {
     const signers = Array.from({ length: 5 }, () => randomIdentity())
 

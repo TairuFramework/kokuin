@@ -641,6 +641,16 @@ export async function checkCapability(
   if (head == null) {
     throw new Error('Invalid payload: no capability')
   }
+  // Count `head` against the bound here, because this entry point peels it off before
+  // `checkDelegationChain` applies the bound to what is left. Without this the default of four
+  // admits five links — one more than "maximum delegation links an offline verifier will walk"
+  // says, and the extra one is free to an attacker who controls the chain's length. The bound
+  // inside `checkDelegationChain` stays as it is: a direct caller passes the whole chain, so
+  // there `capabilities.length` already is the link count.
+  const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH
+  if (tail.length + 1 > maxDepth) {
+    throw new Error(`Invalid capability: delegation chain exceeds maximum depth of ${maxDepth}`)
+  }
   // Verify the leaf capability's own time claims at the resolved reference time
   // (`atTime` when provided, else now()), matching the delegation checks below.
   const capability = await verifyToken<CapabilityPayload>(head, {
