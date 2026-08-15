@@ -101,6 +101,34 @@ describe('verifyReset()', () => {
       false,
     )
   })
+
+  // A reset carries an empty deny set and no seal — that is what makes "blind reset" mean the same
+  // bytes for every holder of the same seed, which the branch selector relies on to treat two blind
+  // resets at one generation as idempotent rather than as a fork. The rule lives in `createReset`,
+  // which always emits `d: []` and no `a`; the checker enforces it too, so a reset carrying either —
+  // re-signed by the real recovery key, so only a dedicated check can reject it — does not fold as a
+  // reset that clears-then-repopulates the deny set or anchors where a reset never should.
+  test('rejects a reset carrying a non-empty deny snapshot', () => {
+    const { inception } = setup()
+    const signed = createReset(seed, 0, 1)
+    const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
+    const event = { ...signed.event, d: ['did:key:zStillDenied'] }
+    const sigs = signEvent(event, [recovery.privateKey])
+    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
+      false,
+    )
+  })
+
+  test('rejects a reset carrying a seal', () => {
+    const { inception } = setup()
+    const signed = createReset(seed, 0, 1)
+    const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
+    const event = { ...signed.event, a: digestOf('an anchored grant') }
+    const sigs = signEvent(event, [recovery.privateKey])
+    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
+      false,
+    )
+  })
 })
 
 describe('the recovery commitment is fixed at inception', () => {

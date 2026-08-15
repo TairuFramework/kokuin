@@ -1,7 +1,7 @@
 import type { SignedEvent } from './events.js'
 import { type FoldOptions, foldLogAsync, type KeyState } from './fold.js'
 import { allStatesAsync } from './state.js'
-import { resolveBranchesAsync } from './supersede.js'
+import { needsCapabilityVerification, resolveBranchesAsync } from './supersede.js'
 
 /**
  * Where a consumer keeps the last log it accepted for a DID, so the next one can be compared
@@ -69,10 +69,14 @@ export function createMemoryLogStore(): LogStore {
  * whichever of them it kept. Identity would therefore reject the commonest call there is — the same
  * unchanged log, loaded again.
  *
- * A stored log that no longer folds is treated as no memory rather than as a refusal. Only a log
- * that folded is ever stored, so this means local corruption or a fold rule that has since tightened
- * — a package upgrade, say — and refusing forever on either would brick every profile the consumer
- * had cached. The guarantee it costs is one round: the next accepted log becomes the new baseline.
+ * A stored log that no longer folds is treated as no memory rather than as a refusal — but only when
+ * the reason is that it genuinely no longer folds. Local corruption or a fold rule that has since
+ * tightened (a package upgrade) is one round of the guarantee to give up, since only a folded log was
+ * ever stored and refusing forever would brick every cached profile. A stored log that fails to fold
+ * solely because this call has no `verifyCapability` for a capability-authorised revoke it carries is
+ * the opposite case: nothing about the remembered log has changed, the call is simply not equipped to
+ * check it, and treating that as no memory would disable the truncation guard for management-tier
+ * profiles. That case fails closed instead — see the check inside.
  *
  * The states are returned rather than the log alone so the caller does not fold twice; the log
  * travels with them for the store.
@@ -90,6 +94,19 @@ export async function authoritativeStates(
   }
   const previous = await foldLogAsync(did, seen, options)
   if (!previous.ok) {
+    // A stored log that fails only because this call cannot check a capability is a different case
+    // from one that no longer folds, and the two must not share an answer. "The fold rule tightened"
+    // is safe to treat as no memory: only a log that folded was ever stored, so refusing forever
+    // would brick every cached profile, and the cost is one round of the guarantee. "I remember a
+    // management-tier log and was handed no verifier for it" is not that — it is a call not equipped
+    // to check what it remembers, and accepting the loaded log there disables the truncation guard
+    // for exactly the profiles that use the management tier: an attacker serving a prefix that stops
+    // before the cap-authorised `rev` denying their device folds cleanly with no verifier and is
+    // accepted, because the fuller log this party already holds is the one that could not be folded.
+    // Fail closed: what could not be checked is not evidence that what it protects against is absent.
+    if (needsCapabilityVerification(previous)) {
+      throw new Error(`${LOG_NOT_AUTHORITATIVE}: ${did}`)
+    }
     return { log: loaded, states }
   }
 

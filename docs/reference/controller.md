@@ -106,7 +106,7 @@ createRotate(seed, profile, did, prior, {
 })
 ```
 
-`keyPosition` matters because a `rev` advances `s` without establishing a key, so the log's sequence and the derivation index part company at the first revoke of a generation **and never rejoin**. It is optional where the default is provably right and checked either way: `createRotate` verifies the key it is about to reveal against the prior event's own commitment and throws rather than emitting an event no fold would accept.
+`keyPosition` matters because a `rev` advances `s` without establishing a key, so the log's sequence and the derivation index part company at the first revoke of a generation **and never rejoin**. It is optional where the default is provably right and checked either way: when the seed is the log's own root — every legitimate caller — `createRotate` verifies the key it is about to reveal against the prior event's own commitment and throws rather than emitting an event no fold would accept. Building a rotate from a foreign seed (what the conformance suite does to construct adversarial events) skips that check, because a mismatch there says nothing about the position — the commitment was written by other key material entirely; the fold is the backstop that rejects such an event.
 
 `denySnapshot` **replaces** the accumulated deny set rather than adding to it — that is the only way to prune one, and it is why the option is named for what it does. Build it with `pruneDenySet(state, drop)`; writing one by hand and forgetting an entry silently un-revokes a device or un-retires a leaked key, with nothing in the log to say so.
 
@@ -115,7 +115,7 @@ createRotate(seed, profile, did, prior, {
 Adds one target to the deny set. The target has two spellings and they cannot collide:
 
 - a **DID** denies a *holder*: no capability whose `aud` is that DID is valid from this position onward. One entry covers that device for its life, including capabilities the verifier has never seen and future re-mints.
-- `#<the multibase key exactly as it appears in k>` denies a *signer*: nothing this profile signed with that key verifies from this position onward. The same spelling a token's `kid` uses.
+- `#<the multibase key exactly as it appears in k>` denies a *signer*: nothing this profile signed with that key verifies from this position onward. The same spelling a token's `kid` uses. "From this position onward" is the fold-internal rule — `states[i]` denies the key at every position `i` after the `rev`. The resolver answers a different, live question ("is this key usable *now*") and so evaluates a key denial against the **head** deny set, not the position a token's `kid` selects at, exactly as `aud` denials are evaluated against the current state: an author-supplied position must not let a thief resolve at a moment before the key was denied. The two agree because the deny set only grows within a generation, so the head's set contains every earlier position's.
 
 A key the profile **currently publishes** cannot be denied — the fold refuses such an event. Rotate first, then deny the key the rotate retired. Rotation is what an active compromise calls for, and its pre-rotation commitment is something the holder of the leaked key cannot forge; denial is for what the rotate leaves behind.
 

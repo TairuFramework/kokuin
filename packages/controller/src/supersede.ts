@@ -122,7 +122,7 @@ function spineDigest(folded: FoldedBranch, j: number): string {
  * and treating the two alike means a healthy profile resolves to "no valid history at all". Matched
  * by prefix against the fold's exported reasons, which is the contract those constants exist for.
  */
-function needsCapabilityVerification(result: FoldResult): boolean {
+export function needsCapabilityVerification(result: FoldResult): boolean {
   return (
     !result.ok &&
     (result.reason.startsWith(CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD) ||

@@ -294,3 +294,75 @@ describe('D6 — a truncated log is refused when one further along has been seen
     expect((await resolver.resolveDenySet?.(did))?.size).toBe(0)
   })
 })
+
+describe('D6b — the truncation guard fails closed when the stored log needs a verifier', () => {
+  // A management-tier log folds only with a `verifyCapability`. If a later resolution has no verifier
+  // configured, the stored (full) log fails to fold — for want of the verifier, not because anything
+  // about it changed. Treating that as "no memory" accepted whatever prefix was served next, which
+  // disables the truncation guard for exactly the profiles that use the management tier: a peer
+  // serving a prefix that stops before the cap-authorised `rev` denying their device wins, because
+  // the fuller log this party already holds is the one that could not be folded.
+  const cSeed = new Uint8Array(32).fill(7)
+  const delegateSeed = new Uint8Array(32).fill(3)
+  const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+  const cap = 'eyJ.delegated.revoke'
+  const authorised = {
+    authorised: true as const,
+    audienceKey: {
+      alg: 'EdDSA' as const,
+      publicKey: deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
+    },
+  }
+
+  function capLog() {
+    const icp = createInception(cSeed, 0)
+    const did = didFromInception(icp.event)
+    // Signed by the delegate, so only the capability it carries authorises it — foldable only async
+    // and only with a verifier.
+    const rev = createRevoke(delegateSeed, 0, did, icp.event, device, { gen: 0, seq: 0 }, { cap })
+    return { icp, did, full: [icp, rev] as Array<SignedEvent> }
+  }
+
+  test('a prefix served to a verifier-less reader is refused, not accepted as no memory', async () => {
+    const { icp, did, full } = capLog()
+    const store = createMemoryLogStore()
+
+    // Stored while a verifier was configured: the management-tier log folds and is remembered.
+    const configured = createControllerResolver({
+      loadLog: async () => full,
+      history: store,
+      verifyCapability: async () => authorised,
+    })
+    expect([...(await denySet(configured, did))]).toEqual([device])
+
+    // Same store, a reader with no verifier now, served the prefix that stops before the cap-revoke.
+    // The prefix folds cleanly without a verifier; the fuller stored log does not.
+    const unconfigured = createControllerResolver({
+      loadLog: async () => [icp],
+      history: store,
+    })
+    await expect(unconfigured.resolveDenySet?.(did)).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
+  })
+
+  test('CONTROL — the same truncation is refused with a verifier too, so the fix only aligns the two', async () => {
+    const { icp, did, full } = capLog()
+    const store = createMemoryLogStore()
+    const verifyCapability = async () => authorised
+
+    const first = createControllerResolver({
+      loadLog: async () => full,
+      history: store,
+      verifyCapability,
+    })
+    expect([...(await denySet(first, did))]).toEqual([device])
+
+    // A reader that still has the verifier refuses the same prefix — the branch comparison, not the
+    // missing verifier, is what rejects it. The no-verifier path now matches this.
+    const second = createControllerResolver({
+      loadLog: async () => [icp],
+      history: store,
+      verifyCapability,
+    })
+    await expect(second.resolveDenySet?.(did)).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
+  })
+})

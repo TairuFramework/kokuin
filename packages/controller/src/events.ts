@@ -609,6 +609,16 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
   if (!isPublishedRotate(event)) {
     return false
   }
+  // A reset carries an empty deny set and nothing else optional — see {@link createReset}. The
+  // idempotency the branch selector relies on ("two blind resets at one generation produce identical
+  // bytes, so they de-duplicate rather than fork") lives in the generator, which always emits `d: []`
+  // and no seal; enforcing it here too keeps a reset carrying a non-empty `d` or a seal from folding
+  // as a valid reset that clears-then-repopulates the deny set or anchors where a reset never should.
+  // Only the recovery-key holder can sign one, so this is not an attacker's event — it is the one
+  // rule that makes "blind reset" mean the same bytes for every holder of the same seed.
+  if (event.a !== undefined || event.d == null || event.d.length !== 0) {
+    return false
+  }
   if (!Array.isArray(sigs) || sigs.length !== 1) {
     return false
   }
