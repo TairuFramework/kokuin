@@ -39,7 +39,7 @@ const rootCapStr = stringifyToken(rootCap)
 ```
 
 **Key points**:
-- `act` and `res` follow `/`-separated path patterns; a trailing `*` is the only wildcard form (`docs/*` is valid; `docs/*/edit` is not)
+- `act` and `res` follow `/`-separated path patterns; a trailing `*` is the only wildcard form (`docs/*` is valid; `docs/*/edit` is not). A component may hold letters, digits, `_ - . : #` — `#` because a `did:kokuin:` revoke target may be a key fragment, and the revoke permission is `{ act: 'revoke', res: <target> }`
 - `sub` is the resource owner (root DID); `aud` is who may present or re-delegate this capability
 - `exp` is recommended — capabilities without expiry must be revoked explicitly
 

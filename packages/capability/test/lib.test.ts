@@ -930,6 +930,30 @@ describe('assertValidPattern() (M-06)', () => {
     expect(() => assertValidPattern(['test/read', 'test/write'])).not.toThrow()
     expect(() => assertValidPattern(['test/read', '../bad'])).toThrow('Invalid pattern')
   })
+
+  test('accepts a key fragment, which a revoke permission names as its resource', () => {
+    // A `did:kokuin:` `rev` may target a key, spelled `#<multibase key>`, and the revoke permission
+    // is `{ act: 'revoke', res: <target> }`. Without `#` the only grant that could authorise
+    // revoking a key would be `res: '*'` — a wildcard has to be a whole component — so delegating
+    // "retire this one leaked key" would have meant delegating "revoke anything".
+    expect(() =>
+      assertValidPattern('#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'),
+    ).not.toThrow()
+    // Still not a licence for wildcards inside a component.
+    expect(() => assertValidPattern('#z6Mk*')).toThrow('Invalid pattern')
+  })
+
+  test('a key fragment matches itself and nothing else', () => {
+    // `#` is inert to the matcher: components are compared whole. Asserted rather than assumed,
+    // because widening the character class is only safe if it adds no matching behaviour.
+    const key = '#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+    const other = '#z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
+    expect(hasPermission({ act: 'revoke', res: key }, { act: 'revoke', res: key })).toBe(true)
+    expect(hasPermission({ act: 'revoke', res: key }, { act: 'revoke', res: other })).toBe(false)
+    // A wildcard still covers it, and the fragment does not become one.
+    expect(hasPermission({ act: 'revoke', res: key }, { act: 'revoke', res: '*' })).toBe(true)
+    expect(hasPermission({ act: 'revoke', res: other }, { act: 'revoke', res: key })).toBe(false)
+  })
 })
 
 describe('createCapability() - delegation validation (C-03)', () => {

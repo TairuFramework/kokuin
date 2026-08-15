@@ -185,6 +185,35 @@ describe('createControllerCapabilityVerifier()', () => {
     if (second.ok) expect(second.states[1].deny.has(bystander)).toBe(true)
   })
 
+  test('a key target goes through the same `res` check as a DID target', async () => {
+    // A `rev` target may name a key — `#<the multibase key exactly as it appears in `k`>` — and the
+    // permission model must not have a hole at the new spelling: the target is still what `res`
+    // has to cover. A wildcard management grant covers it, an exactly-matching grant covers it, and
+    // a grant naming some other resource does not.
+    //
+    // The controller here is a single-event log, so the key it publishes is current and cannot be
+    // denied. This exercises the authorisation half; the fold's refusal to deny a current key is
+    // `controller/test/fold.test.ts`.
+    const retired = '#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+
+    const wildcard = await foldWithCapability(await mintCapability({ res: '*' }), { deny: retired })
+    expect(wildcard.ok).toBe(true)
+    if (wildcard.ok) expect(wildcard.states[1].deny.has(retired)).toBe(true)
+
+    const exact = await foldWithCapability(await mintCapability({ res: retired }), {
+      deny: retired,
+    })
+    expect(exact.ok).toBe(true)
+
+    // Control: the same key target, a grant that names a different resource. Without it, an
+    // implementation that skipped the `res` check whenever the target started with `#` would pass
+    // both rows above.
+    const mismatched = await foldWithCapability(await mintCapability({ res: bystander }), {
+      deny: retired,
+    })
+    expect(mismatched.ok).toBe(false)
+  })
+
   test('a capability whose `res` names a different DID does not authorise the revoke', async () => {
     const result = await foldWithCapability(await mintCapability({ res: bystander }))
 

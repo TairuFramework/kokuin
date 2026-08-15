@@ -179,9 +179,22 @@ function isStringOrStringArray(value: unknown): value is string | Array<string> 
   return false
 }
 
-// Valid pattern: alphanumeric, hyphens, underscores, dots, colons, slashes, and trailing wildcard
-// Components are separated by '/'. Wildcard '*' is only valid as the entire last component.
-const VALID_COMPONENT_RE = /^[a-zA-Z0-9_\-.:]+$/
+// Valid pattern: alphanumeric, hyphens, underscores, dots, colons, the DID fragment marker, slashes,
+// and a trailing wildcard. Components are separated by '/'. Wildcard '*' is only valid as the entire
+// last component.
+//
+// `#` is here because a resource may be a key. A `did:kokuin:` `rev` event names its target either
+// as a DID or as `#<the multibase key exactly as it appears in `k`>` — the `kid` spelling — and the
+// revoke permission is `{ act: 'revoke', res: <target> }`. Without `#` the *only* grant that could
+// authorise revoking a key would be `res: '*'`, since a wildcard has to be a whole component: an
+// owner delegating "you may retire this one leaked key" would have had to delegate "you may revoke
+// anything", which is the opposite of what an attenuated grant is for.
+//
+// Widening this set cannot invalidate an existing capability, and `#` is inert to the matcher —
+// components are compared whole, only `/` separates and only a standalone `*` wildcards, so `#abc`
+// matches `#abc` and nothing else. It is not a licence for arbitrary punctuation: each addition has
+// to name the resource vocabulary that needs it.
+const VALID_COMPONENT_RE = /^[a-zA-Z0-9_\-.:#]+$/
 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional check for control characters
 const CONTROL_CHAR_RE = /[\x00-\x1f]/
 
