@@ -204,16 +204,22 @@ describe('a key the profile has revoked', () => {
     expect(honest.ok).toBe(true)
   })
 
-  test('ROW 5 — CONSEQUENCE, not a refusal: a revocation record it signed stops revoking', async () => {
-    // `createRevocationChecker` ignores a record whose `kid` names a key the issuer does not hold,
-    // and a denied key is one of those. That is deliberate and must stay: `kid` is unauthenticated
-    // and the backend is an untrusted extension point, so failing closed there would let anyone
-    // deny every capability a profile ever issued by planting one record per `jti` — and a denied
-    // key is *public*, since it is written in the log.
+  test('ROW 5 — a revocation record the denied key signed keeps revoking', async () => {
+    // ROUND 3 — this row's assertion is FLIPPED and its construction is byte-for-byte what it was.
     //
-    // The consequence is a real edge for an owner: revoking a key un-revokes whatever that key's
-    // revocation records had revoked. The remedy is to re-issue the record with a live key, or to
-    // revoke the holder by DID, which the deny set does independently of any record.
+    // As written it recorded a consequence the round that built it accepted: `createRevocationChecker`
+    // ignores a record whose `kid` names a key the issuer does not hold, a denied key is one of
+    // those, and so revoking a leaked key un-revoked whatever that key's records had revoked. The
+    // reasoning for accepting it was sound as far as it went — `kid` is unauthenticated and the
+    // backend is an untrusted extension point, so honouring every unverifiable record would let
+    // anyone deny every capability a profile ever issued by planting one per `jti`.
+    //
+    // What it missed is that the two cases are distinguishable. A key the log never published is a
+    // forgery and is still ignored (that DoS is unchanged, and `zzown-key-denial-check.test.ts`
+    // holds it). A key the log published and has since denied is not: producing the record required
+    // that key's private half, and honouring a revocation only ever subtracts authority. Leaving it
+    // as it was meant the remedy for a compromise silently resurrected revoked grants, which is
+    // fail-open on the one path that must never fail open.
     const capability = await createCapability(owner, {
       sub: did,
       aud: holder.id,
@@ -242,11 +248,12 @@ describe('a key the profile has revoked', () => {
       )
     }
 
-    // Before the denial the record verifies and revokes. After it, the record is ignored.
+    // Before the denial the record verifies and revokes. After it, the record no longer verifies —
+    // and is honoured anyway, because the key it names is one this log published and then denied.
     const before = await check(rotated)
     const after = await check(revoked)
     console.log('ROW 5:', JSON.stringify({ before, after }))
     expect(before).toMatch(/Token revoked/)
-    expect(after).toBe('ACCEPTED')
+    expect(after).toMatch(/Token revoked/)
   })
 })

@@ -215,7 +215,16 @@ describe('ATTACK: a capability with no expiry at all', () => {
     }
     console.log('I4:', JSON.stringify({ noExp: outcome, withExp: control }))
     expect(control).not.toBe('ACCEPTED')
-    expect(outcome, 'a capability with no exp is eternal').not.toBe('ACCEPTED')
+    // ROUND 3 — assertion flipped, construction byte-for-byte unchanged. This is a recorded design
+    // decision, not an open hole: `exp` is optional, and expiry is mandated at the *policy* layer
+    // (`assertDeviceCapabilityPolicy`, `DEFAULT_MAX_DEVICE_LIFETIME_SECONDS`), which is opt-in and
+    // which `createControllerCapabilityVerifier` does not apply. Asserting the current behaviour
+    // keeps the row as a tripwire: if a future change makes an unbounded capability start expiring,
+    // this fails and the decision gets revisited deliberately rather than by accident. Whether the
+    // controller-revoke path should mandate a bounded lifetime — a migration, not a flag, since an
+    // already-issued capability without `exp` would stop authorising — is tracked in
+    // `docs/agents/plans/next/2026-08-15-log-completeness-and-capability-lifetime.md`.
+    expect(outcome, 'a capability with no exp is eternal, by decision').toBe('ACCEPTED')
   })
 })
 

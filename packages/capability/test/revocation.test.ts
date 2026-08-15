@@ -160,7 +160,10 @@ describe('revocation', () => {
     // The backend verifies on the way in, so a record signed by an already-denied key could not be
     // stored through it. This is a record stored while the key was live, read back afterwards.
     const stored = await bySignedKey(deniedKid)
-    const denied = createRevocationChecker({ add: async () => {}, get: async () => stored }, options)
+    const denied = createRevocationChecker(
+      { add: async () => {}, get: async () => stored },
+      options,
+    )
     await expect(denied(capability, stringifyToken(capability))).rejects.toThrow('revoked')
 
     // CONTROL — a key this DID never published is a forgery, and honouring it would let anyone
