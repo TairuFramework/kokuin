@@ -464,19 +464,21 @@ describe('a malformed event its own author signed', () => {
   })
 
   for (const value of [42, {}, [], ['a'], true]) {
-    test(`a revoke whose \`cap\` is ${JSON.stringify(value)} is rejected, not thrown`, async () => {
-      // `cap` is handed straight to the verifier, which is caller code: a non-string reaches
-      // `verifyToken` and throws there, and the fold has to turn that into a reason.
+    test(`a revoke whose \`cap\` is ${JSON.stringify(value)} never reaches the verifier`, async () => {
+      // `cap` crosses a `(cap: string, …)` callback boundary into caller code, and it used to cross
+      // it unchecked — `x`, the member right beside it, was type-checked and this was not. It is now
+      // the fold's rejection, so caller code is never handed a `cap` that is not a string.
       const evil = signedRevoke('cap', value)
+      const malformed = {
+        ok: false,
+        reason: 'revoke capability is not a serialized token',
+        index: 1,
+      }
       let sync: unknown
       expect(() => {
         sync = foldLog(did, [icp, evil])
       }).not.toThrow()
-      expect(sync).toEqual({
-        ok: false,
-        reason: `capability-authorised revoke needs an async fold: ${String(value)}`,
-        index: 1,
-      })
+      expect(sync).toEqual(malformed)
 
       const seen: Array<unknown> = []
       await expect(
@@ -486,14 +488,26 @@ describe('a malformed event its own author signed', () => {
             throw new Error(`cap is ${typeof cap}`)
           },
         }),
-      ).resolves.toEqual({
-        ok: false,
-        reason: `capability verifier failed: cap is ${typeof value}`,
-        index: 1,
-      })
-      expect(seen).toEqual([value])
+      ).resolves.toEqual(malformed)
+      expect(seen).toEqual([])
     })
   }
+
+  test('a revoke whose `cap` is a string still reaches the verifier', async () => {
+    // Control for the five rows above: the same construction with the one member well formed. The
+    // rejection there is the type of `cap`, not the fold having stopped supporting capabilities.
+    const good = signedRevoke('cap', 'header.payload.signature')
+    const seen: Array<unknown> = []
+    await expect(
+      foldLogAsync(did, [icp, good], {
+        verifyCapability: async (cap) => {
+          seen.push(cap)
+          return { authorised: false, reason: 'declined' }
+        },
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'declined', index: 1 })
+    expect(seen).toEqual(['header.payload.signature'])
+  })
 
   test('an unmutated inception still folds', () => {
     // Control for both rows above: the same re-signing path with nothing changed.
@@ -528,23 +542,31 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
     return JSON.parse(json)
   }
 
-  /** The rotate carrying `a`, re-signed, so only the depth guard can reject it. */
-  function rotateWithSeal(seal: unknown): SignedEvent<RotateEvent> {
-    const event = { ...rot.event, a: seal } as unknown as RotateEvent
+  /**
+   * The rotate carrying a member no verifier reads, re-signed, so only the depth guard can reject
+   * it.
+   *
+   * `zz` rather than `a`: the seal is type-checked to a digest string now, so an over-deep `a` is
+   * rejected for being the wrong type and would certify the depth guard without running it. An
+   * unknown member is also the general case — an event may carry anything, and the depth guard
+   * exists for whatever that turns out to be.
+   */
+  function rotateWithDeepMember(value: unknown): SignedEvent<RotateEvent> {
+    const event = { ...rot.event, zz: value } as unknown as RotateEvent
     return JSON.parse(
       JSON.stringify({ event, sigs: signEvent(event, [authority(1).privateKey]) }),
     ) as SignedEvent<RotateEvent>
   }
 
   // The event body is the top-level value the canonicalizer sees, so it is depth 1 and the value of
-  // its `a` member is depth 2. `nest(n)` puts its string n levels below that.
+  // its `zz` member is depth 2. `nest(n)` puts its string n levels below that.
   const deepestAccepted = MAX_CANONICAL_DEPTH - 2
   const shallowestRejected = MAX_CANONICAL_DEPTH - 1
 
   test(`a body reaching exactly ${MAX_CANONICAL_DEPTH} levels folds`, () => {
     // The control, and the reason the bound is a bound rather than a rejection of nesting: a log
     // this deep is canonicalized, hashed and accepted like any other.
-    const result = foldLog(did, [icp, rotateWithSeal(nest(deepestAccepted))])
+    const result = foldLog(did, [icp, rotateWithDeepMember(nest(deepestAccepted))])
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.states[1].keys).toEqual(rot.event.k)
@@ -555,7 +577,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
     // the depth guard has to run before the signature check rather than instead of it.
     const log = [
       icp,
-      { ...rot, event: { ...rot.event, a: nest(shallowestRejected) } },
+      { ...rot, event: { ...rot.event, zz: nest(shallowestRejected) } },
     ] as Array<SignedEvent>
     expect(foldLog(did, log)).toEqual({ ok: false, reason: 'malformed event', index: 1 })
     await expect(foldLogAsync(did, log)).resolves.toEqual({
@@ -577,8 +599,8 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
       { ok: false, reason: 'malformed event', index: 0 },
     ],
     [
-      'a rotate whose seal is 5000 levels deep',
-      wire([icp, { ...rot, event: { ...rot.event, a: abyss() } }]),
+      'a rotate carrying an unread member 5000 levels deep',
+      wire([icp, { ...rot, event: { ...rot.event, zz: abyss() } }]),
       { ok: false, reason: 'malformed event', index: 1 },
     ],
     [

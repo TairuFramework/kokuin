@@ -6,6 +6,8 @@ import {
   createRevokeWithKey,
   createRotate,
   didFromInception,
+  type EventCommon,
+  type SignedEvent,
 } from '../src/events.js'
 import { foldLog } from '../src/fold.js'
 import { resolveBranches } from '../src/supersede.js'
@@ -19,8 +21,11 @@ describe('C1 independent reproduction', () => {
     // The thief holds the CURRENT authority private key (position 0,0) and nothing else.
     // It cannot rotate — pre-rotation holds — but it can append revokes.
     const stolen = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
-    const thief = [inception]
-    let prior = inception.event
+    // Annotated, not narrowed by inference: the array is a log and the cursor walks event types,
+    // so `[inception]` inferring `SignedEvent<InceptionEvent>[]` made `test:types` fail on the
+    // first `push`. Construction below is untouched.
+    const thief: Array<SignedEvent> = [inception]
+    let prior: EventCommon = inception.event
     for (let n = 0; n < 3; n++) {
       const rev = createRevokeWithKey(stolen.privateKey, did, prior, `did:kokuin:zVictim${n}`)
       thief.push(rev)

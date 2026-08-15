@@ -43,7 +43,18 @@ and a deny set instead of a separate revocation registry.
 Key decisions worth keeping:
 
 - **One authority key per generation. No quorum, no thresholds** — the seed is the root, so a
-  threshold over seed-derived keys is theatre.
+  threshold over seed-derived keys is theatre. The wire format carries `kt` and `nt` anyway, and
+  they are **checked against what the fold enforces**: n-of-n, so `kt` must equal `k.length` and
+  `nt` must equal `n.length`, and anything else is a malformed event. They were unread for a while,
+  which inside a format the DID derivation freezes is a trap — a reader would take `kt: 1` over two
+  keys as a policy, and the fold would demand both signatures regardless. Pinned to the enforcement
+  they are a fact instead, and if quorum ever lands the check moves with it and every log written
+  until then still means what it said.
+- **The seal `a` on a rotate is opaque to the fold on purpose**, and that is what separates it from
+  the removed `r`: its meaning belongs to whatever anchored it and no key state can contradict it.
+  What the fold owes it is that a non-string `a` is a malformed event, so a reader that finds one
+  can read it as the digest it claims to be. It is deliberately not surfaced in `KeyState` — it
+  belongs to a position, and the events are in the caller's hands already.
 - **Three custody tiers.** Root seed (Ledger or cold mnemonic) may rotate, reset, clear the deny set
   and mint the management capability. The management capability is hot and long-lived, mints device
   capabilities, and holds **no key-event authority beyond `revoke`** — it cannot rotate, cannot

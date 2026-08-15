@@ -324,11 +324,17 @@ function stepEvent(
     if (rev.event.g !== prior.gen || rev.event.s !== prior.seq + 1) {
       return { status: 'fail', reason: 'sequence gap' }
     }
-    // The one member of a revoke the fold reads rather than verifies. It goes into the deny set —
+    // The two members of a revoke the fold reads rather than verifies. `x` goes into the deny set —
     // a `ReadonlySet<string>` — and, for a capability-authorised revoke, into the verifier as the
     // resource being asked for, where a wildcard grant would happily authorise denying `undefined`.
     if (typeof rev.event.x !== 'string') {
       return { status: 'fail', reason: 'revoke names no target' }
+    }
+    // `cap` crosses a `(cap: string, …)` callback boundary into caller-supplied code, which is the
+    // one place in this package where a wire value is handed to something that cannot have checked
+    // it. `x` immediately above was checked and this was not, which is the whole of the reason.
+    if (rev.event.cap !== undefined && typeof rev.event.cap !== 'string') {
+      return { status: 'fail', reason: 'revoke capability is not a serialized token' }
     }
     const deny = new Set(prior.deny)
     deny.add(rev.event.x)

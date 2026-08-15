@@ -155,3 +155,47 @@ describe('verifyInception()', () => {
     expect(verifyInception(tampered, did)).toBe(false)
   })
 })
+
+describe('the published thresholds mean what the fold enforces', () => {
+  // `kt` and `nt` were published, digested into the event — and therefore into the DID — declared
+  // in the type with real semantics, and read by nothing. The fold enforces n-of-n and only n-of-n:
+  // `verifySignatures` wants one valid signature per published key, and `verifyRotate` wants every
+  // committed key revealed and signing. So the only threshold these can truthfully carry is the
+  // size of the set they govern, and anything else is an event whose own declaration contradicts
+  // the rule it will be judged by. Inside a wire format the DID derivation freezes, a field nothing
+  // reads is a trap for the next reader.
+  function inceptionWith(patch: Record<string, unknown>) {
+    const base = createInception(seedA, 0)
+    const event = { ...base.event, ...patch } as unknown as InceptionEvent
+    const current = deriveKeyPair(seedA, authorityPath(0, 0, 0), 'EdDSA')
+    const signed = { event, sigs: signEvent(event, [current.privateKey]) }
+    return { signed, did: didFromInception(event) }
+  }
+
+  test('the generator publishes the enforced thresholds', () => {
+    const { event } = createInception(seedA, 0)
+    expect(event.kt).toBe(event.k.length)
+    expect(event.nt).toBe(event.n.length)
+  })
+
+  for (const kt of [0, 2, 99, -1, '1', null, undefined, true]) {
+    test(`an inception declaring kt=${JSON.stringify(kt)} over one key is rejected`, () => {
+      const { signed, did } = inceptionWith({ kt })
+      expect(verifyInception(signed, did)).toBe(false)
+    })
+  }
+
+  for (const nt of [0, 2, 99, '1', null, undefined]) {
+    test(`an inception declaring nt=${JSON.stringify(nt)} over one commitment is rejected`, () => {
+      const { signed, did } = inceptionWith({ nt })
+      expect(verifyInception(signed, did)).toBe(false)
+    })
+  }
+
+  test('control: the same re-signing path with truthful thresholds verifies', () => {
+    // Every rejection above is the threshold and not the rebuild — the body goes through the same
+    // spread, the same signature and the same DID derivation.
+    const { signed, did } = inceptionWith({ kt: 1, nt: 1 })
+    expect(verifyInception(signed, did)).toBe(true)
+  })
+})

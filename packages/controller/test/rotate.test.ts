@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { digestOf } from '../src/canonical.js'
+import { canonicalBytes, digestOf } from '../src/canonical.js'
 import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
@@ -259,5 +259,66 @@ describe('createRotate() refuses to emit an event the fold would reject', () => 
       reason: 'invalid rotate',
       index: 1,
     })
+  })
+})
+
+describe('a rotate`s thresholds and seal are checked', () => {
+  // The rotate half of what `inception.test.ts` pins for an inception, plus the seal. `a` stays
+  // opaque to the fold by design — its meaning belongs to whatever anchored it, and no key state
+  // can contradict it — but it is a digest string on the wire, so a reader that finds one can read
+  // it as one.
+  function rotateWith(patch: Record<string, unknown>) {
+    const { inception, did, priorDigest } = setup()
+    const base = createRotate(seed, 0, did, inception.event)
+    const event = { ...base.event, ...patch } as unknown as typeof base.event
+    const key = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
+    return {
+      signed: { event, sigs: signEvent(event, [key.privateKey]) },
+      prior: { digest: priorDigest, n: inception.event.n },
+      did,
+      inception,
+    }
+  }
+
+  for (const patch of [
+    { kt: 0 },
+    { kt: 2 },
+    { kt: '1' },
+    { kt: null },
+    { kt: undefined },
+    { nt: 0 },
+    { nt: 2 },
+    { nt: null },
+    { a: 42 },
+    { a: {} },
+    { a: ['zAbc'] },
+    { a: true },
+  ]) {
+    test(`a rotate carrying ${JSON.stringify(patch)} is rejected`, () => {
+      const { signed, prior, did, inception } = rotateWith(patch)
+      expect(verifyRotate(signed, prior)).toBe(false)
+      expect(foldLog(did, [inception, signed])).toEqual({
+        ok: false,
+        reason: 'invalid rotate',
+        index: 1,
+      })
+    })
+  }
+
+  test('control: a well-formed seal is carried through, and an absent one is not `null`', () => {
+    // Both arms of the seal check, so what the rows above reject is the type. And the generator's
+    // own output never encodes an absent `a` at all — `canonicalize` drops undefined members — so
+    // the digest of a sealless rotate does not depend on the member existing.
+    const { signed, prior, did, inception } = rotateWith({ a: 'zSomeExternalDigest' })
+    expect(verifyRotate(signed, prior)).toBe(true)
+    expect(foldLog(did, [inception, signed]).ok).toBe(true)
+
+    const sealed = createRotate(seed, 0, did, inception.event, { seal: 'zSomeExternalDigest' })
+    expect(sealed.event.a).toBe('zSomeExternalDigest')
+    const plain = createRotate(seed, 0, did, inception.event)
+    expect(plain.event.a).toBeUndefined()
+    // The member is present-and-undefined on the object and absent from the encoding — the
+    // canonicalizer drops undefined members — so a sealless rotate's digest does not depend on it.
+    expect(new TextDecoder().decode(canonicalBytes(plain.event))).not.toContain('"a"')
   })
 })

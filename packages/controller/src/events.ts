@@ -45,9 +45,15 @@ export type InceptionEvent = EventCommon & {
   ka: Array<string>
   /** Digests of the next public keys — pre-rotation. */
   n: Array<string>
-  /** Signing threshold. */
+  /**
+   * Signing threshold: how many of `k` must sign. **Must equal `k.length`** — see
+   * {@link isEnforcedThreshold}.
+   */
   kt: number
-  /** Rotation threshold. */
+  /**
+   * Rotation threshold: how many of the keys `n` commits must sign the next rotate. **Must equal
+   * `n.length`** — see {@link isEnforcedThreshold}.
+   */
   nt: number
   /**
    * Digest of the recovery key. Root-retained, and **immutable for the life of the DID** — the
@@ -76,6 +82,29 @@ export type SignedEvent<E extends EventCommon = EventCommon> = {
 export function signEvent(event: EventCommon, privateKeys: Array<Uint8Array>): Array<string> {
   const bytes = canonicalBytes(event)
   return privateKeys.map((key) => base64urlnopad.encode(ed25519.sign(bytes, key)))
+}
+
+/**
+ * Whether a published threshold agrees with what the fold actually enforces.
+ *
+ * `kt` and `nt` were published, digested into the event — and therefore into the DID, for an
+ * inception — declared in the type with real semantics, and read by nothing. The fold enforces
+ * n-of-n and only n-of-n: {@link verifySignatures} requires one valid signature per published key,
+ * and {@link verifyRotate} requires every key the prior event committed to be revealed and to sign.
+ * So the only threshold these fields can truthfully carry is the size of the set they govern, and
+ * anything else — `99`, `0`, `-5`, `"banana"`, `null`, an absent member — is an event whose own
+ * declaration contradicts the rule it will be judged by.
+ *
+ * That is a malformed event rather than a policy this package might one day honour. Inside a wire
+ * format fixed by the DID derivation, a field nothing reads is a trap for the next reader; a field
+ * pinned to what is enforced is a fact. If quorum ever lands, the check moves with the enforcement
+ * and every log written until then still means what it said.
+ *
+ * The comparison is `===` against the length, so a string `"1"` fails: the value is wire data, and
+ * a threshold that has to be coerced to be read is not a threshold.
+ */
+function isEnforcedThreshold(threshold: unknown, keys: Array<string>): boolean {
+  return threshold === keys.length
 }
 
 /**
@@ -266,6 +295,14 @@ export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string
   ) {
     return false
   }
+  // An inception is self-certifying, so *any* body an attacker writes is a valid log for the DID it
+  // hashes to — which is exactly why the thresholds it publishes have to mean something.
+  if (
+    !isEnforcedThreshold(signed.event.kt, signed.event.k) ||
+    !isEnforcedThreshold(signed.event.nt, signed.event.n)
+  ) {
+    return false
+  }
   if (didFromInception(signed.event) !== did) {
     return false
   }
@@ -286,11 +323,22 @@ export type RotateEvent = EventCommon & {
   ka: Array<string>
   /** Digests of the next public keys — pre-rotation. */
   n: Array<string>
-  /** Signing threshold. */
+  /** Signing threshold: how many of `k` must sign. **Must equal `k.length`.** */
   kt: number
-  /** Rotation threshold. */
+  /** Rotation threshold: how many of `n` must sign the next rotate. **Must equal `n.length`.** */
   nt: number
-  /** Seal: an anchored external digest, used to pin a high-value grant to a log position. */
+  /**
+   * Seal: an anchored external digest, pinning a high-value grant to this log position.
+   *
+   * Opaque to the fold **by design**, and that is the difference between this and the `r` that was
+   * removed: a seal's whole job is to be an anchor whose meaning belongs to whatever produced it,
+   * and nothing in the key state can contradict it. What the fold owes it is that it cannot ride in
+   * as something other than a digest string — a non-string `a` is a malformed event, checked in
+   * {@link isPublishedRotate} — so a reader that finds one can read it as one.
+   *
+   * Not surfaced in `KeyState`: it belongs to a position, not to the key state, and the events are
+   * in the caller's hands already.
+   */
   a?: string
   /** Deny-set snapshot. Replaces the accumulated set, pruning it. */
   d?: Array<string>
@@ -426,6 +474,11 @@ function isPublishedRotate(event: RotateEvent): boolean {
   return (
     isKeyList(event.k) &&
     isKeyList(event.n) &&
+    isEnforcedThreshold(event.kt, event.k) &&
+    isEnforcedThreshold(event.nt, event.n) &&
+    // A seal is opaque to the fold, but it is still a digest string on the wire — see
+    // `RotateEvent.a`. A non-string one is a member a reader would have to guess at.
+    (event.a == null || typeof event.a === 'string') &&
     (event as { r?: unknown }).r === undefined &&
     // The deny snapshot replaces the accumulated set, so the fold builds a `Set` from it. A scalar
     // `d` is not iterable and throws there; a string `d` would silently become a set of characters.

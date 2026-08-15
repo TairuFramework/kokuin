@@ -50,7 +50,10 @@ describe('wire types the fold never checks', () => {
     expect(skipped).toEqual(['false'])
   })
 
-  test('ROW 3: `cap` is handed to the verifier unvalidated, unlike `x` right above it', async () => {
+  // CLOSED. `cap` is type-checked in `stepEvent` beside `x`, so caller-supplied verifier code is
+  // never handed a `cap` that is not a string. Construction untouched; the assertion is inverted
+  // and the control below — which already showed `x` being checked — now shows the two agreeing.
+  test('ROW 3 (closed): `cap` is checked in `stepEvent`, like `x` right above it', async () => {
     const { icp, did } = build()
     const rev = createRevoke(delegateSeed, 0, did, icp.event, target, { gen: 0, seq: 0 })
     // One field mutated: `cap` set to a non-string. `x` is type-checked in `stepEvent`; `cap` is
@@ -61,14 +64,20 @@ describe('wire types the fold never checks', () => {
     } as unknown as SignedEvent
 
     let seenType = 'never called'
-    await foldLogAsync(did, [icp, forged], {
+    const result = await foldLogAsync(did, [icp, forged], {
       verifyCapability: async (cap) => {
         seenType = `${typeof cap}: ${JSON.stringify(cap)}`
         return { authorised: false, reason: 'declined' }
       },
     })
     console.log('verifier received cap as', seenType)
-    expect(seenType).toMatch(/^object/)
+    console.log('fold answered:', result.ok ? 'ACCEPTED' : `rejected — ${result.reason}`)
+    expect(seenType).toBe('never called')
+    expect(result).toEqual({
+      ok: false,
+      reason: 'revoke capability is not a serialized token',
+      index: 1,
+    })
 
     // CONTROL: the same event with `x` — the field right beside it — set to a non-string is
     // rejected by the fold before the verifier is reached.
@@ -86,5 +95,21 @@ describe('wire types the fold never checks', () => {
     console.log('CONTROL non-string `x`:', control.ok ? 'ACCEPTED' : `rejected — ${control.reason}`)
     console.log('CONTROL verifier called:', called)
     expect(called).toBe(false)
+
+    // Second control: the same event with a well-formed string `cap` does reach the verifier, so
+    // the rejection above is the member's type and not the capability path having gone away.
+    const wellFormed = {
+      ...rev,
+      event: { ...rev.event, cap: 'header.payload.signature' },
+    } as unknown as SignedEvent
+    let reached: unknown = 'never called'
+    await foldLogAsync(did, [icp, wellFormed], {
+      verifyCapability: async (cap) => {
+        reached = cap
+        return { authorised: false, reason: 'declined' }
+      },
+    })
+    console.log('CONTROL string `cap` reached the verifier:', reached)
+    expect(reached).toBe('header.payload.signature')
   })
 })
