@@ -135,6 +135,25 @@ fully carried:
   artefacts survive a rotate" as licence to let a compromised key keep issuing *new* ones. The
   implementation could not tell the two apart, so it granted both; splitting the surface is what
   tells them apart.
+- **A `rev` may name a key, and that is what retires one for material it has already signed.** The
+  split above left a hole on the capability path, where `historic: true` is unconditional and has to
+  be: head-only resolution there would invalidate every outstanding capability on a routine rotate,
+  and would make a revocation record signed by a since-rotated key raise `IssuerKeyNotFoundError` —
+  which the revocation checker swallows, silently un-revoking, on the one path that must never fail
+  open. The cost, demonstrated in `packages/capability/test/zzown-historic-mint.test.ts`, was that a
+  leaked, since-rotated authority key could mint a *fresh* `act: '*', res: '*'` capability naming a
+  device the thief controlled. Rotation cannot be the fix without breaking the promise that a rotate
+  does not invalidate already-issued material, so retirement is explicit: a `rev` target spelled
+  `#<the multibase key exactly as it appears in `k`>` — the `kid` spelling, in the same deny set,
+  where the two forms cannot collide. Enforcement lives in `signingKeyFrom`, through which every
+  `did:kokuin:` signature check reaches a resolved key, so it covers `verifyToken` on both settings
+  of `historic`, everything `@kokuin/capability` verifies, and the fold's own capability-authorised
+  revoke; `agreementKeysFrom` drops a denied key so the other half of what a profile publishes is
+  not left inert. Read at the **head**, unlike a DID denial, which is read at the position being
+  verified: a key denial is a statement about the key, and the position an artefact carries is
+  author-supplied. Denying a key the profile *currently* publishes is refused — `rotate` is the
+  event a live compromise calls for, and a capability-authorised `rev` with a wildcard `res` would
+  otherwise let the management tier stop the root tier from signing with one event.
 - A capability-authorised revoke is verified **at the log position it sits at**. The fold hands the
   verifier a resolver over the preceding states rather than asking the caller for a prefix — a
   caller configures a resolver once per DID with no way to know which event is asking, so it can
@@ -202,7 +221,11 @@ no versioning intent exists yet for any package, and `@kokuin/token` carries an 
 while `@kokuin/controller` has breaking signature changes and `@kokuin/capability` gains public API
 plus a new hard denial. A changelog note is needed because several rounds of fail-closed turn former
 silent passes into hard failures — a consumer upgrading sees new denials that are correct but read
-as regressions. `@kokuin/controller` should join the co-bump group: it sits across three contracts
+as regressions. Key revocation adds to that list: `resolveDenySet` now answers with a heterogeneous
+set (a consumer that enumerates it rather than matching against it sees `#`-prefixed entries), the
+fold rejects two shapes it used to accept (`revoke names a key the profile publishes`, `rotate
+establishes a denied key`), and a `kid` naming a revoked key is a new `IssuerKeyNotFoundError` on
+both resolution members. `@kokuin/controller` should join the co-bump group: it sits across three contracts
 nothing enforces (the `verifyCapability` callback, `CapabilityAuthorisation`, and the exported
 reason strings). A new `@kokuin/controller` against an older `@kokuin/token` dies with an ESM link
 error on a named import, so the peer range matters and not just the version number.

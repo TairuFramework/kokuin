@@ -141,9 +141,28 @@ hardware in hand, at the moment speed matters most.
 
 ### Revocation on the log
 
-`revoke` adds a DID to a **deny set**: no capability whose `aud` is that DID is valid from that
-position onward. It names the device DID rather than a capability `jti`, so it is one entry per
-device for that device's life and it covers capabilities the verifier has never seen.
+`revoke` adds an entry to a **deny set**, in one of two spellings.
+
+A **DID** denies a *holder*: no capability whose `aud` is that DID is valid from that position
+onward. It names the device DID rather than a capability `jti`, so it is one entry per device for
+that device's life and it covers capabilities the verifier has never seen.
+
+A **key** — `#<the multibase key exactly as it appears in `k`>`, the spelling a token's `kid`
+already uses — denies a *signer*: nothing the profile signed with that key verifies from that
+position onward. This is the middle rung of the remedy ladder made complete. `rotate` retires a
+leaked key for *new* issuance, because `resolve` answers from the head alone; it deliberately does
+not touch material the profile has already issued, since `resolveHistoric` exists precisely so a
+routine rotation does not invalidate outstanding capabilities held by third parties who cannot know
+a rotation happened. Without an explicit key denial, a thief holding a leaked, since-rotated
+authority key could still mint a *fresh* wildcard capability that verified through the historic
+path — which is where `@kokuin/capability` verifies every capability and every revocation record.
+So retirement is an event, not a side effect: rotate to stop new issuance, then revoke the key to
+end what it already signed.
+
+A key the profile *currently* publishes cannot be denied — the fold rejects the event. Rotate
+first: the pre-rotation commitment is what the holder of a leaked key cannot forge, so `rotate` is
+the event that answers a live compromise. Allowing the denial would also let a management-tier
+device, whose `res` is normally a wildcard, stop the root tier from signing at all with one event.
 
 This narrows the design's weakest cost. Capability revocation propagation is best-effort — kubun's
 `kubun_revoked_capabilities` table, per-author rows keyed `(jti, revoker_did)`, LWW within one
@@ -154,6 +173,13 @@ expiry only for those that have not heard.
 
 The deny set is position-dependent state: clearing a DID at a later position does not retroactively
 validate its earlier actions. The hot key may add; only cold key-event authority may clear.
+
+The two spellings are enforced at opposite ends of that one set, and the *evaluation position*
+differs with the question being asked. A DID denial is read at the position being verified — the
+whole question is whether this author was allowed to act *here*. A key denial is read at the head,
+because it is a statement about the key rather than about one event, and the position an artefact
+carries is author-supplied: a thief would otherwise present a token whose `kid` reaches back to a
+position before the revoke.
 
 ### Devices hold capabilities, not document entries
 

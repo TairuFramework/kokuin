@@ -11,10 +11,14 @@ capability whose `aud` has been denied is rejected, at the leaf and at every int
 delegation chain. Reproduced end to end during development, with the control that a non-denied
 audience still verifies against the same log.
 
-`verifyToken` consults nothing. A device the profile has revoked signs an ordinary token and it
-verifies, with the deny set sitting right there in the resolved state. So a consumer authenticating
-a device by plain token — rather than by presenting a capability — gets no denial from revocation at
-all.
+`verifyToken` consults the deny set for one thing only, and it is not this one. A `rev` naming a
+**key** (`#<multibase key>`) is enforced inside the resolver, so a token signed by a revoked key of
+the profile itself is refused there — but that is the profile denying its own signing key, not the
+profile denying a device. A device the profile has revoked signs an ordinary token with its **own**
+key, resolved through its own method (`did:key`, `did:peer:4`), which knows nothing about this
+profile's deny set. So a consumer authenticating a device by plain token — rather than by presenting
+a capability — still gets no denial from revocation at all, with the deny set sitting right there in
+the resolved state of a profile nothing thought to ask about.
 
 This matches the design's own wording, which says only that no *capability* whose `aud` is that DID
 is valid from the revoke position onward. Whether that wording is what was actually wanted is the
@@ -29,6 +33,11 @@ cannot be added where the gap is — it needs either a new input at the call sit
 
 There is also no `isDenied` helper today. The deny set reaches consumers only through
 `DIDMethodResolver.resolveDenySet`, which is the shape `@kokuin/capability` needed.
+
+One consequence of the key-denial work to carry into any helper: the set is **heterogeneous**. It
+holds DIDs and `#<multibase key>` fragments in one collection, deliberately, so that a wrapper
+cannot forward one rule and drop the other. The two forms cannot collide, so membership tests stay
+exact — but a helper that *enumerates* the set as a list of revoked devices would be wrong.
 
 ## Work
 

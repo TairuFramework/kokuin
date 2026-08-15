@@ -485,6 +485,43 @@ any claim whose subject is the profile rather than a device
   evaluated against the log's **current** head, never against a position the capability names —
   `iat` is author-supplied and backdatable. A profile clears a denial with a deny-set snapshot
   (`createRotate(…, { deny: [] })`) or with a `reset`
+- **A `rev` can also deny a key, and that is what retires a leaked one for what it has already
+  signed.** The target is spelled `keyTarget(key)` — `#<the multibase key exactly as it appears in
+  `k`>`, the same spelling a `kid` uses — and it rides the same deny set, so `resolveDenySet`
+  answers with both forms. They cannot collide, so **match against the set, never enumerate it**:
+  ask whether the DID you hold is present. Enforcement is not on the `resolveDenySet` side at all —
+  `createControllerResolver` refuses to resolve a denied key, so `verifyToken` rejects such a token
+  under **both** `resolve` and `resolveHistoric`, and `resolveAgreementKey` drops a denied agreement
+  key. Nothing to wire, and no consumer that has to remember the rule.
+
+  Why it exists: `rotate` retires a key for *new* issuance only, because `resolve` is head-only —
+  it deliberately leaves already-issued material verifying, which is what `resolveHistoric` is for
+  and what `@kokuin/capability` uses for every capability and every revocation record. So a leaked,
+  since-rotated authority key could still mint a fresh capability that verified. The remedy ladder
+  is therefore rotate **then** revoke-the-key: the first stops new issuance, the second ends what
+  the key already signed.
+
+  ```typescript
+  import { createRevoke, keyTarget } from '@kokuin/controller'
+
+  // `head` is the fold's head state — `keyGen`/`keySeq`, not `gen`/`seq`.
+  const rev = createRevoke(seed, 0, did, prior, keyTarget(leakedKey), {
+    gen: head.keyGen,
+    seq: head.keySeq,
+  })
+  ```
+
+  **A key the profile currently publishes cannot be denied** — the fold rejects the event with
+  `revoke names a key the profile publishes`, and rejects a rotate that would establish a key its
+  own deny set names. Rotate first. The reasons are that `rotate` is the event a live compromise
+  actually calls for (its pre-rotation commitment is what the leaked key cannot forge), and that a
+  `rev` may be capability-authorised — so allowing it would let a management-tier device with a
+  wildcard `res` stop the root tier from signing with a single event. The invariant this buys is
+  that a folded head's `k` and `ka` never contain a denied key, so a reader may take them at face
+  value. A denial is cleared the same way a DID denial is: a `d` snapshot or a `reset`
+
+  The error is `Controller <did> kid names a key the controller has revoked: #<key>`, an
+  `IssuerKeyNotFoundError` like every other `kid` failure — see the classification note below
 - **Key selection**: a controller's `k` is a *set*. Every token `createControllerIdentity` signs
   carries `kid: "#<the multibase key exactly as it appears in `k`>"`, and the resolver matches that
   against the folded key sets by membership. A header with no `kid` still resolves to the head's
@@ -498,8 +535,9 @@ any claim whose subject is the profile rather than a device
   already-issued capability, a revocation record — which a routine rotate must not invalidate,
   including copies held by third parties who cannot know a rotation happened. A `reset` invalidates
   even those: it bumps the generation, and every key from the prior one stops resolving under either
-  member. A `kid` naming a key this profile never published, or one outside what the member answers
-  for, is an error — never a fall back to `k[0]`
+  member. So does an explicit `rev` naming the key, which is the *only* way to stop historic
+  resolution short of a reset. A `kid` naming a key this profile never published, one outside what
+  the member answers for, or one the profile has revoked, is an error — never a fall back to `k[0]`
 - `@kokuin/capability` sets `historic: true` for you on every capability in a chain and on every
   revocation record, so a delegation keeps working across a rotate with nothing to wire. **A
   hand-written `DIDMethodResolver` must publish `resolveHistoric`** for that to work: the member is
