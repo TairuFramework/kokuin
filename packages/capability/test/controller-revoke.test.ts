@@ -5,7 +5,6 @@ import {
   createInception,
   createRevoke,
   createRevokeWithKey,
-  createRotate,
   deriveKeyPair,
   didFromInception,
   encodeKey,
