@@ -175,3 +175,89 @@ describe('verifyRotate()', () => {
     expect(verifyRotate({ event, sigs }, { digest: priorDigest, n: inception.event.n })).toBe(false)
   })
 })
+
+describe('createRotate() refuses to emit an event the fold would reject', () => {
+  // `keyPosition` is where the currently-active authority key lives, and it decides which key gets
+  // derived. Defaulted from `prior.s`, it is right only while the log's sequence and its derivation
+  // index still coincide — and a `rev` advances `s` while establishing no key, so after the first
+  // revoke of a generation they part company and never rejoin. A wrong position produced a
+  // well-formed, correctly signed event that no fold would ever accept, and said nothing at emit
+  // time. It is checked here against `prior`'s own pre-rotation commitment, which is in the
+  // argument already.
+  const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+
+  test('the default is refused on a rotate chained onto a revoke', () => {
+    const { inception, did } = setup()
+    const rev = createRevoke(seed, 0, did, inception.event, target, { gen: 0, seq: 0 })
+
+    expect(() => createRotate(seed, 0, did, rev.event)).toThrow(/pre-commits no key/)
+    // Control: the same rotate with the position the fold would name folds cleanly, so what was
+    // refused is the missing position and not the shape of the log.
+    const good = createRotate(seed, 0, did, rev.event, { keyPosition: { gen: 0, seq: 0 } })
+    expect(foldLog(did, [inception, rev, good]).ok).toBe(true)
+  })
+
+  test('the default is refused on a rotate two events past a revoke, not just the next one', () => {
+    // The case a "pass it after a revoke" rule misses: `s` stays ahead of the derivation index for
+    // the rest of the generation, so this rotate's prior is an ordinary `rot` and the default is
+    // still wrong. Here it is caught by the commitment rather than by the missing-`n` rule.
+    const { inception, did } = setup()
+    const rev = createRevoke(seed, 0, did, inception.event, target, { gen: 0, seq: 0 })
+    const rot = createRotate(seed, 0, did, rev.event, { keyPosition: { gen: 0, seq: 0 } })
+
+    expect(() => createRotate(seed, 0, did, rot.event)).toThrow(/pre-committed/)
+    const good = createRotate(seed, 0, did, rot.event, { keyPosition: { gen: 0, seq: 1 } })
+    expect(foldLog(did, [inception, rev, rot, good]).ok).toBe(true)
+  })
+
+  test('an explicitly wrong position is refused too, not only a defaulted one', () => {
+    const { inception, did } = setup()
+
+    expect(() =>
+      createRotate(seed, 0, did, inception.event, { keyPosition: { gen: 0, seq: 5 } }),
+    ).toThrow(/pre-committed/)
+    expect(() =>
+      createRotate(seed, 0, did, inception.event, { keyPosition: { gen: 1, seq: 0 } }),
+    ).toThrow(/pre-committed/)
+    // Control: the right position — which is also the default here — emits and folds.
+    expect(
+      foldLog(did, [
+        inception,
+        createRotate(seed, 0, did, inception.event, { keyPosition: { gen: 0, seq: 0 } }),
+      ]).ok,
+    ).toBe(true)
+  })
+
+  test('every position of a revoke-heavy generation emits, and the whole log folds', () => {
+    // The end this exists for: a log stays rotatable after any number of revokes, and the deny-set
+    // snapshot — the "cold rotate" of the remedy ladder — rides on exactly such a rotate.
+    const { inception, did } = setup()
+    const a = createRevoke(seed, 0, did, inception.event, target, { gen: 0, seq: 0 })
+    const b = createRevoke(seed, 0, did, a.event, `${target}2`, { gen: 0, seq: 0 })
+    const cold = createRotate(seed, 0, did, b.event, { keyPosition: { gen: 0, seq: 0 }, deny: [] })
+    const c = createRevoke(seed, 0, did, cold.event, `${target}3`, { gen: 0, seq: 1 })
+    const last = createRotate(seed, 0, did, c.event, { keyPosition: { gen: 0, seq: 1 } })
+
+    const result = foldLog(did, [inception, a, b, cold, c, last])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.states.map((state) => state.keySeq)).toEqual([0, 0, 0, 1, 1, 2])
+  })
+
+  test('a seed that is not the log`s root is left alone — the fold is that layer', () => {
+    // The check asks "will my own log reject this", which has no answer for a profile this seed
+    // never inceptioned: the commitment was written by other key material entirely, so a mismatch
+    // says nothing about the position. Building a foreign rotate is something the conformance
+    // suite legitimately does, and the fold is what refuses it.
+    const { inception, did } = setup()
+    const foreign = new Uint8Array(32).fill(9)
+
+    const forged = createRotate(foreign, 0, did, inception.event)
+    expect(forged.event.t).toBe('rot')
+    expect(foldLog(did, [inception, forged])).toEqual({
+      ok: false,
+      reason: 'invalid rotate',
+      index: 1,
+    })
+  })
+})

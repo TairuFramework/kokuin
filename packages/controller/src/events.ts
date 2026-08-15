@@ -210,12 +210,25 @@ export function verifyEventSignedBy(signed: SignedEvent, key: ResolvedSigningKey
  * recovery would reproduce a different DID.
  */
 export function createInception(seed: Uint8Array, profile: number): SignedEvent<InceptionEvent> {
+  const event = inceptionEvent(seed, profile)
+  const current = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
+  return { event, sigs: signEvent(event, [current.privateKey]) }
+}
+
+/**
+ * The inception body alone, unsigned.
+ *
+ * Split out because {@link createRotate} needs the DID this seed and profile index produce in order
+ * to know whether it is the log's root, and signing an inception it will throw away to find out is
+ * the one expensive step in building one.
+ */
+function inceptionEvent(seed: Uint8Array, profile: number): InceptionEvent {
   const current = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
   const next = deriveKeyPair(seed, authorityPath(profile, 0, 1), 'EdDSA')
   const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
   const agreement = deriveKeyPair(seed, agreementPath(profile, 0, 0), 'X25519')
 
-  const event: InceptionEvent = {
+  return {
     v: 1,
     t: 'icp',
     g: 0,
@@ -228,8 +241,6 @@ export function createInception(seed: Uint8Array, profile: number): SignedEvent<
     nt: 1,
     r: digestOf(encodeKey(recovery.publicKey, 'EdDSA')),
   }
-
-  return { event, sigs: signEvent(event, [current.privateKey]) }
 }
 
 export function didFromInception(event: InceptionEvent): DIDString {
@@ -292,12 +303,18 @@ export type CreateRotateOptions = {
    * Where the currently-active authority key lives — the position of the last `icp`/`rot`, which
    * is the fold's `keyGen`/`keySeq`.
    *
-   * Defaults to `prior`'s own position, which is right whenever `prior` established a key. A `rev`
-   * does not (Amendment A), so a rotate chained onto one must pass this. Without it the rotate
-   * reveals a key one past the *revoke*, which nothing ever pre-committed — the event cannot fold,
-   * and a log becomes permanently unrotatable after its first revoke. That also takes the deny-set
-   * snapshot with it, since the "cold rotate clearing the deny set" of the spec's remedy ladder is
-   * exactly a rotate chained onto revokes.
+   * Defaults to `prior`'s own position, which is right only while the log's sequence and its
+   * derivation index still coincide: a `rev` advances `s` and establishes no key (Amendment A), so
+   * after the first revoke in a generation the two part company **and never rejoin**. It is not
+   * enough to pass this for the rotate that sits directly on a revoke — every rotate after one
+   * needs it too, because `s` stays ahead of the derivation index for the rest of the generation.
+   *
+   * Left optional rather than made required, and checked instead: {@link createRotate} verifies the
+   * key it is about to reveal against `prior`'s own pre-rotation commitment and throws when they
+   * disagree. That covers the wrong default and a wrong value alike, and it covers them for exactly
+   * the events the fold would reject — so the position is optional where it is provably right, and
+   * an error rather than an unfoldable event where it is not. Take it from `KeyState.keyGen` and
+   * `KeyState.keySeq`; those are the fold's own answer.
    */
   keyPosition?: { gen: number; seq: number }
 }
@@ -307,6 +324,18 @@ export type CreateRotateOptions = {
  * newly revealed keys, per KERI, which is what makes a stolen current key unable to rotate.
  *
  * Reproducible from the seed alone unless it carries a seal or a deny snapshot.
+ *
+ * **Throws rather than emitting an event the fold will reject.** The key a rotate reveals has to be
+ * the one `prior` pre-committed in `n`, and `options.keyPosition` is what decides which key gets
+ * derived — so a wrong or defaulted-wrong position used to produce a well-formed, correctly signed
+ * event that no fold would ever accept, with nothing said at emit time. The two are checked against
+ * each other here: `prior.n` is the commitment and it is right there in the argument.
+ *
+ * When `prior` carries no commitment to check against — a `rev`, which establishes no key —
+ * `keyPosition` is required, because there the default is provably wrong: it would derive a key one
+ * past the *revoke*, which nothing ever pre-committed. That case cannot be verified from `prior`
+ * alone, so it is the one place the caller is trusted, and `KeyState.keyGen`/`keySeq` is where the
+ * value comes from.
  */
 export function createRotate(
   seed: Uint8Array,
@@ -317,6 +346,23 @@ export function createRotate(
 ): SignedEvent<RotateEvent> {
   const gen = prior.g
   const seq = prior.s + 1
+  // The pre-rotation commitment the revealed key must match, when `prior` carries one. An `icp` and
+  // a `rot` do; a `rev` does not, and neither does a hand-built prior of any other shape.
+  const commitment = (prior as { n?: unknown }).n
+  const committed = isKeyList(commitment) && commitment.length > 0 ? commitment : undefined
+  // Every check below asks "will my own log reject this event", and that question only has an
+  // answer when this seed *is* the log's root. When it is not — a forgery built for a test, a
+  // hand-mutated prior, a profile this seed never inceptioned — a mismatch says nothing about the
+  // position, because the commitment was written by somebody else's key material entirely. Refusing
+  // there would turn this generator into something that cannot build a foreign rotate at all, which
+  // is a thing the conformance suite legitimately does; the fold is the layer that rejects it.
+  const root = didFromInception(inceptionEvent(seed, profile)) === did
+  if (root && committed == null && options.keyPosition == null) {
+    throw new Error(
+      'createRotate: prior event pre-commits no key, so keyPosition is required — pass the fold`s ' +
+        'KeyState.keyGen / keySeq for the position the last icp/rot established',
+    )
+  }
   // The log position and the derivation position are the same thing only until the first revoke —
   // see `CreateRotateOptions.keyPosition`. The key this rotate reveals is the one the last icp/rot
   // pre-committed, which sits one past *its* position, and the agreement key lands at the same
@@ -326,6 +372,22 @@ export function createRotate(
   const current = deriveKeyPair(seed, authorityPath(profile, keyGen, keySeq), 'EdDSA')
   const next = deriveKeyPair(seed, authorityPath(profile, keyGen, keySeq + 1), 'EdDSA')
   const agreement = deriveKeyPair(seed, agreementPath(profile, keyGen, keySeq), 'X25519')
+
+  if (root && committed != null) {
+    // Exactly what `verifyRotate` will check, checked here where the caller can still act on it.
+    // The arity first: this generator emits a single key, so a prior committing any other number
+    // of them has no rotate this function can produce.
+    const revealed = encodeKey(current.publicKey, 'EdDSA')
+    if (committed.length !== 1 || digestOf(revealed) !== committed[0]) {
+      throw new Error(
+        `createRotate: the key at (gen ${keyGen}, seq ${keySeq}) is not the one the prior event ` +
+          'pre-committed — pass options.keyPosition naming where the last icp/rot established a ' +
+          'key (the fold`s KeyState.keyGen / keySeq). A revoke advances `s` without establishing ' +
+          'one, so `s` and the derivation index part company at the first revoke of a generation ' +
+          'and stay apart.',
+      )
+    }
+  }
 
   const event: RotateEvent = {
     v: 1,
