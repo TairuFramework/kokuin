@@ -70,6 +70,38 @@ describe('criticality', () => {
     expect(result.states[1].seq).toBe(0)
   })
 
+  test('an unknown event with no `crit` member fails closed rather than skipping', () => {
+    // `crit` is wire data, and an absent member reads as `undefined`. Under a truthiness test that
+    // was the skip path, so an unknown type could opt out of criticality by saying nothing at all.
+    const { icp, did } = build()
+    const { event } = unknownEvent(did, icp, false)
+    const { crit: _crit, ...withoutCrit } = event
+    const result = foldLog(did, [icp, { event: withoutCrit as typeof event, sigs: [] }])
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toMatch(/no criticality flag/)
+  })
+
+  test('a skipped event may only claim the next sequence position', () => {
+    // The one event the fold accepts without checking a signature — it cannot, not knowing the
+    // type's rules — so its position must not be free wire data. `resolveBranches` orders branches
+    // by position, and a fabricated one is a branch nothing the controller authors can outrank.
+    const { icp, did } = build()
+    const skipped = unknownEvent(did, icp, false)
+    for (const [g, s] of [
+      [0, Number.MAX_SAFE_INTEGER],
+      [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
+      [1, 1],
+      [0, 0],
+      [0, 2],
+    ]) {
+      const result = foldLog(did, [icp, { ...skipped, event: { ...skipped.event, g, s } }])
+      expect(result).toEqual({ ok: false, reason: 'sequence gap', index: 1 })
+    }
+    // The truthful position still folds.
+    expect(foldLog(did, [icp, skipped]).ok).toBe(true)
+  })
+
   test('a revoke is critical, so a verifier that cannot read it never accepts the device', () => {
     const { icp, did } = build()
     const forged = {

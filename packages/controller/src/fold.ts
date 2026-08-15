@@ -212,8 +212,9 @@ type StepOutcome =
 /**
  * Validate one event against the state so far and produce the next state. Pure and total — every
  * rejection is a returned reason, never a throw. Criticality is decided here, so both fold entry
- * points inherit it: an unknown critical event fails closed, an unknown non-critical one is
- * skipped by carrying the prior state forward unchanged.
+ * points inherit it: an unknown critical event fails closed, an unknown event declaring
+ * `crit: false` at the next sequence position is skipped by carrying the prior state forward
+ * unchanged, and an unknown event that does neither fails closed too.
  */
 function stepEvent(
   did: string,
@@ -315,11 +316,34 @@ function stepEvent(
   // Unknown type. Criticality lives in the envelope precisely so this decision can be made
   // without understanding `t`. Failing closed on a critical event is what stops a verifier that
   // does not understand `rev` from accepting a revoked device.
-  if (event.crit) {
-    return { status: 'fail', reason: `unknown critical event type: ${String(event.t)}` }
+  //
+  // Only an explicit `crit: false` means "skip me". `crit` is wire data like everything else here,
+  // and an absent member reads as `undefined` — falsy — so a truthiness test let an attacker who
+  // simply *omitted* the flag claim the skip path for an event nobody could have understood. A
+  // criticality that cannot be read is not a criticality, so anything but `false` fails closed;
+  // the two reasons separate "declared critical" from "declared nothing".
+  if (event.crit !== false) {
+    return {
+      status: 'fail',
+      reason: event.crit
+        ? `unknown critical event type: ${String(event.t)}`
+        : `unknown event type with no criticality flag: ${String(event.t)}`,
+    }
   }
+
+  // A skipped event is the only one the fold accepts without verifying a signature — it cannot,
+  // since it does not know the type's rules — so it must not be allowed to claim a position it did
+  // not earn. `p` is already checked above; without this, `g` and `s` were free wire data on an
+  // unsigned event, and anything ordering branches by the raw head could be handed
+  // `Number.MAX_SAFE_INTEGER` by someone holding no key material at all. Nothing an honest peer
+  // appends is at any position but the next one.
+  if (event.g !== prior.gen || event.s !== prior.seq + 1) {
+    return { status: 'fail', reason: 'sequence gap' }
+  }
+
   // Non-critical: skip, carrying state forward unchanged so positions stay aligned with the input
-  // array.
+  // array. `seq` deliberately does not advance — the skipped event established nothing — so a run
+  // of consecutive skipped events all claim the same `s`.
   return { status: 'ok', state: { ...prior, digest: prior.digest } }
 }
 

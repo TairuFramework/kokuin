@@ -1,12 +1,15 @@
 import { describe, expect, test } from 'vitest'
 
+import { digestOf } from '../src/canonical.js'
 import {
   createInception,
   createReset,
   createRevoke,
   createRotate,
   didFromInception,
+  type SignedEvent,
 } from '../src/events.js'
+import { foldLog } from '../src/fold.js'
 import { resolveBranches } from '../src/supersede.js'
 
 const seed = new Uint8Array(32).fill(1)
@@ -107,6 +110,38 @@ describe('resolveBranches()', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.superseded).toBe(0)
+  })
+
+  // Regression: precedence reads the folded position, never `branch[last].event.g`/`.s`. A skipped
+  // event advances neither `gen` nor `seq` in the fold while carrying an `s` of its own on the
+  // wire, so a branch padded with one used to read as a position ahead of the branch it is padding.
+  test('a branch padded with a skipped event does not outrank the branch it pads', () => {
+    const { did, icp } = build()
+    const rot = createRotate(seed, 0, did, icp.event)
+    const honest = [icp, rot]
+    // Appended by someone holding no key material: an unknown, non-critical, unsigned event at the
+    // next sequence position, which is all the fold can ask of a type it cannot verify.
+    const padded = [
+      ...honest,
+      {
+        event: { v: 1, t: 'nop', i: did, g: 0, s: 2, p: digestOf(rot.event), crit: false },
+        sigs: [],
+      } as unknown as SignedEvent,
+    ]
+    expect(foldLog(did, padded).ok).toBe(true)
+
+    for (const order of [
+      [honest, padded],
+      [padded, honest],
+    ]) {
+      const result = resolveBranches(did, order)
+      expect(result.ok).toBe(true)
+      if (!result.ok) continue
+      // The same folded head, so the two are one history: the shorter representative is kept and
+      // nothing is reported as superseded.
+      expect(result.winner).toBe(honest)
+      expect(result.superseded).toBe(0)
+    }
   })
 
   // Beyond the brief's cases: with two thieves at the same position, a sequential pairwise

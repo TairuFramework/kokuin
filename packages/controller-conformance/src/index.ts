@@ -445,6 +445,13 @@ export function runControllerConformance(
     // 10. Criticality — an unknown critical event fails the fold closed; an unknown non-critical
     // one is skipped and the fold continues. Both directions are asserted so a fold that always
     // fails closed (or always skips) cannot pass the whole group.
+    //
+    // The skip path is the only one on which an implementation accepts an event without verifying
+    // a signature — it cannot, not knowing the type's rules — so the last two properties bound what
+    // that acceptance may claim. Criticality must be *declared*, not merely absent, and the event
+    // must sit at the position it says it does: an implementation that lets an unsigned event carry
+    // an arbitrary `(g, s)` hands branch selection to anyone who can read the log, since precedence
+    // is a position comparison.
     describe('criticality', () => {
       test('an unknown critical event fails the fold closed', () => {
         const icp = impl.createInception(seedA, 0)
@@ -473,6 +480,43 @@ export function runControllerConformance(
         // Skipped events carry the prior state forward unchanged, so the sequence does not
         // advance to the skipped event's own `s`.
         expect(result.states[1].seq).toBe(0)
+      })
+
+      test('an unknown event with no criticality flag fails closed', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const unknown = {
+          event: { v: 1, t: 'xyz', i: did, g: 0, s: 1, p: impl.digestOf(icp.event) },
+          sigs: [],
+        } as unknown as ConformanceSigned
+        const result = impl.foldLog(did, [icp, unknown])
+        expect(result.ok).toBe(false)
+      })
+
+      test('a skipped event claiming a position it does not hold is rejected', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        // The inception sits at (0, 0), so the only position this event may claim is (0, 1).
+        for (const position of [
+          { g: 0, s: Number.MAX_SAFE_INTEGER },
+          { g: Number.MAX_SAFE_INTEGER, s: Number.MAX_SAFE_INTEGER },
+          { g: 0, s: 0 },
+          { g: 0, s: 2 },
+          { g: 1, s: 1 },
+        ]) {
+          const unknown: ConformanceSigned = {
+            event: {
+              v: 1,
+              t: 'xyz',
+              i: did,
+              ...position,
+              p: impl.digestOf(icp.event),
+              crit: false,
+            },
+            sigs: [],
+          }
+          expect(impl.foldLog(did, [icp, unknown]).ok).toBe(false)
+        }
       })
     })
 
