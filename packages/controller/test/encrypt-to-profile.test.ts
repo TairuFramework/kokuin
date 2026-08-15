@@ -57,6 +57,10 @@ describe('encrypting to a did:kokuin: profile', () => {
       agreeKey: async (ephemeralPublicKey: Uint8Array) =>
         x25519.getSharedSecret(inceptionAgreement.privateKey, ephemeralPublicKey),
     }
-    await expect(decryptToken(inceptionRecipient, jwe)).rejects.toThrow(/invalid ghash tag/)
+    // The AEAD tag check is what rejects it. Match both spellings @noble/ciphers has used
+    // ("invalid ghash tag" before 2.3, "aes-gcm: invalid tag" from 2.3) so a patch bump does
+    // not read as a security regression, while still failing if the rejection came from
+    // anywhere other than authentication.
+    await expect(decryptToken(inceptionRecipient, jwe)).rejects.toThrow(/invalid (ghash )?tag/)
   })
 })
