@@ -63,16 +63,16 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     await invoke(delegate, cap).catch((e) => {
       before = e
     })
-    console.log('before the revoke:', before === 'accepted' ? 'ACCEPTED' : String(before))
+    // Before the revoke the same capability is accepted, so the refusal below is caused by the
+    // revoke and not by anything incidental to the capability.
+    expect(before).toBe('accepted')
 
     log = [inception, revokeOf(delegate.id)]
-    const folded = foldLog(did, log)
-    console.log('deny set at head:', folded.ok ? [...folded.states[1].deny] : 'n/a')
+    expect(foldLog(did, log).ok).toBe(true)
     let after: unknown = 'accepted'
     await invoke(delegate, cap).catch((e) => {
       after = e
     })
-    console.log('after the revoke:', after === 'accepted' ? 'ACCEPTED' : String(after))
     expect(String(after)).toMatch(/audience is revoked by the subject/)
   })
 
@@ -85,10 +85,6 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     await invoke(bystander, capB).catch((e) => {
       outcome = e
     })
-    console.log(
-      'non-denied audience against the same revoking log:',
-      outcome === 'accepted' ? 'ACCEPTED' : String(outcome),
-    )
     expect(outcome).toBe('accepted')
   })
 
@@ -119,16 +115,10 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     } as unknown as SignedEvent
     log = [inception, revoke, forged]
     const folded = foldLog(did, log)
-    console.log('log with the forged tail folds:', folded.ok)
-    console.log('deny set at head:', folded.ok ? [...folded.states[2].deny] : 'n/a')
     let outcome: unknown = 'accepted'
     await invoke(delegate, cap).catch((e) => {
       outcome = e
     })
-    console.log(
-      'revoked device after the forged tail:',
-      outcome === 'accepted' ? 'ACCEPTED' : String(outcome),
-    )
     expect(folded.ok).toBe(false)
     expect(outcome).not.toBe('accepted')
     expect(String(outcome)).toMatch(/sequence gap at event 2/)
@@ -141,7 +131,6 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     await invoke(delegate, cap).catch((e) => {
       control = e
     })
-    console.log('CONTROL without the forged tail:', String(control))
     expect(String(control)).toMatch(/audience is revoked by the subject/)
   })
 
@@ -157,7 +146,6 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     ).catch((e) => {
       outcome = e
     })
-    console.log('unloadable log:', outcome === 'accepted' ? 'ACCEPTED' : String(outcome))
     expect(outcome).not.toBe('accepted')
   })
 
@@ -165,8 +153,6 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     const device = await randomIdentity()
     const long = device.id
     const short = normalizeDID(long)
-    console.log('identity id is the long form:', long !== short)
-    console.log('normalizeDID(short) === short:', normalizeDID(short) === short)
 
     // (a) revoke recorded in the SHORT form, capability audience in the LONG form.
     log = [inception]
@@ -176,7 +162,6 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     await invoke(device, capLong).catch((e) => {
       a = e
     })
-    console.log('revoke=short, aud=long ->', a === 'accepted' ? 'ACCEPTED (evasion)' : 'refused')
 
     // (b) revoke recorded in the LONG form, capability audience in the SHORT form.
     log = [inception]
@@ -186,10 +171,8 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     await invoke(device, capShort).catch((e) => {
       b = e
     })
-    console.log(
-      'revoke=long,  aud=short ->',
-      b === 'accepted' ? 'ACCEPTED (evasion)' : `refused: ${String(b)}`,
-    )
+    // Both spellings are refused: the deny check matches the audience in either form.
     expect(String(a)).toMatch(/audience is revoked/)
+    expect(String(b)).toMatch(/audience is revoked/)
   })
 })

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest'
 
 import { checkCapability, createCapability } from '../src/index.js'
 
-describe('K3 independent reproduction — attenuation at the last hop', () => {
+describe('attenuation at the last hop (independent reproduction)', () => {
   test('a narrowed sub-capability cannot wield the parent wildcard grant', async () => {
     const profile = await randomIdentity()
     const manager = await randomIdentity()
@@ -33,18 +33,14 @@ describe('K3 independent reproduction — attenuation at the last hop', () => {
     } catch (err) {
       refused = (err as Error).message
     }
-    console.log('narrow grant:', narrow.payload.act, narrow.payload.res)
-    console.log('revoke refused with:', refused ?? 'NOT REFUSED — ATTACK SUCCEEDED')
 
     // Control: the same capability used for what it actually grants must still work.
     let allowed = true
     try {
       await checkCapability({ act: 'read', res: 'doc:A' }, narrow.payload as never)
-    } catch (err) {
+    } catch {
       allowed = false
-      console.log('CONTROL FAILED — in-grant request refused:', (err as Error).message)
     }
-    console.log('control (read doc:A) allowed:', allowed)
 
     expect(refused).toBeDefined()
     expect(allowed).toBe(true)

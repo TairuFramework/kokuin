@@ -45,7 +45,6 @@ describe('MAX_CANONICAL_DEPTH: both directions', () => {
       } catch {
         /* recorded above */
       }
-      console.log(`depth ${depth}: withinCanonicalDepth=${within} canonicalBytes=${encoded}`)
       expect(within).toBe(encoded !== 'THREW')
     }
   })
@@ -55,21 +54,18 @@ describe('MAX_CANONICAL_DEPTH: both directions', () => {
     // log for the DID it hashes to. The member nests 63, putting the whole body at 64.
     const base = createInception(seed, 0).event
     const event = { ...base, deep: nest(MAX_CANONICAL_DEPTH - 1) } as unknown as InceptionEvent
-    console.log('body within depth (expect true):', withinCanonicalDepth(event))
     const did = didFromInception(event)
     const signed: SignedEvent<InceptionEvent> = {
       event,
       sigs: signEvent(event, [authorityPrivateKey]),
     }
     const r = foldLog(did, [signed])
-    console.log('depth-64 valid inception folds:', r.ok, r.ok ? '' : r.reason)
     expect(r.ok).toBe(true)
   })
 
   test('ROW 3: the same event one level deeper is REJECTED with a reason, not a throw', () => {
     const base = createInception(seed, 0).event
     const event = { ...base, deep: nest(MAX_CANONICAL_DEPTH) } as unknown as InceptionEvent
-    console.log('body within depth (expect false):', withinCanonicalDepth(event))
     const did = didFromInception(base)
     const signed = { event, sigs: [] } as unknown as SignedEvent
     let thrown: unknown
@@ -79,7 +75,6 @@ describe('MAX_CANONICAL_DEPTH: both directions', () => {
     } catch (error) {
       thrown = error
     }
-    console.log('result:', result, '| threw:', thrown)
     expect(thrown).toBeUndefined()
     expect(result).toEqual({ ok: false, reason: 'malformed event', index: 0 })
   })
@@ -94,15 +89,12 @@ describe('MAX_CANONICAL_DEPTH: both directions', () => {
     } catch (error) {
       thrown = error
     }
-    console.log('200k-deep foldLog result:', result, '| threw:', thrown)
     expect(thrown).toBeUndefined()
     expect(result).toEqual({ ok: false, reason: 'malformed event', index: 0 })
   })
 
   test('ROW 5: `verifyDigest` answers false rather than throwing on over-deep input', () => {
     const d = digestOf({ a: 1 })
-    console.log('verifyDigest(over-deep):', verifyDigest(d, nest(MAX_CANONICAL_DEPTH + 1)))
-    console.log('verifyDigest(matching):', verifyDigest(d, { a: 1 }))
     expect(verifyDigest(d, nest(MAX_CANONICAL_DEPTH + 1))).toBe(false)
     expect(verifyDigest(d, { a: 1 })).toBe(true)
   })

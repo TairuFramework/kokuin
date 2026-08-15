@@ -93,7 +93,6 @@ describe('a key the profile has revoked', () => {
     const token = await mint(thief, holder.id)
     const before = await outcome(() => verifyToken(token, { methods: registry(rotated) }))
     const after = await outcome(() => verifyToken(token, { methods: registry(revoked) }))
-    console.log('ROW 1:', JSON.stringify({ before, after }))
     // The reason is deliberately recorded as *unchanged*. A key the profile publishes cannot be
     // denied and a rotate cannot establish a denied key, so on any log this package folds a denied
     // key is never in the head's `k` — `headSigningKey` turns it away before the deny check is
@@ -115,7 +114,6 @@ describe('a key the profile has revoked', () => {
     )
     // Control: the identical call, one event earlier in the log, accepts. Historic resolution is
     // designed to survive a rotate — that is the whole reason an explicit denial had to exist.
-    console.log('ROW 2:', JSON.stringify({ before, after }))
     expect(before).toBe('ACCEPTED')
     expect(after).toMatch(/has revoked/)
   })
@@ -133,7 +131,6 @@ describe('a key the profile has revoked', () => {
     // Control on the same log: a capability from the key the profile holds still grants, so the
     // refusal above is the denial and not the third event breaking resolution for everyone.
     const control = await outcome(() => invoke(honest))
-    console.log('ROW 3:', JSON.stringify({ denied, control }))
     expect(denied).toMatch(/has revoked/)
     expect(control).toBe('ACCEPTED')
   })
@@ -186,13 +183,6 @@ describe('a key the profile has revoked', () => {
 
     const stolen = await foldWith(await grant(thief))
     const honest = await foldWith(await grant(owner))
-    console.log(
-      'ROW 4:',
-      JSON.stringify({
-        stolen: stolen.ok ? 'FOLDED' : stolen.reason,
-        honest: honest.ok ? 'FOLDED' : honest.reason,
-      }),
-    )
     expect(stolen.ok).toBe(false)
     if (stolen.ok) return
     // `createControllerCapabilityVerifier` collapses every verification failure into one reason on
@@ -204,15 +194,12 @@ describe('a key the profile has revoked', () => {
     expect(honest.ok).toBe(true)
   })
 
-  test('ROW 5 — a revocation record the denied key signed keeps revoking', async () => {
-    // ROUND 3 — this row's assertion is FLIPPED and its construction is byte-for-byte what it was.
-    //
-    // As written it recorded a consequence the round that built it accepted: `createRevocationChecker`
-    // ignores a record whose `kid` names a key the issuer does not hold, a denied key is one of
-    // those, and so revoking a leaked key un-revoked whatever that key's records had revoked. The
-    // reasoning for accepting it was sound as far as it went — `kid` is unauthenticated and the
-    // backend is an untrusted extension point, so honouring every unverifiable record would let
-    // anyone deny every capability a profile ever issued by planting one per `jti`.
+  test('a revocation record the denied key signed keeps revoking', async () => {
+    // The tempting reading: `createRevocationChecker` ignores a record whose `kid` names a key the
+    // issuer does not hold, a denied key is one of those, so revoking a leaked key un-revokes whatever
+    // that key's records revoked. Sound as far as it goes — `kid` is unauthenticated and the backend
+    // is an untrusted extension point, so honouring every unverifiable record would let anyone deny
+    // every capability a profile issued by planting one per `jti`.
     //
     // What it missed is that the two cases are distinguishable. A key the log never published is a
     // forgery and is still ignored (that DoS is unchanged, and `zzown-key-denial-check.test.ts`
@@ -252,7 +239,6 @@ describe('a key the profile has revoked', () => {
     // and is honoured anyway, because the key it names is one this log published and then denied.
     const before = await check(rotated)
     const after = await check(revoked)
-    console.log('ROW 5:', JSON.stringify({ before, after }))
     expect(before).toMatch(/Token revoked/)
     expect(after).toMatch(/Token revoked/)
   })

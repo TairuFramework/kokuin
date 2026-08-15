@@ -55,7 +55,7 @@ function revokeOf(who: string): SignedEvent {
 }
 
 describe('ATTACK: the cnf pin', () => {
-  test('E1 — authority follows `cnf`, revocation follows `aud`, and they need not agree', async () => {
+  test('authority follows `cnf`, revocation follows `aud`, and they need not agree', async () => {
     const nominal = randomIdentity() // the DID named in `aud`
     const holder = randomIdentity() // the key actually pinned in `cnf`
 
@@ -74,10 +74,6 @@ describe('ATTACK: the cnf pin', () => {
     // binding and not by the deny set, because nobody is revoked here.
     const clean = createRevokeWithKey(holder.privateKey, did, inception.event, target, { cap })
     const cleanResult = await foldWith([inception, clean])
-    console.log(
-      'E1b control (nobody revoked):',
-      JSON.stringify(cleanResult.ok ? { ok: true } : cleanResult),
-    )
     expect(cleanResult.ok).toBe(false)
 
     // CONTROL E1a — revoke the DID in `aud`: the deny set bites, proving it is live here.
@@ -86,24 +82,19 @@ describe('ATTACK: the cnf pin', () => {
       cap,
     })
     const nominalResult = await foldWith([inception, revokeNominal, afterNominal])
-    console.log('E1a control (aud revoked):', JSON.stringify(nominalResult))
     expect(nominalResult.ok).toBe(false)
 
     // ATTACK — revoke the DID of the key that actually wields the capability.
     const revokeHolder = revokeOf(holder.id)
     const attack = createRevokeWithKey(holder.privateKey, did, revokeHolder.event, target, { cap })
     const attacked = await foldWith([inception, revokeHolder, attack])
-    console.log(
-      'E1 attack (pinned key holder revoked):',
-      JSON.stringify(attacked.ok ? { ok: true, deny: [...attacked.states[2].deny] } : attacked),
-    )
 
     expect(attacked.ok, 'UNREVOKABLE HOLDER: revoking the pinned key holder does nothing').toBe(
       false,
     )
   })
 
-  test('E2 — one mutation at a time on the pin', async () => {
+  test('one mutation at a time on the pin', async () => {
     const device = randomIdentity()
     const good = audienceConfirmation({ alg: 'EdDSA', publicKey: device.publicKey })
     const other = randomIdentity()
@@ -115,7 +106,6 @@ describe('ATTACK: the cnf pin', () => {
         cap: await mint(device.id, good),
       }),
     ])
-    console.log('E2 control (correct pin):', JSON.stringify(okResult.ok ? { ok: true } : okResult))
     expect(okResult.ok).toBe(true)
 
     const rows: Array<[string, ConfirmationClaim | undefined]> = [
@@ -147,7 +137,6 @@ describe('ATTACK: the cnf pin', () => {
       ])
       results.push([name, result.ok ? 'ACCEPTED' : result.reason])
     }
-    console.log('E2 rows:', JSON.stringify(results, null, 1))
     for (const [name, outcome] of results) {
       expect(outcome, name).not.toBe('ACCEPTED')
     }

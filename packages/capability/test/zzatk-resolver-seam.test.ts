@@ -72,7 +72,7 @@ function dropDenySet(inner: DIDMethodResolver): DIDMethodResolver {
 }
 
 describe('ATTACK: the injected resolver seam', () => {
-  test('H1 — a caller registry that drops resolveDenySet cannot disable the fold’s own deny set', async () => {
+  test('a caller registry that drops resolveDenySet cannot disable the fold’s own deny set', async () => {
     const manager = randomIdentity()
     const cap = await manageCap(manager)
     const revokeManager = revokeOf(manager.id)
@@ -87,7 +87,6 @@ describe('ATTACK: the injected resolver seam', () => {
     const attacked = await foldLogAsync(did, log, {
       verifyCapability: createControllerCapabilityVerifier({ methods: wrapped }),
     })
-    console.log('H1 attack (caller registry drops resolveDenySet):', JSON.stringify(attacked))
 
     // CONTROL — the same wrapper, the same capability, with the manager NOT revoked: the fold
     // accepts, so what fails above is the denial and not the wrapper breaking resolution.
@@ -95,15 +94,11 @@ describe('ATTACK: the injected resolver seam', () => {
     const cleanResult = await foldLogAsync(did, [inception, clean], {
       verifyCapability: createControllerCapabilityVerifier({ methods: wrapped }),
     })
-    console.log(
-      'H1 control (same wrapper, nobody revoked):',
-      JSON.stringify(cleanResult.ok ? { ok: true } : cleanResult),
-    )
     expect(cleanResult.ok).toBe(true)
     expect(attacked.ok, 'wrapper disables the fold deny set').toBe(false)
   })
 
-  test('H2 — a subjectAtPosition that drops resolveDenySet, handed straight to the verifier', async () => {
+  test('a subjectAtPosition that drops resolveDenySet, handed straight to the verifier', async () => {
     // The fourth argument is the one place the fold cannot police: a third-party fold (kubun,
     // kumiai) builds its own. Wrap the REAL state resolver and drop only `resolveDenySet`.
     const manager = randomIdentity()
@@ -127,7 +122,6 @@ describe('ATTACK: the injected resolver seam', () => {
 
     const full = await verify(cap, did, target, captured)
     const stripped = await verify(cap, did, target, dropDenySet(captured))
-    console.log('H2:', JSON.stringify({ withDenySet: full, denySetDropped: stripped }))
 
     // CONTROL — the same two calls at a position where nobody is revoked: both authorise, so the
     // difference above is the deny set and not the wrapper.
@@ -142,13 +136,6 @@ describe('ATTACK: the injected resolver seam', () => {
     if (cleanPosition == null) return
     const cleanFull = await verify(cap, did, target, cleanPosition)
     const cleanStripped = await verify(cap, did, target, dropDenySet(cleanPosition))
-    console.log(
-      'H2 control (nobody revoked):',
-      JSON.stringify({
-        withDenySet: cleanFull.authorised,
-        denySetDropped: cleanStripped.authorised,
-      }),
-    )
     // REWRITTEN after the fix (c1c0c4f), which removed this control's premise. As written it
     // asserted that a stripped resolver authorises at a clean position, so that the refusal below
     // could be attributed to the deny set rather than to the wrapper. The decided fix makes a
@@ -166,7 +153,7 @@ describe('ATTACK: the injected resolver seam', () => {
     )
   })
 
-  test('H3 — a fourth argument that answers for the WRONG DID, or for a later state', async () => {
+  test('a fourth argument that answers for the WRONG DID, or for a later state', async () => {
     const manager = randomIdentity()
     const cap = await manageCap(manager)
     const revokeManager = revokeOf(manager.id)
@@ -203,10 +190,6 @@ describe('ATTACK: the injected resolver seam', () => {
         ? await verify(cap, did, target, atPosition1)
         : undefined,
     }
-    console.log(
-      'H3:',
-      JSON.stringify(results, (_k, v) => (v instanceof Uint8Array ? '<key>' : v)),
-    )
 
     expect(results['undefined fourth argument']).toEqual({
       authorised: false,
@@ -226,7 +209,6 @@ describe('ATTACK: the injected resolver seam', () => {
     const folded = await foldLogAsync(did, [inception, revokeManager, attack], {
       verifyCapability: verify,
     })
-    console.log('H3 fold with the whole log as the caller registry:', JSON.stringify(folded))
     expect(folded.ok).toBe(false)
   })
 })

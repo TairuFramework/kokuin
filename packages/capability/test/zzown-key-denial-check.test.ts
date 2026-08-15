@@ -70,7 +70,6 @@ describe('key revocation, independently', () => {
     } catch (err) {
       stolenRefusal = (err as Error).message
     }
-    console.log('stolen capability after key denial:', stolenRefusal)
 
     // CONTROL — the live key, same log, same shape. If this also fails the denial proves nothing.
     const owner = createControllerIdentity(seed, 0, [inception, rotate, revoke])
@@ -94,7 +93,6 @@ describe('key revocation, independently', () => {
     } catch (err) {
       honestRefusal = (err as Error).message
     }
-    console.log('control — live key, same log:', honestRefusal)
 
     expect(stolenRefusal).not.toBe('ACCEPTED')
     expect(stolenRefusal).toContain('revoked')
@@ -140,7 +138,6 @@ describe('key revocation, independently', () => {
     }
 
     const beforeDenial = await invoke(before)
-    console.log('revoked grant, before the key denial:', beforeDenial)
 
     const revoke = createRevoke(seed, 0, did, rotate.event, keyTarget(leakedKey), {
       gen: 0,
@@ -152,7 +149,6 @@ describe('key revocation, independently', () => {
       }),
     ]
     const afterDenial = await invoke(after)
-    console.log('revoked grant, after the key denial:', afterDenial)
 
     // The grant was revoked. Denying the key that signed the revocation record must not resurrect
     // it — and if it does, that is a fail-open worth stating out loud.
@@ -204,7 +200,6 @@ describe('key revocation, independently', () => {
     }
 
     const beforeDenial = await invoke(before)
-    console.log('LIVE-key grant, before the key denial:', beforeDenial)
 
     const revoke = createRevoke(seed, 0, did, rotate.event, keyTarget(leakedKey), {
       gen: 0,
@@ -216,7 +211,6 @@ describe('key revocation, independently', () => {
       }),
     ]
     const afterDenial = await invoke(after)
-    console.log('LIVE-key grant, after the key denial:', afterDenial)
 
     expect(beforeDenial).not.toBe('ACCEPTED')
     expect(afterDenial).not.toBe('ACCEPTED')
@@ -268,7 +262,6 @@ describe('key revocation, independently', () => {
     } catch (err) {
       outcome = (err as Error).message
     }
-    console.log('planted record, key never published:', outcome)
 
     expect(outcome).toBe('ACCEPTED')
   })

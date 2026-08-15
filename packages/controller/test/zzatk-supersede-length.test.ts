@@ -59,39 +59,10 @@ describe('ATTACK (closed): superseding recovery must not be decided by branch LE
     const thief = thiefRun(did, icp, 2)
     const owner = ownerRun(did, icp, 1)
 
-    console.log(
-      'thief branch folds:',
-      foldLog(did, thief).ok,
-      '| head (g,s):',
-      0,
-      thief[thief.length - 1].event.s,
-    )
-    console.log(
-      'owner branch folds:',
-      foldLog(did, owner).ok,
-      '| head (g,s):',
-      0,
-      owner[owner.length - 1].event.s,
-    )
-
     const result = resolveBranches(did, [owner, thief])
-    console.log(
-      'winner head type:',
-      result.ok ? result.winner[result.winner.length - 1].event.t : 'duplicity',
-    )
-    console.log('winner is the thief branch:', result.ok && result.winner === thief)
-    if (result.ok) {
-      const folded = foldLog(did, result.winner)
-      console.log(
-        'winner head authority keys === the STOLEN inception keys:',
-        folded.ok &&
-          JSON.stringify(folded.states[folded.states.length - 1].keys) ===
-            JSON.stringify(icp.event.k),
-      )
-      console.log('owner events discarded:', result.superseded)
-    }
     expect(result.ok).toBe(true)
     if (!result.ok) return
+    expect(foldLog(did, result.winner).ok).toBe(true)
     expect(result.winner).toBe(owner)
     // The thief's whole tail is discarded, not just the event the rotate forked from.
     expect(result.superseded).toBe(2)
@@ -102,10 +73,6 @@ describe('ATTACK (closed): superseding recovery must not be decided by branch LE
     const thief = thiefRun(did, icp, 1)
     const owner = ownerRun(did, icp, 1)
     const result = resolveBranches(did, [thief, owner])
-    console.log(
-      'equal length, winner head type:',
-      result.ok ? result.winner[1].event.t : 'duplicity',
-    )
     expect(result.ok && result.winner).toBe(owner)
   })
 
@@ -113,12 +80,6 @@ describe('ATTACK (closed): superseding recovery must not be decided by branch LE
     const { icp, did } = build()
     const thief = thiefRun(did, icp, 5)
     const r = foldLog(did, thief)
-    console.log('5-long thief run folds:', r.ok, r.ok ? `head seq ${r.states[5].seq}` : r.reason)
-    console.log('deny set the thief wrote:', r.ok ? [...r.states[5].deny].length : 'n/a')
-    console.log(
-      'authority keys still the stolen ones:',
-      r.ok && JSON.stringify(r.states[5].keys) === JSON.stringify(icp.event.k),
-    )
     expect(r.ok).toBe(true)
   })
 
@@ -130,10 +91,6 @@ describe('ATTACK (closed): superseding recovery must not be decided by branch LE
       const owner = ownerRun(did, icp, n)
       const thief = thiefRun(did, icp, n + 1)
       const r = resolveBranches(did, [owner, thief])
-      console.log(
-        `owner ${n} rotates vs thief ${n + 1} revokes -> winner is`,
-        r.ok ? (r.winner === thief ? 'THIEF' : 'owner') : 'duplicity',
-      )
       expect(r.ok && r.winner).toBe(owner)
     }
   })

@@ -53,9 +53,6 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       error = e
       return undefined
     })
-    console.log('log head keySeq is 2; token signed with keySeq 0')
-    console.log('verifyToken accepted the retired key:', verified?.payload.hello === 'world')
-    console.log('refused with:', error instanceof Error ? error.message : error)
     expect(verified).toBeUndefined()
     expect((error as Error).message).toMatch(/kid names a key that is not current/)
 
@@ -63,7 +60,6 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     // the same registry, so the refusal above is the retirement and not the fixture.
     const live = await mintWithKeyAt(did, 0, 2)
     const ok = await verifyToken(live, { methods: registry(log, did) })
-    console.log('CONTROL head key accepted:', ok.payload.hello === 'world')
     expect(ok.payload.hello).toBe('world')
   })
 
@@ -77,7 +73,6 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     await verifyToken(stranger, { methods: registry(log, did) }).catch((e) => {
       error = e
     })
-    console.log('stranger key refused with:', error instanceof Error ? error.message : error)
     expect(error).toBeInstanceOf(Error)
   })
 
@@ -88,11 +83,12 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     const reset = createReset(seed, 0, 1)
     const stolen = await mintWithKeyAt(did, 0, 0)
 
-    const before = await verifyToken(stolen, {
+    // Before the reset the retired key still verifies historically (throws if it does not), so the
+    // refusal after the reset is caused by the reset and not by anything incidental to the token.
+    await verifyToken(stolen, {
       methods: registry([icp, rot1], did),
       historic: true,
     })
-    console.log('before the reset, accepted historically:', before.payload.hello === 'world')
 
     let error: unknown
     await verifyToken(stolen, {
@@ -101,7 +97,6 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     }).catch((e) => {
       error = e
     })
-    console.log('after the reset, refused with:', error instanceof Error ? error.message : error)
     expect(error).toBeInstanceOf(Error)
   })
 
@@ -119,8 +114,6 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
         return undefined
       },
     )
-    console.log('a deny-snapshot rotate retires the key as well:', verified === undefined)
-    console.log('refused with:', error instanceof Error ? error.message : error)
     expect(verified).toBeUndefined()
     expect((error as Error).message).toMatch(/kid names a key that is not current/)
   })
@@ -137,10 +130,6 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
 
     const issued = await mintWithKeyAt(did, 0, 0)
     const verified = await verifyToken(issued, { methods: registry(log, did), historic: true })
-    console.log(
-      'historic opt-in accepted the rotated-away key:',
-      verified.payload.hello === 'world',
-    )
     expect(verified.payload.hello).toBe('world')
 
     // Control: a key the profile NEVER published is still refused under the opt-in, so `historic`
@@ -150,10 +139,6 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     await verifyToken(stranger, { methods: registry(log, did), historic: true }).catch((e) => {
       error = e
     })
-    console.log(
-      'CONTROL stranger key under historic:',
-      error instanceof Error ? error.message : error,
-    )
     expect(error).toBeInstanceOf(Error)
   })
 })

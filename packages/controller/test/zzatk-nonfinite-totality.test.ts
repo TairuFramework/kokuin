@@ -36,7 +36,6 @@ function build() {
 describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold totality', () => {
   test('ROW 0 (premise): `1e400` off the wire is Infinity, and the envelope guard admits it', () => {
     const parsed = fromWire('{"v":1,"junk":1e400}') as Record<string, unknown>
-    console.log('typeof junk:', typeof parsed.junk, '| value:', parsed.junk)
     expect(Number.isFinite(parsed.junk as number)).toBe(false)
   })
 
@@ -53,8 +52,6 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     } catch (error) {
       thrown = error
     }
-    console.log('foldLog returned:', returned)
-    console.log('foldLog THREW:', thrown instanceof Error ? thrown.message : thrown)
     expect(thrown).toBeUndefined()
     expect(returned).toEqual({ ok: false, reason: 'malformed event', index: 0 })
   })
@@ -73,8 +70,6 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     } catch (error) {
       thrown = error
     }
-    console.log('CONTROL foldLog returned:', returned)
-    console.log('CONTROL foldLog threw:', thrown)
     expect(thrown).toBeUndefined()
     expect(returned).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
   })
@@ -89,10 +84,6 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
       good.states[0].digest,
     )},"crit":true,"x":${JSON.stringify(deviceX)},"junk":JUNK},"sigs":["AAAA"]}`
     const wire = fromWire(raw.replace('JUNK', '1e400')) as SignedEvent
-    console.log(
-      'junk on the wire is finite:',
-      Number.isFinite((wire.event as never as Record<string, number>).junk),
-    )
 
     let thrown: unknown
     let hostileResult: unknown
@@ -101,10 +92,6 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     } catch (error) {
       thrown = error
     }
-    console.log(
-      'foldLog([icp, hostile rev]) returned:',
-      thrown instanceof Error ? `THREW ${thrown.message}` : JSON.stringify(hostileResult),
-    )
     expect(thrown).toBeUndefined()
     expect(hostileResult).toEqual({ ok: false, reason: 'malformed event', index: 1 })
 
@@ -112,7 +99,6 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     // reason, so the rejection above is the non-finite member and not the junk signature bytes.
     const tame = fromWire(raw.replace('JUNK', '1')) as SignedEvent
     const control = foldLog(did, [icp, tame])
-    console.log('CONTROL (finite junk) returned:', control)
     expect(control).toEqual({ ok: false, reason: 'invalid revoke', index: 1 })
     expect(honest.length).toBe(3)
   })
@@ -124,7 +110,6 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     ) as SignedEvent
 
     const aloneOk = resolveBranches(did, [honest])
-    console.log('honest branch alone resolves:', aloneOk.ok)
 
     let thrown: unknown
     let together: unknown
@@ -133,10 +118,6 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     } catch (error) {
       thrown = error
     }
-    console.log(
-      'resolveBranches([honest, hostile]) returned:',
-      thrown instanceof Error ? `THREW ${thrown.message}` : JSON.stringify(together),
-    )
     expect(aloneOk.ok).toBe(true)
     expect(thrown).toBeUndefined()
     // The hostile branch does not fold, so it is filtered like any other invalid branch and the
@@ -154,10 +135,6 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
       rejected = error
       return undefined
     })
-    console.log(
-      'foldLogAsync answered with:',
-      rejected instanceof Error ? `REJECTED ${rejected.message}` : JSON.stringify(resolvedWith),
-    )
     expect(rejected).toBeUndefined()
     expect(resolvedWith).toEqual({ ok: false, reason: 'malformed event', index: 0 })
   })
@@ -171,15 +148,12 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     } catch (error) {
       thrown = error
     }
-    console.log(
-      'verifySignatures answered:',
-      thrown instanceof Error ? `THREW ${thrown.message}` : answered,
-    )
-    // Control: the same call with a finite member returns `false`.
+    // Control: the same call with a finite member also returns `false` (via the ordinary bad-signature
+    // path), so the non-finite case is handled as a plain `false` and not as a throw.
     const tame = fromWire('{"v":1,"t":"rev","g":0,"s":1,"crit":true,"junk":1}') as never
-    console.log('CONTROL verifySignatures returned:', verifySignatures(tame, ['AAAA'], ['zAbc']))
     expect(thrown).toBeUndefined()
     expect(answered).toBe(false)
+    expect(verifySignatures(tame, ['AAAA'], ['zAbc'])).toBe(false)
   })
 
   test('ROW 7 (the other spellings): NaN and -Infinity are refused, `-0` and 2^53+1 are not', () => {
@@ -191,12 +165,11 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
 
     // `-1e400` is the second non-finite spelling reachable from the wire. `NaN` is not valid JSON,
     // so it is injected the only way it can arrive: from a caller's own object.
-    for (const [label, event] of [
+    for (const [, event] of [
       ['-1e400', body('-1e400')],
       ['NaN', { event: { ...(body('1').event as object), junk: Number.NaN }, sigs: [] }],
     ] as Array<[string, SignedEvent]>) {
       const result = foldLog(did, [event])
-      console.log(`${label} ->`, JSON.stringify(result))
       expect(result).toEqual({ ok: false, reason: 'malformed event', index: 0 })
     }
 
@@ -205,7 +178,6 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     // discriminates the non-finite values specifically and does not simply refuse every number.
     for (const junk of ['-0', '9007199254740993', '1e21']) {
       const result = foldLog(did, [body(junk)])
-      console.log(`${junk} ->`, JSON.stringify(result))
       expect(result).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
     }
   })

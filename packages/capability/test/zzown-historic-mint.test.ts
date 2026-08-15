@@ -16,16 +16,14 @@ import { checkCapability, createCapability, now } from '../src/index.js'
 // NEW authority? `@kokuin/capability` opts into historic resolution unconditionally, so this asks
 // the question at the capability path rather than the plain-token path.
 //
-// ROUND 2 — the first assertion below is FLIPPED, and the construction above it is byte-for-byte
-// what it was. The original demanded that a rotate alone stop the mint. It cannot, and must not:
-// `HISTORIC_ISSUANCE` in `src/index.ts` is what keeps an already-issued capability working across
-// the subject's routine key hygiene, and a rotate that also invalidated archived material would
-// break every outstanding grant — including the revocation records `revocation.ts` swallows a
-// resolution failure on, which is the one path that must never fail open. So the escalation on a
-// rotate-only log is now asserted as the standing cost, and the second half of this file is the
-// remedy the cost buys: an explicit `rev` naming the leaked KEY, after which the identical
-// thief-minted capability is refused. The legitimacy row is what proves the refusal is the denial
-// and not the extra event.
+// A rotate alone cannot and must not stop the mint: `HISTORIC_ISSUANCE` in `src/index.ts` keeps an
+// already-issued capability working across the subject's routine key hygiene, and a rotate that also
+// invalidated archived material would break every outstanding grant — including the revocation
+// records `revocation.ts` swallows a resolution failure on, the one path that must never fail open.
+// So the escalation on a rotate-only log is asserted as the standing cost, and the second half of
+// this file is the remedy it buys: an explicit `rev` naming the leaked KEY, after which the identical
+// thief-minted capability is refused. The legitimacy row proves the refusal is the denial and not
+// the extra event.
 
 describe('a rotated-away authority key, at the capability path', () => {
   test('can it mint a fresh capability granting itself everything?', async () => {
@@ -58,11 +56,9 @@ describe('a rotated-away authority key, at the capability path', () => {
     let tokenVerified = true
     try {
       await verifyToken(raw, { methods })
-    } catch (err) {
+    } catch {
       tokenVerified = false
-      console.log('verifyToken (default, head-only) refused:', (err as Error).message)
     }
-    console.log('verifyToken accepted the retired key:', tokenVerified)
 
     // And does it grant authority through the capability path?
     let granted = true
@@ -72,11 +68,9 @@ describe('a rotated-away authority key, at the capability path', () => {
         { iss: thiefDevice.id, sub: did, cap: [raw] } as never,
         { methods },
       )
-    } catch (err) {
+    } catch {
       granted = false
-      console.log('checkCapability refused:', (err as Error).message)
     }
-    console.log('ESCALATION — retired key minted a live wildcard grant:', granted)
 
     // Control for the row above: the identical token is refused by head-only resolution, so what
     // accepts it is the historic opt-in and nothing incidental.
@@ -115,7 +109,6 @@ describe('a rotated-away authority key, at the capability path', () => {
       grantedAfterRevoke = false
       refusal = (err as Error).message
     }
-    console.log('after revoking the leaked key, the same grant:', { grantedAfterRevoke, refusal })
 
     // Legitimacy control: on the very same three-event log, a capability minted by the key the
     // profile currently holds still grants. Without this row a rejection above could just as well
@@ -139,11 +132,9 @@ describe('a rotated-away authority key, at the capability path', () => {
         { iss: honestDevice.id, sub: did, cap: [honest] } as never,
         { methods: remedied },
       )
-    } catch (err) {
+    } catch {
       honestGranted = false
-      console.log('CONTROL FAILED — the honest grant was refused:', (err as Error).message)
     }
-    console.log('control — current key still mints a live grant:', honestGranted)
 
     expect(honestGranted).toBe(true)
     expect(grantedAfterRevoke).toBe(false)

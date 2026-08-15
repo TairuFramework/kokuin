@@ -52,12 +52,7 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
     const did = didFromInception(icp.event)
     const rot = createRotate(ownerSeed, 0, did, icp.event)
 
-    const oldRecovery = recoveryKeyOf(ownerSeed)
     const newRecovery = recoveryKeyOf(newRootSeed)
-    console.log(
-      'inception r === digest(old recovery key):',
-      icp.event.r === digestOf(encodeKey(oldRecovery.publicKey, 'EdDSA')),
-    )
 
     // Mutate exactly one field: `r`. Everything else is the generator's own rotate. Re-signed with
     // the same revealed authority key the generator used — no recovery signature is added.
@@ -66,22 +61,18 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
       r: digestOf(encodeKey(newRecovery.publicKey, 'EdDSA')),
     }
     const forgedRot = resign(mutated, ownerSeed, 0, 1)
-    console.log('rotate carries exactly one signature:', forgedRot.sigs.length)
 
     const folded = foldLog(did, [icp, forgedRot])
-    console.log('log with r-replacing rotate folds:', folded.ok, folded.ok ? '' : folded.reason)
     expect(folded).toEqual({ ok: false, reason: 'invalid rotate', index: 1 })
 
     // ROW 1 control: the same rotate with `r` left alone, re-signed by the same key at the same
     // position — so the rejection above is the `r` member and nothing about the re-signing.
     const control = resign({ ...rot.event }, ownerSeed, 0, 1)
     const controlFold = foldLog(did, [icp, control])
-    console.log('CONTROL (r untouched) folds:', controlFold.ok)
     expect(controlFold.ok).toBe(true)
     if (!controlFold.ok) return
     // And the folded recovery is the inception's, which is exactly what `verifyReset` enforces.
     // The state and the verifier no longer tell different stories.
-    console.log('state.recovery === inception r:', controlFold.states[1].recovery === icp.event.r)
     expect(controlFold.states[1].recovery).toBe(icp.event.r)
   })
 
@@ -105,16 +96,13 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
       sigs: signEvent(body, [newRecovery.privateKey]),
       recoveryKey: encodeKey(newRecovery.publicKey, 'EdDSA'),
     }
-    console.log('verifyReset(new-root reset, inception):', verifyReset(signedByNewRoot, icp.event))
     expect(verifyReset(signedByNewRoot, icp.event)).toBe(false)
     const r = foldLog(did, [icp, forgedRot, signedByNewRoot])
-    console.log('fold of [icp, rot(r=new), reset-by-new-root]:', r.ok, r.ok ? '' : r.reason)
     expect(r.ok).toBe(false)
 
     // ROW 2 control: the *committed* recovery key authors the same shape of reset against the same
     // inception and it verifies — so the refusal above is the key and not the hand-built body.
     const rootReset = createReset(ownerSeed, 0, 1)
-    console.log('verifyReset(root reset, inception):', verifyReset(rootReset, icp.event))
     expect(verifyReset(rootReset, icp.event)).toBe(true)
   })
 
@@ -132,7 +120,6 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
     // The key the owner believes they retired.
     const oldReset = createReset(ownerSeed, 0, 1)
     const r = foldLog(did, [icp, forgedRot, oldReset])
-    console.log('fold of [icp, rot(r=new), reset-by-OLD-root]:', r.ok, r.ok ? '' : r.reason)
     // The r-carrying rotate no longer folds at all, so the log stops there.
     expect(r).toEqual({ ok: false, reason: 'invalid rotate', index: 1 })
 
@@ -141,18 +128,8 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
     // story the state tells, since `KeyState.recovery` is the inception's commitment throughout.
     const plainRot = createRotate(ownerSeed, 0, did, icp.event)
     const control = foldLog(did, [icp, plainRot, oldReset])
-    console.log(
-      'CONTROL fold of [icp, rot, reset-by-root]:',
-      control.ok,
-      control.ok ? '' : control.reason,
-    )
     expect(control.ok).toBe(true)
     if (!control.ok) return
-    console.log("generation after the root's reset:", control.states[2].gen)
-    console.log(
-      'state.recovery at every position:',
-      control.states.every((state) => state.recovery === icp.event.r) ? 'inception r' : 'other',
-    )
     expect(control.states[2].gen).toBe(1)
     expect(control.states.every((state) => state.recovery === icp.event.r)).toBe(true)
   })

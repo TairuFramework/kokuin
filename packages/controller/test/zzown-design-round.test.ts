@@ -55,7 +55,7 @@ function padding(did: string, prior: SignedEvent, index: number): SignedEvent {
   }
 }
 
-describe('D1 — a keyless peer cannot switch duplicity detection off', () => {
+describe('a keyless peer cannot switch duplicity detection off', () => {
   test('a forged cap-bearing branch is counted, not fatal', () => {
     const { inception, did } = build()
     // Two honest, conflicting revokes at position 1: a genuine fork, and the finding that matters.
@@ -121,7 +121,7 @@ describe('D1 — a keyless peer cannot switch duplicity detection off', () => {
   })
 })
 
-describe('D2 — unsigned padding cannot grow a log without limit', () => {
+describe('unsigned padding cannot grow a log without limit', () => {
   test('a padded log is refused, and the same log within budget is not', () => {
     const { inception, did } = build()
 
@@ -159,7 +159,7 @@ describe('D2 — unsigned padding cannot grow a log without limit', () => {
   })
 })
 
-describe('D3 — pruning a deny set cannot silently drop the rest of it', () => {
+describe('pruning a deny set cannot silently drop the rest of it', () => {
   test('pruneDenySet keeps what a hand-written snapshot loses', () => {
     const { inception, did } = build()
     const device = 'did:key:zDevice'
@@ -197,7 +197,7 @@ describe('D3 — pruning a deny set cannot silently drop the rest of it', () => 
   })
 })
 
-describe('D4 — signing as the profile without the root seed', () => {
+describe('signing as the profile without the root seed', () => {
   test('the current authority key alone produces a verifiable token', async () => {
     const { inception, did } = build()
     const log = [inception, createRotate(seed, 0, did, inception.event)]
@@ -219,7 +219,7 @@ describe('D4 — signing as the profile without the root seed', () => {
   })
 })
 
-describe('D6 — a truncated log is refused when one further along has been seen', () => {
+describe('a truncated log is refused when one further along has been seen', () => {
   async function resolverOver(logs: Array<Array<SignedEvent>>) {
     let call = 0
     return createControllerResolver({
@@ -295,7 +295,7 @@ describe('D6 — a truncated log is refused when one further along has been seen
   })
 })
 
-describe('D6b — the truncation guard fails closed when the stored log needs a verifier', () => {
+describe('the truncation guard fails closed when the stored log needs a verifier', () => {
   // A management-tier log folds only with a `verifyCapability`. If a later resolution has no verifier
   // configured, the stored (full) log fails to fold — for want of the verifier, not because anything
   // about it changed. Treating that as "no memory" accepted whatever prefix was served next, which

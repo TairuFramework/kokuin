@@ -26,10 +26,6 @@ describe('wire types the fold never checks', () => {
       sigs: [],
     } as unknown as SignedEvent
     const r = foldLog(did, [icp, noCrit])
-    console.log(
-      'event with no `crit` member:',
-      r.ok ? 'SKIPPED (fold ok)' : `rejected — ${r.reason}`,
-    )
     expect(r.ok).toBe(false)
   })
 
@@ -39,10 +35,6 @@ describe('wire types the fold never checks', () => {
     for (const crit of [false, 0, '', null, undefined, 'false', 'no', 1, {}, []]) {
       const event = { v: 1, t: 'nop', i: did, g: 0, s: 1, p: digest, crit }
       const r = foldLog(did, [icp, { event, sigs: [] } as unknown as SignedEvent])
-      console.log(
-        `crit=${JSON.stringify(crit)} ->`,
-        r.ok ? 'SKIPPED' : `failed closed (${r.reason})`,
-      )
       if (r.ok) skipped.push(JSON.stringify(crit))
     }
     // Every falsy spelling — `0`, `''`, `null`, an omitted member — used to reach the skip path
@@ -70,8 +62,6 @@ describe('wire types the fold never checks', () => {
         return { authorised: false, reason: 'declined' }
       },
     })
-    console.log('verifier received cap as', seenType)
-    console.log('fold answered:', result.ok ? 'ACCEPTED' : `rejected — ${result.reason}`)
     expect(seenType).toBe('never called')
     expect(result).toEqual({
       ok: false,
@@ -92,8 +82,8 @@ describe('wire types the fold never checks', () => {
         return { authorised: false, reason: 'declined' }
       },
     })
-    console.log('CONTROL non-string `x`:', control.ok ? 'ACCEPTED' : `rejected — ${control.reason}`)
-    console.log('CONTROL verifier called:', called)
+    // A non-string `x` is rejected by the fold before the verifier is reached.
+    expect(control.ok).toBe(false)
     expect(called).toBe(false)
 
     // Second control: the same event with a well-formed string `cap` does reach the verifier, so
@@ -109,7 +99,6 @@ describe('wire types the fold never checks', () => {
         return { authorised: false, reason: 'declined' }
       },
     })
-    console.log('CONTROL string `cap` reached the verifier:', reached)
     expect(reached).toBe('header.payload.signature')
   })
 })

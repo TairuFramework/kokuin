@@ -59,21 +59,18 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
   test('ROW 1: a 2-key set declaring `kt: 1` still demands BOTH signatures (fail-closed)', () => {
     const { signed, did } = twoKeyInception(1, 1, 'first')
     const r = foldLog(did, [signed])
-    console.log('kt:1, 2 keys, 1 signature ->', r.ok ? 'ACCEPTED' : `rejected: ${r.reason}`)
     expect(r.ok).toBe(false)
   })
 
   test('ROW 2 (closed): both signatures are not enough — `kt: 1` over 2 keys is a lie', () => {
     const { signed, did } = twoKeyInception(1, 1, 'both')
     const r = foldLog(did, [signed])
-    console.log('kt:1, 2 keys, 2 signatures ->', r.ok ? 'ACCEPTED' : `rejected: ${r.reason}`)
     expect(r).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
 
     // ROW 2 control: the identical body with the truthful thresholds, signed the same way. It
     // folds — so what ROW 1 and ROW 2 reject is the declaration, not the two-key shape.
     const truthful = twoKeyInception(2, 2, 'both')
     const ok = foldLog(truthful.did, [truthful.signed])
-    console.log('kt:2, 2 keys, 2 signatures ->', ok.ok ? 'ACCEPTED' : `rejected: ${ok.reason}`)
     expect(ok.ok).toBe(true)
     if (!ok.ok) return
     expect(ok.states[0].keys.length).toBe(2)
@@ -89,10 +86,6 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
     ] as Array<[unknown, unknown]>) {
       const { signed, did } = twoKeyInception(kt, nt, 'both')
       const r = foldLog(did, [signed])
-      console.log(
-        `kt=${JSON.stringify(kt)} nt=${JSON.stringify(nt)} ->`,
-        r.ok ? 'ACCEPTED' : `rejected: ${r.reason}`,
-      )
       expect(r).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
     }
     // ROW 3 control: an absent member is refused too — the check is `===` against the set size, so
@@ -100,7 +93,6 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
     for (const kt of [undefined, '2'] as Array<unknown>) {
       const { signed, did } = twoKeyInception(kt, 2, 'both')
       const r = foldLog(did, [signed])
-      console.log(`kt=${JSON.stringify(kt)} nt=2 ->`, r.ok ? 'ACCEPTED' : `rejected: ${r.reason}`)
       expect(r.ok).toBe(false)
     }
   })
@@ -112,7 +104,6 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
       event: { ...signed.event, k: [signed.event.k[0]] },
     }
     const r = foldLog(did, [tampered])
-    console.log('one key removed ->', r.ok ? 'ACCEPTED' : `rejected: ${r.reason}`)
     expect(r.ok).toBe(false)
   })
 })

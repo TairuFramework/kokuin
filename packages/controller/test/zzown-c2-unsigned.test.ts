@@ -42,27 +42,12 @@ describe('keyless branch hijack, independent reproduction', () => {
     } as unknown as SignedEvent
     const attack = [inception, forged]
 
-    console.log('honest folds:', foldLog(did, honest).ok)
-    console.log('attack folds:', foldLog(did, attack).ok)
-
     const resolved = resolveBranches(did, [honest, attack])
-    if (resolved.ok) {
-      const types = resolved.winner.map((e) => e.event.t)
-      const final = foldLog(did, resolved.winner)
-      console.log('winner event types:', types)
-      console.log('honest events discarded:', resolved.superseded)
-      console.log(
-        'winner deny set:',
-        final.ok ? [...final.states[final.states.length - 1].deny] : 'n/a',
-      )
-    } else {
-      console.log('duplicity:', resolved.duplicity)
-    }
-
-    // The honest branch must win.
+    // The honest branch must win, and its winner folds.
     expect(resolved.ok).toBe(true)
     if (resolved.ok) {
       expect(resolved.winner[resolved.winner.length - 1].event.t).toBe('rev')
+      expect(foldLog(did, resolved.winner).ok).toBe(true)
     }
   })
 })

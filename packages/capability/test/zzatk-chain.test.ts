@@ -14,8 +14,6 @@ import {
 
 const root = randomIdentity()
 
-type Link = { raw: string; holder: SigningIdentity }
-
 async function delegate(
   from: SigningIdentity,
   to: SigningIdentity,
@@ -38,7 +36,7 @@ async function delegate(
 }
 
 describe('ATTACK: a delegated capability presented directly to checkCapability', () => {
-  test('I1 — the presented capability’s own act/res are never checked', async () => {
+  test('the presented capability’s own act/res are enforced, not just its parent’s', async () => {
     const manager = randomIdentity()
     const device = randomIdentity()
 
@@ -62,7 +60,6 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
     } catch (error) {
       outcome = (error as Error).message
     }
-    console.log('I1 attack (leaf grants doc/1, request doc/999):', outcome)
 
     // CONTROL Ia — the same call for what the leaf DOES grant.
     let control = 'ACCEPTED'
@@ -71,7 +68,6 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
     } catch (error) {
       control = (error as Error).message
     }
-    console.log('I1a control (request doc/1):', control)
     expect(control).toBe('ACCEPTED')
 
     // CONTROL Ib — a request the PARENT does not grant is refused, so the chain check is live.
@@ -81,13 +77,12 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
     } catch (error) {
       beyondParent = (error as Error).message
     }
-    console.log('I1b control (act the parent never granted):', beyondParent)
     expect(beyondParent).not.toBe('ACCEPTED')
 
     expect(outcome, 'ATTENUATION BYPASS on the plain API').not.toBe('ACCEPTED')
   })
 
-  test('I2 — the presented capability’s own exp and iat are never checked', async () => {
+  test('the presented capability’s own exp and iat are enforced', async () => {
     const manager = randomIdentity()
     const device = randomIdentity()
     // Both minted valid now; the check runs at `later`, by which time the leaf has expired and
@@ -113,7 +108,6 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
     } catch (error) {
       outcome = (error as Error).message
     }
-    console.log('I2 attack (presented capability expired at the reference time):', outcome)
 
     // CONTROL — the PARENT is the one that has expired at `later`, the leaf has not. Refused, so
     // expiry is enforced on this exact path and the only difference is which link expired.
@@ -134,7 +128,6 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
     } catch (error) {
       control = (error as Error).message
     }
-    console.log('I2 control (parent expired at the same reference time):', control)
     expect(control).not.toBe('ACCEPTED')
 
     expect(outcome, 'EXPIRY EVASION on the presented capability').not.toBe('ACCEPTED')
@@ -142,7 +135,7 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
 })
 
 describe('ATTACK: the depth cap', () => {
-  test('I3 — how many links the default actually admits', async () => {
+  test('the default admits no more than DEFAULT_MAX_DELEGATION_DEPTH links', async () => {
     const holders = [root]
     const chain: Array<string> = []
     for (let i = 0; i < 8; i++) {
@@ -174,18 +167,13 @@ describe('ATTACK: the depth cap', () => {
       }
       results.push([links, outcome])
     }
-    console.log(
-      `I3 (DEFAULT_MAX_DELEGATION_DEPTH = ${DEFAULT_MAX_DELEGATION_DEPTH}):`,
-      JSON.stringify(results, null, 1),
-    )
     const accepted = results.filter(([, outcome]) => outcome === 'ACCEPTED').map(([n]) => n)
-    console.log('I3 accepted link counts:', JSON.stringify(accepted))
     expect(Math.max(...accepted)).toBeLessThanOrEqual(DEFAULT_MAX_DELEGATION_DEPTH)
   })
 })
 
 describe('ATTACK: a capability with no expiry at all', () => {
-  test('I4 — verifies arbitrarily far in the future', async () => {
+  test('a capability with no exp verifies arbitrarily far in the future, by decision', async () => {
     const device = randomIdentity()
     const eternal = await delegate(root, device, { act: 'write', res: '*' })
     const invocation = { iss: device.id, sub: root.id, cap: [eternal] }
@@ -213,49 +201,30 @@ describe('ATTACK: a capability with no expiry at all', () => {
     } catch (error) {
       control = (error as Error).message
     }
-    console.log('I4:', JSON.stringify({ noExp: outcome, withExp: control }))
     expect(control).not.toBe('ACCEPTED')
-    // ROUND 3 — assertion flipped, construction byte-for-byte unchanged. This is a recorded design
-    // decision, not an open hole: `exp` is optional, and expiry is mandated at the *policy* layer
-    // (`assertDeviceCapabilityPolicy`, `DEFAULT_MAX_DEVICE_LIFETIME_SECONDS`), which is opt-in and
-    // which `createControllerCapabilityVerifier` does not apply. Asserting the current behaviour
-    // keeps the row as a tripwire: if a future change makes an unbounded capability start expiring,
-    // this fails and the decision gets revisited deliberately rather than by accident. Whether the
-    // controller-revoke path should mandate a bounded lifetime — a migration, not a flag, since an
-    // already-issued capability without `exp` would stop authorising — is tracked in
+    // A recorded design decision, not an open hole: `exp` is optional, and expiry is mandated at the
+    // *policy* layer (`assertDeviceCapabilityPolicy`, `DEFAULT_MAX_DEVICE_LIFETIME_SECONDS`), which is
+    // opt-in and which `createControllerCapabilityVerifier` does not apply. Asserting the current
+    // behaviour keeps this as a tripwire: if a change makes an unbounded capability start expiring,
+    // this fails and the decision is revisited deliberately. Whether the controller-revoke path should
+    // mandate a bounded lifetime — a migration, since an already-issued capability without `exp` would
+    // stop authorising — is tracked in
     // `docs/agents/plans/next/2026-08-15-log-completeness-and-capability-lifetime.md`.
     expect(outcome, 'a capability with no exp is eternal, by decision').toBe('ACCEPTED')
   })
 })
 
 describe('ATTACK: the permission matcher itself', () => {
-  test('I5 — grant/request pairs that must not match', async () => {
-    const rows: Array<[string, string, string]> = [
-      // [grant act/res, request, note]
-      ['*', 'anything', 'wildcard grant'],
-      ['a/*', 'a', 'grant of children, request of the parent'],
-      ['a', 'a/b', 'no implicit descent'],
-      ['a/b', 'a', 'grant deeper than request'],
-      ['*/x', 'anything/at/all', 'wildcard in a non-final component'],
-      ['a*', 'ab', 'wildcard glued to a component'],
-      ['a', 'A', 'case'],
-      ['a', 'a ', 'trailing space'],
-      ['', 'a', 'empty grant'],
-      ['a', '', 'empty request'],
-    ]
-    const results = rows.map(([granted, expected, note]) => [
-      `${note}: grant ${JSON.stringify(granted)} vs request ${JSON.stringify(expected)}`,
-      hasPermission({ act: 'x', res: expected }, { act: 'x', res: granted }),
-    ])
-    console.log('I5:', JSON.stringify(results, null, 1))
-    // The two that must hold whatever else does.
+  test('a grant does not match a request at a different depth in either direction', async () => {
+    // No implicit descent: a grant of `a` does not cover `a/b`. And no ascent: a grant deeper than
+    // the request (`a/b`) does not cover the broader `a` — the privilege-escalation direction.
     expect(hasPermission({ act: 'x', res: 'a/b' }, { act: 'x', res: 'a' })).toBe(false)
     expect(hasPermission({ act: 'x', res: 'a' }, { act: 'x', res: 'a/b' })).toBe(false)
   })
 })
 
 describe('ATTACK: nbf and iat on the presented capability', () => {
-  test('I6 — a not-yet-valid, future-issued capability is accepted', async () => {
+  test('a not-yet-valid, future-issued presented capability is rejected', async () => {
     const manager = randomIdentity()
     const device = randomIdentity()
     const parent = await delegate(root, manager, { act: 'write', res: '*', exp: now() + 3600 })
@@ -306,7 +275,6 @@ describe('ATTACK: nbf and iat on the presented capability', () => {
     } catch (error) {
       control = (error as Error).message
     }
-    console.log('I6:', JSON.stringify({ presentedLeaf: outcome, sameClaimsOnParent: control }))
     expect(control).not.toBe('ACCEPTED')
     expect(outcome, 'nbf/iat evasion on the presented capability').not.toBe('ACCEPTED')
   })

@@ -12,8 +12,8 @@ import {
 import { foldLog } from '../src/fold.js'
 import { resolveBranches } from '../src/supersede.js'
 
-describe('C1 independent reproduction', () => {
-  test('a longer run of current-key revokes outranks the owning rotate', () => {
+describe('branch precedence: current-key revokes never outrank the owning rotate', () => {
+  test('a longer run of current-key revokes still loses to the owning rotate', () => {
     const seed = new Uint8Array(32).fill(7)
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
@@ -35,28 +35,16 @@ describe('C1 independent reproduction', () => {
     // The owner recovers with the pre-committed next key: one rotate off the inception.
     const owner = [inception, createRotate(seed, 0, did, inception.event)]
 
-    const thiefFold = foldLog(did, thief)
-    const ownerFold = foldLog(did, owner)
-    console.log('thief branch folds:', thiefFold.ok, 'head s:', thief[thief.length - 1].event.s)
-    console.log('owner branch folds:', ownerFold.ok, 'head s:', owner[owner.length - 1].event.s)
+    // Both branches fold on their own; the question is which resolution keeps.
+    expect(foldLog(did, thief).ok).toBe(true)
+    expect(foldLog(did, owner).ok).toBe(true)
 
     const resolved = resolveBranches(did, [thief, owner])
-    console.log(
-      'winner head t:',
-      resolved.ok ? resolved.winner[resolved.winner.length - 1].event.t : 'DUPLICITY',
-    )
-    if (resolved.ok) {
-      const final = foldLog(did, resolved.winner)
-      console.log(
-        'winner deny set:',
-        final.ok ? [...final.states[final.states.length - 1].deny] : 'n/a',
-      )
-    }
-
-    // The property the docstring claims: the owner's recovering rotate wins.
     expect(resolved.ok).toBe(true)
     if (resolved.ok) {
+      // The owner's recovering rotate wins, and its winner folds.
       expect(resolved.winner[resolved.winner.length - 1].event.t).toBe('rot')
+      expect(foldLog(did, resolved.winner).ok).toBe(true)
     }
   })
 })
