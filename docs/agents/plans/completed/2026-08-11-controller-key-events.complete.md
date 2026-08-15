@@ -133,10 +133,19 @@ fully carried:
 
 - **A stolen mnemonic is terminal.** The thief holds every key at every index including the recovery
   key, and can always rotate ahead of the owner. This is the price of seed-rooting.
-- **Adopted profiles are out of scope.** The co-signature-gated recovery field on `rotate` is
-  retained so a device-generated profile can later adopt an HD-derived authority key without a
-  format break; nothing implements it. Such a profile sits at no derivation path, so it is invisible
-  to the cold picker and outside the pure-mnemonic recovery guarantee.
+- **Adopted profiles are out of scope, and the field reserved for them is gone.** A rotate used to
+  carry an optional `r`, described as a co-signature-gated recovery-commitment update and held for a
+  device-generated profile that later adopts an HD-derived authority key. Nothing implemented the
+  co-signature: the fold accepted any `r` from an ordinary rotate, `verifyReset` checked
+  `inception.r` regardless, and `KeyState.recovery` reported a key that could not author a reset.
+  A field written, digested, and read by nothing is a trap in an effectively frozen wire format, so
+  it was removed and a rotate carrying one is now refused rather than ignored.
+  Moving the commitment is also not merely unimplemented but *unwanted*: a reset anchors to the
+  inception so a root holding nothing but its seed can author one with no log knowledge and no log
+  availability, and a movable commitment makes the root read the log first. `recoveryPath(profile)`
+  carries no index for the same reason. Adoption, if it ever lands, needs a new event type or a
+  version bump rather than this member. Such a profile sits at no derivation path either way, so it
+  is invisible to the cold picker and outside the pure-mnemonic recovery guarantee.
 - **Cross-group duplicity is detectable, not preventable.** Detection still needs a member of both
   groups, an external witness, or a public mirror.
 - **Unanchored capabilities remain backdatable** — `cap.iat` is author-supplied.

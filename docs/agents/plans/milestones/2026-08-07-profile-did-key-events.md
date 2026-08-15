@@ -101,8 +101,14 @@ DID, are a pure function of the seed and the profile index. Three properties fal
 - Profiles are enumerable by index, which is what makes an offline recovery picker possible.
 - Re-derivation is idempotent, so legitimate recovery cannot be mistaken for duplicity.
 
-Rotations are deterministic by default and stop being reproducible only when they carry a seal, a
-deny-set snapshot, or a recovery-commitment update.
+Rotations are deterministic by default and stop being reproducible only when they carry a seal or a
+deny-set snapshot.
+
+> **Superseded.** This section originally listed a recovery-commitment update as a third source of
+> non-reproducibility. `RotateEvent.r` was removed: nothing verified or read it, and moving the
+> commitment would cost the property that a root holding only its seed can author a reset without
+> the log. A rotate carrying `r` is refused. The recovery key is fixed at inception, for the life of
+> the DID.
 
 ### Pre-rotation and superseding recovery
 
@@ -436,10 +442,13 @@ Recorded here so the reasoning is not re-litigated. Full arguments in the spec.
 - **Which group anchors the cut-off position** for documents reachable from several groups. Owned by
   kubun.
 - **Adopted profiles.** A device could operate under its own `did:kokuin:` profile before onboarding
-  and later adopt an HD-derived authority key by a co-signed `rotate`, keeping the same DID and
-  needing no migration. Such a profile sits at no derivation path, so it is invisible to the offline
-  picker and outside the pure-mnemonic guarantee. The co-signature-gated recovery field on `rotate`
-  is retained so this stays possible without a format break; nothing implements it.
+  and later adopt an HD-derived authority key, keeping the same DID and needing no migration. Such a
+  profile sits at no derivation path, so it is invisible to the offline picker and outside the
+  pure-mnemonic guarantee.
+  > **Superseded.** The co-signature-gated recovery field on `rotate` was to have reserved this
+  > without a format break. Nothing implemented the co-signature, and the field was removed rather
+  > than left as wire data nothing reads — see the note above. Adoption now needs a new event type
+  > or a version bump.
 - **Checkpointing or compaction** for the ledger, once post-quantum entry sizes land.
 
 ## References

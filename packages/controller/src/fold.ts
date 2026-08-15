@@ -35,6 +35,15 @@ export type KeyState = {
   /** Key agreement keys — an OR set. Established by icp/rot, carried forward across rev. */
   agreement: Array<string>
   next: Array<string>
+  /**
+   * The inception's recovery commitment, carried unchanged through every event of the log.
+   *
+   * Fixed for the life of the DID, and this field says so because {@link verifyReset} enforces
+   * exactly that: it checks the revealed recovery key against `inception.r` and against nothing
+   * else. It used to be updatable by a rotate's `r`, which no event verified and no event read —
+   * so this field reported a recovery key that could not author a reset while the one that could
+   * went unnamed. A state that disagrees with what the verifier enforces is worse than no state.
+   */
   recovery: string
   deny: ReadonlySet<string>
   /** Digest of the event that produced this state — the `p` any successor must carry. */
@@ -297,7 +306,9 @@ function stepEvent(
         keys: rot.event.k,
         agreement: rot.event.ka,
         next: rot.event.n,
-        recovery: rot.event.r ?? prior.recovery,
+        // Carried, never replaced — including across a reset, which opens a new generation under
+        // the same root. See `KeyState.recovery` and `RotateEvent`.
+        recovery: prior.recovery,
         deny: rot.event.d == null ? prior.deny : new Set(rot.event.d),
         digest: digestOf(rot.event),
       },

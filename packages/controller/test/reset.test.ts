@@ -1,14 +1,19 @@
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import { deriveKeyPair, recoveryPath } from '../src/derivation.js'
+import { authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
 import {
   createInception,
   createReset,
+  createRevoke,
+  createRotate,
   didFromInception,
+  encodeKey,
   signEvent,
   verifyReset,
+  verifyRotate,
 } from '../src/events.js'
+import { foldLog } from '../src/fold.js'
 
 const seed = new Uint8Array(32).fill(1)
 
@@ -95,5 +100,79 @@ describe('verifyReset()', () => {
     expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
       false,
     )
+  })
+})
+
+describe('the recovery commitment is fixed at inception', () => {
+  // `RotateEvent` used to carry an optional `r` documented as a recovery-commitment update. Nothing
+  // verified it and nothing read it: `verifyReset` checks `inception.r` and only that, so the
+  // original recovery key could never be retired while `KeyState.recovery` reported a replacement.
+  // The field is gone, and the fold refuses an event that carries one rather than ignoring it —
+  // a member the fold silently drops is the same lie in a different place.
+  //
+  // The alternative (a recovery co-signature on a rotate that moves `r`) was rejected: a reset
+  // anchors to the inception precisely so a root holding nothing but its seed can author one with
+  // no log knowledge or availability, and a movable commitment makes the root read the log first.
+  const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+
+  test('a rotate carrying `r` is refused, at every position and by both verifiers', () => {
+    const { inception, did } = setup()
+    const rot = createRotate(seed, 0, did, inception.event)
+    const withRecovery = { ...rot.event, r: digestOf('anything at all') }
+    const key = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
+    const forged = { event: withRecovery, sigs: signEvent(withRecovery, [key.privateKey]) }
+
+    expect(verifyRotate(forged, { digest: digestOf(inception.event), n: inception.event.n })).toBe(
+      false,
+    )
+    expect(foldLog(did, [inception, forged])).toEqual({
+      ok: false,
+      reason: 'invalid rotate',
+      index: 1,
+    })
+
+    // Control: the identical body without `r`, signed by the same key. The rejection is the member.
+    const plain = { ...rot.event }
+    const control = { event: plain, sigs: signEvent(plain, [key.privateKey]) }
+    expect(verifyRotate(control, { digest: digestOf(inception.event), n: inception.event.n })).toBe(
+      true,
+    )
+    expect(foldLog(did, [inception, control]).ok).toBe(true)
+  })
+
+  test('a reset carrying `r` is refused too — it is a rotate body and shares the check', () => {
+    const { inception, did } = setup()
+    const signed = createReset(seed, 0, 1)
+    const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
+    const event = { ...signed.event, r: digestOf('anything at all') }
+    const sigs = signEvent(event, [recovery.privateKey])
+
+    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
+      false,
+    )
+    // Control: the same reset without the member verifies and folds.
+    expect(verifyReset(signed, inception.event)).toBe(true)
+    expect(foldLog(did, [inception, signed]).ok).toBe(true)
+  })
+
+  test('`KeyState.recovery` is the inception commitment at every position of a mixed log', () => {
+    // Including across a reset, which opens a new generation under the same root — and this is the
+    // value `verifyReset` enforces, so the state and the verifier agree by construction now.
+    const { inception, did } = setup()
+    const rot = createRotate(seed, 0, did, inception.event)
+    const rev = createRevoke(seed, 0, did, rot.event, target, { gen: 0, seq: 1 })
+    const reset = createReset(seed, 0, 1)
+    const after = createRotate(seed, 0, did, reset.event)
+
+    const result = foldLog(did, [inception, rot, rev, reset, after])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.states.map((state) => state.recovery)).toEqual(
+      result.states.map(() => inception.event.r),
+    )
+    // And the value is the digest of the key `recoveryPath` derives, which is what a restored
+    // mnemonic reproduces without the log.
+    const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
+    expect(inception.event.r).toBe(digestOf(encodeKey(recovery.publicKey, 'EdDSA')))
   })
 })

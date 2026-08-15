@@ -49,7 +49,15 @@ export type InceptionEvent = EventCommon & {
   kt: number
   /** Rotation threshold. */
   nt: number
-  /** Digest of the recovery key. Root-retained; immutable unless a co-signed rotate moves it. */
+  /**
+   * Digest of the recovery key. Root-retained, and **immutable for the life of the DID** — the
+   * only event that can carry one is this one, and this one is the DID.
+   *
+   * A rotate used to carry an optional `r` documented as a recovery-commitment update. Nothing
+   * read it: `verifyReset` checked the inception's value regardless, so the original recovery key
+   * could never be retired while `KeyState.recovery` reported a different one. It is gone, and a
+   * rotate carrying one is refused rather than ignored — see {@link RotateEvent}.
+   */
   r: string
 }
 
@@ -271,8 +279,6 @@ export type RotateEvent = EventCommon & {
   kt: number
   /** Rotation threshold. */
   nt: number
-  /** Recovery-commitment update. Only valid when co-signed by the current recovery key. */
-  r?: string
   /** Seal: an anchored external digest, used to pin a high-value grant to a log position. */
   a?: string
   /** Deny-set snapshot. Replaces the accumulated set, pruning it. */
@@ -345,15 +351,20 @@ export function createRotate(
  * Whether the members a rotate publishes into the folded state have the shape the fold will carry.
  *
  * Shared by {@link verifyRotate} and {@link verifyReset}: the two verify different signatures over
- * the same event body, and both hand `k`, `n`, `r` and `d` straight to the next `KeyState`. A reset
+ * the same event body, and both hand `k`, `n` and `d` straight to the next `KeyState`. A reset
  * in particular never verifies against `k` — it verifies against the revealed recovery key — so
  * without this it is the one event that can publish a key set of any shape at all.
+ *
+ * `r` is refused outright here, which is the runtime half of removing it from {@link RotateEvent}.
+ * The type stops this package writing one; only a check stops a peer from putting one on the wire,
+ * and a member the fold silently ignores is exactly the field-that-lies this removal is about — a
+ * reader seeing `r` on a rotate would take the recovery key to have moved when nothing moved it.
  */
 function isPublishedRotate(event: RotateEvent): boolean {
   return (
     isKeyList(event.k) &&
     isKeyList(event.n) &&
-    (event.r == null || typeof event.r === 'string') &&
+    (event as { r?: unknown }).r === undefined &&
     // The deny snapshot replaces the accumulated set, so the fold builds a `Set` from it. A scalar
     // `d` is not iterable and throws there; a string `d` would silently become a set of characters.
     (event.d == null || isKeyList(event.d))
@@ -449,6 +460,14 @@ export function createReset(
  * A reset verifies against the committed recovery digest, not against the pre-rotation set. Both
  * values it needs — the anchor digest and the recovery commitment — come from the inception
  * itself, so passing the inception event makes the pairing impossible to get wrong.
+ *
+ * The inception is the *only* place either value can come from, and that is a property rather than
+ * a simplification. A reset anchors to the inception so a root holding nothing but its seed can
+ * author one with no log knowledge and no log availability; if the recovery commitment could be
+ * moved by a later event, the root would have to read the log to find out which key to sign with,
+ * and the one recovery path that survives losing the log would be gone. `recoveryPath(profile)`
+ * carries no index for the same reason — there is one recovery key per profile, for its lifetime.
+ * See {@link RotateEvent} for what was removed and why.
  */
 export function verifyReset(signed: SignedEvent<RotateEvent>, inception: InceptionEvent): boolean {
   const { event, sigs } = signed
