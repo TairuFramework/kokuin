@@ -1,8 +1,9 @@
 # Profile DIDs with rotating keys
 
 **Scope:** kokuin (owner), kumiai (registry transport), kubun (ownership + apply-time checks).
-**Written:** 2026-08-07. **Revised:** 2026-08-08 after the design questions were resolved, and
-2026-08-11 when the kokuin half shipped.
+**Written:** 2026-08-07. **Revised:** 2026-08-08 after the design questions were resolved,
+2026-08-11 when the kokuin half shipped, and 2026-08-15 after the pre-docs design pass and its
+follow-on fixes closed several named limits on the branch.
 **Status:** the kokuin half is **built** — see
 `completed/2026-08-11-controller-key-events.complete.md`, which carries the resolved design and is
 authoritative for every kokuin detail. kumiai and kubun are **not started**. This document is the
@@ -418,10 +419,14 @@ symbols its sources import — not from the design notes, which were wrong about
 - **kumiai** — `kumiai/docs/agents/plans/backlog/2026-08-07-did-registry-ledger-entries.md`
 - **kubun** — `kubun/docs/agents/plans/backlog/2026-08-07-profile-did-ownership.md`
 - **kokuin** — `next/2026-08-11-did-kokuin-downstream-adoption.md` (the build-and-verify pass and
-  kubun's fail-open), `next/2026-08-11-deny-set-for-plain-tokens.md`,
-  `next/2026-08-15-log-completeness-and-capability-lifetime.md` (log truncation as a silent
-  revocation bypass, and capabilities that never expire — both left open by the 2026-08-15 review),
-  `backlog/2026-08-11-controller-follow-ons.md`
+  kubun's fail-open), `next/2026-08-15-log-completeness-and-capability-lifetime.md` (truncation on a
+  **first encounter**, which needs a witness or anchor subsystem — all that remains after the branch
+  closed the capability-never-expires half with a mandated `exp` and the stale-prefix half with the
+  resolver's `history` store), `backlog/2026-08-11-controller-follow-ons.md`. The plain-token
+  deny-set question was resolved on the branch (2026-08-15) as an invariant — the deny set governs
+  devices only through capabilities and rosters, never bare tokens, so nothing walks the path it
+  worried about — and is recorded in `docs/reference/security.md` and the completed summary's named
+  limitations.
 
 ## Costs and constraints
 
@@ -511,7 +516,8 @@ Recorded here so the reasoning is not re-litigated. Full arguments in the spec.
 
 - `completed/2026-08-11-controller-key-events.complete.md` — the resolved kokuin design, as built.
 - `next/2026-08-11-did-kokuin-downstream-adoption.md` — the downstream build-and-verify pass.
-- `next/2026-08-11-deny-set-for-plain-tokens.md` — revocation does not reach ordinary tokens.
+- `next/2026-08-15-log-completeness-and-capability-lifetime.md` — first-encounter truncation, all
+  that remains of the log-completeness work after the branch closed the rest.
 - `backlog/2026-08-11-controller-follow-ons.md` — the accepted limits, with their reasoning.
 - `backlog/2026-06-30-post-quantum-algorithms.md` — the algorithm work this design depends on.
 - `backlog/2026-06-30-ledger-root-identity.md` — multi-Ledger support, needed for one device to
