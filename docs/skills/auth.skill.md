@@ -370,6 +370,14 @@ message was addressed
   resolves the DID being folded; see Pattern 10 and `ControllerResolverOptions.loadLog`
 - Reuse one resolver instance rather than building one per resolution: concurrent resolutions of
   one DID share a single fold, and a fresh instance per hop shares nothing
+- **Pass a `history` `LogStore` if this process will ever resolve the same DID twice.** Without one,
+  a peer serving a *prefix* of the log — stopping just before the `rev` that denies their device —
+  gives you a log that folds cleanly, chains every digest, verifies every signature, and has a deny
+  set missing exactly the entry that matters. With one, a log that does not supersede the last
+  accepted one is refused. `createMemoryLogStore()` covers a process lifetime; a consumer that
+  survives restarts wants a persistent implementation, since the guarantee is only as durable as the
+  memory of what was seen. It does nothing on a first encounter — only a witness or an anchor can
+  — see `docs/reference/security.md`
 - Resolution happens once, inside `createTokenEncrypterAsync` — the resolved agreement key is
   closed over by the returned encrypter, and `encryptToken` itself resolves nothing (it just
   calls `encrypter.encrypt`). So an encrypter snapshots whatever `ka` was current in the folded
@@ -415,6 +423,13 @@ verified.payload.iss // === did
 any claim whose subject is the profile rather than a device
 
 **Key points**:
+- **Prefer `createControllerIdentityWithKey(privateKey, log)` on any path that runs often.** The seed
+  is the root of everything the profile can ever do — rotate, reset, derive every key at every index
+  — and the design keeps it for rare ceremonies on a Ledger or a cold mnemonic. The key form signs as
+  the profile with the current authority private key alone (a `KeyStore` entry hands back exactly
+  that shape), and cannot rotate, because a rotate must reveal the key the log pre-committed and only
+  the seed derives that one. Same guards, same `kid`, same failures; `…WithKeyAsync` for a log whose
+  revoke carries a capability. The seed form below is the ceremony API
 - `createControllerIdentity(seed, profile, log)` takes the **log**, not a `{ gen, seq }` position.
   What that buys is narrow but real: the caller cannot name a position, so the signing key always
   matches the log it was handed. **The log is still the caller's freshness contract** — build an
@@ -573,8 +588,14 @@ any claim whose subject is the profile rather than a device
   identifier
 - Building or resolving a folded key event log (inception, rotation, reset, revocation)
 - Encrypting to a `did:kokuin:` recipient through a registered `DIDMethodResolver`
-- Issuing tokens whose `iss` is a `did:kokuin:` profile (`createControllerIdentity`), or verifying
-  them (`verifyToken`/`checkCapability` with `methods`)
+- Issuing tokens whose `iss` is a `did:kokuin:` profile (`createControllerIdentityWithKey` on a
+  daily path, `createControllerIdentity` for a root ceremony), or verifying them
+  (`verifyToken`/`checkCapability` with `methods`)
+
+Before depending on any of it, read `docs/reference/security.md`: the guarantees, the assumptions,
+and the short list of things a consumer has to do — forward every optional resolver member through a
+wrapper, pass `methods` wherever a capability is checked, configure `history`, build a deny snapshot
+with `pruneDenySet`, and keep the seed off the daily path.
 
 **Use `@kokuin/node`** when:
 - Building Node.js servers or CLI tools

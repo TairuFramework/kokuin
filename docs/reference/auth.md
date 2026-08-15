@@ -280,9 +280,11 @@ Rotation is managed through `@kokuin/controller`. A rotation event contains:
 - **Signature and agreement keys** (`k`, `ka`): The new key material being rotated into
 - **Pre-rotation commitments** (`n`): Digests of the keys the *next* rotation must reveal
 
-`verifyRotate` validates a single rotate: it checks that `k` hashes to the digests the prior event committed in `n`. This creates a key takeover protection: an attacker who steals the current signing key still cannot rotate the profile, because rotation requires revealing keys that match the pre-committed digests — keys they do not possess. Chain-level operations (`foldLog` and `foldLogAsync` in `packages/controller/src/fold.ts`) walk the entire event log to establish the current key state.
+`verifyRotate` validates a single rotate: it checks that `k` hashes to the digests the prior event committed in `n`. This creates a key takeover protection: an attacker who steals the current signing key still cannot rotate the profile, because rotation requires revealing keys that match the pre-committed digests — keys they do not possess. Chain-level operations (`foldLog` and `foldLogAsync`) walk the entire event log to establish the current key state.
 
-See `@kokuin/controller` and `packages/controller/src/events.ts` for the full key event log API.
+One consequence reaches every caller of `verifyToken`, whether or not they think about controllers: a method whose key set rotates answers **two** questions, and the safe one is the default. `resolve` answers from the profile's current keys alone, so a rotated-away key stops verifying; `resolveHistoric`, reached only by `verifyToken({ historic: true })`, accepts a key that was authoritative earlier in the same generation, for material the issuer minted in the past. Use the second only for archived artefacts, never to authenticate a live signer.
+
+See [./controller.md](./controller.md) for the method and the full event log API, and [./security.md](./security.md) for the guarantees and the rules a consumer has to follow to get them.
 
 ---
 

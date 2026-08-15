@@ -261,7 +261,52 @@ ephemeral plan deleted, and the branch parked at QA. And **probe direction is no
 written to characterise a suspected hole *passes* while the hole is open, so reading "all green" as
 "no findings" inverts the result.
 
+### The design pass before the docs
+
+A fourth round, run when the reference documentation was commissioned and it became necessary to
+write down what the design actually guarantees. Four more defects, two of them confirmed by
+construction, all pinned in `packages/controller/test/zzown-design-round.test.ts`.
+
+- **A keyless peer could switch duplicity detection off.** A `cap`-bearing revoke reaches the
+  verifier path *before* any signature check — the capability names the signer — so anyone able to
+  read a log could copy the public inception, append a `rev` with no signatures and arbitrary `cap`
+  bytes, and make `resolveBranches` refuse the whole resolution. A genuine fork between two honest
+  branches came back as `needs-capability-verification`, for any profile, including ones with no
+  verifier configured because they never use the management tier. Such a branch is now counted in
+  `ResolveResult.unverified` and left out of the comparison, and only a call where *every* branch is
+  unverifiable refuses. Dropping it in silence was the previous round's bug and is not the fix: the
+  count is what keeps the answer honest, and the conformance suite now requires it rather than
+  requiring the refusal it used to.
+- **Unsigned padding grew a log without limit.** A skipped event advances neither `seq` nor the
+  digest and carries no signature; 500 of them folded clean and produced 502 states. Bounded against
+  the log's own real length plus `MAX_SKIPPED_SLACK`.
+- **A deny snapshot silently un-revoked.** `d` replaces the accumulated set, so a caller writing one
+  entry meaning "also deny this" dropped every device denial and every retired key with it. Renamed
+  to `denySnapshot`, with `pruneDenySet(state, drop)` to build one from the fold's own answer.
+- **Signing as a profile required the root seed**, contradicting the tier rule on the busiest path
+  in the system. `createControllerIdentityWithKey` takes the current authority private key — the
+  same split `createRevokeWithKey` already made for revokes. It signs and cannot rotate.
+
+Three more were taken on the capability side because nothing downstream had adopted the method yet,
+so each cost nothing now and would have cost a migration later: a capability authorising a revoke
+must carry `exp`; its `cnf` pin must name an audience whose identifier carries a key, which gives up
+one profile holding a management capability over another and with it the last unbound pin; and
+`checkCapability` refuses a subject whose deny set no registry can answer for instead of skipping
+the check in silence.
+
+Two things this round settled that are worth keeping. The **audience-rotation hazard is gone**, not
+merely avoided: every audience the revoke path now accepts has an identifier whose key material
+cannot change, so the reason the pin was never checked against a resolvable audience no longer has a
+case to protect. And the **truncation item filed as consumer work came back in-house** as `LogStore`
+— the standing rule that this layer should not rely on consumer repos to cover a fail-open applies
+to a mitigation as much as to a check.
+
 ## Remaining at branch finish
+
+Reference documentation landed with the design pass above: `docs/reference/controller.md` for the
+method and the package, and `docs/reference/security.md` for the guarantees, the assumptions and the
+rules a consumer has to follow for the guarantees to hold. The second is the one to point a
+downstream repo at first.
 
 Release mechanics were deliberately deferred to one coherent pass rather than accumulated per task:
 no versioning intent exists yet for any package, and `@kokuin/token` carries an unambiguous major
@@ -276,6 +321,16 @@ both resolution members. `@kokuin/controller` should join the co-bump group: it 
 nothing enforces (the `verifyCapability` callback, `CapabilityAuthorisation`, and the exported
 reason strings). A new `@kokuin/controller` against an older `@kokuin/token` dies with an ESM link
 error on a named import, so the peer range matters and not just the version number.
+
+The design pass adds to both lists. Breaking, in `@kokuin/controller`:
+`CreateRotateOptions.deny` is now `denySnapshot`, and `ResolveResult` carries `unverified` on both
+arms. Breaking, in `@kokuin/capability`: a capability authorising a `did:kokuin:` revoke must carry
+`exp` and must pin an audience whose identifier carries its own key, and `checkCapability` refuses a
+subject whose deny set no registry can answer for. New rather than breaking:
+`createControllerIdentityWithKey`, `pruneDenySet`, `LogStore` / `createMemoryLogStore` and the
+resolver's `history` option, `assertRevokeCapabilityAudience`, and a fold that refuses a log padded
+past `MAX_SKIPPED_SLACK`. The changelog note about fail-closed rounds reading as regressions covers
+all of them — every one turns a former silent pass into a hard failure.
 
 Never exercised in the development environment: `tests/e2e-*`, `tests/ledger`, the on-device
 firmware, and `kubun`/`kumiai` built against the changed signatures.
