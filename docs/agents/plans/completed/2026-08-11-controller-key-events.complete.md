@@ -190,6 +190,20 @@ fully carried:
   carries no index for the same reason. Adoption, if it ever lands, needs a new event type or a
   version bump rather than this member. Such a profile sits at no derivation path either way, so it
   is invisible to the cold picker and outside the pure-mnemonic recovery guarantee.
+- **The deny set governs devices through capabilities and rosters, never bare tokens** — resolved as
+  an invariant on 2026-08-15, closing `next/2026-08-11-deny-set-for-plain-tokens.md`. A `rev` naming a
+  device DID is enforced by `@kokuin/capability` on every capability whose `aud` it names; a plain
+  token signed by a device's own `did:key`/`did:peer` resolves through that method, which knows
+  nothing of any profile, so nothing consults the profile's deny set. That is by design, not a gap: a
+  device's authority under a profile *is* the capability the profile issued or the roster membership
+  its group maintains, never a bare signature — enkaku authorizes through `checkCapability`, kumiai
+  through MLS roster removal. There is deliberately no bare-token-under-a-profile path, so revocation
+  has nothing to miss; adding one would need a subject supplied to `verifyToken` and an
+  `isDenied(state, did)` helper, and was declined as speculative infrastructure for a path nothing
+  walks. The self-issued invocation case (`iss === sub`) is decided the same way: a `jti` revocation
+  against a self-grant is inapplicable — you do not revoke your own intrinsic authority with a
+  delegation-revocation record — while the audience deny-set check still runs on that branch, so a
+  revoked device is caught. Stated in `docs/reference/security.md` under "What the deny set governs".
 - **Cross-group duplicity is detectable, not preventable.** Detection still needs a member of both
   groups, an external witness, or a public mirror.
 - **Unanchored capabilities remain backdatable** — `cap.iat` is author-supplied.
@@ -335,6 +349,7 @@ all of them — every one turns a former silent pass into a hard failure.
 Never exercised in the development environment: `tests/e2e-*`, `tests/ledger`, the on-device
 firmware, and `kubun`/`kumiai` built against the changed signatures.
 
-Follow-on work is filed separately — see `next/2026-08-11-did-kokuin-downstream-adoption.md`,
-`next/2026-08-11-deny-set-for-plain-tokens.md`, and
-`backlog/2026-08-11-controller-follow-ons.md`.
+Follow-on work is filed separately — see `next/2026-08-11-did-kokuin-downstream-adoption.md` and
+`backlog/2026-08-11-controller-follow-ons.md`. The plain-token deny-set question
+(`next/2026-08-11-deny-set-for-plain-tokens.md`) was resolved on 2026-08-15 as the invariant recorded
+under "Named limitations, carried forward" above, and its file removed.

@@ -58,6 +58,14 @@ Two different position rules apply, and both are deliberate:
 
 For the same reason, `resolveDenySet` answers for **now**, never for a position a capability names: `iat` is author-supplied and backdatable, so anchoring to it would let a revoked holder choose a moment before it was denied.
 
+### What the deny set governs, and what it does not
+
+The DID-denial reaches a device **only where that device's authority is mediated by the profile** — a capability the profile issued (`aud` is the device), or a group roster the profile's members maintain. `@kokuin/capability` enforces it on every capability; a roster enforces removal itself. There is deliberately **no path where a device authenticates by a bare token and is governed by the profile's deny set**. A plain token's `iss` is the device's own `did:key`/`did:peer`, resolved through that method, which knows nothing of any profile — so nothing consults the profile's deny set, and nothing should, because under this design a device's authority *is* the capability or the roster membership, never the bare signature.
+
+This is an invariant, not an accident, and it is what every consumer already does: enkaku authorizes each request through `checkCapability`, and kumiai through MLS roster membership whose removal is an MLS Remove proposal. Do not add a path that authenticates a device by plain token and expects revocation to reach it. If such a path is ever genuinely needed, it cannot be a bare `verifyToken` — the verifier has no subject and a token carries none, so revocation would have nowhere to look; it would need the subject supplied at the call site and an `isDenied(state, did)` helper, and the deny set is heterogeneous (**match, never enumerate**). The simpler rule holds until then: authority under a profile is granted by something the profile issued, so revocation reaches it there.
+
+A related, decided case: revoking a **self-issued invocation** (`iss === sub`) by `jti` has no effect, and correctly so. That branch of `checkCapability` is a subject exercising its own intrinsic authority, not a delegated grant — there is no delegation to revoke. The *audience* deny-set check still runs on that branch, so a revoked **device** is caught; only a `jti` revocation record against a self-grant is inapplicable, because you do not revoke your own authority with a delegation-revocation record.
+
 ## Things a consumer must do
 
 Each of these is a rule whose violation fails **open** or bricks something, and each was a real defect.
