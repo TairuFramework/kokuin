@@ -413,6 +413,20 @@ export function assertValidIssuedAt(payload: { iat?: number }, atTime?: number):
   }
 }
 
+/**
+ * Reject a token that is not yet valid.
+ *
+ * The third registered time claim, and the one this package had no check for. `verifyToken` enforces
+ * it on every token it verifies, so a chain link is covered — but a payload handed straight to
+ * `checkCapability` never passes through `verifyToken` here, and `exp` and `iat` were the only two
+ * such a payload was checked for.
+ */
+export function assertValidNotBefore(payload: { nbf?: number }, atTime?: number): void {
+  if (payload.nbf != null && payload.nbf > (atTime ?? now())) {
+    throw new Error('Invalid token: not yet valid')
+  }
+}
+
 export function assertValidDelegation(
   from: CapabilityPayload,
   to: CapabilityPayload,
@@ -577,6 +591,7 @@ export async function checkCapability(
     // Subject is issuer, no delegation required
     // But still need to validate the permission is granted
     assertNonExpired(payload, time)
+    assertValidNotBefore(payload as { nbf?: number }, time)
     assertValidIssuedAt(payload as { iat?: number }, time)
     // This branch never reaches `checkDelegationChain`, so it needs the audience check of its own.
     // It is also the shape `createControllerCapabilityVerifier` takes: an undelegated management
@@ -603,8 +618,19 @@ export async function checkCapability(
   // resolved or verified: it costs nothing, and a request outside the presented grant is refused
   // whatever its ancestors say.
   const grant = presentedGrant(payload)
-  if (grant != null && !hasPermission(permission, grant)) {
-    throw new Error('Invalid capability: permission not granted')
+  if (grant != null) {
+    if (!hasPermission(permission, grant)) {
+      throw new Error('Invalid capability: permission not granted')
+    }
+    // A presented capability's own time claims are checked nowhere else. It never passes through
+    // `verifyToken` here — the caller verified it and handed over the payload — and the chain walk
+    // below starts at its parent, so an expired, not-yet-valid or future-dated capability was
+    // accepted on this arm at any reference time. The same three claims the `iss === sub` arm
+    // above checks, at the same `time`, because the two arms differ in how authority is derived
+    // and not in when a token is valid.
+    assertNonExpired(payload, time)
+    assertValidNotBefore(payload as { nbf?: number }, time)
+    assertValidIssuedAt(payload as { iat?: number }, time)
   }
 
   if (payload.cap == null) {

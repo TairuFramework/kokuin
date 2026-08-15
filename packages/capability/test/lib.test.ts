@@ -1486,6 +1486,72 @@ describe('checkCapability() - a capability presented directly rather than invoke
       checkCapability({ act: 'write', res: 'doc/999' }, invocation as never),
     ).rejects.toThrow('Invalid capability: permission mismatch')
   })
+
+  describe('its own time claims, one at a time', () => {
+    // A presented capability never passes through `verifyToken` here — the caller verified it and
+    // handed over the payload — and the chain walk starts at its parent, so nothing else in this
+    // package looks at these three. Each row moves exactly one claim; the parent is minted sound
+    // and identical every time, so a rejection is the claim under test and nothing around it.
+    const reference = 1700000000
+
+    async function leafWith(claims: Record<string, unknown>): Promise<CapabilityPayload> {
+      const root = randomIdentity()
+      const manager = randomIdentity()
+      const device = randomIdentity()
+      const parent = stringifyToken(
+        await createCapability(root, {
+          sub: root.id,
+          aud: manager.id,
+          act: 'write',
+          res: '*',
+          exp: reference + 7200,
+        }),
+      )
+      // Hand-signed: the mint path would refuse some of these outright, and what is under test is
+      // the verifier rather than the minter.
+      const leaf = await manager.signToken({
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: '*',
+        cap: [parent],
+        ...claims,
+      })
+      return leaf.payload as CapabilityPayload
+    }
+
+    test('sound claims verify at the reference time', async () => {
+      const leaf = await leafWith({
+        exp: reference + 3600,
+        nbf: reference - 60,
+        iat: reference - 60,
+      })
+      await expect(
+        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+      ).resolves.not.toThrow()
+    })
+
+    test('an expired one is refused', async () => {
+      const leaf = await leafWith({ exp: reference - 1 })
+      await expect(
+        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+      ).rejects.toThrow('Invalid token: expired')
+    })
+
+    test('a not-yet-valid one is refused', async () => {
+      const leaf = await leafWith({ exp: reference + 3600, nbf: reference + 60 })
+      await expect(
+        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+      ).rejects.toThrow('Invalid token: not yet valid')
+    })
+
+    test('one issued in the future is refused', async () => {
+      const leaf = await leafWith({ exp: reference + 3600, iat: reference + 60 })
+      await expect(
+        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+      ).rejects.toThrow('Invalid token: issued in the future')
+    })
+  })
 })
 
 describe('assertCapabilityToken with non-token input', () => {
