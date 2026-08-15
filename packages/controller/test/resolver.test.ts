@@ -236,7 +236,7 @@ describe('createControllerResolver() and a revoked key', () => {
     const head = folded.states[folded.states.length - 1]
     const cleared = createRotate(seed, 0, did, rev.event, {
       keyPosition: { gen: head.keyGen, seq: head.keySeq },
-      deny: [],
+      denySnapshot: [],
     })
     const resolver = createControllerResolver({ loadLog: async () => [...revoked, cleared] })
 

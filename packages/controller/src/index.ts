@@ -64,9 +64,24 @@ export {
   foldLogAsync,
   type KeyState,
   keyStateAt,
+  MAX_SKIPPED_SLACK,
+  pruneDenySet,
   REVOKE_NOT_SIGNED_BY_AUDIENCE,
+  TOO_MANY_UNKNOWN_EVENTS,
 } from './fold.js'
-export { createControllerIdentity, createControllerIdentityAsync } from './identity.js'
+export {
+  authoritativeStates,
+  createMemoryLogStore,
+  LOG_FORKED,
+  LOG_NOT_AUTHORITATIVE,
+  type LogStore,
+} from './history.js'
+export {
+  createControllerIdentity,
+  createControllerIdentityAsync,
+  createControllerIdentityWithKey,
+  createControllerIdentityWithKeyAsync,
+} from './identity.js'
 export {
   type KeyAlgorithm,
   type TaggedKey,

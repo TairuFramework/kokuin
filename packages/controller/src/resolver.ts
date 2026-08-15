@@ -7,6 +7,7 @@ import type {
 
 import { DID_PREFIX, type SignedEvent } from './events.js'
 import type { FoldOptions, KeyState } from './fold.js'
+import { authoritativeStates, type LogStore } from './history.js'
 import { allStatesAsync } from './state.js'
 import { agreementKeysFrom, DID_METHOD, signingKeyFrom } from './state-resolver.js'
 
@@ -54,6 +55,22 @@ export type ControllerResolverOptions = {
    * a delegate in the chain whose own DID method cannot be resolved from the identifier alone.
    */
   verifyCapability?: FoldOptions['verifyCapability']
+  /**
+   * Where to remember the last log accepted for each DID, so a later one that is *behind* it is
+   * refused rather than answered from.
+   *
+   * Without one, truncation is a silent revocation bypass: a peer serving a prefix that stops just
+   * before the `rev` denying their device produces a log that folds cleanly, verifies every
+   * signature, and yields a deny set missing exactly that entry. Nothing inside a single log tells
+   * a verifier it is not the whole log.
+   *
+   * Optional, because the guarantee needs storage this package cannot provide and because a first
+   * encounter has nothing to compare against. **Configure one anyway if this process resolves the
+   * same DIDs more than once** — which is every consumer that caches, syncs or serves. See
+   * {@link LogStore} for what it does and does not close, and `createMemoryLogStore` for the
+   * process-lifetime version.
+   */
+  history?: LogStore
 }
 
 /**
@@ -97,9 +114,18 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
     if (events == null || events.length === 0) {
       throw new Error(`Unknown DID: ${did}`)
     }
-    return await allStatesAsync(did, events, CONTEXT, {
-      verifyCapability: options.verifyCapability,
-    })
+    const foldOptions = { verifyCapability: options.verifyCapability }
+    if (options.history == null) {
+      return await allStatesAsync(did, events, CONTEXT, foldOptions)
+    }
+    // Compared against what this party last accepted, so a truncated log — one that folds cleanly
+    // and is missing the revoke that matters — is refused instead of answered from. See `LogStore`.
+    const seen = await options.history.get(did)
+    const { log, states } = await authoritativeStates(did, events, seen, CONTEXT, foldOptions)
+    // Only after it has folded, and only in the direction that keeps the memory: a log that lost
+    // never reaches here, so the store never moves backwards.
+    await options.history.set(did, log)
+    return states
   }
 
   async function loadStates(did: string): Promise<Array<KeyState>> {

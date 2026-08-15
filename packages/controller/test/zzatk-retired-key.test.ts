@@ -110,7 +110,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     // names *audiences*, and the fold carries every past key set forward inside the generation.
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate(seed, 0, did, icp.event, { deny: [] })
+    const rot1 = createRotate(seed, 0, did, icp.event, { denySnapshot: [] })
     const stolen = await mintWithKeyAt(did, 0, 0)
     let error: unknown
     const verified = await verifyToken(stolen, { methods: registry([icp, rot1], did) }).catch(

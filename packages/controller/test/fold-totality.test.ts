@@ -760,7 +760,7 @@ describe('resolveBranches() survives a hostile branch', () => {
     // contradicted and none of its events were discarded. The hostile branch never folded, so
     // nothing of it is counted either.
     const result = resolveBranches(did, [hostile, [icp, rot], [icp]])
-    expect(result).toEqual({ ok: true, winner: [icp, rot], superseded: 0 })
+    expect(result).toEqual({ ok: true, winner: [icp, rot], superseded: 0, unverified: 0 })
   })
 
   test('reports no valid history when every branch is hostile', () => {
@@ -768,6 +768,7 @@ describe('resolveBranches() survives a hostile branch', () => {
       ok: false,
       failure: 'no-valid-branch',
       duplicity: { gen: -1, seq: -1, digests: ['', ''] },
+      unverified: 0,
     })
   })
 
@@ -800,6 +801,7 @@ describe('resolveBranches() survives a hostile branch', () => {
       ok: false,
       failure: 'no-valid-branch',
       duplicity: { gen: -1, seq: -1, digests: ['', ''] },
+      unverified: 0,
     })
   })
 })

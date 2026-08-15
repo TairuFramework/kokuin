@@ -346,7 +346,24 @@ export type RotateEvent = EventCommon & {
 
 export type CreateRotateOptions = {
   seal?: string
-  deny?: Array<string>
+  /**
+   * The complete deny set this rotate leaves behind — **a replacement, not an addition**.
+   *
+   * Named for what it is because the fold does exactly what it says: `d` present replaces the
+   * accumulated set, `d` absent carries it forward. A caller who writes one entry meaning "also deny
+   * this" silently drops every entry the log had accumulated, which un-revokes the devices *and*
+   * un-retires the leaked keys the profile had denied — no error, no event, and nothing in the
+   * resulting log that says anything was lost. That is the whole reason to prune from a rotate at
+   * all (nothing else can), and the whole reason it must be spelled loudly.
+   *
+   * Build it from the folded state rather than by hand: {@link pruneDenySet} takes the current
+   * `KeyState` and the entries to drop and returns the rest. `[]` is the deliberate "clear
+   * everything" — what a cold rotate does to recover from a management tier gone bad.
+   *
+   * A rotate cannot establish a key its own snapshot denies; the fold refuses such an event rather
+   * than publishing a head whose keys resolve to nothing.
+   */
+  denySnapshot?: Array<string>
   /**
    * Where the currently-active authority key lives — the position of the last `icp`/`rot`, which
    * is the fold's `keyGen`/`keySeq`.
@@ -451,7 +468,7 @@ export function createRotate(
     kt: 1,
     nt: 1,
     a: options.seal,
-    d: options.deny,
+    d: options.denySnapshot,
   }
 
   return { event, sigs: signEvent(event, [current.privateKey]) }

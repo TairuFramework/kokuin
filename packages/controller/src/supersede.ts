@@ -27,9 +27,11 @@ export type Duplicity = {
  * - `duplicity` — two events the controller cannot both have authored at one position. The real
  *   finding, and the only one that says anything is wrong with the log.
  * - `no-valid-branch` — nothing presented folded at all. Not duplicity: the absence of a history.
- * - `needs-capability-verification` — a branch carries a capability-authorised revoke this call
- *   was not equipped to check. The log is fine; use {@link resolveBranchesAsync} with a
- *   `verifyCapability`.
+ * - `needs-capability-verification` — **every** branch presented carries a capability-authorised
+ *   revoke this call was not equipped to check, so there is nothing left to compare. The log is
+ *   fine; use {@link resolveBranchesAsync} with a `verifyCapability`. A call where only *some*
+ *   branches are unverifiable answers with the ones that are, and reports the rest as
+ *   {@link ResolveResult.unverified} — see there for why.
  *
  * Added rather than swapped in: `duplicity` still carries the `gen: -1` sentinel position for the
  * two non-duplicity arms, so a caller written against the previous shape keeps telling them apart
@@ -38,9 +40,34 @@ export type Duplicity = {
  */
 export type ResolveFailure = 'duplicity' | 'no-valid-branch' | 'needs-capability-verification'
 
+/**
+ * How many presented branches this call could not check, and therefore did not compare.
+ *
+ * Non-zero means the answer is **provisional**: a branch that could not be folded may have
+ * superseded the one reported, so a caller acting on a winner — caching it, serving it, treating a
+ * duplicity report as evidence — must either re-resolve through {@link resolveBranchesAsync} with a
+ * `verifyCapability` or treat the result as unconfirmed. It is zero for every correctly configured
+ * call: with a verifier, an honest capability-authorised revoke folds and a forged one is rejected
+ * like any other invalid branch.
+ *
+ * Reported rather than fatal because the alternative is an unauthenticated denial of service on
+ * duplicity detection. A capability-bearing revoke reaches the verifier path *before* any signature
+ * check — the capability names the signer, so there is nothing to check it against yet — which
+ * means a peer holding no key material at all can copy the public inception, append a `rev` with
+ * `sigs: []` and a `cap` of arbitrary bytes, and present it. Refusing the whole resolution on that
+ * turned a genuine duplicity report between two honest branches into a refusal, for every profile,
+ * including profiles that never use the management tier and so have no reason to configure a
+ * verifier. Duplicity detection is the mechanism that catches a key-takeover fork; nobody keyless
+ * may switch it off.
+ *
+ * Dropping such a branch cannot hand an attacker a win: a branch that does not fold is not a
+ * contender, and a forged one never folds. The exposure it does leave is a *stale* answer — an
+ * honest cap-bearing branch that this call could not check, so the winner is an earlier honest head
+ * — which is what this count is for.
+ */
 export type ResolveResult =
-  | { ok: true; winner: Array<SignedEvent>; superseded: number }
-  | { ok: false; failure: ResolveFailure; duplicity: Duplicity }
+  | { ok: true; winner: Array<SignedEvent>; superseded: number; unverified: number }
+  | { ok: false; failure: ResolveFailure; duplicity: Duplicity; unverified: number }
 
 /**
  * The position reported for a failure that is not a fork. Real comparisons never reach `gen < 0`
@@ -103,10 +130,8 @@ function needsCapabilityVerification(result: FoldResult): boolean {
   )
 }
 
-const UNVERIFIED_CAPABILITY: ResolveResult = {
-  ok: false,
-  failure: 'needs-capability-verification',
-  duplicity: NO_POSITION,
+function allUnverified(unverified: number): ResolveResult {
+  return { ok: false, failure: 'needs-capability-verification', duplicity: NO_POSITION, unverified }
 }
 
 function branchFrom(branch: Array<SignedEvent>, result: FoldResult): FoldedBranch | undefined {
@@ -316,28 +341,35 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
  * Branches that do not fold successfully are filtered out before comparison — a thief who cannot
  * produce a valid event cannot create a duplicity report.
  *
- * This form folds synchronously and so cannot check a capability-authorised revoke. Presented one,
- * it answers `failure: 'needs-capability-verification'` rather than filtering the branch away as
- * invalid — silently dropping it reported "no valid history" for a healthy profile, which is
- * duplicity detection switched off for every profile using the management tier. A `cap`-bearing
- * revoke reaches that path before any signature check (the capability names the signer), so any
- * peer can provoke this answer with a branch nobody signed; the remedy is the same either way —
- * fold it through {@link resolveBranchesAsync}, where a verifier rejects the forgery and the branch
- * is filtered like any other.
+ * This form folds synchronously and so cannot check a capability-authorised revoke. Such a branch is
+ * counted in {@link ResolveResult.unverified} and left out of the comparison, and only a call where
+ * *every* branch is one answers `failure: 'needs-capability-verification'`.
+ *
+ * Neither of the two failures that shaped this is available to anyone. Filtering such a branch away
+ * as merely invalid reported "no valid history" for a healthy profile — duplicity detection off for
+ * every profile using the management tier. Refusing the whole call instead handed the same switch to
+ * a keyless attacker, since a `cap`-bearing revoke reaches the verifier path before any signature
+ * check: copy the public inception, append a `rev` with no signatures and arbitrary `cap` bytes, and
+ * a genuine duplicity report between two honest branches became a refusal. Reporting the count keeps
+ * the honest comparison and makes the gap in it visible. The remedy for the gap is unchanged — fold
+ * through {@link resolveBranchesAsync} with a verifier, where an honest branch folds and a forged one
+ * is rejected like any other.
  */
 export function resolveBranches(did: string, branches: Array<Array<SignedEvent>>): ResolveResult {
   const valid: Array<FoldedBranch> = []
+  let unverified = 0
   for (const branch of branches) {
     const result = foldLog(did, branch)
     if (needsCapabilityVerification(result)) {
-      return UNVERIFIED_CAPABILITY
+      unverified++
+      continue
     }
     const folded = branchFrom(branch, result)
     if (folded != null) {
       valid.push(folded)
     }
   }
-  return selectWinner(valid)
+  return selectWinner(valid, unverified)
 }
 
 /**
@@ -359,26 +391,32 @@ export async function resolveBranchesAsync(
   options: FoldOptions = {},
 ): Promise<ResolveResult> {
   const valid: Array<FoldedBranch> = []
+  let unverified = 0
   for (const branch of branches) {
     const result = await foldLogAsync(did, branch, options)
     // Reachable here only with no `verifyCapability` configured — with one, the verifier's own
-    // answer decides, and a rejection is an invalid branch like any other.
+    // answer decides, and a rejection is an invalid branch like any other. So a correctly configured
+    // call always reports `unverified: 0`.
     if (needsCapabilityVerification(result)) {
-      return UNVERIFIED_CAPABILITY
+      unverified++
+      continue
     }
     const folded = branchFrom(branch, result)
     if (folded != null) {
       valid.push(folded)
     }
   }
-  return selectWinner(valid)
+  return selectWinner(valid, unverified)
 }
 
-function selectWinner(valid: Array<FoldedBranch>): ResolveResult {
+function selectWinner(valid: Array<FoldedBranch>, unverified: number): ResolveResult {
   if (valid.length === 0) {
-    // No branch folded, so there is nothing to compare — this is not duplicity, it is the absence
-    // of any valid history.
-    return { ok: false, failure: 'no-valid-branch', duplicity: NO_POSITION }
+    // Nothing left to compare. Which of the two answers that is depends on *why* nothing is left:
+    // a branch this call was not equipped to check is not evidence that the log has no history, and
+    // saying so would report a healthy management-tier profile as historyless.
+    return unverified > 0
+      ? allUnverified(unverified)
+      : { ok: false, failure: 'no-valid-branch', duplicity: NO_POSITION, unverified }
   }
 
   // Re-derivation is idempotent: branches that fold to the same head are the same history
@@ -404,7 +442,9 @@ function selectWinner(valid: Array<FoldedBranch>): ResolveResult {
   const topGen = Math.max(...distinct.map((folded) => headState(folded).gen))
   const resolved = resolveContenders(distinct.filter((f) => headState(f).gen === topGen))
   if (!resolved.ok) {
-    return resolved
+    // A duplicity report is provisional in exactly the same way a winner is: a branch this call
+    // could not check might have superseded both of the conflicting events.
+    return { ...resolved, unverified }
   }
 
   const { winner } = resolved
@@ -414,5 +454,5 @@ function selectWinner(valid: Array<FoldedBranch>): ResolveResult {
       superseded += loser.spine.length - commonSpine(winner, loser)
     }
   }
-  return { ok: true, winner: winner.branch, superseded }
+  return { ok: true, winner: winner.branch, superseded, unverified }
 }

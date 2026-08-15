@@ -201,7 +201,7 @@ describe('foldLog() and a revoke naming a key', () => {
     // the same event — leaving a head whose `k` resolves to nothing.
     const { did, icp } = build()
     const selfDenying = createRotate(seed, 0, did, icp.event, {
-      deny: [keyTarget(createRotate(seed, 0, did, icp.event).event.k[0])],
+      denySnapshot: [keyTarget(createRotate(seed, 0, did, icp.event).event.k[0])],
     })
     const result = foldLog(did, [icp, selfDenying])
     expect(result.ok).toBe(false)
@@ -210,7 +210,9 @@ describe('foldLog() and a revoke naming a key', () => {
 
     // Control: the same rotate with the same snapshot mechanism, denying a key it does not
     // establish, folds — so the rejection is the collision and not the presence of `d`.
-    const other = createRotate(seed, 0, did, icp.event, { deny: [keyTarget(icp.event.k[0])] })
+    const other = createRotate(seed, 0, did, icp.event, {
+      denySnapshot: [keyTarget(icp.event.k[0])],
+    })
     expect(foldLog(did, [icp, other]).ok).toBe(true)
   })
 

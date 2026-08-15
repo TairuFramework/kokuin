@@ -247,7 +247,7 @@ function isSignedEventShape(value: unknown): value is SignedEvent {
 }
 
 type StepOutcome =
-  | { status: 'ok'; state: KeyState }
+  | { status: 'ok'; state: KeyState; skipped?: boolean }
   | { status: 'fail'; reason: string }
   /**
    * A cap-bearing revoke: `state` is what to apply *if* the capability verifies, and `signed` is
@@ -445,7 +445,51 @@ function stepEvent(
   // Non-critical: skip, carrying state forward unchanged so positions stay aligned with the input
   // array. `seq` deliberately does not advance — the skipped event established nothing — so a run
   // of consecutive skipped events all claim the same `s`.
-  return { status: 'ok', state: { ...prior, digest: prior.digest } }
+  return { status: 'ok', state: { ...prior, digest: prior.digest }, skipped: true }
+}
+
+/**
+ * How many events a log may carry that this version cannot understand, beyond the number it can.
+ *
+ * A skipped event is the only one the fold accepts without verifying a signature, and it advances
+ * neither `seq` nor the digest — so nothing about it is authenticated and nothing chains it in. A
+ * peer relaying a log can therefore insert them anywhere, in any number, and the log still folds to
+ * the same head: 500 unsigned events fold clean and produce 502 states. The resolver is not a cache
+ * and re-folds on every resolution, and a group replays the whole log at every welcome, so an
+ * unbounded skip path makes log size — and with it the verifier's CPU and memory — an attacker's
+ * choice rather than the profile's.
+ *
+ * Bounded against the log's own real length rather than by an absolute cap, so the ceiling stays
+ * proportional to work the verifier was going to do anyway. The slack is what keeps this
+ * forward-compatible in the small: a v1 verifier meeting a log whose first events include a few
+ * non-critical types from a later version still folds it, which is the whole reason the skip path
+ * exists. A log that needs more than that from a verifier which understands none of it is one the
+ * verifier should refuse rather than replay.
+ */
+export const MAX_SKIPPED_SLACK = 8
+
+/** What a log padded past {@link MAX_SKIPPED_SLACK} fails with. */
+export const TOO_MANY_UNKNOWN_EVENTS = 'too many unknown events'
+
+/**
+ * The running budget for skipped events, shared by both fold entry points so the two cannot drift.
+ *
+ * `understood` counts the events this fold validated — the inception is the first — and `skipped`
+ * the ones it carried past. The bound is checked as each skipped event arrives rather than at the
+ * end, so a padded log stops being folded at the point it exceeds the budget instead of after.
+ */
+function skipBudget(): { understood(): void; skip(): boolean } {
+  let understood = 1
+  let skipped = 0
+  return {
+    understood() {
+      understood++
+    },
+    skip() {
+      skipped++
+      return skipped <= understood + MAX_SKIPPED_SLACK
+    },
+  }
 }
 
 type FoldInit =
@@ -522,6 +566,7 @@ export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
     return init.result
   }
   const { inception, states } = init
+  const budget = skipBudget()
 
   for (let i = 1; i < events.length; i++) {
     const outcome = stepEvent(did, inception, events[i], states[i - 1])
@@ -530,6 +575,13 @@ export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
     }
     if (outcome.status === 'capability') {
       return fail(`${CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD}: ${outcome.cap}`, i)
+    }
+    if (outcome.skipped) {
+      if (!budget.skip()) {
+        return fail(TOO_MANY_UNKNOWN_EVENTS, i)
+      }
+    } else {
+      budget.understood()
     }
     states.push(outcome.state)
   }
@@ -552,6 +604,7 @@ export async function foldLogAsync(
     return init.result
   }
   const { inception, states } = init
+  const budget = skipBudget()
 
   for (let i = 1; i < events.length; i++) {
     const outcome = stepEvent(did, inception, events[i], states[i - 1])
@@ -600,6 +653,13 @@ export async function foldLogAsync(
         return fail(REVOKE_NOT_SIGNED_BY_AUDIENCE, i)
       }
     }
+    if (outcome.status === 'ok' && outcome.skipped) {
+      if (!budget.skip()) {
+        return fail(TOO_MANY_UNKNOWN_EVENTS, i)
+      }
+    } else {
+      budget.understood()
+    }
     states.push(outcome.state)
   }
 
@@ -608,4 +668,21 @@ export async function foldLogAsync(
 
 export function keyStateAt(result: FoldResult, position: number): KeyState | undefined {
   return result.ok ? result.states[position] : undefined
+}
+
+/**
+ * The deny set of `state` with `drop` removed — what to pass as a rotate's `denySnapshot` when the
+ * intent is to prune a few entries rather than to replace the set.
+ *
+ * A rotate's `d` replaces the accumulated set outright, so pruning by hand means writing out
+ * everything that stays. Miss one and the profile silently un-revokes a device or un-retires a
+ * leaked key, with nothing in the log to say so — the same shape as building an allow-list by
+ * remembering what to keep. This builds it from the fold's own answer instead.
+ *
+ * Entries in `drop` that the state does not carry are ignored: a caller pruning what is already
+ * gone has the set it asked for.
+ */
+export function pruneDenySet(state: KeyState, drop: Iterable<string>): Array<string> {
+  const dropped = new Set(drop)
+  return [...state.deny].filter((entry) => !dropped.has(entry))
 }

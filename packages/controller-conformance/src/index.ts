@@ -62,8 +62,13 @@ export type ConformanceResolveFailure =
   | 'needs-capability-verification'
 
 export type ConformanceResolveResult =
-  | { ok: true; winner: Array<ConformanceSigned>; superseded: number }
-  | { ok: false; failure: ConformanceResolveFailure; duplicity: ConformanceDuplicity }
+  | { ok: true; winner: Array<ConformanceSigned>; superseded: number; unverified: number }
+  | {
+      ok: false
+      failure: ConformanceResolveFailure
+      duplicity: ConformanceDuplicity
+      unverified: number
+    }
 
 /** What a capability verifier answers a cap-bearing revoke with. */
 export type ConformanceCapabilityAuthorisation =
@@ -87,7 +92,12 @@ export type ConformanceProfileEntry = {
 
 export type CreateRotateOptions = {
   seal?: string
-  deny?: Array<string>
+  /**
+   * The complete deny set the rotate leaves behind — a **replacement**, not an addition. Named for
+   * that, because a caller who reads it as "also deny this" silently drops every entry the log had
+   * accumulated, un-revoking devices and un-retiring leaked keys with nothing in the log to say so.
+   */
+  denySnapshot?: Array<string>
   /**
    * Where the currently-active authority key lives — the last `icp`/`rot` position, i.e. the fold's
    * `keyGen`/`keySeq`. Required once a revoke has intervened; see the `rotate after a revoke` case.
@@ -409,7 +419,7 @@ export function runControllerConformance(
 
         const rot = impl.createRotate(seedA, 0, did, rev.event, {
           keyPosition: { gen: denied.states[1].keyGen, seq: denied.states[1].keySeq },
-          deny: [],
+          denySnapshot: [],
         })
         const result = impl.foldLog(did, [icp, rev, rot])
         expect(result.ok).toBe(true)
@@ -582,10 +592,16 @@ export function runControllerConformance(
         expect(result.failure).toBe('needs-capability-verification')
       })
 
-      test('the sync form does not resolve around a branch it could not check', () => {
+      test('the sync form reports a branch it could not check rather than dropping it', () => {
         // A rival branch is present, so an implementation that filtered the cap-bearing one away
-        // would happily answer `ok: true` with the rival as winner — a fork reported as a clean
-        // history.
+        // *and said nothing* would answer `ok: true` with the rival as winner — a fork reported as a
+        // clean history. `unverified` is what stops that from being silent, and it is the member
+        // this row exists to require: the count, not the refusal.
+        //
+        // A refusal is not the alternative. A `cap`-bearing revoke reaches the verifier path before
+        // any signature check, since the capability names the signer — so refusing the whole
+        // resolution hands a peer holding no key material at all a way to switch duplicity detection
+        // off for any profile, by presenting the public inception with an unsigned `rev` appended.
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
         const rival = [
@@ -593,11 +609,26 @@ export function runControllerConformance(
           impl.createRevoke(seedA, 0, did, icp.event, deviceB, { gen: 0, seq: 0 }),
         ]
         const result = impl.resolveBranches(did, [capBranch(did, icp), rival])
+        expect(result.unverified).toBe(1)
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
+        expect(result.winner).toEqual(rival)
+      })
+
+      test('the sync form refuses when every branch carries an unverifiable capability', () => {
+        // Nothing left to compare, so there is no answer to give — and "no valid history" would be
+        // the wrong one, since the branch is fine and this call was simply not equipped for it.
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const result = impl.resolveBranches(did, [capBranch(did, icp)])
         expect(result.ok).toBe(false)
         if (result.ok) {
           return
         }
         expect(result.failure).toBe('needs-capability-verification')
+        expect(result.unverified).toBe(1)
       })
 
       test('the async form resolves a cap-bearing log the verifier approves', async () => {

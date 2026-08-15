@@ -331,11 +331,15 @@ describe('resolveBranchesAsync()', () => {
       [icp, rival],
     ]
 
-    // The finding the tier exists to make, and the answer the sync form gives instead.
+    // The finding the tier exists to make, and the answer the sync form gives instead: the branch it
+    // could check, and a count saying it did not see all of them. `unverified` is the whole of what
+    // makes that answer safe to act on — without reading it a caller takes a fork for a clean
+    // history — and it is why the sync form cannot simply drop such a branch and say nothing.
     expect(resolveBranches(did, branches)).toEqual({
-      ok: false,
-      failure: 'needs-capability-verification',
-      duplicity: { gen: -1, seq: -1, digests: ['', ''] },
+      ok: true,
+      winner: [icp, rival],
+      superseded: 0,
+      unverified: 1,
     })
 
     const result = await resolveBranchesAsync(did, branches, { verifyCapability: approve })
@@ -375,6 +379,7 @@ describe('resolveBranchesAsync()', () => {
       ok: false,
       failure: 'needs-capability-verification',
       duplicity: { gen: -1, seq: -1, digests: ['', ''] },
+      unverified: 1,
     })
   })
 

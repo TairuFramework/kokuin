@@ -4,6 +4,7 @@ import {
   type SigningIdentity,
   type SignTokenOptions,
 } from '@kokuin/token'
+import { ed25519 } from '@noble/curves/ed25519.js'
 
 import { authorityPath, deriveKeyPair } from './derivation.js'
 import { didFromInception, encodeKey, type InceptionEvent, type SignedEvent } from './events.js'
@@ -60,14 +61,21 @@ function withKid(identity: SigningIdentity, kid: string): SigningIdentity {
 }
 
 /**
- * Derive the signing key the folded state establishes and bind it to the DID. Shared by the sync
- * and async entry points, which differ only in how they reach the state.
+ * Bind a private key the caller already holds to the DID, having checked the folded state
+ * publishes its public half. Shared by all four entry points — the two that derive from a seed and
+ * the two that are handed a key — so the membership rule and the `kid` binding are written once.
+ *
+ * Membership, not `keys[0]`: a key set may publish several keys and the one in hand need not come
+ * first — the co-signers' keys belong to holders this caller knows nothing about. What must hold is
+ * that the resolver can answer with this key, which membership is exactly. A key outside the set
+ * signs tokens nothing can verify, so fail loudly at construction instead.
  */
-function identityForState(
-  seed: Uint8Array,
-  profile: number,
+function identityForKey(
+  privateKey: Uint8Array,
+  publicKey: Uint8Array,
   did: DIDString,
   state: KeyState,
+  mismatch: string,
 ): SigningIdentity {
   if (state.keys.length === 0) {
     // Defensive, and unreachable through either fold today: `verifySignatures` rejects an empty
@@ -77,24 +85,42 @@ function identityForState(
     throw new Error(`Controller ${did} has no signing key`)
   }
 
-  const { privateKey, publicKey } = deriveKeyPair(
-    seed,
-    authorityPath(profile, state.keyGen, state.keySeq),
-    'EdDSA',
-  )
-  // Membership, not `keys[0]`: a key set may publish several keys and the seed-derived one need
-  // not come first — the co-signers' keys belong to holders this seed knows nothing about. What
-  // must hold is that the resolver can answer with this key, which membership is exactly. A key
-  // outside the set signs tokens nothing can verify, so fail loudly at construction instead — the
-  // mismatch means the seed or profile is not this log's.
   const key = encodeKey(publicKey, 'EdDSA')
   if (!state.keys.includes(key)) {
-    throw new Error(`${CONTEXT}: derived key is not one of the current authority keys of ${did}`)
+    throw new Error(`${CONTEXT}: ${mismatch} of ${did}`)
   }
 
   // The resolver picks by `kid` and defaults to `keys[0]`, so a token from a controller whose key
   // is not first is unverifiable unless the header names the key that signed it.
   return withKid(createSigningIdentityForDID(did, privateKey), `#${key}`)
+}
+
+/**
+ * Derive the signing key the folded state establishes and bind it to the DID. Shared by the sync
+ * and async seed entry points, which differ only in how they reach the state.
+ */
+function identityForState(
+  seed: Uint8Array,
+  profile: number,
+  did: DIDString,
+  state: KeyState,
+): SigningIdentity {
+  if (state.keys.length === 0) {
+    throw new Error(`Controller ${did} has no signing key`)
+  }
+  const { privateKey, publicKey } = deriveKeyPair(
+    seed,
+    authorityPath(profile, state.keyGen, state.keySeq),
+    'EdDSA',
+  )
+  return identityForKey(
+    privateKey,
+    publicKey,
+    did,
+    state,
+    // The mismatch means the seed or profile is not this log's.
+    'derived key is not one of the current authority keys',
+  )
 }
 
 /**
@@ -152,4 +178,66 @@ export async function createControllerIdentityAsync(
 ): Promise<SigningIdentity> {
   const did = didFromLog(log)
   return identityForState(seed, profile, did, await currentStateAsync(did, log, CONTEXT, options))
+}
+
+/**
+ * A signing identity for a `did:kokuin:` profile, from the current authority private key rather
+ * than from the profile seed.
+ *
+ * The seed form above can only be used by a holder of the root seed, because that is what it takes
+ * to derive the key. The design's custody tiers say the opposite about the daily path: the root
+ * seed lives on a Ledger or a cold mnemonic and is needed for rare ceremonies only, and a device
+ * never receives the profile sub-seed — handing one out would void the pre-rotation guarantee, since
+ * a sub-seed holder can derive the *next* key and therefore rotate. With only the seed form, a
+ * process that issues tokens as the profile had to hold the seed, which is that boundary crossed on
+ * the busiest path in the system. This is the same split {@link createRevokeWithKey} makes for
+ * revokes, for the same reason.
+ *
+ * What the key in hand can and cannot do is exactly the intended granularity: it signs as the
+ * profile, and it cannot rotate, because a rotate must reveal the key the log pre-committed in `n`
+ * and nothing but the seed derives that one. Losing it costs the profile a rotate-then-deny, not
+ * the identity.
+ *
+ * Takes the raw private key rather than an identity for the same reason `createRevokeWithKey` does:
+ * no identity type in this stack signs raw bytes, and a `KeyStore` entry hands back exactly this.
+ * The public half is derived from it, so a caller cannot present one key and sign with another.
+ *
+ * @throws when the log does not fold, or when the key's public half is not one of the profile's
+ * current authority keys — a stale log, or a key the profile has rotated away.
+ */
+export function createControllerIdentityWithKey(
+  privateKey: Uint8Array,
+  log: Array<SignedEvent>,
+): SigningIdentity {
+  const did = didFromLog(log)
+  return identityForKey(
+    privateKey,
+    ed25519.getPublicKey(privateKey),
+    did,
+    currentState(did, log, CONTEXT),
+    'the supplied key is not one of the current authority keys',
+  )
+}
+
+/**
+ * Async sibling of {@link createControllerIdentityWithKey}, for a log whose revoke carries a
+ * capability authorising a non-authority signer — the shape only `foldLogAsync` can check.
+ *
+ * The pairing is not incidental here: a profile that uses the management tier is the same profile
+ * whose daily signer should not hold the seed, so a log with a capability-authorised revoke in it is
+ * exactly the log this entry point exists for.
+ */
+export async function createControllerIdentityWithKeyAsync(
+  privateKey: Uint8Array,
+  log: Array<SignedEvent>,
+  options?: FoldOptions,
+): Promise<SigningIdentity> {
+  const did = didFromLog(log)
+  return identityForKey(
+    privateKey,
+    ed25519.getPublicKey(privateKey),
+    did,
+    await currentStateAsync(did, log, CONTEXT, options),
+    'the supplied key is not one of the current authority keys',
+  )
 }

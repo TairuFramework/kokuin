@@ -61,8 +61,10 @@ describe('createRotate()', () => {
 
   test('carries a deny-set snapshot when one is given', () => {
     const { inception, did } = setup()
-    const deny = ['did:key:zStolen']
-    expect(createRotate(seed, 0, did, inception.event, { deny }).event.d).toEqual(deny)
+    const denySnapshot = ['did:key:zStolen']
+    expect(createRotate(seed, 0, did, inception.event, { denySnapshot }).event.d).toEqual(
+      denySnapshot,
+    )
   })
 
   test('a rotate chained onto a revoke reveals the key the log actually pre-committed', () => {
@@ -82,7 +84,7 @@ describe('createRotate()', () => {
 
     const rotate = createRotate(seed, 0, did, revoke.event, {
       keyPosition: { gen: state.keyGen, seq: state.keySeq },
-      deny: [],
+      denySnapshot: [],
     })
     expect(digestOf(rotate.event.k[0])).toBe(state.next[0])
 
@@ -234,7 +236,10 @@ describe('createRotate() refuses to emit an event the fold would reject', () => 
     const { inception, did } = setup()
     const a = createRevoke(seed, 0, did, inception.event, target, { gen: 0, seq: 0 })
     const b = createRevoke(seed, 0, did, a.event, `${target}2`, { gen: 0, seq: 0 })
-    const cold = createRotate(seed, 0, did, b.event, { keyPosition: { gen: 0, seq: 0 }, deny: [] })
+    const cold = createRotate(seed, 0, did, b.event, {
+      keyPosition: { gen: 0, seq: 0 },
+      denySnapshot: [],
+    })
     const c = createRevoke(seed, 0, did, cold.event, `${target}3`, { gen: 0, seq: 1 })
     const last = createRotate(seed, 0, did, c.event, { keyPosition: { gen: 0, seq: 1 } })
 
