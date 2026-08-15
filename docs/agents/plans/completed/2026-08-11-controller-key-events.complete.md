@@ -228,6 +228,39 @@ recorded because they generalise: a stub agrees with an implementation that chec
 a whole options object proves nothing about its fields; and a forgery that breaks two things at once
 certifies neither.
 
+### The review round after "complete"
+
+A full-branch review — one design pass and two adversarial passes, 152 constructed rows — found
+**five more Criticals** on a branch that had already been through per-task review, a whole-branch
+review, and `kigu:complete`. Everything above was already true when they were found.
+
+- **A keyless attacker owned the identifier, permanently.** An unknown non-critical event was
+  accepted with no signature check and no validation of `g`/`s`, and branch precedence read the
+  *raw event* rather than the folded state. One unsigned `nop` at `g = s = MAX_SAFE_INTEGER` beat
+  every honest branch, and no reset the root could ever author outranked it.
+- **A stolen current key beat the owner's recovering rotate.** Precedence compared heads, and
+  supersession ran only on an exact tie, so a thief who could not rotate simply appended cheap
+  revokes until its branch was longer.
+- **Attenuation at the last hop was a no-op.** `checkCapability` was handed a capability but treated
+  it as an invocation, spreading the request over its own `act`/`res` and checking it against the
+  *parent*. A narrowed sub-capability wielded the full parent grant.
+- **The presented capability's `aud` never reached the deny set**, so a revoked device kept
+  authoring capability-authorised revokes through one level of delegation.
+- **Duplicity detection was off for the management tier.** `resolveBranches` filtered branches
+  through the *sync* fold, which fails closed on a `cap`-bearing revoke, so any profile that used
+  the feature reported "no valid history" for a healthy log.
+
+Two more were opened by these fixes, keeping the pattern intact: comparing raw branch arrays would
+have turned every honest log into a duplicity report, and making `resolve` head-only silently
+un-revoked every revocation record signed by a since-rotated key.
+
+Three lessons this round adds. **The conformance suite passed all five** — it only ever presented
+equal-length, cap-free branches, so the properties it certified were never the ones under attack.
+**A completed plan is not evidence**; this round ran after the work had been summarised, the
+ephemeral plan deleted, and the branch parked at QA. And **probe direction is not uniform**: a probe
+written to characterise a suspected hole *passes* while the hole is open, so reading "all green" as
+"no findings" inverts the result.
+
 ## Remaining at branch finish
 
 Release mechanics were deliberately deferred to one coherent pass rather than accumulated per task:

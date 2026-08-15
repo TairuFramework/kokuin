@@ -400,6 +400,18 @@ symbols its sources import — not from the design notes, which were wrong about
 - **kubun is the heaviest consumer of the surfaces that moved**: `verifyToken`, `checkCapability`,
   `VerifyTokenHook`, `createRevocationRecord`, `createFullIdentity` / `isFullIdentity`. The
   `KeyAgreementIdentity` narrowing and the new hard denial on a revoked audience both land here.
+- **The 2026-08-15 review round added four things downstream must absorb.** Re-measured against all
+  three repos on 2026-08-15: none implements `DIDMethodResolver`, and none references
+  `resolveDenySet`, `resolveAgreementKey`, or passes a `methods:` registry anywhere — so the
+  `resolve`/`resolveHistoric` split costs them nothing *today*, and will cost them the day they
+  verify a `did:kokuin:` token or wrap a resolver. What does reach them, across 26 files calling
+  `verifyToken`/`checkCapability`: (1) a presented capability's own `act`/`res` now constrain the
+  request and must sit within the parent's grant — inert for these three, which pass invocation
+  payloads carrying `cap` and never `act`/`res`, but it is the shape to check first; (2) the
+  delegation depth cap now admits four links where it admitted five, which bites any chain of
+  exactly five; (3) a presented capability's `exp`/`nbf`/`iat` are enforced where they were not;
+  (4) `resolveDenySet` answers with a **heterogeneous** set holding both DIDs and `#`-prefixed keys
+  — match against it, never enumerate it.
 
 ### Repo-owned work
 
@@ -407,6 +419,8 @@ symbols its sources import — not from the design notes, which were wrong about
 - **kubun** — `kubun/docs/agents/plans/backlog/2026-08-07-profile-did-ownership.md`
 - **kokuin** — `next/2026-08-11-did-kokuin-downstream-adoption.md` (the build-and-verify pass and
   kubun's fail-open), `next/2026-08-11-deny-set-for-plain-tokens.md`,
+  `next/2026-08-15-log-completeness-and-capability-lifetime.md` (log truncation as a silent
+  revocation bypass, and capabilities that never expire — both left open by the 2026-08-15 review),
   `backlog/2026-08-11-controller-follow-ons.md`
 
 ## Costs and constraints
