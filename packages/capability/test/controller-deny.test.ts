@@ -510,6 +510,66 @@ describe('the deny set inside the fold: who may author a capability-authorised r
     ).resolves.toMatchObject({ ok: true })
   })
 
+  test('a position resolver that publishes no deny set refuses, rather than answering "nobody"', async () => {
+    // The fourth argument is the one place the fold cannot police: a third-party fold builds its
+    // own, and the plausible way to lose `resolveDenySet` is a wrapper — caching, metrics, tracing
+    // — forwarding only the member its author knew about. Inside the fold an absent member cannot
+    // mean the empty set: that reads as "nobody is revoked" and hands a denied manager an
+    // authorisation, which is this package's rule switched off from outside it.
+    const manager = randomIdentity()
+    const cap = await manageCap(manager)
+    const revokeManager = revokeOf(manager.id)
+    const attack = createRevokeWithKey(manager.privateKey, did, revokeManager.event, deviceX, {
+      cap,
+    })
+    const verify = createControllerCapabilityVerifier({ methods: registryFor([inception]) })
+
+    // The real resolver the fold builds, captured from a fold rather than hand-made — a stub would
+    // agree with an implementation that consults nothing.
+    let atPosition: DIDMethodResolver | undefined
+    await foldLogAsync(did, [inception, revokeManager, attack], {
+      verifyCapability: async (c, subject, target, position) => {
+        atPosition = position
+        return await verify(c, subject, target, position)
+      },
+    })
+    if (atPosition == null) throw new Error('the fold supplied no position resolver')
+    const stripped: DIDMethodResolver = {
+      method: atPosition.method,
+      resolve: (asked, header) => (atPosition as DIDMethodResolver).resolve(asked, header),
+      // resolveDenySet deliberately not forwarded.
+    }
+
+    // Control: the wrapper is not broken. It resolves the profile's key at this position exactly as
+    // the real one does, so a refusal below is the missing deny set and nothing else.
+    expect(await stripped.resolve(did, {})).toEqual(await atPosition.resolve(did, {}))
+
+    expect(await verify(cap, did, deviceX, atPosition)).toEqual({
+      authorised: false,
+      reason: 'capability does not authorise this revoke',
+    })
+    expect(await verify(cap, did, deviceX, stripped)).toEqual({
+      authorised: false,
+      reason: 'capability does not authorise this revoke',
+    })
+
+    // Control: at a position where nobody is revoked, the real resolver authorises — so the refusal
+    // above is not this capability being rejected everywhere.
+    let cleanPosition: DIDMethodResolver | undefined
+    const clean = createRevokeWithKey(manager.privateKey, did, inception.event, deviceX, { cap })
+    await foldLogAsync(did, [inception, clean], {
+      verifyCapability: async (c, subject, target, position) => {
+        cleanPosition = position
+        return await verify(c, subject, target, position)
+      },
+    })
+    if (cleanPosition == null) throw new Error('the fold supplied no position resolver')
+    expect(await verify(cap, did, deviceX, cleanPosition)).toMatchObject({ authorised: true })
+    // And stripped of its deny set, the same clean position refuses too: with nothing to decide
+    // from, "unknown" is a refusal. That is the cost of the rule, paid by a broken caller only.
+    expect(await verify(cap, did, deviceX, stripped)).toMatchObject({ authorised: false })
+  })
+
   test('a capability minted for one profile cannot revoke on another', async () => {
     // The subject binding, re-checked now that the registry the verifier uses is assembled rather
     // than supplied: the fold's resolver answers for its own profile only.

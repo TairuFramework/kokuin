@@ -253,7 +253,8 @@ export type CapabilityAuthorisation =
  * `resolveAgreementKey` is deliberately absent: this registry exists for issuer resolution and the
  * deny set, and nothing on a capability path encrypts. A missing `resolveDenySet` on the fallback
  * side answers with the empty set, which is exactly what an absent member already means to
- * `checkCapability`.
+ * `checkCapability`; on the **subject** side it throws, because there the empty set would be the
+ * fold's own rule switched off by a caller.
  */
 function registryForSubject(
   subject: string,
@@ -276,9 +277,25 @@ function registryForSubject(
     async resolveDenySet(did) {
       // Only ever asked about a capability's `sub`, which every capability on this path has already
       // been checked to share with `subject` — so this is the fold's own deny set at the position
-      // being verified. The fallback arm exists for the type, not for a reachable case, and an
-      // empty set is what an absent member already means to `checkCapability`.
-      return (await pick(did)?.resolveDenySet?.(did)) ?? new Set<string>()
+      // being verified, and it is the whole of the rule inside the fold.
+      //
+      // Absent, that arm **throws**: `createStateResolver` always publishes one, so a position
+      // resolver without it is a broken caller — a third-party fold that wrapped it and forwarded
+      // only the member its author knew about. Answering the empty set there would read as "nobody
+      // is revoked" and turn a denied manager into an authorised one, which is the deny set
+      // disabled from outside the package that owns it. The throw fails the whole verification
+      // closed, which for a fold means an unfoldable log: loud, and the only answer that cannot be
+      // a bypass. There is no third option — with no deny set there is nothing to decide from.
+      if (did === subject) {
+        if (subjectAtPosition.resolveDenySet == null) {
+          throw new Error(`Position resolver for ${subject} publishes no deny set`)
+        }
+        return await subjectAtPosition.resolveDenySet(did)
+      }
+      // The fallback arm is for a delegate of the same method resolved through the caller's
+      // registry. It exists for the type more than for a reachable case, and an empty set is what
+      // an absent member already means to `checkCapability` everywhere outside a fold.
+      return (await fallback?.resolveDenySet?.(did)) ?? new Set<string>()
     },
   }
   // First, so `findMethodResolver` — which answers with the first entry of a matching method —
