@@ -662,6 +662,7 @@ export type { CapabilityAuthorisation, ControllerCapabilityVerifier } from './co
 export {
   audienceConfirmation,
   createControllerCapabilityVerifier,
+  REVOKE_AUDIENCE_KEY_MISMATCH,
   REVOKE_NO_AUDIENCE_KEY,
   REVOKE_NO_POSITION,
   REVOKE_NOT_AUTHORISED,

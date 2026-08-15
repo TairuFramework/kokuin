@@ -15,6 +15,7 @@ import {
   type SignedEvent,
 } from '@kokuin/controller'
 import {
+  createIdentity,
   createSigningIdentity,
   type MethodRegistry,
   randomIdentity,
@@ -347,17 +348,87 @@ describe('createControllerCapabilityVerifier()', () => {
     })
   })
 
-  test('a pinned key that did not sign the revoke fails differently from an absent pin', async () => {
-    // Two failure modes that must stay apart: nothing was pinned, versus something was pinned and
-    // somebody else signed. The `aud` claim here still names the delegate — only the pin moves —
-    // so this also shows the binding is to the pinned key rather than to the `aud` string.
+  test('a pin naming a key the audience does not carry is rejected, and says so', async () => {
+    // Authority follows the pin and revocation follows `aud`, so a capability where they are
+    // different parties is a revoke authority the deny set cannot reach: deny the `aud` and the
+    // pinned key carries on, deny the key's own DID and the capability never named it. Only the pin
+    // moves here — `aud` still names the delegate, whose `did:key` carries its key for comparison.
     const result = await foldWithCapability(
       await mintCapability({ cnf: confirmationForSeed(outsiderSeed) }),
+      { signerSeed: outsiderSeed },
     )
 
     expect(result).toEqual({
       ok: false,
+      reason: 'capability pins a key the audience does not carry',
+      index: 1,
+    })
+  })
+
+  test('a pin the audience does carry, signed by somebody else, still fails as an unsigned revoke', async () => {
+    // The control that keeps the two failure modes apart: the binding above passes — `aud` and
+    // `cnf` are the same delegate — and what fails is the event signature. Both reasons stay
+    // reachable, so a caller can tell "the capability is malformed" from "somebody else signed".
+    const result = await foldWithCapability(await mintCapability(), {
+      signerSeed: outsiderSeed,
+    })
+
+    expect(result).toEqual({
+      ok: false,
       reason: 'revoke is not signed by the capability audience',
+      index: 1,
+    })
+  })
+
+  test('an audience whose identifier carries no key is accepted with its pin unbound', async () => {
+    // The `did:kokuin:` audience of the rotation test below: its key is knowable only by resolving
+    // it, and resolving the audience is what the pin exists to remove — so the binding does not
+    // reach it and the capability folds. Pinned deliberately: refusing here would make one
+    // profile's management capability over another unusable and its logs unfoldable.
+    const cap = await mintCapability({
+      aud: otherController.did,
+      cnf: confirmationForSeed(otherControllerSeed),
+    })
+    await expect(
+      foldWithCapability(cap, { signerSeed: otherControllerSeed }),
+    ).resolves.toMatchObject({ ok: true })
+  })
+
+  test('a did:peer:4 long-form audience is bound to the keys its document publishes', async () => {
+    // The other identifier that carries its key. The long form embeds the document, so the
+    // `authentication` key is readable from the string alone — no resolution, same as `did:key`.
+    const peer = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    expect(peer.longForm).not.toBe(peer.id)
+
+    // Control: the document's own key binds, and the holder authors the revoke.
+    const bound = await mintCapability({
+      aud: peer.longForm,
+      cnf: audienceConfirmation({ alg: 'EdDSA', publicKey: peer.publicKey }),
+    })
+    const revoke = createRevokeWithKey(
+      peer.privateKey,
+      controller.did,
+      controller.inception.event,
+      target,
+      { cap: bound },
+    )
+    await expect(
+      foldLogAsync(controller.did, [controller.inception, revoke], {
+        verifyCapability: createControllerCapabilityVerifier({ methods }),
+      }),
+    ).resolves.toMatchObject({ ok: true })
+
+    // Only the pin moves: another key, the same long-form audience.
+    const unbound = await mintCapability({
+      aud: peer.longForm,
+      cnf: confirmationForSeed(outsiderSeed),
+    })
+    await expect(foldWithCapability(unbound, { signerSeed: outsiderSeed })).resolves.toEqual({
+      ok: false,
+      reason: 'capability pins a key the audience does not carry',
       index: 1,
     })
   })

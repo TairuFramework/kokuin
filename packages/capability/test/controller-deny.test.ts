@@ -366,7 +366,14 @@ describe('a capability presented directly, without an invocation', () => {
     )
     const leaf = await createCapability(
       manager,
-      { sub: did, aud: delegate.id, act: 'revoke', res: 'doc/1', exp: now() + 3600, cap: [rootRaw] },
+      {
+        sub: did,
+        aud: delegate.id,
+        act: 'revoke',
+        res: 'doc/1',
+        exp: now() + 3600,
+        cap: [rootRaw],
+      },
       undefined,
       { parentCapability: rootRaw, methods },
     )

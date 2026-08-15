@@ -2,9 +2,13 @@ import {
   CODECS,
   type DIDMethodResolver,
   decodeMultibase,
+  decodePeer4,
   encodeMultibase,
   findMethodResolver,
   getAlgorithmAndPublicKey,
+  getPeer4ShortForm,
+  getSignatureInfo,
+  isPeer4,
   type MethodRegistry,
   normalizeDID,
   type ResolvedSigningKey,
@@ -36,6 +40,36 @@ export const REVOKE_NOT_AUTHORISED = 'capability does not authorise this revoke'
 export const REVOKE_NO_AUDIENCE_KEY = 'capability pins no audience key'
 
 /**
+ * What the fold does when the capability pins a key its audience's own identifier does not carry.
+ *
+ * Authority on this path follows `cnf` — the pinned key is what the revoke event is checked against
+ * — while revocation follows `aud`, which is what a `rev` event names and what the deny set holds.
+ * Nothing makes the two the same party unless this does, and a capability where they differ is a
+ * revoke authority that revoking cannot reach: deny the DID in `aud` and the key in `cnf` carries
+ * on, deny the key's own DID and the capability never named it.
+ *
+ * Its own reason rather than {@link REVOKE_NO_AUDIENCE_KEY}: a pin is present and well formed, and
+ * what is wrong is the binding. Both are minting bugs, and a minter told "pins no audience key"
+ * about a capability that plainly pins one would look for the wrong thing.
+ *
+ * The audience is **never resolved** to establish this — resolving is the bug `cnf` exists to
+ * remove, and a third party's routine key rotation would otherwise make a profile's log unfoldable
+ * forever. The binding is therefore checked against the audience identifier itself, and reaches
+ * exactly the identifiers that carry a key: a `did:key`, and a `did:peer:4` long form (its
+ * `authentication` keys). Mint for one of those whenever the audience is a device.
+ *
+ * **What stays open, stated plainly:** an audience whose identifier carries no key — a
+ * `did:kokuin:` profile, a short-form `did:peer:4` — cannot be bound to a pin without resolving it,
+ * so a capability naming one is accepted with its pin unbound. A minter who chooses such an
+ * audience and pins somebody else's key still produces an authority that denying the `aud` does not
+ * reach. Refusing that case instead would make one profile's management capability over another
+ * unusable and its logs unfoldable, which is the worse failure and the one the standing rule
+ * against resolving the audience exists to prevent. The remedy is at mint time: name the audience
+ * by a DID that carries its key.
+ */
+export const REVOKE_AUDIENCE_KEY_MISMATCH = 'capability pins a key the audience does not carry'
+
+/**
  * What a verifier answers when it is called without the log position it must verify at.
  *
  * The fourth argument is required, and this is the runtime half of that: a type cannot stop an
@@ -65,6 +99,12 @@ const KEY_LENGTHS: Record<string, number> = { EdDSA: 32, ES256: 33 }
  * that key is in the identifier, and for anything else it is whatever `resolveIssuer` answers with
  * at that moment. That moment is the point: the pin is what the issuer saw when it granted, and it
  * never has to be looked up again.
+ *
+ * On the controller-revoke path the pin is additionally checked against the audience's *identifier*
+ * — the only way to tie the party that wields the capability to the party the deny set can name
+ * without resolving anything. Mint for a `did:key` audience, or for a `did:peer:4` **long form**: a
+ * short form is a hash of the document and carries no key, so a pin against one cannot be checked
+ * at all. See {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
  */
 export function audienceConfirmation(key: ResolvedSigningKey): ConfirmationClaim {
   const codec = CODECS[key.alg]
@@ -92,6 +132,88 @@ function confirmedKey(cnf: ConfirmationClaim | undefined): ResolvedSigningKey {
     throw new Error(`Invalid audience key size for ${alg}: ${publicKey.length}`)
   }
   return { alg, publicKey }
+}
+
+/** As long as `resolveKidFromDoc` in `@kokuin/token` allows: base58 decoding is O(n^2). */
+const MAX_KEY_ENCODED = 64
+
+/**
+ * The signing keys a DID carries in the identifier itself, or `null` when it carries none.
+ *
+ * `did:key` **is** its key. A `did:peer:4` long form embeds the document, so the keys its
+ * `authentication` relationship names are readable from the string alone — and `authentication` is
+ * the right relationship because signing is what the audience will do with the pinned key. Anything
+ * else — a `did:peer:4` short form, a `did:kokuin:`, anything network-backed — needs a lookup, and
+ * answering `null` rather than performing one is the whole point: see
+ * {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
+ *
+ * Throws on an identifier that claims to carry a key and does not — a malformed `did:key`, an
+ * undecodable long form. The caller treats that as no match.
+ */
+function identifierKeys(did: string): Array<ResolvedSigningKey> | null {
+  if (did.startsWith('did:key:')) {
+    const [alg, publicKey] = getSignatureInfo(did)
+    return [{ alg, publicKey }]
+  }
+  if (!isPeer4(did) || did === getPeer4ShortForm(did)) {
+    return null
+  }
+  const { doc } = decodePeer4(did)
+  const keys: Array<ResolvedSigningKey> = []
+  for (const id of doc.authentication ?? []) {
+    const method = doc.verificationMethod.find((entry) => entry.id === id)
+    if (method == null || method.publicKeyMultibase.length > MAX_KEY_ENCODED) {
+      continue
+    }
+    let info: [ResolvedSigningKey['alg'], Uint8Array] | null = null
+    try {
+      info = getAlgorithmAndPublicKey(decodeMultibase(method.publicKeyMultibase))
+    } catch {
+      // A legal-but-unsupported multibase, or a key of another kind: it is not the pinned key
+      // either way, and one unreadable entry must not hide a readable one further down.
+      continue
+    }
+    if (info != null) {
+      keys.push({ alg: info[0], publicKey: info[1] })
+    }
+  }
+  return keys
+}
+
+/** Whether two resolved keys are the same key. */
+function isSameKey(a: ResolvedSigningKey, b: ResolvedSigningKey): boolean {
+  if (a.alg !== b.alg || a.publicKey.length !== b.publicKey.length) {
+    return false
+  }
+  return a.publicKey.every((byte, index) => byte === b.publicKey[index])
+}
+
+/**
+ * Whether the pinned key contradicts the audience — the binding that keeps the party wielding the
+ * capability and the party the deny set can name the same one. Never resolves the audience; see
+ * {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
+ *
+ * An audience whose identifier carries no key at all is **not** a contradiction and is not refused
+ * here. That is the `did:kokuin:` case — one profile holding a management capability over another
+ * is a supported shape, pinned by a test in `controller-revoke.test.ts` — and its key is knowable
+ * only by resolving it, which is the bug the pin exists to remove and a standing rule against.
+ * Refusing instead would make every such log unfoldable and the profile's DID permanently
+ * unresolvable, which is a far worse failure than the one it would close. What remains open there
+ * is stated in {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
+ */
+function contradictsAudience(aud: unknown, pinned: ResolvedSigningKey): boolean {
+  if (typeof aud !== 'string') {
+    return true
+  }
+  let carried: Array<ResolvedSigningKey> | null
+  try {
+    carried = identifierKeys(aud)
+  } catch {
+    // An identifier that claims to carry a key and does not: whatever the pin is, it is not that
+    // audience's key, and nothing about this can start working later.
+    return true
+  }
+  return carried != null && !carried.some((key) => isSameKey(key, pinned))
 }
 
 /**
@@ -203,13 +325,19 @@ export type ControllerCapabilityVerifier = (
  *    capability must carry its parents in its own `cap` claim, since that is where
  *    `checkCapability` walks the chain from; naming a parent only at mint time leaves nothing for
  *    a verifier that sees the event alone;
- * 4. that it pins its audience's signing key in `cnf`.
+ * 4. that it pins a signing key in `cnf`, and that the key does not contradict the audience's own
+ *    identifier. Authority on this path follows the pin and revocation follows `aud`; the binding
+ *    is what makes them the same party, and without it a capability could name a revokable audience
+ *    while handing the authority to a key no `rev` event can reach. See
+ *    {@link REVOKE_AUDIENCE_KEY_MISMATCH} for why the audience is checked from its identifier
+ *    rather than resolved, which audiences that reaches, and what it asks of a minter.
  *
  * All four passing yields that pinned key. Handing it back rather than a bare `true` is what lets
  * the fold check the revoke event's own signature against it — the audience binding, which nothing
  * on this side of the split can do, because the event is not an argument here and never should be.
  *
- * **The pin is mandatory here, and is never resolved.** Looking the audience up instead would make
+ * **The pin is mandatory here, is never resolved, and must be the audience's own key.** Looking the
+ * audience up instead would make
  * the *audience's* routine key rotation stop the revoke from verifying, and a revoke that stops
  * verifying makes the whole log unfoldable and the profile's DID permanently unresolvable — a
  * third party bricking an identity by rotating their own key. A capability with no `cnf` is
@@ -270,6 +398,7 @@ export function createControllerCapabilityVerifier(
     const methods = registryForSubject(subject, subjectAtPosition, options.methods)
     const chainOptions: DelegationChainOptions = { ...options, methods }
     let pinned: ConfirmationClaim | undefined
+    let audience: unknown
     try {
       const capability = await verifyToken<CapabilityPayload>(cap, {
         atTime: options.atTime,
@@ -290,6 +419,7 @@ export function createControllerCapabilityVerifier(
 
       await checkCapability({ act: 'revoke', res: target }, capability.payload, chainOptions)
       pinned = capability.payload.cnf
+      audience = capability.payload.aud
     } catch {
       // Every failure is the same answer here, including the two `@kokuin/token` keeps apart:
       // `UnresolvableIssuerError` (nothing was learned about the capability) and
@@ -306,10 +436,19 @@ export function createControllerCapabilityVerifier(
     if (pinned == null) {
       return { authorised: false, reason: REVOKE_NO_AUDIENCE_KEY }
     }
+    let audienceKey: ResolvedSigningKey
     try {
-      return { authorised: true, audienceKey: confirmedKey(pinned) }
+      audienceKey = confirmedKey(pinned)
     } catch {
       return { authorised: false, reason: REVOKE_NO_AUDIENCE_KEY }
     }
+    // The pin is well formed; it still has to name the audience. Authority follows the pinned key
+    // and revocation follows `aud`, so a capability where they are different parties is one the
+    // deny set cannot reach — see {@link REVOKE_AUDIENCE_KEY_MISMATCH}. Checked against the
+    // identifier alone, never by resolving the audience.
+    if (contradictsAudience(audience, audienceKey)) {
+      return { authorised: false, reason: REVOKE_AUDIENCE_KEY_MISMATCH }
+    }
+    return { authorised: true, audienceKey }
   }
 }
