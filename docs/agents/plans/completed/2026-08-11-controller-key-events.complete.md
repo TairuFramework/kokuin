@@ -163,6 +163,17 @@ fully carried:
 
 - **A stolen mnemonic is terminal.** The thief holds every key at every index including the recovery
   key, and can always rotate ahead of the owner. This is the price of seed-rooting.
+- **Revoking a key un-revokes what that key's revocation records had revoked.** A `jti` revocation
+  record is an artefact signed by a key, so the rule reaches it too — and `createRevocationChecker`
+  *ignores* a record whose `kid` names a key the issuer does not hold, rather than failing closed.
+  That asymmetry has to stay: `kid` is unauthenticated and the backend is an untrusted extension
+  point, so failing closed there would let anyone deny every capability a profile ever issued by
+  planting one record per `jti` — and a denied key is *public*, since it is written in the log, so it
+  would be worse than the invented-key case that classification was built for. Bounded in practice:
+  `add()` verifies on the way in, so only records a backend already held are affected. The remedy is
+  to re-issue those records with a live key, or to revoke the holder by DID, which the deny set
+  enforces independently of any record. `zzown-denied-key-reach.test.ts` row 5 asserts the behaviour
+  so it cannot drift silently.
 - **Adopted profiles are out of scope, and the field reserved for them is gone.** A rotate used to
   carry an optional `r`, described as a co-signature-gated recovery-commitment update and held for a
   device-generated profile that later adopts an HD-derived authority key. Nothing implemented the
