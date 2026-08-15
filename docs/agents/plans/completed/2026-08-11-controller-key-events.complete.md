@@ -111,10 +111,19 @@ fully carried:
   delegate rotating its own key permanently bricked the profile.
 - `kid` is `#<the multibase key exactly as it appears in `k`>`, membership-checked. An out-of-set
   `kid` is an error, never a fallback to the first key.
-- `resolve()` accepts any key that was authoritative at some position **within the current
-  generation**, so a routine rotate does not invalidate every grant the profile ever issued. A
-  generation bump (`reset`) still discards everything under the prior generation. This is the remedy
-  ladder the design describes; without it, `rotate` was as destructive as `reset`.
+- **The two key questions are separate members.** `resolve()` answers from the **head's `k` alone**
+  — "can this profile sign with this key now" — so a rotate does retire the key it rotated away for
+  new issuance, and a stolen authority key stops minting verifiable tokens at the next rotate rather
+  than at the next reset. `resolveHistoric()` accepts any key that was authoritative at some
+  position **within the current generation**, so a routine rotate does not invalidate a grant the
+  profile already issued; a generation bump (`reset`) still discards everything under the prior
+  generation. Callers verifying archived material — `@kokuin/capability`'s chain walk and its
+  revocation records — opt in with `verifyToken({ historic: true })`; everything else gets the safe
+  answer without asking for it.
+  Originally one permissive scan on `resolve()`, which read the remedy ladder's "already issued
+  artefacts survive a rotate" as licence to let a compromised key keep issuing *new* ones. The
+  implementation could not tell the two apart, so it granted both; splitting the surface is what
+  tells them apart.
 - A capability-authorised revoke is verified **at the log position it sits at**. The fold hands the
   verifier a resolver over the preceding states rather than asking the caller for a prefix — a
   caller configures a resolver once per DID with no way to know which event is asking, so it can

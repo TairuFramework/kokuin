@@ -274,6 +274,26 @@ function registryForSubject(
       }
       return await resolver.resolve(did, header)
     },
+    // Forwarded, not dropped. A capability is archived material — see `HISTORIC_ISSUANCE` in
+    // `index.ts` — so `verifyToken` asks this member for it, and a wrapper that forwarded only
+    // `resolve` would make every capability-authorised revoke fail closed: an unfoldable log, and
+    // the profile's DID permanently unresolvable. The same trap `resolveDenySet` documents, in the
+    // availability direction rather than the bypass one.
+    //
+    // Absent on the position resolver, this member is absent here too, and `resolveIssuerWithDoc`
+    // refuses rather than silently falling back to `resolve`. That is the fail-closed answer: a
+    // fold whose position resolver cannot answer the historic question rejects the log rather than
+    // answering a different one. `createStateResolver` always publishes it.
+    resolveHistoric:
+      subjectAtPosition.resolveHistoric == null && fallback?.resolveHistoric == null
+        ? undefined
+        : async (did, header) => {
+            const resolver = pick(did)
+            if (resolver?.resolveHistoric == null) {
+              throw new Error(`Unknown DID: ${did}`)
+            }
+            return await resolver.resolveHistoric(did, header)
+          },
     async resolveDenySet(did) {
       // Only ever asked about a capability's `sub`, which every capability on this path has already
       // been checked to share with `subject` — so this is the fold's own deny set at the position
@@ -422,6 +442,11 @@ export function createControllerCapabilityVerifier(
         cache: options.cache,
         resolver: options.resolver,
         methods,
+        // The capability was issued at some position of this very log, and the revoke that names it
+        // sits later — possibly after a rotate. Verifying it against the prefix head's keys alone
+        // would make the profile's own routine rotation unfold its own log. See `HISTORIC_ISSUANCE`
+        // in `index.ts`; the prefix is still the position, so nothing after this event is in scope.
+        historic: true,
       })
       assertCapabilityToken(capability)
       // `checkCapability` runs the hook on every capability it verifies, but it verifies the

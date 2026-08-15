@@ -219,26 +219,64 @@ export type ResolveIssuerWithDocResult = {
 }
 
 /**
+ * Whether to resolve the issuer's *current* signing key or one it signed with in the past.
+ *
+ * `false` (the default) asks {@link DIDMethodResolver.resolve} — the safe question, and the right
+ * one for authenticating a live signer. `true` asks
+ * {@link DIDMethodResolver.resolveHistoric}, which is an explicit statement that the artefact being
+ * verified was issued in the past and must survive the issuer's key rotation; see that member for
+ * what accepting a superseded key means.
+ *
+ * A method resolver with no `resolveHistoric` **refuses** the historic question rather than
+ * answering the other one. Falling back to `resolve` would be the permissive scan by another name
+ * for a method that has one, and a silently different answer for every method that does not.
+ */
+export type ResolveIssuerMode = { historic?: boolean }
+
+/**
  * Resolve a token issuer (did:key or did:peer:4) and return alg + public key,
  * plus the decoded peer:4 doc when one was obtained inline or via the resolver.
  * Callers writing to a DID cache should write `peer4Doc` only after signature verification.
+ *
+ * `mode.historic` selects which question is asked of a `DIDMethodResolver` — see
+ * {@link ResolveIssuerMode}. It reaches only the method-registry branch: `did:key` carries its key
+ * in the identifier and a `did:peer:4` document is fixed by its own hash, so neither has a past key
+ * set distinct from its present one.
  */
 export async function resolveIssuerWithDoc(
   iss: string,
   header: ResolveIssuerHeader = {},
   resolver?: DIDResolver,
   methods?: MethodRegistry,
+  mode: ResolveIssuerMode = {},
 ): Promise<ResolveIssuerWithDocResult> {
   if (methods != null) {
     const methodResolver = findMethodResolver(methods, iss)
     if (methodResolver != null) {
+      // The historic question is answered only by the member that exists to answer it. A resolver
+      // that does not publish one is not asked `resolve` instead: for a method that can retire keys
+      // that would be the permissive scan the split removed, and for one that cannot it would
+      // quietly substitute a different question for the caller's. `UnresolvableIssuerError` is the
+      // right type — nothing was learned about this artefact either way, which is exactly what a
+      // fail-closed caller must treat as a denial.
+      const historic = mode.historic === true
+      if (historic && methodResolver.resolveHistoric == null) {
+        throw new UnresolvableIssuerError(
+          `DID method ${methodResolver.method} cannot resolve historic keys: ${iss}`,
+        )
+      }
       // A method resolver throws its own error strings — `@kokuin/controller` alone has four.
       // Re-type them so a method-backed failure to resolve is indistinguishable to callers from
       // the built-in ones below. The original message is preserved so nothing loses detail, and
       // the original error is kept as `cause`.
       let resolved: ResolvedSigningKey
       try {
-        resolved = await methodResolver.resolve(iss, header)
+        // Called as a method of its own resolver, not as a detached function: an implementation is
+        // free to be a class with private state, and both members are declared on the object.
+        resolved =
+          historic && methodResolver.resolveHistoric != null
+            ? await methodResolver.resolveHistoric(iss, header)
+            : await methodResolver.resolve(iss, header)
       } catch (cause) {
         // Except for the one failure that is not a failure to resolve. A method saying "I have
         // this issuer, it has no such key" is reporting what the `kid` branches below report for
@@ -331,8 +369,9 @@ export async function resolveIssuer(
   header: ResolveIssuerHeader = {},
   resolver?: DIDResolver,
   methods?: MethodRegistry,
+  mode: ResolveIssuerMode = {},
 ): Promise<[SignatureAlgorithm, Uint8Array]> {
-  const { alg, publicKey } = await resolveIssuerWithDoc(iss, header, resolver, methods)
+  const { alg, publicKey } = await resolveIssuerWithDoc(iss, header, resolver, methods, mode)
   return [alg, publicKey]
 }
 

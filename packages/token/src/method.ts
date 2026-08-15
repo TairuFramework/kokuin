@@ -26,7 +26,37 @@ export type ResolvedAgreementKey = {
 export type DIDMethodResolver = {
   /** The method segment, without `did:` and without the trailing colon. E.g. `kokuin`. */
   method: string
+  /**
+   * The key this subject signs with **now** — its head keys, and nothing it has rotated away.
+   *
+   * The safe default, and the one a caller reaches for without thinking: authenticating a live
+   * signer asks whether *this* party can sign today, and a key the subject has retired must not
+   * answer yes. A method whose key set can change over time therefore answers from its current
+   * state alone here, and offers {@link resolveHistoric} for the other question.
+   */
   resolve(did: string, header: ResolveIssuerHeader): Promise<ResolvedSigningKey>
+  /**
+   * The key this subject signed with **at some point in the past**, for verifying an artefact it
+   * has already issued.
+   *
+   * The explicit opt-in half of the split. Accepting a superseded key means accepting a signature
+   * from a key the subject may have rotated away *because it was compromised*: the answer is "this
+   * profile did once hold this key", never "this profile holds this key". Use it only where the
+   * artefact being verified was minted in the past and must survive the subject's routine key
+   * hygiene — an already-issued capability, a revocation record, an archived grant — and never to
+   * authenticate a live signer, where {@link resolve} is the question.
+   *
+   * A method whose key set never changes may implement it as an alias of {@link resolve}; the two
+   * genuinely coincide there.
+   *
+   * Optional, so that a hand-rolled resolver written before this member existed still typechecks.
+   * Its **absence fails closed**: `resolveIssuerWithDoc` asked for a historic resolution refuses
+   * rather than falling back to {@link resolve}, because the fallback would silently answer a
+   * different question than the caller asked. A method that can retire keys and wants archived
+   * material to keep verifying must implement it — including a *wrapper* around one that does, for
+   * the same reason `resolveDenySet` must be forwarded.
+   */
+  resolveHistoric?(did: string, header: ResolveIssuerHeader): Promise<ResolvedSigningKey>
   /**
    * Resolve the recipient's key agreement key set, in the method's own order.
    *

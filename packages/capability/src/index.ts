@@ -47,6 +47,29 @@ export const DEFAULT_MAX_DELEGATION_DEPTH = 4
  */
 export const DEFAULT_MAX_DEVICE_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 
+/**
+ * Every capability this package verifies is checked against the keys its issuer held **at some
+ * point**, not only the ones it holds now — `verifyToken`'s `historic` option.
+ *
+ * A capability is an artefact the subject minted in the past and handed to somebody else, and the
+ * point of holding one is that it keeps working. For an issuer whose key set rotates —
+ * `did:kokuin:`, whose keys are a projection of a key event log — the default question ("is this a
+ * key the issuer holds now") would make a routine `rotate` invalidate every capability the profile
+ * had ever issued, including ones held by third parties who cannot know a rotation happened. The
+ * spec reserves that blast radius for `reset`, which bumps the generation and does still invalidate
+ * them.
+ *
+ * What it costs, stated plainly: a capability signed by an authority key that leaked and was
+ * rotated away still verifies here. It is not a live proof of possession and never was — the holder
+ * is the `aud`, and what proves the holder is the signature on the invocation token or the `cnf`
+ * pin, neither of which this widens. Denying the leaked key's issuance of *new* material is the
+ * default `resolve` on the other side of the split, and denying a holder is the deny set.
+ *
+ * A single constant rather than a literal at each call site, so the three cannot drift apart and
+ * the reasoning is written once.
+ */
+const HISTORIC_ISSUANCE = true
+
 /** Hook called for each token during verification. Throw to reject. */
 export type VerifyTokenHook = (token: CapabilityToken, raw: string) => void | Promise<void>
 
@@ -281,6 +304,8 @@ export async function createCapability<
     cache: options.cache,
     resolver: options.resolver,
     methods: options.methods,
+    // See {@link HISTORIC_ISSUANCE}. The parent was minted before this delegation exists at all.
+    historic: HISTORIC_ISSUANCE,
   })
   assertCapabilityToken(parent)
 
@@ -553,6 +578,8 @@ export async function checkDelegationChain(
     cache: options?.cache,
     resolver: options?.resolver,
     methods: options?.methods,
+    // See {@link HISTORIC_ISSUANCE}.
+    historic: HISTORIC_ISSUANCE,
   })
   assertCapabilityToken(next)
   if (options?.verifyToken != null) {
@@ -658,6 +685,8 @@ export async function checkCapability(
     cache: options?.cache,
     resolver: options?.resolver,
     methods: options?.methods,
+    // See {@link HISTORIC_ISSUANCE}.
+    historic: HISTORIC_ISSUANCE,
   })
   assertCapabilityToken(capability)
   if (options?.verifyToken != null) {

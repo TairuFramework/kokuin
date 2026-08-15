@@ -92,3 +92,89 @@ describe('VerifyTokenOptions.methods', () => {
     expect(verified.payload.iss).toBe(identity.id)
   })
 })
+
+describe('VerifyTokenOptions.historic', () => {
+  // A method whose key set rotates: `resolve` answers only for the current key, `resolveHistoric`
+  // for either. That is the shape `did:kokuin:` has, spelled out here so the option's behaviour is
+  // pinned in the package that owns it rather than only where it is consumed.
+  function buildRotating() {
+    const oldKey = ed25519.utils.randomSecretKey()
+    const newKey = ed25519.utils.randomSecretKey()
+    const retired = createSigningIdentityForDID(did, oldKey)
+    const current = createSigningIdentityForDID(did, newKey)
+    const resolver: DIDMethodResolver = {
+      method: 'kokuin',
+      resolve: async (requested: string) => {
+        if (requested !== did) {
+          throw new Error(`Unknown DID: ${requested}`)
+        }
+        return { alg: 'EdDSA', publicKey: current.publicKey }
+      },
+      resolveHistoric: async (requested: string, header) => {
+        if (requested !== did) {
+          throw new Error(`Unknown DID: ${requested}`)
+        }
+        return {
+          alg: 'EdDSA',
+          publicKey: header.kid === '#retired' ? retired.publicKey : current.publicKey,
+        }
+      },
+    }
+    return { retired, current, resolver }
+  }
+
+  test('a token from a rotated-away key is rejected by default and accepted under the opt-in', async () => {
+    const { retired, resolver } = buildRotating()
+    const token = await retired.signToken({ hello: 'world' }, { header: { kid: '#retired' } })
+
+    await expect(verifyToken(token, { methods: [resolver] })).rejects.toThrow(/Invalid signature/)
+    await expect(
+      verifyToken(token, { methods: [resolver], historic: true }),
+    ).resolves.toMatchObject({ payload: { hello: 'world' } })
+  })
+
+  test('control: a token from the current key verifies under both', async () => {
+    // So the rejection above is the key being retired and not the option breaking verification.
+    const { current, resolver } = buildRotating()
+    const token = await current.signToken({ hello: 'world' })
+
+    await expect(verifyToken(token, { methods: [resolver] })).resolves.toBeDefined()
+    await expect(verifyToken(token, { methods: [resolver], historic: true })).resolves.toBeDefined()
+  })
+
+  test('a historically verified token object is re-checked when handed back without the opt-in', async () => {
+    // The `verifiedTokens` fast path must not launder the weaker check into the stronger one: the
+    // same object, verified once historically, is asked the current-key question and refused.
+    const { retired, resolver } = buildRotating()
+    const token = await retired.signToken({ hello: 'world' }, { header: { kid: '#retired' } })
+    const verified = await verifyToken(token, { methods: [resolver], historic: true })
+
+    await expect(verifyToken(verified, { methods: [resolver] })).rejects.toThrow(
+      /Invalid signature/,
+    )
+    // Control: the same object re-verified historically still takes the fast path and passes.
+    await expect(
+      verifyToken(verified, { methods: [resolver], historic: true }),
+    ).resolves.toBeDefined()
+  })
+
+  test('a strictly verified token object stays verified when re-checked historically', async () => {
+    // The other direction needs no re-check: the strict answer already implies the loose one.
+    const { current, resolver } = buildRotating()
+    const token = await current.signToken({ hello: 'world' })
+    const verified = await verifyToken(token, { methods: [resolver] })
+
+    await expect(
+      verifyToken(verified, { methods: [resolver], historic: true }),
+    ).resolves.toBeDefined()
+  })
+
+  test('a serialized token is unaffected by any of this — it is verified from scratch', async () => {
+    const { retired, resolver } = buildRotating()
+    const token = await retired.signToken({ hello: 'world' }, { header: { kid: '#retired' } })
+    const wire = stringifyToken(token)
+
+    await expect(verifyToken(wire, { methods: [resolver] })).rejects.toThrow(/Invalid signature/)
+    await expect(verifyToken(wire, { methods: [resolver], historic: true })).resolves.toBeDefined()
+  })
+})

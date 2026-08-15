@@ -26,6 +26,16 @@ function buildProfile(): { identity: SigningIdentity; resolver: DIDMethodResolve
       }
       return { alg: 'EdDSA', publicKey: identity.publicKey }
     },
+    // A fake with one fixed key, so the two questions genuinely coincide — the alias
+    // `DIDMethodResolver.resolveHistoric` documents for a method whose key set never changes. It
+    // has to be published all the same: `checkCapability` verifies archived material and asks for
+    // it, and its absence is refused rather than answered from `resolve`.
+    resolveHistoric: async (did: string) => {
+      if (did !== profileDID) {
+        throw new Error(`Unknown DID: ${did}`)
+      }
+      return { alg: 'EdDSA', publicKey: identity.publicKey }
+    },
   }
   return { identity, resolver }
 }

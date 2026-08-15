@@ -57,10 +57,14 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     const token = await signToken(stale, createUnsignedToken({ hello: 'world' }))
 
     const recovered = createControllerResolver({ loadLog: async () => [inception, reset] })
-    // A reset is the one event that discards everything under the prior generation — a rotate is
-    // not, which `generation-lifecycle.test.ts` covers from the other side.
-    await expect(verifyToken(token, { methods: [recovered] })).rejects.toThrow(
+    // A reset is the one event that discards everything under the prior generation *even for a
+    // caller that opted into historic resolution* — a rotate discards it only for the default,
+    // which `generation-lifecycle.test.ts` covers from the other side.
+    await expect(verifyToken(token, { methods: [recovered], historic: true })).rejects.toThrow(
       /kid names a key outside the current generation/,
+    )
+    await expect(verifyToken(token, { methods: [recovered] })).rejects.toThrow(
+      /kid names a key that is not current/,
     )
 
     // Control: the same token still verifies against a resolver whose log stops at the inception,

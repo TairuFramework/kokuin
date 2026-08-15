@@ -1,7 +1,11 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
-import { resolveIssuerWithDoc } from '../src/did.js'
+import {
+  isIssuerKeyNotFoundError,
+  isUnresolvableIssuerError,
+  resolveIssuerWithDoc,
+} from '../src/did.js'
 import { type DIDMethodResolver, findMethodResolver } from '../src/method.js'
 import { encodeMultibase } from '../src/multibase.js'
 import { encodePeer4 } from '../src/peer4.js'
@@ -54,6 +58,66 @@ describe('DIDMethodResolver.resolveAgreementKey', () => {
     }
     const keys = await resolverWithAgreement.resolveAgreementKey?.('did:kokuin:zABC')
     expect(keys).toEqual([{ alg: 'X25519', publicKey: agreementKey }])
+  })
+})
+
+describe('DIDMethodResolver.resolveHistoric', () => {
+  const historicKey = new Uint8Array(32).fill(11)
+  const bothMembers: DIDMethodResolver = {
+    method: 'kokuin',
+    resolve: async () => ({ alg: 'EdDSA', publicKey }),
+    resolveHistoric: async () => ({ alg: 'EdDSA', publicKey: historicKey }),
+  }
+
+  test('the default asks `resolve`, never `resolveHistoric`', async () => {
+    const result = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [bothMembers])
+    expect(result.publicKey).toEqual(publicKey)
+  })
+
+  test('`historic: true` asks `resolveHistoric`, and nothing else does', async () => {
+    // The two members answer with different keys, so this cannot pass by both being consulted.
+    const result = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [bothMembers], {
+      historic: true,
+    })
+    expect(result.publicKey).toEqual(historicKey)
+    // An explicit `false` and an absent `mode` are the same ask.
+    const off = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [bothMembers], {
+      historic: false,
+    })
+    expect(off.publicKey).toEqual(publicKey)
+  })
+
+  test('a resolver that omits it refuses the historic ask rather than falling back', async () => {
+    // Fail closed at the call site. A resolver written against the previous contract has a
+    // *permissive* `resolve` — the whole-generation scan — so answering the historic ask from it
+    // would be exactly the behaviour the split removed, silently and for every such resolver.
+    await expect(
+      resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [kokuinResolver], { historic: true }),
+    ).rejects.toThrow(/cannot resolve historic keys/)
+    // Control: the identical registry entry, the identical DID, answering the non-historic ask.
+    // The refusal above is the missing member and not the resolver being unusable.
+    const control = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [kokuinResolver])
+    expect(control.publicKey).toEqual(publicKey)
+  })
+
+  test('the refusal is an UnresolvableIssuerError — "could not check", not "checked and bad"', async () => {
+    // A fail-closed caller keys on this type. Nothing was learned about the artefact: the method
+    // simply cannot answer the question that was asked.
+    const error = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [kokuinResolver], {
+      historic: true,
+    }).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    )
+    expect(isUnresolvableIssuerError(error)).toBe(true)
+    expect(isIssuerKeyNotFoundError(error)).toBe(false)
+  })
+
+  test('`did:key` ignores the mode entirely — its key is in the identifier', async () => {
+    const did = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+    const historic = await resolveIssuerWithDoc(did, {}, undefined, undefined, { historic: true })
+    const current = await resolveIssuerWithDoc(did)
+    expect(historic.publicKey).toEqual(current.publicKey)
   })
 })
 

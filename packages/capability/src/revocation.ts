@@ -61,10 +61,22 @@ export type RevocationOptions = {
 // of truth, and makes the set this forwards legible next to the set `verifyToken` accepts. It does
 // not force a future field on `VerifyTokenOptions` to be considered here — nothing in the type
 // system can — but it puts the two lists side by side for whoever adds one.
+//
+// `historic` is set rather than forwarded: a revocation record is an artefact its issuer minted at
+// some point in the past, and the whole point of holding one is that it stays checkable afterwards.
+// Without it, an issuer whose key set rotates — `did:kokuin:` — would have every record it ever
+// signed stop verifying at its next routine rotate, which on this path reads as "not revoked". See
+// `DIDMethodResolver.resolveHistoric` for what accepting a superseded key does and does not
+// establish, and note that a `reset` still invalidates the record: it discards the generation.
 function verifyOptions(
   options?: RevocationOptions,
-): Pick<VerifyTokenOptions, 'methods' | 'resolver' | 'cache'> {
-  return { methods: options?.methods, resolver: options?.resolver, cache: options?.cache }
+): Pick<VerifyTokenOptions, 'methods' | 'resolver' | 'cache' | 'historic'> {
+  return {
+    methods: options?.methods,
+    resolver: options?.resolver,
+    cache: options?.cache,
+    historic: true,
+  }
 }
 
 export function createMemoryRevocationBackend(options?: RevocationOptions): RevocationBackend {

@@ -83,9 +83,10 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
   // Shared by every member: load the log, fold it, throw `Unknown DID` when absent. A second copy
   // of this sequence would drift.
   //
-  // The whole state array rather than the head alone: `resolve` has to answer about keys the log
-  // has since rotated away, since a token outlives the state that gave its `kid` meaning. The
-  // members that want only the head take `states[states.length - 1]`.
+  // The whole state array rather than the head alone: `resolveHistoric` has to answer about keys
+  // the log has since rotated away, since an already-issued capability outlives the state that gave
+  // its `kid` meaning. The members that want only the head — every other one, `resolve` included —
+  // take `states[states.length - 1]`.
   //
   // Always the async fold. Both members are already async, and `foldLogAsync` differs from
   // `foldLog` only in being able to await a capability-authorised revoke's verifier — every other
@@ -130,8 +131,22 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
 
   return {
     method: DID_METHOD,
+    // The head's key set only. A profile that has rotated away from a key answers "no" for it here
+    // — which is what makes `rotate` retire a leaked authority key rather than merely add one
+    // beside it, and what the `revoke → rotate → reset` remedy ladder needs to mean anything.
     async resolve(did: string, header: ResolveIssuerHeader = {}): Promise<ResolvedSigningKey> {
       return signingKeyFrom(did, await loadStates(did), header)
+    },
+    // Every key set within the current generation, for a caller that has said it is verifying
+    // material this profile issued in the past — an already-issued capability, a revocation record.
+    // A `rotate` must not invalidate those; a `reset` still does, and the scan stops at the
+    // generation boundary. See `signingKeyFrom` in `state-resolver.ts` for what accepting a
+    // superseded key does and does not establish.
+    async resolveHistoric(
+      did: string,
+      header: ResolveIssuerHeader = {},
+    ): Promise<ResolvedSigningKey> {
+      return signingKeyFrom(did, await loadStates(did), header, true)
     },
     async resolveDenySet(did: string): Promise<ReadonlySet<string>> {
       // The head's set, deliberately, and not the state at any position a capability names: `iat`

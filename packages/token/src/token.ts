@@ -32,6 +32,14 @@ const verifiedTokens = new WeakSet<object>()
 // token, so the value captured at verification time is the one the re-bind compares against.
 const verifiedTokenData = new WeakMap<object, string>()
 
+// Tokens whose signature was checked against a key the issuer has since rotated away — verified
+// with `historic: true`. Membership is the reason the fast path above cannot be taken for them: a
+// later `verifyToken` of the same object *without* `historic` is asking the stricter question, and
+// answering it from a weaker check is the fail-open direction. Re-verification is the answer, not a
+// rejection, because the strict question may well pass. The reverse — a strictly verified token
+// re-checked historically — needs nothing: the strict answer already implies the loose one.
+const historicallyVerifiedTokens = new WeakSet<object>()
+
 export type VerifyTokenOptions = TimeValidationOptions & {
   verifiers?: Verifiers
   resolver?: DIDResolver
@@ -54,6 +62,26 @@ export type VerifyTokenOptions = TimeValidationOptions & {
    * array accepts no audience (every token is rejected).
    */
   audience?: DIDString | Array<DIDString>
+  /**
+   * Verify against a key the issuer has already rotated away, as well as its current ones.
+   * Defaults to `false`.
+   *
+   * A token is an artefact its issuer minted at a moment in the past, and for a method whose key
+   * set rotates — `did:kokuin:` — those are two different questions. The default asks the safe one:
+   * the signature must be from a key the issuer holds **now**, so a key that has been rotated away
+   * (because it leaked, say) mints nothing that verifies. Opting in asks the other: the signature
+   * must be from a key the issuer held **at some point**, which is what an already-issued
+   * capability or revocation record needs in order to survive the issuer's routine key hygiene.
+   *
+   * Set it only when the token being verified was issued in the past and is not itself the proof
+   * that a live party holds a key. It is not a compatibility switch: on this path it is the
+   * difference between "a compromised key mints nothing" and "a compromised key mints anything
+   * until the profile resets".
+   *
+   * A method resolver that publishes no `resolveHistoric` rejects with `UnresolvableIssuerError`
+   * rather than answering the current-key question instead — see `DIDMethodResolver.resolveHistoric`.
+   */
+  historic?: boolean
   /**
    * Accept unsigned (`alg:none`) tokens. Defaults to `false`.
    *
@@ -106,6 +134,8 @@ export type VerifySignedPayloadInput<
   resolver?: DIDResolver
   cache?: DIDCache
   methods?: MethodRegistry
+  /** See `VerifyTokenOptions.historic`. Defaults to `false` — the issuer's current keys only. */
+  historic?: boolean
 }
 
 /**
@@ -114,7 +144,7 @@ export type VerifySignedPayloadInput<
 export async function verifySignedPayload<
   Payload extends Record<string, unknown> = Record<string, unknown>,
 >(input: VerifySignedPayloadInput<Payload>): Promise<Uint8Array> {
-  const { signature, payload, header, data, verifiers, resolver, cache, methods } = input
+  const { signature, payload, header, data, verifiers, resolver, cache, methods, historic } = input
   assertType(validateSignedPayload, payload)
   const effectiveResolver: DIDResolver | undefined =
     cache == null
@@ -129,6 +159,7 @@ export async function verifySignedPayload<
     { kid: header.kid },
     effectiveResolver,
     methods,
+    { historic },
   )
   const verify = getVerifier(alg, verifiers)
   const message = typeof data === 'string' ? fromUTF(data) : data
@@ -264,6 +295,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
     methods,
     audience,
     allowUnsigned = false,
+    historic,
     ...timeOptions
   } = options
   if (typeof token !== 'string') {
@@ -273,7 +305,10 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
       assertTimeClaimsValid(token.payload as Record<string, unknown>, timeOptions)
       return token
     }
-    if (isVerifiedToken(token)) {
+    // The `historic` arm is what keeps the fast path from weakening the check: a token verified
+    // against a rotated-away key must not satisfy a later caller who asked for the issuer's current
+    // keys. It falls through to the full verification below rather than being rejected.
+    if (isVerifiedToken(token) && !(historic !== true && historicallyVerifiedTokens.has(token))) {
       // The signature was checked when this object entered `verifiedTokens`, but its payload may
       // have been mutated in place since. Re-bind it to the signed bytes — cheap next to a
       // signature verification, and enough to reject tampering.
@@ -293,12 +328,16 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
         resolver,
         cache,
         methods,
+        historic,
       })
       assertTimeClaimsValid(token.payload as Record<string, unknown>, timeOptions)
       assertAudienceValid(token.payload as Record<string, unknown>, audience)
       const result = { ...token, data, verifiedPublicKey } as Token<Payload>
       verifiedTokens.add(result)
       verifiedTokenData.set(result, data)
+      if (historic === true) {
+        historicallyVerifiedTokens.add(result)
+      }
       return result
     }
     throw new Error('Unsupported token')
@@ -338,6 +377,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
       resolver,
       cache,
       methods,
+      historic,
     })
     assertTimeClaimsValid(payload as Record<string, unknown>, timeOptions)
     assertAudienceValid(payload as Record<string, unknown>, audience)
@@ -350,6 +390,9 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
     } as Token<Payload>
     verifiedTokens.add(result)
     verifiedTokenData.set(result, data)
+    if (historic === true) {
+      historicallyVerifiedTokens.add(result)
+    }
     return result
   }
 

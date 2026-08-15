@@ -27,6 +27,7 @@ export {
   isUnresolvableIssuerError,
   normalizeDID,
   type ResolveIssuerHeader,
+  type ResolveIssuerMode,
   type ResolveIssuerWithDocResult,
   resolveIssuer,
   resolveIssuerWithDoc,

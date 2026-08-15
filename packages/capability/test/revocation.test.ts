@@ -39,6 +39,16 @@ function buildProfile(): { identity: SigningIdentity; resolver: DIDMethodResolve
       }
       return { alg: 'EdDSA', publicKey: identity.publicKey }
     },
+    // A fake with one fixed key, so the two questions genuinely coincide — the alias
+    // `DIDMethodResolver.resolveHistoric` documents for a method whose key set never changes. It
+    // has to be published all the same: `checkCapability` verifies archived material and asks for
+    // it, and its absence is refused rather than answered from `resolve`.
+    resolveHistoric: async (did: string) => {
+      if (did !== profileDID) {
+        throw new Error(`Unknown DID: ${did}`)
+      }
+      return { alg: 'EdDSA', publicKey: identity.publicKey }
+    },
   }
   return { identity, resolver }
 }
@@ -553,6 +563,20 @@ describe('revocation', () => {
     return {
       method: 'kokuin',
       resolve: async (did: string, header: { kid?: string }) => {
+        if (did !== profileDID) {
+          throw new Error(`Unknown DID: ${did}`)
+        }
+        if (header.kid != null && header.kid !== currentKid) {
+          throw new IssuerKeyNotFoundError(
+            `Controller ${did} kid names a key outside the current generation: `,
+          )
+        }
+        return { alg: 'EdDSA' as const, publicKey: identity.publicKey }
+      },
+      // The same answer, because this fake has one key and the record under test names a *retired*
+      // one — the point of the case is that a record naming a key the profile does not have is
+      // ignored, and that must hold under the historic ask a revocation check makes.
+      resolveHistoric: async (did: string, header: { kid?: string }) => {
         if (did !== profileDID) {
           throw new Error(`Unknown DID: ${did}`)
         }

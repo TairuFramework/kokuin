@@ -107,23 +107,33 @@ describe('createControllerResolver().resolve() with a kid', () => {
     const stranger = strangerKey()
 
     // Rejected, never answered with `keys[0]`: a verifier told which key signed must not fall
-    // back to a different one, which would accept a signature the token never claimed.
+    // back to a different one, which would accept a signature the token never claimed. Both
+    // members refuse it — the key is in no key set this profile ever published.
     await expect(resolver.resolve(did, { kid: `#${stranger}` })).rejects.toThrow(
+      `Controller ${did} kid names a key that is not current: #${stranger}`,
+    )
+    await expect(resolver.resolveHistoric?.(did, { kid: `#${stranger}` })).rejects.toThrow(
       `Controller ${did} kid names a key outside the current generation: #${stranger}`,
     )
   })
 
-  test('a kid naming a key the log rotated away within the generation still resolves', async () => {
+  test('a kid naming a key the log rotated away is historic-only', async () => {
     const { icp, did } = build()
     const rot = createRotate(seed, 0, did, icp.event)
     const resolver = createControllerResolver({ loadLog: async () => [icp, rot] })
     const retired = icp.event.k[0]
 
     // A rotate is routine hygiene, so it must not invalidate what the profile signed before it —
-    // see `generation-lifecycle.test.ts` for the token-level consequence.
-    const resolved = await resolver.resolve(did, { kid: `#${retired}` })
-    expect(resolved.publicKey).toEqual(decodeKey(retired).publicKey)
-    // The head answer is still the rotated key, so the resolution above really did reach back.
+    // see `generation-lifecycle.test.ts` for the token-level consequence. That is the historic
+    // question, and it has to be asked explicitly.
+    const resolved = await resolver.resolveHistoric?.(did, { kid: `#${retired}` })
+    expect(resolved?.publicKey).toEqual(decodeKey(retired).publicKey)
+    // `resolve` answers the other question — can the profile sign with it now — and the answer is
+    // no, which is what makes a rotate retire a leaked key for new issuance.
+    await expect(resolver.resolve(did, { kid: `#${retired}` })).rejects.toThrow(
+      /kid names a key that is not current/,
+    )
+    // The head answer is still the rotated key, so the historic resolution really did reach back.
     const head = await resolver.resolve(did, {})
     expect(head.publicKey).toEqual(decodeKey(rot.event.k[0]).publicKey)
   })
@@ -134,14 +144,14 @@ describe('createControllerResolver().resolve() with a kid', () => {
     const resolver = createControllerResolver({ loadLog: async () => [icp, reset] })
     const retired = icp.event.k[0]
 
-    await expect(resolver.resolve(did, { kid: `#${retired}` })).rejects.toThrow(
+    await expect(resolver.resolveHistoric?.(did, { kid: `#${retired}` })).rejects.toThrow(
       /kid names a key outside the current generation/,
     )
     // Control: the same kid resolves against a resolver whose log stops before the reset, so the
     // rejection is the generation bump and not the kid form being unusable.
     const preReset = createControllerResolver({ loadLog: async () => [icp] })
-    const resolved = await preReset.resolve(did, { kid: `#${retired}` })
-    expect(resolved.publicKey).toEqual(decodeKey(retired).publicKey)
+    const resolved = await preReset.resolveHistoric?.(did, { kid: `#${retired}` })
+    expect(resolved?.publicKey).toEqual(decodeKey(retired).publicKey)
   })
 
   test('a kid that is not a fragment is rejected rather than matched bare', async () => {
@@ -446,13 +456,20 @@ describe('createStateResolver()', () => {
       alg: 'EdDSA',
       publicKey: decodeKey(rot.event.k[0]).publicKey,
     })
-    // A key from an earlier position of the same generation, exactly as the live resolver does.
-    await expect(resolver.resolve(did, { kid: `#${icp.event.k[0]}` })).resolves.toBeDefined()
+    // A key from an earlier position of the same generation, exactly as the live resolver does:
+    // historic only, and refused by `resolve`.
+    await expect(
+      resolver.resolveHistoric?.(did, { kid: `#${icp.event.k[0]}` }),
+    ).resolves.toBeDefined()
+    await expect(resolver.resolve(did, { kid: `#${icp.event.k[0]}` })).rejects.toThrow(
+      /not current/,
+    )
     await expect(resolver.resolveDenySet?.(did)).resolves.toEqual(new Set())
     await expect(resolver.resolveAgreementKey?.(did)).resolves.toHaveLength(1)
 
     const stranger = 'did:kokuin:zStranger'
     await expect(resolver.resolve(stranger, {})).rejects.toThrow(`Unknown DID: ${stranger}`)
+    await expect(resolver.resolveHistoric?.(stranger, {})).rejects.toThrow(/Unknown DID/)
     await expect(resolver.resolveDenySet?.(stranger)).rejects.toThrow(/Unknown DID/)
     await expect(resolver.resolveAgreementKey?.(stranger)).rejects.toThrow(/Unknown DID/)
   })

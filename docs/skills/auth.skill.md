@@ -489,12 +489,25 @@ any claim whose subject is the profile rather than a device
   carries `kid: "#<the multibase key exactly as it appears in `k`>"`, and the resolver matches that
   against the folded key sets by membership. A header with no `kid` still resolves to the head's
   `k[0]`, so single-key profiles are unaffected
-- **A `kid` resolves against the whole current generation**, not only the head's `k`. A `rotate` is
-  routine hygiene, so it must not invalidate the tokens, capabilities and revocation records the
-  profile has already issued — including ones held by third parties who cannot know a rotation
-  happened. A `reset` is what invalidates: it bumps the generation, and every key from the prior one
-  stops resolving. A `kid` naming a key this profile never published, or one from a superseded
-  generation, is an error — never a fall back to `k[0]`
+- **Two members, two questions.** `DIDMethodResolver.resolve` answers from the **head's `k` alone**:
+  can this profile sign with this key *now*. That is what `verifyToken` asks by default, and what
+  makes a `rotate` actually retire a leaked authority key — a stolen key stops minting verifiable
+  tokens at the next rotate, not at the next reset. `resolveHistoric` accepts any key that was
+  authoritative at some position **within the current generation**, and is reached only through
+  `verifyToken({ historic: true })`. Use it for material the profile issued in the past — an
+  already-issued capability, a revocation record — which a routine rotate must not invalidate,
+  including copies held by third parties who cannot know a rotation happened. A `reset` invalidates
+  even those: it bumps the generation, and every key from the prior one stops resolving under either
+  member. A `kid` naming a key this profile never published, or one outside what the member answers
+  for, is an error — never a fall back to `k[0]`
+- `@kokuin/capability` sets `historic: true` for you on every capability in a chain and on every
+  revocation record, so a delegation keeps working across a rotate with nothing to wire. **A
+  hand-written `DIDMethodResolver` must publish `resolveHistoric`** for that to work: the member is
+  optional on the interface so existing implementations still typecheck, and its *absence* is
+  refused (`UnresolvableIssuerError`) rather than answered from `resolve`, because a resolver
+  written against the old contract has a permissive `resolve` and falling back to it would be the
+  bug this split removes. A method whose key set never changes aliases it to `resolve`; a *wrapper*
+  around a real resolver must forward it, exactly as it must forward `resolveDenySet`
 - That error is an `IssuerKeyNotFoundError` (`@kokuin/token`, guard `isIssuerKeyNotFoundError`),
   **not** an `UnresolvableIssuerError`: the DID resolved and its log folded; only the key the token
   named was missing. The classification matters because fail-closed callers key on the second type —

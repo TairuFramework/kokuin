@@ -623,6 +623,10 @@ describe('what the deny lookup costs a caller-supplied chain', () => {
     const counting: DIDMethodResolver = {
       method: 'kokuin',
       resolve: (asked, header) => inner.resolve(asked, header),
+      // Forwarded like the rest: a capability is archived material, so `verifyToken` asks this
+      // member for it, and a wrapper omitting it makes every capability unverifiable rather than
+      // isolating the thing under test.
+      resolveHistoric: (asked, header) => inner.resolveHistoric?.(asked, header) as never,
       resolveDenySet: async (asked) => {
         denyCalls++
         return (await inner.resolveDenySet?.(asked)) ?? new Set<string>()
@@ -665,6 +669,10 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
     const wrapped: DIDMethodResolver = {
       method: 'kokuin',
       resolve: (asked, header) => real.resolve(asked, header),
+      // Forwarded, so the *only* member this wrapper drops is `resolveDenySet` — otherwise the
+      // capability would be refused for want of a historic answer and the deny rule would never be
+      // reached, certifying a check that never ran.
+      resolveHistoric: (asked, header) => real.resolveHistoric?.(asked, header) as never,
     }
     const cap = await mintFor(delegate)
     const invocation = { iss: delegate.id, sub: did, cap: [cap] }

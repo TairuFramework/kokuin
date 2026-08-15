@@ -1065,6 +1065,14 @@ describe('createCapability() - delegation validation (C-03)', () => {
         }
         return { alg: 'EdDSA', publicKey: root.publicKey }
       },
+      // One fixed key, so historic and current coincide — but it still has to be published, since
+      // a capability is archived material and `verifyToken` asks for it.
+      resolveHistoric: async (did: string) => {
+        if (did !== profileDID) {
+          throw new Error(`Unknown DID: ${did}`)
+        }
+        return { alg: 'EdDSA', publicKey: root.publicKey }
+      },
     }
     const bob = randomIdentity()
     const carol = randomIdentity()
