@@ -1,6 +1,14 @@
 import { digestOf } from './canonical.js'
 import { type RotateEvent, type SignedEvent, verifyRotate } from './events.js'
-import { foldLog, type KeyState } from './fold.js'
+import {
+  CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD,
+  CAPABILITY_REVOKE_NEEDS_VERIFIER,
+  type FoldOptions,
+  type FoldResult,
+  foldLog,
+  foldLogAsync,
+  type KeyState,
+} from './fold.js'
 
 export type Duplicity = {
   /** Position of the divergence, from the folded state of the first conflicting event. */
@@ -13,9 +21,33 @@ export type Duplicity = {
   digests: [string, string]
 }
 
+/**
+ * Why branch selection could not name a winner.
+ *
+ * - `duplicity` — two events the controller cannot both have authored at one position. The real
+ *   finding, and the only one that says anything is wrong with the log.
+ * - `no-valid-branch` — nothing presented folded at all. Not duplicity: the absence of a history.
+ * - `needs-capability-verification` — a branch carries a capability-authorised revoke this call
+ *   was not equipped to check. The log is fine; use {@link resolveBranchesAsync} with a
+ *   `verifyCapability`.
+ *
+ * Added rather than swapped in: `duplicity` still carries the `gen: -1` sentinel position for the
+ * two non-duplicity arms, so a caller written against the previous shape keeps telling them apart
+ * exactly as before. New callers should switch on this instead — the sentinel says only "not a
+ * real position", which is one bit fewer than there are answers.
+ */
+export type ResolveFailure = 'duplicity' | 'no-valid-branch' | 'needs-capability-verification'
+
 export type ResolveResult =
   | { ok: true; winner: Array<SignedEvent>; superseded: number }
-  | { ok: false; duplicity: Duplicity }
+  | { ok: false; failure: ResolveFailure; duplicity: Duplicity }
+
+/**
+ * The position reported for a failure that is not a fork. Real comparisons never reach `gen < 0`
+ * and a real digest is never the empty string, which is how a caller told these from duplicity
+ * before {@link ResolveFailure} existed.
+ */
+const NO_POSITION: Duplicity = { gen: -1, seq: -1, digests: ['', ''] }
 
 /**
  * A branch that folded, paired with what the fold made of it.
@@ -55,8 +87,29 @@ function spineDigest(folded: FoldedBranch, j: number): string {
   return folded.states[folded.spine[j]].digest
 }
 
-function foldBranch(did: string, branch: Array<SignedEvent>): FoldedBranch | undefined {
-  const result = foldLog(did, branch)
+/**
+ * Whether a branch failed to fold only because this call could not check a capability.
+ *
+ * Filtering such a branch out as invalid is what switched duplicity detection off for the
+ * management tier: a `cap`-bearing revoke is the tier working as designed, not a thief's forgery,
+ * and treating the two alike means a healthy profile resolves to "no valid history at all". Matched
+ * by prefix against the fold's exported reasons, which is the contract those constants exist for.
+ */
+function needsCapabilityVerification(result: FoldResult): boolean {
+  return (
+    !result.ok &&
+    (result.reason.startsWith(CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD) ||
+      result.reason.startsWith(CAPABILITY_REVOKE_NEEDS_VERIFIER))
+  )
+}
+
+const UNVERIFIED_CAPABILITY: ResolveResult = {
+  ok: false,
+  failure: 'needs-capability-verification',
+  duplicity: NO_POSITION,
+}
+
+function branchFrom(branch: Array<SignedEvent>, result: FoldResult): FoldedBranch | undefined {
   if (!result.ok) {
     return undefined
   }
@@ -129,7 +182,9 @@ function supersedes(
   })
 }
 
-type Resolution = { ok: true; winner: FoldedBranch } | { ok: false; duplicity: Duplicity }
+type Resolution =
+  | { ok: true; winner: FoldedBranch }
+  | { ok: false; failure: ResolveFailure; duplicity: Duplicity }
 
 /**
  * Walk the contenders down to one, deciding at each divergence point rather than at the heads.
@@ -223,6 +278,7 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
       const at = reporter[0].states[reporter[0].spine[divergence]]
       return {
         ok: false,
+        failure: 'duplicity',
         duplicity: { gen: at.gen, seq: at.seq, digests: [digests[0], digests[1]] },
       }
     }
@@ -259,23 +315,70 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
  *
  * Branches that do not fold successfully are filtered out before comparison — a thief who cannot
  * produce a valid event cannot create a duplicity report.
+ *
+ * This form folds synchronously and so cannot check a capability-authorised revoke. Presented one,
+ * it answers `failure: 'needs-capability-verification'` rather than filtering the branch away as
+ * invalid — silently dropping it reported "no valid history" for a healthy profile, which is
+ * duplicity detection switched off for every profile using the management tier. A `cap`-bearing
+ * revoke reaches that path before any signature check (the capability names the signer), so any
+ * peer can provoke this answer with a branch nobody signed; the remedy is the same either way —
+ * fold it through {@link resolveBranchesAsync}, where a verifier rejects the forgery and the branch
+ * is filtered like any other.
  */
 export function resolveBranches(did: string, branches: Array<Array<SignedEvent>>): ResolveResult {
   const valid: Array<FoldedBranch> = []
   for (const branch of branches) {
-    const folded = foldBranch(did, branch)
+    const result = foldLog(did, branch)
+    if (needsCapabilityVerification(result)) {
+      return UNVERIFIED_CAPABILITY
+    }
+    const folded = branchFrom(branch, result)
     if (folded != null) {
       valid.push(folded)
     }
   }
+  return selectWinner(valid)
+}
+
+/**
+ * Async counterpart of {@link resolveBranches}, and the form the management tier needs.
+ *
+ * A capability-authorised revoke is the whole point of `createRevokeWithKey` and the `cnf` pin, and
+ * the sync fold fails closed on one by construction. Resolving branches through it therefore
+ * filtered every branch of such a log away as invalid — reporting "no valid history" for a
+ * perfectly healthy profile, which is duplicity detection silently switched off for every profile
+ * that uses the management tier. There was no async form to reach for.
+ *
+ * Branches are folded one at a time rather than in parallel: `verifyCapability` is caller-supplied
+ * code that may do I/O of its own, and branch counts in a duplicity report are small, so there is
+ * nothing to win against the risk of calling a caller's verifier concurrently.
+ */
+export async function resolveBranchesAsync(
+  did: string,
+  branches: Array<Array<SignedEvent>>,
+  options: FoldOptions = {},
+): Promise<ResolveResult> {
+  const valid: Array<FoldedBranch> = []
+  for (const branch of branches) {
+    const result = await foldLogAsync(did, branch, options)
+    // Reachable here only with no `verifyCapability` configured — with one, the verifier's own
+    // answer decides, and a rejection is an invalid branch like any other.
+    if (needsCapabilityVerification(result)) {
+      return UNVERIFIED_CAPABILITY
+    }
+    const folded = branchFrom(branch, result)
+    if (folded != null) {
+      valid.push(folded)
+    }
+  }
+  return selectWinner(valid)
+}
+
+function selectWinner(valid: Array<FoldedBranch>): ResolveResult {
   if (valid.length === 0) {
-    // No branch folded, so there is nothing to compare — this is not duplicity, it is the
-    // absence of any valid history. Reported through the `duplicity` arm (the type has no other
-    // failure shape), but at an unambiguous sentinel position: real comparisons never reach
-    // `gen < 0`, and a real digest is never the empty string, so a caller can distinguish "no
-    // valid branch at all" from a genuine fork by checking `gen < 0` rather than mistaking it for
-    // duplicity at the inception.
-    return { ok: false, duplicity: { gen: -1, seq: -1, digests: ['', ''] } }
+    // No branch folded, so there is nothing to compare — this is not duplicity, it is the absence
+    // of any valid history.
+    return { ok: false, failure: 'no-valid-branch', duplicity: NO_POSITION }
   }
 
   // Re-derivation is idempotent: branches that fold to the same head are the same history

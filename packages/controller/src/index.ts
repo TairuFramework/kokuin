@@ -49,6 +49,8 @@ export {
   verifySignatures,
 } from './events.js'
 export {
+  CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD,
+  CAPABILITY_REVOKE_NEEDS_VERIFIER,
   CAPABILITY_VERIFIER_FAILED,
   CAPABILITY_VERIFIER_MALFORMED_ANSWER,
   type CapabilityAuthorisation,
@@ -68,5 +70,11 @@ export {
 } from './keys.js'
 export { enumerateProfiles, handleForDID, type ProfileEntry } from './profiles.js'
 export { type ControllerResolverOptions, createControllerResolver } from './resolver.js'
-export { type Duplicity, type ResolveResult, resolveBranches } from './supersede.js'
+export {
+  type Duplicity,
+  type ResolveFailure,
+  type ResolveResult,
+  resolveBranches,
+  resolveBranchesAsync,
+} from './supersede.js'
 export { VERSION_TAG } from './version.js'

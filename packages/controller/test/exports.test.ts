@@ -37,6 +37,9 @@ describe('public surface', () => {
       'foldLogAsync',
       'keyStateAt',
       'resolveBranches',
+      // The management tier's form: the sync one cannot verify a capability-authorised revoke, so
+      // a log carrying one has no duplicity detection at all without this.
+      'resolveBranchesAsync',
       'enumerateProfiles',
       'handleForDID',
       'createControllerResolver',
@@ -47,6 +50,10 @@ describe('public surface', () => {
       'CAPABILITY_VERIFIER_FAILED',
       'CAPABILITY_VERIFIER_MALFORMED_ANSWER',
       'REVOKE_NOT_SIGNED_BY_AUDIENCE',
+      // "This call was not equipped to check a capability" — the fold's answer to a `cap`-bearing
+      // revoke, which a caller has to tell from a log that is actually broken.
+      'CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD',
+      'CAPABILITY_REVOKE_NEEDS_VERIFIER',
     ]) {
       expect(controller).toHaveProperty(name)
     }

@@ -684,6 +684,7 @@ describe('resolveBranches() survives a hostile branch', () => {
   test('reports no valid history when every branch is hostile', () => {
     expect(resolveBranches(did, [hostile, [null] as unknown as Array<SignedEvent>])).toEqual({
       ok: false,
+      failure: 'no-valid-branch',
       duplicity: { gen: -1, seq: -1, digests: ['', ''] },
     })
   })
@@ -713,6 +714,10 @@ describe('resolveBranches() survives a hostile branch', () => {
 
   test('every branch hostile reports the no-valid-history sentinel', () => {
     const result = resolveBranches(did, hostiles.map(([, h]) => h) as Array<Array<SignedEvent>>)
-    expect(result).toEqual({ ok: false, duplicity: { gen: -1, seq: -1, digests: ['', ''] } })
+    expect(result).toEqual({
+      ok: false,
+      failure: 'no-valid-branch',
+      duplicity: { gen: -1, seq: -1, digests: ['', ''] },
+    })
   })
 })

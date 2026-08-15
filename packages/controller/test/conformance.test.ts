@@ -19,7 +19,7 @@ import {
 } from '../src/events.js'
 import { foldLog } from '../src/fold.js'
 import { enumerateProfiles } from '../src/profiles.js'
-import { resolveBranches } from '../src/supersede.js'
+import { resolveBranches, resolveBranchesAsync } from '../src/supersede.js'
 
 /** Test-support only: the recovery private key `createReset` derives internally. */
 function recoveryPrivateKey(seed: Uint8Array, profile: number): Uint8Array {
@@ -34,6 +34,16 @@ function authorityPrivateKey(
   seq: number,
 ): Uint8Array {
   return deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA').privateKey
+}
+
+/** Test-support only: the public half, which is what a capability pins as its audience key. */
+function authorityPublicKey(
+  seed: Uint8Array,
+  profile: number,
+  gen: number,
+  seq: number,
+): Uint8Array {
+  return deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA').publicKey
 }
 
 // vitest's `expect` is structurally wider than the suite's minimal `ConformanceExpectation` —
@@ -55,10 +65,12 @@ const implementation = {
   didFromInception,
   foldLog,
   resolveBranches,
+  resolveBranchesAsync,
   enumerateProfiles,
   digestOf,
   recoveryPrivateKey,
   authorityPrivateKey,
+  authorityPublicKey,
   signEvent,
 }
 

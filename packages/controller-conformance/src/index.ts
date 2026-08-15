@@ -48,9 +48,36 @@ export type ConformanceDuplicity = {
   digests: [string, string]
 }
 
+/**
+ * Why branch selection could not name a winner.
+ *
+ * `needs-capability-verification` is the one that has to be its own answer rather than a filtered
+ * branch: a capability-authorised revoke is the management tier working as designed, and an
+ * implementation that folds such a branch away as invalid reports "no valid history" for a healthy
+ * profile — duplicity detection silently off for every profile that uses the tier.
+ */
+export type ConformanceResolveFailure =
+  | 'duplicity'
+  | 'no-valid-branch'
+  | 'needs-capability-verification'
+
 export type ConformanceResolveResult =
   | { ok: true; winner: Array<ConformanceSigned>; superseded: number }
-  | { ok: false; duplicity: ConformanceDuplicity }
+  | { ok: false; failure: ConformanceResolveFailure; duplicity: ConformanceDuplicity }
+
+/** What a capability verifier answers a cap-bearing revoke with. */
+export type ConformanceCapabilityAuthorisation =
+  | { authorised: true; audienceKey: { alg: string; publicKey: Uint8Array } }
+  | { authorised: false; reason: string }
+
+export type ConformanceFoldOptions = {
+  verifyCapability?: (
+    cap: string,
+    subject: string,
+    target: string,
+    subjectAtPosition: unknown,
+  ) => Promise<ConformanceCapabilityAuthorisation>
+}
 
 export type ConformanceProfileEntry = {
   index: number
@@ -103,6 +130,17 @@ export type ControllerImplementation = {
     did: string,
     branches: Array<Array<ConformanceSigned>>,
   ) => ConformanceResolveResult
+  /**
+   * Branch selection that can verify a capability-authorised revoke.
+   *
+   * Required, not optional: the sync form cannot check a capability, so without this an
+   * implementation has no duplicity detection at all for a profile using the management tier.
+   */
+  resolveBranchesAsync: (
+    did: string,
+    branches: Array<Array<ConformanceSigned>>,
+    options?: ConformanceFoldOptions,
+  ) => Promise<ConformanceResolveResult>
   enumerateProfiles: (seed: Uint8Array, count: number) => Array<ConformanceProfileEntry>
   /** Self-addressing digest of a canonicalized value. Several assertions need to compute one. */
   digestOf: (value: unknown) => string
@@ -123,6 +161,13 @@ export type ControllerImplementation = {
    * way `recoveryPrivateKey` isolates the root-override check above.
    */
   authorityPrivateKey: (seed: Uint8Array, profile: number, gen: number, seq: number) => Uint8Array
+  /**
+   * Test-support only: the *public* half of the same key. The capability group needs it to answer
+   * as a verifier would — a capability pins its audience's signing key, and the fold checks the
+   * revoke's own signature against it, so a suite that could not name that key could only exercise
+   * the rejecting direction.
+   */
+  authorityPublicKey: (seed: Uint8Array, profile: number, gen: number, seq: number) => Uint8Array
   /** Test-support only: sign an event with arbitrary private keys. Used only for the forgeries above. */
   signEvent: (event: ConformanceEvent, privateKeys: Array<Uint8Array>) => Array<string>
 }
@@ -439,6 +484,121 @@ export function runControllerConformance(
           expect(result.winner[1].event.t).toBe('rot')
           expect(result.superseded).toBe(2)
         }
+      })
+    })
+
+    // 7b. The management tier. A capability-authorised revoke cannot be checked synchronously — the
+    // capability names the signer, and resolving it is I/O — so the sync fold fails closed on one.
+    // Branch selection folds every branch it is given, which made "the sync fold cannot check this"
+    // indistinguishable from "a thief forged this": every branch of a cap-bearing log was filtered
+    // away as invalid and a healthy profile resolved to the no-valid-history answer. Both
+    // directions are asserted — the sync form must say so, and the async form must actually
+    // resolve — so an implementation cannot pass by refusing every cap-bearing log outright either.
+    describe('capability-authorised revoke', () => {
+      const capability = 'a-serialized-capability'
+
+      function capBranch(did: string, icp: ConformanceSigned) {
+        return [
+          icp,
+          impl.createRevoke(
+            seedC,
+            0,
+            did,
+            icp.event,
+            deviceA,
+            { gen: 0, seq: 0 },
+            { cap: capability },
+          ),
+        ]
+      }
+
+      // The capability's audience: whoever signed the revoke above, which is seedC's authority key.
+      const approve = async () => ({
+        authorised: true as const,
+        audienceKey: { alg: 'EdDSA', publicKey: impl.authorityPublicKey(seedC, 0, 0, 0) },
+      })
+
+      test('the sync form says it could not check the capability, rather than dropping the branch', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const result = impl.resolveBranches(did, [capBranch(did, icp)])
+        expect(result.ok).toBe(false)
+        if (result.ok) {
+          return
+        }
+        expect(result.failure).toBe('needs-capability-verification')
+      })
+
+      test('the sync form does not resolve around a branch it could not check', () => {
+        // A rival branch is present, so an implementation that filtered the cap-bearing one away
+        // would happily answer `ok: true` with the rival as winner — a fork reported as a clean
+        // history.
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const rival = [
+          icp,
+          impl.createRevoke(seedA, 0, did, icp.event, deviceB, { gen: 0, seq: 0 }),
+        ]
+        const result = impl.resolveBranches(did, [capBranch(did, icp), rival])
+        expect(result.ok).toBe(false)
+        if (result.ok) {
+          return
+        }
+        expect(result.failure).toBe('needs-capability-verification')
+      })
+
+      test('the async form resolves a cap-bearing log the verifier approves', async () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const branch = capBranch(did, icp)
+        const result = await impl.resolveBranchesAsync(did, [branch], {
+          verifyCapability: approve,
+        })
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
+        expect(result.winner).toHaveLength(2)
+        expect(result.superseded).toBe(0)
+      })
+
+      test('the async form surfaces duplicity on a cap-bearing fork', async () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const rival = [
+          icp,
+          impl.createRevoke(seedA, 0, did, icp.event, deviceB, { gen: 0, seq: 0 }),
+        ]
+        const result = await impl.resolveBranchesAsync(did, [capBranch(did, icp), rival], {
+          verifyCapability: approve,
+        })
+        expect(result.ok).toBe(false)
+        if (result.ok) {
+          return
+        }
+        expect(result.failure).toBe('duplicity')
+        expect(result.duplicity.seq).toBe(1)
+      })
+
+      test('a branch whose capability the verifier declines is filtered, not fatal', async () => {
+        // A cap-bearing revoke reaches the capability path before any signature check — the
+        // capability names the signer — so anyone who can read a log can append one. Rejected, it
+        // must be an invalid branch like any other, or a keyless peer could stop every resolution.
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const honest = [
+          icp,
+          impl.createRevoke(seedA, 0, did, icp.event, deviceB, { gen: 0, seq: 0 }),
+        ]
+        const result = await impl.resolveBranchesAsync(did, [capBranch(did, icp), honest], {
+          verifyCapability: async () => ({ authorised: false, reason: 'no such grant' }),
+        })
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
+        expect(result.winner).toHaveLength(2)
+        expect(result.winner[1].event.x).toBe(deviceB)
       })
     })
 

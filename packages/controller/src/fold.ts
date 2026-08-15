@@ -156,6 +156,22 @@ export const CAPABILITY_VERIFIER_MALFORMED_ANSWER =
 export const REVOKE_NOT_SIGNED_BY_AUDIENCE = 'revoke is not signed by the capability audience'
 
 /**
+ * The sync fold met a capability-authorised revoke, which it cannot verify by construction. The
+ * capability follows after `: `, so match with `startsWith`.
+ *
+ * Not a defect in the log: this is the management tier working as designed, and the answer is
+ * `foldLogAsync`. Exported because callers that fold speculatively — `resolveBranches`, which must
+ * not quietly treat such a branch as invalid — have to tell it from a log that is actually broken.
+ */
+export const CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD = 'capability-authorised revoke needs an async fold'
+
+/**
+ * The async fold met a capability-authorised revoke with no `verifyCapability` configured. Same
+ * shape, same reason for existing: the log is fine and the call was not equipped for it.
+ */
+export const CAPABILITY_REVOKE_NEEDS_VERIFIER = 'capability-authorised revoke needs a verifier'
+
+/**
  * Whether a log entry has the envelope shape everything downstream reads without checking.
  *
  * The fold's input is untrusted by definition — a log arrives from a network peer or an untrusted
@@ -428,7 +444,7 @@ export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
       return fail(outcome.reason, i)
     }
     if (outcome.status === 'capability') {
-      return fail(`capability-authorised revoke needs an async fold: ${outcome.cap}`, i)
+      return fail(`${CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD}: ${outcome.cap}`, i)
     }
     states.push(outcome.state)
   }
@@ -459,7 +475,7 @@ export async function foldLogAsync(
     }
     if (outcome.status === 'capability') {
       if (options.verifyCapability == null) {
-        return fail(`capability-authorised revoke needs a verifier: ${outcome.cap}`, i)
+        return fail(`${CAPABILITY_REVOKE_NEEDS_VERIFIER}: ${outcome.cap}`, i)
       }
       // The fold is total by contract, and a verifier is caller-supplied code that TypeScript
       // cannot police across a package boundary or a stale build. Both ways it can break that
