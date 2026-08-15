@@ -6,7 +6,13 @@ import type {
   SigningIdentity,
   VerifyTokenOptions,
 } from '@kokuin/token'
-import { isUnresolvableIssuerError, normalizeDID, verifyToken } from '@kokuin/token'
+import {
+  findMethodResolver,
+  isIssuerKeyNotFoundError,
+  isUnresolvableIssuerError,
+  normalizeDID,
+  verifyToken,
+} from '@kokuin/token'
 
 import type { CapabilityToken, VerifyTokenHook } from './index.js'
 import { now } from './index.js'
@@ -97,6 +103,47 @@ export function createMemoryRevocationBackend(options?: RevocationOptions): Revo
   }
 }
 
+/**
+ * Does this record name a key its issuer published and has since **denied**?
+ *
+ * The distinction this draws is what keeps the remedy for a leaked key from undoing the profile's
+ * own revocations. Revoking a key makes every record that key signed stop verifying, and the catch
+ * below reads a verification failure as "not evidence of anything" — so denying a compromised key
+ * silently resurrected every capability its records had revoked, on the one path that must never
+ * fail open.
+ *
+ * A record naming a key the log never published is still a forgery, and still ignored: anyone can
+ * mint one for any `jti`, which is exactly the plant-a-record denial of service the catch exists to
+ * stop. A record naming a **denied** key is not that. Producing it required the private half of a
+ * key the DID itself published, so the only party who could have written it is the issuer or
+ * whoever compromised it — and honouring it can only ever subtract authority, never grant any.
+ * Between "the owner's revocations lapse the moment they act on a compromise" and "the thief's
+ * planted revocations survive that remedy", the second is the bounded harm.
+ *
+ * Only reachable for a `did:kokuin:` issuer, whose resolver publishes a deny set. A method with no
+ * deny set answers `false` and nothing changes for it. The `kid` and the deny set's key entries are
+ * the same spelling — `#<the multibase key as it appears in `k`>` — so this is a membership test,
+ * never an enumeration: the set is heterogeneous and also holds revoked DIDs.
+ *
+ * A resolver that has a deny set and cannot produce it throws, which fails closed — the same
+ * direction `assertAudienceNotRevoked` takes for the same reason.
+ */
+async function namesADeniedKey(
+  record: RevocationRecord,
+  options?: RevocationOptions,
+): Promise<boolean> {
+  const kid = record.header?.kid
+  const iss = record.payload?.iss
+  if (typeof kid !== 'string' || typeof iss !== 'string' || options?.methods == null) {
+    return false
+  }
+  const resolveDenySet = findMethodResolver(options.methods, iss)?.resolveDenySet
+  if (resolveDenySet == null) {
+    return false
+  }
+  return (await resolveDenySet(iss)).has(kid)
+}
+
 export function createRevocationChecker(
   backend: RevocationBackend,
   options?: RevocationOptions,
@@ -134,11 +181,22 @@ export function createRevocationChecker(
       // genuinely unknown. Without the gate, the backend — an untrusted extension point, which
       // is why this re-verifies at all — could deny any capability by returning a record naming
       // an unresolvable DID it invented.
-      if (
-        isUnresolvableIssuerError(error) &&
-        normalizeDID(record.payload.iss) === normalizeDID(token.payload.iss)
-      ) {
+      const sameIssuer = normalizeDID(record.payload.iss) === normalizeDID(token.payload.iss)
+      if (isUnresolvableIssuerError(error) && sameIssuer) {
         throw error
+      }
+      // A third reading, between the two above: the record is signed by a key this issuer once
+      // published and has since revoked. Not "evidence of nothing" — see {@link namesADeniedKey}.
+      // Checked after the two cheap classifications and only for this token's own issuer, since a
+      // record naming anyone else could not revoke this token however it was signed.
+      if (
+        isIssuerKeyNotFoundError(error) &&
+        sameIssuer &&
+        (await namesADeniedKey(record, options))
+      ) {
+        // Same message as the verified path below, so a caller matching on it does not have to
+        // learn a second spelling; the resolution failure rides along as `cause` for a reader.
+        throw new Error(`Token revoked: ${jti}`, { cause: error })
       }
       return
     }

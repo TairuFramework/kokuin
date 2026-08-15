@@ -163,17 +163,20 @@ fully carried:
 
 - **A stolen mnemonic is terminal.** The thief holds every key at every index including the recovery
   key, and can always rotate ahead of the owner. This is the price of seed-rooting.
-- **Revoking a key un-revokes what that key's revocation records had revoked.** A `jti` revocation
-  record is an artefact signed by a key, so the rule reaches it too — and `createRevocationChecker`
-  *ignores* a record whose `kid` names a key the issuer does not hold, rather than failing closed.
-  That asymmetry has to stay: `kid` is unauthenticated and the backend is an untrusted extension
-  point, so failing closed there would let anyone deny every capability a profile ever issued by
-  planting one record per `jti` — and a denied key is *public*, since it is written in the log, so it
-  would be worse than the invented-key case that classification was built for. Bounded in practice:
-  `add()` verifies on the way in, so only records a backend already held are affected. The remedy is
-  to re-issue those records with a live key, or to revoke the holder by DID, which the deny set
-  enforces independently of any record. `zzown-denied-key-reach.test.ts` row 5 asserts the behaviour
-  so it cannot drift silently.
+- **A thief's planted revocations survive the owner's remedy.** A `jti` revocation record is an
+  artefact signed by a key, so denying a leaked key stops its records verifying — which would have
+  made the remedy for a compromise silently resurrect every capability that key had revoked, on the
+  one path that must never fail open. `createRevocationChecker` therefore separates two failures
+  that look identical at the point of verification. A record naming a key the log **never
+  published** stays ignored: `kid` is unauthenticated and the backend is an untrusted extension
+  point, so honouring it is the plant-a-record denial of service the classification exists to stop.
+  A record naming a key the log **published and has since denied** is honoured — producing it
+  required the private half of a key the DID itself published, and honouring a revocation only ever
+  subtracts authority. What remains is the inverse: whoever holds the leaked key can plant
+  revocations for `jti`s they know and those keep biting after the key is denied. That is the
+  bounded side of the trade, chosen over the owner's own revocations lapsing at the moment they act
+  on a compromise. `zzown-key-denial-check.test.ts` pins both directions, including the control that
+  the denial-of-service case is still ignored.
 - **Adopted profiles are out of scope, and the field reserved for them is gone.** A rotate used to
   carry an optional `r`, described as a co-signature-gated recovery-commitment update and held for a
   device-generated profile that later adopts an HD-derived authority key. Nothing implemented the

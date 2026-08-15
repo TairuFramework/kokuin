@@ -113,6 +113,66 @@ describe('revocation', () => {
     await expect(checker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
   })
 
+  test('a record signed by a key the issuer has denied still revokes', async () => {
+    // Revoking a leaked key stops every record that key signed from verifying. Ignoring those, as
+    // an unverifiable record otherwise is, would make the remedy for a compromise resurrect every
+    // capability the key had revoked — so a record naming a key the issuer *published and denied*
+    // is honoured. The control below is the case that must stay ignored.
+    const identity = createSigningIdentityForDID(profileDID, randomPrivateKey())
+    const liveKid = '#zLiveAuthorityKey'
+    const deniedKid = '#zLeakedAuthorityKey'
+    // A `kid` outside the key set is an error, never a fallback — so the fake answers for exactly
+    // one key and refuses every other, which is what makes the two failing records below fail the
+    // *same* way. Without that, the control naming an unknown key would verify against the live
+    // key and revoke through the ordinary path, certifying nothing about the branch under test.
+    const keyFor = async (did: string, header?: { kid?: string }) => {
+      if (did !== profileDID) {
+        throw new Error(`Unknown DID: ${did}`)
+      }
+      if (header?.kid != null && header.kid !== liveKid) {
+        throw new IssuerKeyNotFoundError(
+          `kid names a key the controller does not hold: ${header.kid}`,
+        )
+      }
+      return { alg: 'EdDSA' as const, publicKey: identity.publicKey }
+    }
+    const resolver: DIDMethodResolver = {
+      method: 'kokuin',
+      resolve: keyFor,
+      resolveHistoric: keyFor,
+      resolveDenySet: async () => new Set([deniedKid]),
+    }
+    const options = { methods: [resolver] }
+
+    const capability = await createCapability(
+      identity,
+      { sub: profileDID, aud: 'did:key:bob', act: '*', res: '*', jti: 'grant-denied-key' },
+      undefined,
+      options,
+    )
+
+    const bySignedKey = async (kid: string): Promise<RevocationRecord> =>
+      (await identity.signToken(
+        { jti: 'grant-denied-key', rev: true, iat: Math.floor(Date.now() / 1000) },
+        { header: { kid } },
+      )) as RevocationRecord
+
+    // The backend verifies on the way in, so a record signed by an already-denied key could not be
+    // stored through it. This is a record stored while the key was live, read back afterwards.
+    const stored = await bySignedKey(deniedKid)
+    const denied = createRevocationChecker({ add: async () => {}, get: async () => stored }, options)
+    await expect(denied(capability, stringifyToken(capability))).rejects.toThrow('revoked')
+
+    // CONTROL — a key this DID never published is a forgery, and honouring it would let anyone
+    // deny every capability the profile ever issued by planting one record per `jti`.
+    const planted = await bySignedKey('#zNeverPublished')
+    const forged = createRevocationChecker(
+      { add: async () => {}, get: async () => planted },
+      options,
+    )
+    await expect(forged(capability, stringifyToken(capability))).resolves.toBeUndefined()
+  })
+
   test('a revocation signed by a different issuer does not revoke the token', async () => {
     const backend = createMemoryRevocationBackend()
     const checker = createRevocationChecker(backend)
