@@ -25,11 +25,15 @@ import {
 import { describe, expect, test } from 'vitest'
 
 import {
+  assertRevokeCapabilityAudience,
   audienceConfirmation,
   type ConfirmationClaim,
   createCapability,
   createControllerCapabilityVerifier,
   now,
+  REVOKE_AUDIENCE_KEY_MISMATCH,
+  REVOKE_NO_AUDIENCE_KEY,
+  REVOKE_UNBOUNDED_LIFETIME,
 } from '../src/index.js'
 
 // Every object on this path is real: a real inception, a real `createCapability`, a real revoke
@@ -109,7 +113,8 @@ type CapabilityFields = {
   aud?: string
   act?: string | Array<string>
   res?: string | Array<string>
-  exp?: number
+  /** Explicit `undefined` mints a capability that never expires — not the same as omitting it. */
+  exp?: number | undefined
   /** Explicit `undefined` mints a capability with no pin at all — not the same as omitting it. */
   cnf?: ConfirmationClaim | undefined
   /** The parent chain carried in the payload, which is where `checkCapability` walks it from. */
@@ -126,7 +131,7 @@ async function mintCapability(fields: CapabilityFields = {}): Promise<string> {
       aud: fields.aud ?? delegate.id,
       act: fields.act ?? 'revoke',
       res: fields.res ?? target,
-      exp: fields.exp ?? now() + 3600,
+      exp: 'exp' in fields ? fields.exp : now() + 3600,
       cnf: 'cnf' in fields ? fields.cnf : confirmationForSeed(delegateSeed),
       cap: fields.cap,
     },
@@ -409,18 +414,43 @@ describe('createControllerCapabilityVerifier()', () => {
     })
   })
 
-  test('an audience whose identifier carries no key is accepted with its pin unbound', async () => {
-    // The `did:kokuin:` audience of the rotation test below: its key is knowable only by resolving
-    // it, and resolving the audience is what the pin exists to remove — so the binding does not
-    // reach it and the capability folds. Pinned deliberately: refusing here would make one
-    // profile's management capability over another unusable and its logs unfoldable.
+  test('an audience whose identifier carries no key is refused', async () => {
+    // A `did:kokuin:` audience: its key is knowable only by resolving it, and resolving the audience
+    // is what the pin exists to remove — so the pin cannot be tied to the party the deny set names,
+    // and the capability is a revoke authority that revoking cannot reach. This was once accepted
+    // with the binding left open, to keep one profile holding a management capability over another
+    // workable; that shape is given up, because unbound authority is what it is made of.
     const cap = await mintCapability({
       aud: otherController.did,
       cnf: confirmationForSeed(otherControllerSeed),
     })
-    await expect(
-      foldWithCapability(cap, { signerSeed: otherControllerSeed }),
-    ).resolves.toMatchObject({ ok: true })
+    await expect(foldWithCapability(cap, { signerSeed: otherControllerSeed })).resolves.toEqual({
+      ok: false,
+      reason: REVOKE_AUDIENCE_KEY_MISMATCH,
+      index: 1,
+    })
+
+    // CONTROL — the identical capability for an audience that does carry its key folds, so what
+    // failed above is the binding and not the grant, the pin, or the signature.
+    await expect(foldWithCapability(await mintCapability())).resolves.toMatchObject({ ok: true })
+  })
+
+  test('minting one is refused where the mistake is cheap', () => {
+    // The same rule at the other end. At verification the cost is an unfoldable log and a DID that
+    // stops resolving; here it is an error with the capability still in the minter's hands.
+    expect(() =>
+      assertRevokeCapabilityAudience({
+        aud: otherController.did,
+        cnf: confirmationForSeed(otherControllerSeed),
+      }),
+    ).toThrow(REVOKE_AUDIENCE_KEY_MISMATCH)
+    expect(() => assertRevokeCapabilityAudience({ aud: delegate.id })).toThrow(
+      REVOKE_NO_AUDIENCE_KEY,
+    )
+    // CONTROL — the audience that carries its own key passes.
+    expect(() =>
+      assertRevokeCapabilityAudience({ aud: delegate.id, cnf: confirmationForSeed(delegateSeed) }),
+    ).not.toThrow()
   })
 
   test('a did:peer:4 long-form audience is bound to the keys its document publishes', async () => {
@@ -507,33 +537,19 @@ describe('createControllerCapabilityVerifier()', () => {
     expect(seen).toEqual([leaf, root])
   })
 
-  test('the audience rotating its own key does not stop the revoke verifying', async () => {
-    // The pin's whole purpose. The audience is another profile, which rotates — a routine action
-    // by someone who is not the profile owner. Resolving the audience at verification time would
-    // make this revoke stop verifying, and a revoke that stops verifying makes the log unfoldable
-    // and this controller's DID permanently unresolvable.
-    const rotated = createRotate(
-      otherControllerSeed,
-      0,
-      otherController.did,
-      otherController.inception.event,
-    )
-    const rotatingMethods: MethodRegistry = [
-      createControllerResolver({
-        loadLog: async (did) => {
-          if (did === controller.did) return [controller.inception]
-          if (did === otherController.did) return [otherController.inception, rotated]
-          return undefined
-        },
-      }),
-    ]
-
-    const cap = await mintCapability({
-      aud: otherController.did,
-      cnf: confirmationForSeed(otherControllerSeed),
-    })
+  test('the audience is never resolved, and now cannot be', async () => {
+    // The pin's whole purpose, restated for the audiences that remain. This used to be shown with
+    // another profile as the audience, rotating its own key: resolving the audience would have made
+    // that routine third-party action stop the revoke verifying, and a revoke that stops verifying
+    // makes the log unfoldable and this controller's DID permanently unresolvable.
+    //
+    // The binding now refuses an audience whose identifier carries no key, so the only audiences
+    // that reach here are `did:key` and a `did:peer:4` long form — identifiers whose key material
+    // cannot change. The hazard is gone rather than merely avoided, and the mechanism that removed
+    // it is still the one under test: no registry is configured at all below, and the revoke folds.
+    const cap = await mintCapability()
     const revoke = createRevoke(
-      otherControllerSeed,
+      delegateSeed,
       0,
       controller.did,
       controller.inception.event,
@@ -542,14 +558,52 @@ describe('createControllerCapabilityVerifier()', () => {
       { cap },
     )
     const result = await foldLogAsync(controller.did, [controller.inception, revoke], {
-      verifyCapability: createControllerCapabilityVerifier({ methods: rotatingMethods }),
+      // No `methods`: the controller is answered by the resolver the fold supplies, and the audience
+      // is answered by its own identifier. Nothing here can reach the network or a registry.
+      verifyCapability: createControllerCapabilityVerifier(),
     })
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.states[1].deny.has(target)).toBe(true)
-    // The rotation really happened: the audience profile no longer publishes the pinned key.
-    expect(rotated.event.k[0]).not.toBe(otherController.inception.event.k[0])
+  })
+
+  test('a capability that never expires cannot authorise a revoke', async () => {
+    // An omitted `exp` is not a long grant, it is a permanent one: authority over this log for the
+    // life of the profile, with the deny set as the only remedy. A bounded one lapses whether or not
+    // anybody notices, which is the asymmetry that matters at an offline verifier.
+    const cap = await mintCapability({ exp: undefined })
+    await expect(foldWithCapability(cap)).resolves.toEqual({
+      ok: false,
+      reason: REVOKE_UNBOUNDED_LIFETIME,
+      index: 1,
+    })
+
+    // CONTROL — the same capability with an expiry folds, so what failed is the missing claim and
+    // not the grant, the pin or the signature.
+    await expect(foldWithCapability(await mintCapability())).resolves.toMatchObject({ ok: true })
+  })
+
+  test('a ceiling on the lifetime is available and off by default', async () => {
+    // Presence is mandated, length is not: the management capability is minted by the *root*, which
+    // is cold, so a short ceiling would mean reaching for the hardware to renew and a rule nobody
+    // keeps. A caller with a policy can still set one.
+    const longLived = await mintCapability({ exp: now() + 365 * 24 * 3600 })
+    await expect(foldWithCapability(longLived)).resolves.toMatchObject({ ok: true })
+
+    const revoke = createRevoke(
+      delegateSeed,
+      0,
+      controller.did,
+      controller.inception.event,
+      target,
+      inceptionKeyPosition,
+      { cap: longLived },
+    )
+    const result = await foldLogAsync(controller.did, [controller.inception, revoke], {
+      verifyCapability: createControllerCapabilityVerifier({ maxLifetimeSeconds: 24 * 3600 }),
+    })
+    expect(result).toMatchObject({ ok: false })
   })
 
   test('a device holding the capability and no seed at all authors the revoke', async () => {

@@ -491,6 +491,29 @@ export function assertValidDelegation(
 export const AUDIENCE_REVOKED = 'Invalid capability: audience is revoked by the subject'
 
 /**
+ * What a capability whose subject's deny set could not be consulted at all is rejected with. The
+ * subject DID is appended, so match with `startsWith`.
+ */
+export const DENY_SET_UNAVAILABLE =
+  'Invalid capability: no resolver for the subject, so its deny set cannot be checked'
+
+/**
+ * Whether a DID's own identifier carries the material needed to verify against it, so that no
+ * registry entry is required and no deny set can be silently skipped.
+ *
+ * `did:key` **is** its key. `did:peer` is self-contained in the same sense: a long form embeds the
+ * document, a short form is a hash of one, and neither has a published deny set for this package to
+ * miss. Every other method resolves through the registry, which is where a deny set lives — so its
+ * absence means the question was not asked rather than answered.
+ *
+ * A prefix test rather than a registry lookup, deliberately: the point is to catch the caller who
+ * supplied *no* registry, and asking the registry that is missing cannot do that.
+ */
+function carriesOwnKeys(did: string): boolean {
+  return did.startsWith('did:key:') || did.startsWith('did:peer:')
+}
+
+/**
  * Reject a capability whose audience the subject has revoked.
  *
  * The subject of a capability is the party whose resources it grants, and a `did:kokuin:` subject
@@ -504,10 +527,18 @@ export const AUDIENCE_REVOKED = 'Invalid capability: audience is revoked by the 
  * `iat` is author-supplied and backdatable, so a holder could otherwise choose a moment before it
  * was revoked.
  *
- * Silent when the subject's method publishes no deny set, and when no registry was supplied at all
- * — a subject that needs one is a subject `verifyToken` could not have resolved either, so the
- * chain has already failed by then. A resolver that *has* a deny set and cannot produce it throws,
- * which fails the chain closed.
+ * Silent when the subject's method publishes no deny set — a method with no revocation concept has
+ * nothing to enforce. A resolver that *has* a deny set and cannot produce it throws, which fails the
+ * chain closed.
+ *
+ * **Not silent when no registry could answer for the subject at all.** That was justified by "a
+ * subject that needs one is a subject `verifyToken` could not have resolved either", which holds for
+ * a chain — the root link is issued by the subject, so resolving it needs the registry — and does
+ * not hold for the `iss === sub` arm of `checkCapability`, where the caller verified the token
+ * itself and hands over a payload. A caller who resolved a `did:kokuin:` subject with their own
+ * resolver and then omitted `methods` here got no deny-set enforcement and no indication of it. The
+ * subject's own method is the test: `did:key` and `did:peer` carry their material in the identifier
+ * and have no deny set to miss, and anything else has one this call cannot see.
  *
  * This is the *holder* half of the set. A `did:kokuin:` deny set also carries `#<multibase key>`
  * entries denying the subject's own signing keys, which are enforced where a key is resolved rather
@@ -520,10 +551,17 @@ async function assertAudienceNotRevoked(
   options?: DelegationChainOptions,
 ): Promise<void> {
   const { sub, aud } = payload
-  if (options?.methods == null || typeof sub !== 'string' || typeof aud !== 'string') {
+  if (typeof sub !== 'string' || typeof aud !== 'string') {
     return
   }
-  const resolveDenySet = findMethodResolver(options.methods, sub)?.resolveDenySet
+  const resolver = options?.methods == null ? undefined : findMethodResolver(options.methods, sub)
+  if (resolver == null) {
+    if (carriesOwnKeys(sub)) {
+      return
+    }
+    throw new Error(`${DENY_SET_UNAVAILABLE}: ${sub}`)
+  }
+  const { resolveDenySet } = resolver
   if (resolveDenySet == null) {
     return
   }
@@ -744,12 +782,15 @@ export {
 
 export type { CapabilityAuthorisation, ControllerCapabilityVerifier } from './controller.js'
 export {
+  assertRevokeCapabilityAudience,
   audienceConfirmation,
   createControllerCapabilityVerifier,
   REVOKE_AUDIENCE_KEY_MISMATCH,
+  REVOKE_LIFETIME_TOO_LONG,
   REVOKE_NO_AUDIENCE_KEY,
   REVOKE_NO_POSITION,
   REVOKE_NOT_AUTHORISED,
+  REVOKE_UNBOUNDED_LIFETIME,
 } from './controller.js'
 export type { RevocationBackend, RevocationOptions, RevocationRecord } from './revocation.js'
 export {

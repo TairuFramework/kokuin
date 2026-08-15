@@ -30,6 +30,7 @@ import {
   createCapability,
   createControllerCapabilityVerifier,
   DEFAULT_MAX_DELEGATION_DEPTH,
+  DENY_SET_UNAVAILABLE,
   now,
   REVOKE_NO_POSITION,
 } from '../src/index.js'
@@ -163,7 +164,10 @@ describe('a capability whose audience the profile has revoked', () => {
     log = [
       inception,
       revoke,
-      createRotate(seed, 0, did, revoke.event, { keyPosition: inceptionKeyPosition, deny: [] }),
+      createRotate(seed, 0, did, revoke.event, {
+        keyPosition: inceptionKeyPosition,
+        denySnapshot: [],
+      }),
     ]
 
     await expect(invoke(delegate, cap)).resolves.toBeUndefined()
@@ -774,5 +778,54 @@ describe('the deny set the resolver exposes', () => {
   test('rejects an unknown DID rather than answering with an empty set', async () => {
     // Fail closed: an empty answer for a DID nothing could load would read as "nobody is revoked".
     await expect(methods[0].resolveDenySet?.('did:kokuin:zNope')).rejects.toThrow(/Unknown DID/)
+  })
+})
+
+describe('a deny set nothing could answer for', () => {
+  // The rule was silent when no registry was supplied at all, justified by "a subject that needs one
+  // is a subject `verifyToken` could not have resolved either". True for a chain, whose root link is
+  // issued by the subject. Not true for the `iss === sub` arm of `checkCapability`, which takes a
+  // payload the caller verified: a caller who resolved the profile with their own resolver and then
+  // omitted `methods` here got no enforcement, and nothing said so.
+
+  test('a did:kokuin subject with no registry is refused rather than waved through', async () => {
+    log = [inception, revokeOf(delegate.id)]
+    const payload = {
+      iss: did,
+      sub: did,
+      aud: delegate.id,
+      act: 'write',
+      res: 'doc/1',
+      exp: now() + 3600,
+    }
+
+    // CONTROL — with the registry, the denial is what decides.
+    await expect(
+      checkCapability({ act: 'write', res: 'doc/1' }, payload, { methods }),
+    ).rejects.toThrow(/audience is revoked/)
+
+    // The same call with the registry omitted. It used to resolve.
+    await expect(checkCapability({ act: 'write', res: 'doc/1' }, payload)).rejects.toThrow(
+      DENY_SET_UNAVAILABLE,
+    )
+  })
+
+  test('CONTROL — a subject that carries its own keys needs no registry', async () => {
+    // `did:key` and `did:peer` have no deny set to miss, so requiring a registry for them would be a
+    // false positive on the ordinary case that has nothing to do with controllers.
+    const selfIssued = randomIdentity()
+    await expect(
+      checkCapability(
+        { act: 'write', res: 'doc/1' },
+        {
+          iss: selfIssued.id,
+          sub: selfIssued.id,
+          aud: delegate.id,
+          act: 'write',
+          res: 'doc/1',
+          exp: now() + 3600,
+        },
+      ),
+    ).resolves.toBeUndefined()
   })
 })

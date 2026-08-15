@@ -58,14 +58,18 @@ export const REVOKE_NO_AUDIENCE_KEY = 'capability pins no audience key'
  * exactly the identifiers that carry a key: a `did:key`, and a `did:peer:4` long form (its
  * `authentication` keys). Mint for one of those whenever the audience is a device.
  *
- * **What stays open, stated plainly:** an audience whose identifier carries no key — a
- * `did:kokuin:` profile, a short-form `did:peer:4` — cannot be bound to a pin without resolving it,
- * so a capability naming one is accepted with its pin unbound. A minter who chooses such an
- * audience and pins somebody else's key still produces an authority that denying the `aud` does not
- * reach. Refusing that case instead would make one profile's management capability over another
- * unusable and its logs unfoldable, which is the worse failure and the one the standing rule
- * against resolving the audience exists to prevent. The remedy is at mint time: name the audience
- * by a DID that carries its key.
+ * **An audience whose identifier carries no key is refused here**, and this is the same reason: a
+ * `did:kokuin:` profile or a short-form `did:peer:4` cannot be tied to its pin without a lookup, so
+ * accepting one meant accepting a pin nobody had checked — an authority that denying the `aud`
+ * cannot reach, which is precisely the hole the binding exists to close. It was once accepted with
+ * the mismatch left open, to keep one profile holding a management capability over another
+ * workable. That shape is given up deliberately: it is unbound authority by construction, the tiers
+ * this design draws put a *device* in the audience of a management capability, and a hole that only
+ * a speculative shape needs is not worth carrying in a wire format this hard to change.
+ *
+ * The refusal lands at verification, which for a log already carrying such a revoke means an
+ * unfoldable log. Mint-side, {@link assertRevokeCapabilityAudience} is the same rule applied where
+ * the mistake is cheap — call it before issuing anything that grants `revoke`.
  */
 export const REVOKE_AUDIENCE_KEY_MISMATCH = 'capability pins a key the audience does not carry'
 
@@ -83,6 +87,28 @@ export const REVOKE_AUDIENCE_KEY_MISMATCH = 'capability pins a key the audience 
  * capability: the grant was never evaluated.
  */
 export const REVOKE_NO_POSITION = 'capability verifier was called without a log position'
+
+/**
+ * What the fold does when the capability authorising the revoke never expires.
+ *
+ * `exp` is optional in the capability schema, and an omitted one is not a long grant but a permanent
+ * one: it authorises log revokes for the life of the profile. The only remedy against a capability
+ * that never lapses is the deny set — the owner noticing and acting — where a bounded one lapses on
+ * its own whether anybody noticed or not. That asymmetry is the whole argument: revocation reaches
+ * an offline verifier best-effort, expiry unconditionally.
+ *
+ * Presence is mandated; length is not. The management capability is minted by the *root*, which is
+ * cold — a Ledger, or a mnemonic in a safe — so a short ceiling would mean reaching for the hardware
+ * every week, and a rule that makes the secure path inconvenient is a rule that gets worked around.
+ * A ceiling is available to callers who want one through `maxLifetimeSeconds`.
+ *
+ * Its own reason rather than {@link REVOKE_NOT_AUTHORISED}: the delegation is sound and the
+ * capability is malformed for this use, which is a minting bug like {@link REVOKE_NO_AUDIENCE_KEY}.
+ */
+export const REVOKE_UNBOUNDED_LIFETIME = 'capability authorising a revoke sets no expiry'
+
+/** What the fold does when the capability's lifetime exceeds a configured `maxLifetimeSeconds`. */
+export const REVOKE_LIFETIME_TOO_LONG = 'capability authorising a revoke outlives the policy'
 
 /** Payload length per signature algorithm, checked after the multicodec prefix is stripped. */
 const KEY_LENGTHS: Record<string, number> = { EdDSA: 32, ES256: 33 }
@@ -189,17 +215,13 @@ function isSameKey(a: ResolvedSigningKey, b: ResolvedSigningKey): boolean {
 }
 
 /**
- * Whether the pinned key contradicts the audience — the binding that keeps the party wielding the
+ * Whether the pinned key fails to name the audience — the binding that keeps the party wielding the
  * capability and the party the deny set can name the same one. Never resolves the audience; see
  * {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
  *
- * An audience whose identifier carries no key at all is **not** a contradiction and is not refused
- * here. That is the `did:kokuin:` case — one profile holding a management capability over another
- * is a supported shape, pinned by a test in `controller-revoke.test.ts` — and its key is knowable
- * only by resolving it, which is the bug the pin exists to remove and a standing rule against.
- * Refusing instead would make every such log unfoldable and the profile's DID permanently
- * unresolvable, which is a far worse failure than the one it would close. What remains open there
- * is stated in {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
+ * An audience whose identifier carries no key at all fails this, rather than passing unbound. A pin
+ * nobody can check is not a weaker binding than a wrong one, it is no binding: the capability names
+ * a party the deny set can reach and hands the authority to a key it cannot.
  */
 function contradictsAudience(aud: unknown, pinned: ResolvedSigningKey): boolean {
   if (typeof aud !== 'string') {
@@ -213,7 +235,41 @@ function contradictsAudience(aud: unknown, pinned: ResolvedSigningKey): boolean 
     // audience's key, and nothing about this can start working later.
     return true
   }
-  return carried != null && !carried.some((key) => isSameKey(key, pinned))
+  return carried == null || !carried.some((key) => isSameKey(key, pinned))
+}
+
+/**
+ * Refuse to mint a capability granting `revoke` whose audience cannot be bound to its own key.
+ *
+ * The same rule {@link createControllerCapabilityVerifier} applies, applied where getting it wrong
+ * is cheap. At verification the cost is an unfoldable log and a profile whose DID stops resolving;
+ * here it is an error at the moment of issuance, with the capability not yet in anybody's hands.
+ *
+ * Two ways to fail: no `cnf` pin at all, and a pin the audience's identifier does not carry —
+ * including an audience that carries no key, such as a `did:kokuin:` profile or a short-form
+ * `did:peer:4`. Name the audience by a `did:key`, or by a `did:peer:4` **long form** whose
+ * `authentication` holds the key.
+ *
+ * Not called from `createCapability`: `act: 'revoke'` is an ordinary application action for
+ * everything that is not a controller log, and a general mint API has no business deciding which of
+ * the two a caller meant. Call it yourself when minting for the log.
+ */
+export function assertRevokeCapabilityAudience(payload: {
+  aud?: unknown
+  cnf?: ConfirmationClaim
+}): void {
+  if (payload.cnf == null) {
+    throw new Error(`Invalid capability: ${REVOKE_NO_AUDIENCE_KEY}`)
+  }
+  let pinned: ResolvedSigningKey
+  try {
+    pinned = confirmedKey(payload.cnf)
+  } catch (cause) {
+    throw new Error(`Invalid capability: ${REVOKE_NO_AUDIENCE_KEY}`, { cause })
+  }
+  if (contradictsAudience(payload.aud, pinned)) {
+    throw new Error(`Invalid capability: ${REVOKE_AUDIENCE_KEY_MISMATCH}`)
+  }
 }
 
 /**
@@ -413,7 +469,7 @@ export type ControllerCapabilityVerifier = (
  * in the event, which is where a revocation check goes.
  */
 export function createControllerCapabilityVerifier(
-  options: DelegationChainOptions = {},
+  options: DelegationChainOptions & { maxLifetimeSeconds?: number } = {},
 ): ControllerCapabilityVerifier {
   return async function verifyControllerCapability(
     cap: string,
@@ -436,6 +492,10 @@ export function createControllerCapabilityVerifier(
     const chainOptions: DelegationChainOptions = { ...options, methods }
     let pinned: ConfirmationClaim | undefined
     let audience: unknown
+    // Reported after the try below rather than thrown inside it, so a capability that never expires
+    // is told apart from a rejected grant — the two are different bugs in different places, and one
+    // of them is the minter's. See {@link REVOKE_UNBOUNDED_LIFETIME}.
+    let lifetime: string | undefined
     try {
       const capability = await verifyToken<CapabilityPayload>(cap, {
         atTime: options.atTime,
@@ -460,6 +520,15 @@ export function createControllerCapabilityVerifier(
       }
 
       await checkCapability({ act: 'revoke', res: target }, capability.payload, chainOptions)
+      const { exp } = capability.payload
+      if (exp == null) {
+        lifetime = REVOKE_UNBOUNDED_LIFETIME
+      } else if (
+        options.maxLifetimeSeconds != null &&
+        exp - (options.atTime ?? Math.floor(Date.now() / 1000)) > options.maxLifetimeSeconds
+      ) {
+        lifetime = REVOKE_LIFETIME_TOO_LONG
+      }
       pinned = capability.payload.cnf
       audience = capability.payload.aud
     } catch {
@@ -473,6 +542,9 @@ export function createControllerCapabilityVerifier(
       return { authorised: false, reason: REVOKE_NOT_AUTHORISED }
     }
 
+    if (lifetime != null) {
+      return { authorised: false, reason: lifetime }
+    }
     // Outside the catch above so a malformed pin is reported as a malformed pin, rather than
     // disappearing into the generic rejection that every other failure shares.
     if (pinned == null) {

@@ -97,7 +97,7 @@ describe('DelegationChainOptions.methods', () => {
 
     await expect(
       checkDelegationChain(managerToDevice.payload, [stringifyToken(rootToManager)]),
-    ).rejects.toThrow(`Unknown DID: ${profileDID}`)
+    ).rejects.toThrow(profileDID)
   })
 
   test('checkCapability forwards the registry to every link, not just the leaf', async () => {
@@ -130,8 +130,11 @@ describe('DelegationChainOptions.methods', () => {
       checkCapability({ act: 'foo', res: 'bar' }, leaf.payload, { methods: [resolver] }),
     ).resolves.toBeUndefined()
 
+    // Without the registry it fails closed. Which guard says so is deliberately not pinned: the
+    // deny-set check now refuses a subject no registry can answer for, and it sits ahead of the
+    // resolution that used to be the first thing to fail.
     await expect(checkCapability({ act: 'foo', res: 'bar' }, leaf.payload)).rejects.toThrow(
-      `Unknown DID: ${profileDID}`,
+      profileDID,
     )
   })
 })
