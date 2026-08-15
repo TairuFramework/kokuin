@@ -3,26 +3,16 @@ import { decodeMultibase, encodeMultibase, multihashSHA256, verifyMultihash } fr
 const encoder = new TextEncoder()
 
 /**
- * Deepest nesting these functions will encode. The top-level value is depth 1, a value inside it
- * depth 2, and so on.
+ * Deepest nesting these functions will encode (top-level value is depth 1). `canonicalize` recurses
+ * once per level, so without a bound the depth of untrusted input decides stack use: `JSON.parse` is
+ * iterative and accepts unbounded depth, so a few kilobytes of `[[[[…]]]]` on the wire is a
+ * `RangeError` thrown from a function every event passes through — and from inside `resolveBranches`,
+ * where one hostile branch would take duplicity detection down for every honest one.
  *
- * `canonicalize` recurses once per level, so without a bound the nesting depth of untrusted input
- * decides how much of the call stack is used: `JSON.parse` is iterative in V8 and accepts
- * unbounded depth, so a few kilobytes of `[[[[…]]]]` on the wire is a `RangeError` here — thrown
- * from a function every event of every log passes through, and from inside `resolveBranches`,
- * where one hostile branch would take duplicity detection down for every well-formed branch
- * beside it.
- *
- * A bound rather than a `try`/`catch` around the recursion. Catching a `RangeError` would turn
- * this particular throw into a reason while still letting an attacker drive the stack to
- * exhaustion once per event — the work is done before the catch, it is unbounded per event, and a
- * stack that deep unwinds through whatever frame happens to be innermost, so the catch would also
- * have to sit at every call site rather than at one. The bound costs a comparison per level and
- * makes the depth of untrusted input irrelevant.
- *
- * 64 is far above anything this stack canonicalizes — an event body reaches depth 3 (`{ k: [ "…" ] }`)
- * — and far below the ~10⁴ frames a JS stack holds. Raising it is safe; lowering it below 3 is not.
- * It never changes the encoding of a value it accepts, so no identifier this stack has issued moves.
+ * A bound rather than a `try`/`catch`: catching would still let an attacker drive the stack to
+ * exhaustion once per event, and would have to sit at every call site. 64 is far above anything this
+ * stack canonicalizes (an event body reaches depth 3) and far below the ~10⁴ frames a JS stack holds.
+ * Raising it is safe; lowering below 3 is not. It never changes the encoding of a value it accepts.
  */
 export const MAX_CANONICAL_DEPTH = 64
 
@@ -61,21 +51,13 @@ function canonicalize(value: unknown, depth: number): string {
 
 /**
  * Whether {@link canonicalBytes} could encode this value without exceeding
- * {@link MAX_CANONICAL_DEPTH}.
- *
- * The total counterpart of the bound above: this is what a caller holding untrusted input uses to
- * turn "too deep" into a rejection with a reason instead of an exception. Its own recursion is
- * bounded by the same constant, so it is safe on exactly the input it exists to judge — including
- * a cyclic object, which `canonicalize` cannot be handed from parsed JSON but can be handed by a
- * caller.
- *
- * Answers only the depth question. Prefer {@link isCanonicalizable} for untrusted input: a
- * non-finite number *is* reachable from `JSON.parse` — `1e400` off the wire is `Infinity` — and
- * this predicate says nothing about it.
+ * {@link MAX_CANONICAL_DEPTH} — the total counterpart of the bound above, turning "too deep" into a
+ * rejection. Bounded by the same constant, so it is safe even on a cyclic object (which parsed JSON
+ * cannot produce but a caller can). Answers only the depth question; prefer {@link isCanonicalizable}
+ * for untrusted input, since a non-finite number is reachable from `JSON.parse` and this ignores it.
  */
 export function withinCanonicalDepth(value: unknown, depth = 1): boolean {
-  // The same comparison at the same point as `canonicalize`'s, so the two agree exactly on the
-  // boundary rather than approximately.
+  // Same comparison at the same point as `canonicalize`'s, so the two agree exactly on the boundary.
   if (depth > MAX_CANONICAL_DEPTH) {
     return false
   }
@@ -88,47 +70,23 @@ export function withinCanonicalDepth(value: unknown, depth = 1): boolean {
 
 /**
  * Whether {@link canonicalBytes} could encode this value at all — every reason it throws, answered
- * instead of raised.
+ * instead of raised. The total counterpart of the whole canonicalizer. {@link withinCanonicalDepth}
+ * answers only depth, which left a hole: `1e400` on the wire parses to `Infinity`, is a `number`,
+ * nests no deeper than anything, and reached `canonicalize` where it *threw* — breaking the total
+ * contract of `foldLog`/`verifySignatures` and taking `resolveBranches` down for every honest branch.
  *
- * The total counterpart of the whole canonicalizer, and what a caller holding untrusted input uses.
- * {@link withinCanonicalDepth} answers one of the two questions and was for a while the only one
- * asked, which left a hole: `1e400` on the wire parses to `Infinity`, is a `number`, nests no
- * deeper than any other member, and reached `canonicalize` — where it *threw*. `foldLog`,
- * `foldLogAsync` and `verifySignatures` are documented total, so that throw broke their contract,
- * and one hostile branch took `resolveBranches` down for every honest branch beside it.
+ * Answers `false` for exactly what `canonicalize` refuses: a non-finite number (`Infinity`/`NaN`,
+ * the first reachable from `JSON.parse` via `1e400`); a type with no encoding (`bigint`, `symbol`,
+ * `function`, top-level `undefined` — all caller-only); a non-plain object (caller-only); a value
+ * nesting past {@link MAX_CANONICAL_DEPTH}, kept here so one call covers the whole contract.
  *
- * Answers `false` for exactly what `canonicalize` refuses:
- *
- * - a non-finite number — `Infinity`, `-Infinity`, `NaN`. All three are reachable from `JSON.parse`:
- *   the first two from any literal that overflows a double (`1e400`, `-1e400`), and `NaN` from
- *   nothing on the wire but from a caller's own object. A digest cannot name a value with no
- *   encoding, so an event carrying one is malformed rather than unfoldable.
- * - a value of a type with no encoding here — `bigint`, `symbol`, `function`, `undefined` at the
- *   top level. None arrives from `JSON.parse`; all arrive from a caller.
- * - a non-plain object — a class instance, anything with a prototype other than `Object.prototype`
- *   or `null`. `JSON.parse` produces only plain objects and arrays, so this too is a caller's.
- * - a value nesting deeper than {@link MAX_CANONICAL_DEPTH}, which is `withinCanonicalDepth`'s
- *   question and stays answered here so one call covers the whole contract.
- *
- * Two things it deliberately does **not** reject, both documented rather than guarded:
- *
- * - `-0`. It encodes as `0`, which is what JCS and ES6 `Number::toString` prescribe, so `-0` and
- *   `0` share a digest. They are the same value under every comparison anything in this package
- *   makes (`===`, `<`, `+`), and no field the fold reads distinguishes them, so the shared digest
- *   names one value rather than two.
- * - an integer past `Number.MAX_SAFE_INTEGER`. `9007199254740993` and `9007199254740992` are two
- *   wire spellings that `JSON.parse` collapses to one double *before* anything here sees them, so
- *   the shared digest is again one value and not two. Rejecting the collapsed value would refuse
- *   numbers JCS accepts while removing no distinction: this package never trusts wire bytes, it
- *   re-canonicalizes from the parsed value, so there is nothing an attacker can make the two
- *   spellings mean differently.
- *
- * Its own recursion is bounded by the same constant, so it is safe on exactly the input it exists
- * to judge — including a cyclic object, which `JSON.parse` cannot produce but a caller can.
+ * Deliberately **not** rejected: `-0` (encodes as `0`, same value under every comparison this package
+ * makes), and integers past `Number.MAX_SAFE_INTEGER` (`JSON.parse` collapses the two wire spellings
+ * to one double before anything here sees them, so the shared digest names one value). Bounded by the
+ * same constant, so it is safe even on a cyclic object.
  */
 export function isCanonicalizable(value: unknown, depth = 1): boolean {
-  // The same comparison at the same point as `canonicalize`'s, so the two agree exactly on the
-  // boundary rather than approximately.
+  // Same comparison at the same point as `canonicalize`'s, so the two agree exactly on the boundary.
   if (depth > MAX_CANONICAL_DEPTH) {
     return false
   }
@@ -159,14 +117,11 @@ export function isCanonicalizable(value: unknown, depth = 1): boolean {
 }
 
 /**
- * JCS-style canonical bytes: keys sorted lexicographically, no insignificant whitespace,
- * `undefined` properties dropped so an absent optional field never encodes as `null`.
- *
- * The DID is the hash of these bytes, so any change to this function changes every identifier
- * the stack has ever issued. It is effectively frozen.
- *
- * Throws for a value nesting deeper than {@link MAX_CANONICAL_DEPTH}. Callers holding untrusted
- * input reject with {@link withinCanonicalDepth} first rather than catching that.
+ * JCS-style canonical bytes: keys sorted lexicographically, no insignificant whitespace, `undefined`
+ * properties dropped so an absent optional field never encodes as `null`. The DID is the hash of
+ * these bytes, so any change here moves every identifier the stack has issued — effectively frozen.
+ * Throws for a value past {@link MAX_CANONICAL_DEPTH}; untrusted callers reject with
+ * {@link withinCanonicalDepth} first.
  */
 export function canonicalBytes(value: unknown): Uint8Array {
   return encoder.encode(canonicalize(value, 1))
@@ -179,20 +134,11 @@ export function digestOf(value: unknown): string {
 
 /**
  * Total: a malformed digest *or* a value this file cannot canonicalize returns false rather than
- * throwing.
- *
- * Both halves matter, and only the digest half was total before. The value side is the untrusted
- * one in every real use — "is this the body that digest names" is asked about bytes off the wire —
- * so a value this file cannot encode has to be an answer, not an exception. `false` is the correct
- * answer rather than a convenient one: a digest this package produced can only name a value it
- * could canonicalize, so a value it cannot canonicalize matches no digest it ever issued.
- *
- * {@link isCanonicalizable} rather than {@link withinCanonicalDepth}: depth was only one of the
- * ways `canonicalize` throws, and the other one — a non-finite number — arrives from `JSON.parse`
- * just as readily.
- *
- * `canonicalBytes` keeps the throw. Its contract is "these exact bytes or nothing", and a caller
- * asking for bytes has nothing useful to do with `false`.
+ * throwing. The value side is the untrusted one in real use ("is this the body that digest names" is
+ * asked about wire bytes), and `false` is correct, not convenient: a digest this package produced can
+ * only name a value it could canonicalize. Uses {@link isCanonicalizable}, not
+ * {@link withinCanonicalDepth}, since a non-finite number is another way `canonicalize` throws.
+ * `canonicalBytes` keeps its throw — its contract is "these exact bytes or nothing".
  */
 export function verifyDigest(digest: string, value: unknown): boolean {
   let expected: Uint8Array

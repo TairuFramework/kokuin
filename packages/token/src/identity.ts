@@ -75,13 +75,10 @@ export function isOwnIdentity(identity: Identity): identity is OwnIdentity {
  * Create a signing identity for an Ed25519 private key under a caller-supplied DID.
  *
  * `createSigningIdentity` derives the DID *from* the key, which only works for `did:key`. A method
- * whose identifier is not a function of the current key — `did:kokuin:`, where the identifier is
- * the inception digest and the signing key rotates underneath it — must supply its own `id`, so
- * that the `iss` stamped on every payload is the method's DID rather than the signing key's
- * `did:key`.
- *
- * The caller owns the pairing: nothing here can check that `id` resolves to `privateKey`'s public
- * key, and a mismatched pair produces tokens that verify nowhere.
+ * whose identifier is not a function of the current key — `did:kokuin:`, where the key rotates under
+ * a fixed inception digest — must supply its own `id`, so `iss` is the method's DID, not the key's
+ * `did:key`. The caller owns the pairing: nothing here checks `id` resolves to `privateKey`'s public
+ * key, and a mismatch produces tokens that verify nowhere.
  */
 export function createSigningIdentityForDID(
   id: DIDString,

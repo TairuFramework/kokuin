@@ -205,30 +205,26 @@ function resolveX25519Key(recipient: Uint8Array | string): { key: Uint8Array; id
 }
 
 /**
- * Perform X25519 key agreement with a recipient DID, without building a JWE.
+ * Perform X25519 key agreement with a recipient DID, without building a JWE. Resolves the agreement
+ * key by the same rule `createTokenEncrypter` uses (a did:peer:4's published `keyAgreement` key, or a
+ * `did:key`'s birationally derived one), generates a single-use ephemeral pair, and returns the ECDH
+ * output; the ephemeral private key never leaves this function.
  *
- * Resolves the recipient's agreement key by the same rule `createTokenEncrypter` uses — a
- * did:peer:4 identity's published `keyAgreement` key, or an EdDSA `did:key`'s birationally
- * derived one — generates a single-use ephemeral key pair, and returns the ECDH output.
- * The ephemeral private key never leaves this function.
+ * The recipient recovers the identical bytes with `identity.agreeKey(ephemeralPublicKey)` and no
+ * `kid` — the sender always resolves the *first* published `keyAgreement` key, so a different `kid`
+ * on a multi-KEM identity silently recovers different bytes.
  *
- * The recipient recovers the identical bytes with `identity.agreeKey(ephemeralPublicKey)` —
- * called with no `kid`; the sender always resolves the first published `keyAgreement` key, and
- * on a multi-KEM identity a different `kid` silently recovers different bytes.
- *
- * The agreement is anonymous — it authenticates nothing about the sender, only that the secret
- * is recoverable by the recipient. Bind `ephemeralPublicKey` and the recipient DID into your
- * KDF's info/context.
+ * Anonymous — it authenticates nothing about the sender, only that the recipient can recover the
+ * secret. Bind `ephemeralPublicKey` and the recipient DID into your KDF's info/context. The result is
+ * a raw ECDH output, not a key: run it through a KDF.
  *
  * ```ts
  * const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipientDID)
  * // ship ephemeralPublicKey alongside whatever the secret protects
  * ```
  *
- * The result is a raw ECDH output, not a key: run it through a KDF before use.
- *
- * @param recipient a `did:key` EdDSA DID, or a `did:peer:4` **long form**. A peer:4 short form
- *   throws — the document that carries the agreement key lives only in the long form.
+ * @param recipient a `did:key` EdDSA DID, or a `did:peer:4` **long form** — a short form throws, its
+ *   agreement key living only in the long form.
  */
 export function deriveSharedSecret(recipient: string): SharedSecretResult {
   if (typeof recipient !== 'string') {

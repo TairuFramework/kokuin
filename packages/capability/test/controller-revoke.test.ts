@@ -87,13 +87,10 @@ const controller = buildController(controllerSeed)
 const otherController = buildController(otherControllerSeed)
 
 /**
- * A registry resolving both controllers from the state their inception establishes.
- *
- * Deliberately *not* the same `loadLog` the fold is running over. The capability is issued by the
- * controller whose log contains the revoke, so a registry that loaded the full log would resolve
- * the issuer by folding it, which would reach the same capability-authorised revoke and call the
- * verifier again — unbounded recursion. A capability must in any case be checked against the key
- * state at the position *before* the event that carries it, which is what the prefix here is.
+ * A registry resolving both controllers from the state their inception establishes. Deliberately not
+ * the fold's own `loadLog`: a registry loading the full log would resolve the issuer by folding it,
+ * reach the same cap-authorised revoke, and call the verifier again — unbounded recursion. A
+ * capability must anyway be checked against the state *before* the event carrying it, the prefix here.
  */
 const methods: MethodRegistry = [
   createControllerResolver({

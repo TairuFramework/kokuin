@@ -20,17 +20,14 @@ export type KeyState = {
   did: string
   gen: number
   seq: number
-  /** Generation in which the current `keys` were established — see Amendment A. */
+  /** Generation in which the current `keys` were established. */
   keyGen: number
   /**
-   * Derivation index of the current `keys`: how many key-establishing events this generation has
-   * had, counting the `icp`/`rot` that opened it as 0 — see Amendment A.
-   *
-   * Equal to `seq` until a revoke intervenes, and deliberately not the same thing. A revoke
-   * advances `seq` while establishing no key, so the pre-rotation chain — which commits the digest
-   * of the *next* key, one derivation index on — stops tracking `seq` at that point. Deriving at
-   * `seq` after a revoke produces a key the log never pre-committed: an unverifiable token from
-   * `createControllerIdentity`, and a rotate that cannot fold at all.
+   * Derivation index of the current `keys`: key-establishing events this generation, counting the
+   * `icp`/`rot` that opened it as 0. Equal to `seq` until a revoke intervenes, and deliberately not
+   * the same thing — a revoke advances `seq` while establishing no key, so the pre-rotation chain
+   * (which commits the *next* key's digest, one index on) stops tracking `seq` there. Deriving at
+   * `seq` after a revoke produces a key the log never committed.
    */
   keySeq: number
   keys: Array<string>
@@ -38,34 +35,26 @@ export type KeyState = {
   agreement: Array<string>
   next: Array<string>
   /**
-   * The inception's recovery commitment, carried unchanged through every event of the log.
-   *
-   * Fixed for the life of the DID, and this field says so because {@link verifyReset} enforces
-   * exactly that: it checks the revealed recovery key against `inception.r` and against nothing
-   * else. It used to be updatable by a rotate's `r`, which no event verified and no event read —
-   * so this field reported a recovery key that could not author a reset while the one that could
-   * went unnamed. A state that disagrees with what the verifier enforces is worse than no state.
+   * The inception's recovery commitment, carried unchanged through every event. Fixed for the life
+   * of the DID, and this field says so because {@link verifyReset} checks the revealed recovery key
+   * against `inception.r` and nothing else. A state that disagreed with the verifier would be worse
+   * than no state — see {@link RotateEvent} for the `r` that was removed.
    */
   recovery: string
   /**
-   * What this position denies, in the two spellings a `rev` target may take — see `RevokeEvent.x`.
+   * What this position denies, in the two spellings a `rev` target may take — see `RevokeEvent.x`. A
+   * `did:…` entry denies a *holder* (`@kokuin/capability` refuses a capability whose `aud` it names);
+   * a `#<multibase key>` entry denies a *signer* (`signingKeyFrom` refuses that key, `agreementKeysFrom`
+   * drops it).
    *
-   * A `did:…` entry denies a *holder*: `@kokuin/capability` refuses a capability whose `aud` it
-   * names. A `#<multibase key>` entry denies a *signer*: `signingKeyFrom` refuses to resolve that
-   * key and `agreementKeysFrom` drops it, so nothing this profile signed or published under it is
-   * usable from here on.
-   *
-   * One heterogeneous set rather than two fields, because the two spellings cannot collide and
-   * every mechanism the set already has — position-dependence, the `d` snapshot on a rotate, the
-   * clearing a reset performs, `resolveDenySet` on the resolver interface, the wrapper in
-   * `@kokuin/capability` that must forward it — then covers keys with nothing new to wire and
-   * nothing new to forget. A second optional resolver member is a second thing a wrapper can drop,
-   * and dropping it fails open.
+   * One heterogeneous set rather than two fields: the spellings cannot collide, and every mechanism
+   * the set already has (position-dependence, the `d` snapshot, a reset's clear, `resolveDenySet`,
+   * the `@kokuin/capability` wrapper that forwards it) then covers keys with nothing new to wire or
+   * forget. A second optional resolver member is a second thing a wrapper can drop, and dropping it
+   * fails open.
    *
    * **Invariant, enforced by both branches of `stepEvent`: no key in this state's `keys` or
-   * `agreement` is denied here.** A key the profile currently publishes cannot be revoked, and a
-   * rotate cannot establish a key its own resulting deny set names. Every reader may therefore take
-   * a folded head's key set at face value.
+   * `agreement` is denied here.** So every reader may take a folded head's key set at face value.
    */
   deny: ReadonlySet<string>
   /** Digest of the event that produced this state — the `p` any successor must carry. */
@@ -79,23 +68,16 @@ export type FoldResult =
 /**
  * What a capability verifier answers a cap-bearing revoke with.
  *
- * `audienceKey` is the signing key the capability names as its audience — pinned in the capability
- * at mint time, never resolved at verification time. The fold checks the event's own signature
- * against it, which is what binds the grant to the party it was issued to.
+ * `audienceKey` is the key the capability pins as its audience at mint time, never resolved at
+ * verification time; the fold checks the event's own signature against it, binding the grant to the
+ * party it was issued to.
  *
- * A key rather than a boolean because the fold, not the verifier, must be the one that ties the
- * answer to the event in hand. The log is public — resolving the DID means folding it — so the
- * serialized capability inside a revoke is readable by everyone who can resolve the profile. With
- * a boolean, any such reader could lift it out and chain a revoke of their own, with any bytes at
- * all in `sigs`, covering whatever the capability's `res` covers; a management capability's `res`
- * is a wildcard, so that is every device on the profile.
- *
- * Resolving an audience needs material the fold does not have, and checking a signature over the
- * canonical event bytes needs the event, which the verifier must not be handed. Among divisions
- * that keep a *single* callback, this is the only one where neither side can leave the binding
- * out — a check passed to the verifier as a closure is fail-open the moment a verifier forgets to
- * call it. A two-callback split has the property too, at the price of two answers that must agree
- * about one capability.
+ * A key rather than a boolean because the fold, not the verifier, must tie the answer to the event
+ * in hand. The log is public, so the serialized capability inside a revoke is readable by everyone
+ * who can resolve the profile; with a boolean, any such reader could lift it out and chain a revoke
+ * of their own with any bytes in `sigs`, covering whatever the capability's `res` covers — a
+ * wildcard, for a management capability, so every device. Among divisions keeping a *single*
+ * callback, this is the only one where neither side can leave the binding out.
  */
 export type CapabilityAuthorisation =
   | { authorised: true; audienceKey: ResolvedSigningKey }
@@ -104,28 +86,19 @@ export type CapabilityAuthorisation =
 
 export type FoldOptions = {
   /**
-   * Verify a capability authorising a non-authority signer to revoke. Injected rather than
-   * imported so the fold stays free of a capability dependency on the sync path.
+   * Verify a capability authorising a non-authority signer to revoke. Injected rather than imported
+   * so the sync path stays free of a capability dependency.
    *
-   * Receives the serialized capability, the controller DID (which must be the capability `sub`),
-   * the DID being denied, and a resolver for the controller **at the position being verified**.
-   * See {@link CapabilityAuthorisation} for what it answers with.
-   *
-   * The fourth argument is what makes the position contract keepable. A capability authorising a
-   * revoke is issued by the very profile whose log carries that revoke, so verifying it means
-   * resolving that profile — and the state to resolve it against is neither the head nor the whole
-   * log but the prefix before this event. The head would let a device the log revoked at event 1
-   * keep authoring revokes at event 2, since the deny set is only position-dependent inside the
-   * fold; the whole log would send resolution back into the fold that is asking. Nothing outside
-   * the fold knows which position is being verified — `loadLog` is handed a DID and nothing else —
-   * so the fold answers rather than asks: this resolver holds exactly `states[0..i-1]`, is
-   * complete for the profile (keys by `kid`, deny set, agreement keys), and answers `Unknown DID`
-   * for anything else, so a verifier can merge it into a wider registry for the delegates in a
-   * chain.
-   *
-   * A verifier that ignores it is back to resolving the profile some other way, which is the
-   * failure this argument exists to remove — `createControllerCapabilityVerifier` prefers it over
-   * its own registry for the subject.
+   * Receives the serialized capability, the controller DID (which must be the capability `sub`), the
+   * DID being denied, and a resolver for the controller **at the position being verified**. That
+   * fourth argument makes the position contract keepable: the capability is issued by the very
+   * profile whose log carries the revoke, and the state to resolve it against is the prefix before
+   * this event — not the head (which would let a device revoked at event 1 keep authoring at event 2,
+   * the deny set being position-dependent only inside the fold) and not the whole log (which would
+   * recurse into the asking fold). Nothing outside the fold knows which position is being verified,
+   * so the fold answers rather than asks: this resolver holds exactly `states[0..i-1]`, is complete
+   * for the profile, and answers `Unknown DID` for anything else so a verifier can merge it into a
+   * wider registry for a chain's delegates. See {@link CapabilityAuthorisation}.
    */
   verifyCapability?: (
     cap: string,
@@ -136,16 +109,15 @@ export type FoldOptions = {
 }
 
 /**
- * Whether a verifier's answer is one this fold can act on. Total, and deliberately strict about
- * both arms: an `authorised: true` with no usable key would reach `verifyEventSignedBy` and throw,
- * and an `authorised: false` with no reason would produce a `FoldResult` whose `reason` is not a
- * string. Neither is reachable from typed code; both are reachable from a stale build.
+ * Whether a verifier's answer is one this fold can act on. Total, and strict about both arms: an
+ * `authorised: true` with no usable key would reach `verifyEventSignedBy` and throw, an
+ * `authorised: false` with no reason would produce a non-string `FoldResult.reason`. Neither is
+ * reachable from typed code, both from a stale build.
  *
- * The discriminant is compared against the literals rather than tested for truthiness, so a
- * `'true'` string — the shape an untyped caller reaches for — is malformed rather than authorising.
- * The key bytes go through `ArrayBuffer.isView` instead of `instanceof Uint8Array`: `instanceof`
- * is per-realm, so a correct answer built in a worker, a `vm` context or across an Electron bridge
- * would otherwise be rejected as malformed — the one way this guard can turn away a good answer.
+ * The discriminant is compared against the literals, so a `'true'` string is malformed rather than
+ * authorising. The key bytes go through `ArrayBuffer.isView`, not `instanceof Uint8Array`, which is
+ * per-realm and would reject a correct answer built in a worker, a `vm` context, or across an
+ * Electron bridge — the one way this guard could turn away a good answer.
  */
 function isCapabilityAuthorisation(value: unknown): value is CapabilityAuthorisation {
   if (value == null || typeof value !== 'object') {
@@ -166,12 +138,9 @@ function fail(reason: string, index: number): FoldResult {
 /** What a log entry that is not a {@link SignedEvent} at all fails with. */
 const MALFORMED_EVENT = 'malformed event'
 
-// The fold's failure reasons for a capability-authorised revoke. Exported because they already are
-// a contract: `@kokuin/capability` asserts on them by string literal across a package boundary,
-// which is what not exporting them looks like from the outside. Telling "the grant was rejected"
-// from "the capability is malformed for this use" from "your verifier is broken" should not mean
-// hardcoding English sentences. `FoldResult.reason` stays a plain string, so these name values
-// rather than widening the type.
+// The fold's capability-revoke failure reasons. Exported because they already are a contract:
+// `@kokuin/capability` asserts on them by string literal across a package boundary. `FoldResult.reason`
+// stays a plain string, so these name values rather than widening the type.
 
 /** A verifier threw. The thrown message is appended after `: `, so match with `startsWith`. */
 export const CAPABILITY_VERIFIER_FAILED = 'capability verifier failed'
@@ -187,45 +156,31 @@ export const CAPABILITY_VERIFIER_MALFORMED_ANSWER =
 export const REVOKE_NOT_SIGNED_BY_AUDIENCE = 'revoke is not signed by the capability audience'
 
 /**
- * The sync fold met a capability-authorised revoke, which it cannot verify by construction. The
- * capability follows after `: `, so match with `startsWith`.
- *
- * Not a defect in the log: this is the management tier working as designed, and the answer is
- * `foldLogAsync`. Exported because callers that fold speculatively — `resolveBranches`, which must
- * not quietly treat such a branch as invalid — have to tell it from a log that is actually broken.
+ * The sync fold met a capability-authorised revoke, which it cannot verify by construction — the
+ * management tier working as designed, answered by `foldLogAsync`. The capability follows after `: `,
+ * so match with `startsWith`. Exported so speculative folders (`resolveBranches`) can tell it from a
+ * genuinely broken log.
  */
 export const CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD = 'capability-authorised revoke needs an async fold'
 
 /**
  * The async fold met a capability-authorised revoke with no `verifyCapability` configured. Same
- * shape, same reason for existing: the log is fine and the call was not equipped for it.
+ * shape: the log is fine and the call was not equipped for it.
  */
 export const CAPABILITY_REVOKE_NEEDS_VERIFIER = 'capability-authorised revoke needs a verifier'
 
 /**
- * Whether a log entry has the envelope shape everything downstream reads without checking.
+ * Whether a log entry has the envelope shape everything downstream reads without checking. The
+ * fold's input is untrusted (`JSON.parse` of whatever was on the wire), so `signed.event`/`signed.sigs`
+ * are assumptions until checked; unchecked they are reachable `TypeError`s, and the worst case is
+ * not the throw but that `resolveBranches` filters branches by folding them — so one malformed entry
+ * could crash duplicity resolution for every honest branch beside it.
  *
- * The fold's input is untrusted by definition — a log arrives from a network peer or an untrusted
- * store, and `JSON.parse` produces whatever was on the wire — so `signed.event` and `signed.sigs`
- * are assumptions until something checks them. Unchecked they are several reachable `TypeError`s,
- * and the worst consequence is not the throw: `resolveBranches` filters branches by folding them,
- * so a thief who cannot produce a valid event could still crash duplicity resolution for every
- * well-formed branch — a denial of service on the one mechanism that detects a key-takeover fork.
- *
- * Only the envelope is checked here. What the event *body* must contain depends on `t`, so that
- * stays with each verifier.
- *
- * Whether the body can be canonicalized at all is checked here too. Every path out of this function
- * canonicalizes the whole body — the signature check hashes it, `digestOf` chains it — so a body
- * the canonicalizer refuses is one this function's callers cannot proceed on, and both of the ways
- * it refuses arrive as ordinary wire input. Nesting: the canonicalizer recurses once per level and
- * `JSON.parse` accepts unbounded depth, so an event carrying a member the fold never reads still
- * decides how much stack it uses. Numbers: `1e400` parses to `Infinity`, which has no encoding —
- * and reached `canonicalize` as a *throw*, from inside a fold documented total, which one hostile
- * branch used to take `resolveBranches` down for every honest branch beside it.
- *
- * Both are the same failure as a bad shape: an event body this package could not have produced and
- * cannot hash is a malformed event, and says so with a `FoldResult` rather than an exception.
+ * Only the envelope is checked here; what the body must contain depends on `t` and stays with each
+ * verifier. Canonicalizability is checked here too: every path out canonicalizes the whole body
+ * (signature hash, `digestOf`), and both ways it can refuse (`Infinity` from `1e400`, nesting past
+ * `MAX_CANONICAL_DEPTH`) arrive as ordinary wire input. Both are the same failure as a bad shape — a
+ * `FoldResult`, not an exception from a fold documented total.
  */
 function isSignedEventShape(value: unknown): value is SignedEvent {
   if (value == null || typeof value !== 'object') {
@@ -241,8 +196,7 @@ function isSignedEventShape(value: unknown): value is SignedEvent {
   if (signed.recoveryKey !== undefined && typeof signed.recoveryKey !== 'string') {
     return false
   }
-  // The body is what gets canonicalized, and it is canonicalized as the top-level value — so what
-  // is judged here is exactly what the canonicalizer will be handed.
+  // The body is canonicalized as the top-level value, so this is exactly what the canonicalizer sees.
   return isCanonicalizable(signed.event)
 }
 
@@ -250,8 +204,8 @@ type StepOutcome =
   | { status: 'ok'; state: KeyState; skipped?: boolean }
   | { status: 'fail'; reason: string }
   /**
-   * A cap-bearing revoke: `state` is what to apply *if* the capability verifies, and `signed` is
-   * the event itself, whose signature must be checked against the key the capability authorises.
+   * A cap-bearing revoke: `state` is what to apply *if* the capability verifies, and `signed` is the
+   * event, whose signature must be checked against the key the capability authorises.
    */
   | {
       status: 'capability'
@@ -263,10 +217,9 @@ type StepOutcome =
 
 /**
  * Validate one event against the state so far and produce the next state. Pure and total — every
- * rejection is a returned reason, never a throw. Criticality is decided here, so both fold entry
- * points inherit it: an unknown critical event fails closed, an unknown event declaring
- * `crit: false` at the next sequence position is skipped by carrying the prior state forward
- * unchanged, and an unknown event that does neither fails closed too.
+ * rejection is a returned reason, never a throw. Criticality is decided here so both entry points
+ * inherit it: an unknown critical event fails closed, an unknown `crit: false` event at the next
+ * position is skipped (prior state carried forward unchanged), and anything else fails closed.
  */
 function stepEvent(
   did: string,
@@ -288,14 +241,10 @@ function stepEvent(
     const isReset = rot.event.g > prior.gen
 
     if (isReset) {
-      // A reset chains to the inception, not to the head — Amendment A. That is what lets a root
-      // holding only its seed author one: `p` is recomputable without the log.
-      //
-      // This reason is unobservable and no test can elicit it: `verifyReset` on the next line
-      // rejects the same event with `invalid reset`, so removing the check changes the reason and
-      // nothing else. It stays because `s` is wire data and this is the check that says what a
-      // reset's sequence must be — see the rule at `verifyEventSignedBy` — but do not spend a round
-      // trying to reach it.
+      // A reset chains to the inception, not the head, so `p` is recomputable without the log. This
+      // reason is unobservable (`verifyReset` below rejects the same event with `invalid reset`) but
+      // stays because `s` is wire data and this states what a reset's sequence must be — do not spend
+      // a round trying to reach it.
       if (rot.event.s !== 0) {
         return { status: 'fail', reason: 'reset must restart the sequence' }
       }
@@ -314,17 +263,13 @@ function stepEvent(
       }
     }
 
-    // The deny set this rotate leaves behind: its own snapshot when it carries one — `d` is
-    // validated as a list of strings by `isPublishedRotate`, inside the verifier above — otherwise
-    // the accumulated set carried forward.
+    // The deny set this rotate leaves behind: its own snapshot when it carries one (validated by
+    // `isPublishedRotate`), else the accumulated set carried forward.
     const denyAfter = rot.event.d == null ? prior.deny : new Set(rot.event.d)
-    // A key this event *establishes* must not be one the same event denies. `d` is author-written
-    // wire data and the carried-forward set is whatever the prefix accumulated, so without this a
-    // single rotate could publish a key set and deny it in the same breath — and the invariant every
-    // reader of `KeyState.deny` relies on (see that field) would hold only by the author's good
-    // manners. Failing the fold is the only answer available here: applying it would leave a head
-    // whose `k` resolves to nothing, and ignoring the denial would be the deny set switched off by
-    // the party it constrains.
+    // A key this event *establishes* must not be one it denies. `d` and the carried-forward set are
+    // both attacker-influenced, so without this a single rotate could publish a key and deny it in
+    // one breath, and the `KeyState.deny` invariant would hold only by good manners. Failing the fold
+    // is the only answer: applying it leaves a head whose `k` resolves to nothing.
     const establishedButDenied = [...rot.event.k, ...rot.event.ka].find((key) =>
       denyAfter.has(keyTarget(key)),
     )
@@ -338,16 +283,15 @@ function stepEvent(
         did,
         gen: rot.event.g,
         seq: rot.event.s,
-        // A rotate establishes new keys one derivation index on from the last one that did — not
-        // at its own `s`, which any intervening revoke has already advanced. A reset opens a fresh
-        // generation, so its index restarts at 0 (which is also its `s`).
+        // New keys are one derivation index on from the last that established one — not at `s`, which
+        // any intervening revoke advanced. A reset opens a fresh generation, so its index restarts at
+        // 0 (also its `s`).
         keyGen: rot.event.g,
         keySeq: isReset ? 0 : prior.keySeq + 1,
         keys: rot.event.k,
         agreement: rot.event.ka,
         next: rot.event.n,
-        // Carried, never replaced — including across a reset, which opens a new generation under
-        // the same root. See `KeyState.recovery` and `RotateEvent`.
+        // Carried, never replaced — including across a reset. See `KeyState.recovery`.
         recovery: prior.recovery,
         deny: denyAfter,
         digest: digestOf(rot.event),
@@ -364,34 +308,22 @@ function stepEvent(
     if (rev.event.g !== prior.gen || rev.event.s !== prior.seq + 1) {
       return { status: 'fail', reason: 'sequence gap' }
     }
-    // The two members of a revoke the fold reads rather than verifies. `x` goes into the deny set —
-    // a `ReadonlySet<string>` — and, for a capability-authorised revoke, into the verifier as the
-    // resource being asked for, where a wildcard grant would happily authorise denying `undefined`.
+    // `x` goes into the deny set and, for a cap-authorised revoke, into the verifier as the resource
+    // asked for — where a wildcard grant would happily authorise denying `undefined`.
     if (typeof rev.event.x !== 'string') {
       return { status: 'fail', reason: 'revoke names no target' }
     }
-    // `cap` crosses a `(cap: string, …)` callback boundary into caller-supplied code, which is the
-    // one place in this package where a wire value is handed to something that cannot have checked
-    // it. `x` immediately above was checked and this was not, which is the whole of the reason.
+    // `cap` crosses a callback boundary into caller-supplied code, the one place a wire value is
+    // handed to something that cannot have checked it. `x` above was checked and this was not.
     if (rev.event.cap !== undefined && typeof rev.event.cap !== 'string') {
       return { status: 'fail', reason: 'revoke capability is not a serialized token' }
     }
-    // A key target may not name a key this position currently publishes.
-    //
-    // Refused rather than allowed, and the choice is not about safety-in-the-large — a compromised
-    // current key is a real problem — but about which event fixes it. `resolve` is head-only, so a
-    // key still in `k` is one the profile is asserting it signs with *now*; the event that stops
-    // that is `rotate`, whose pre-rotation commitment authenticates the change and which the holder
-    // of the leaked key cannot forge. Denial is for what the rotate leaves behind: the historic
-    // resolution path, which by design survives a rotate. So the remedy is rotate-then-deny, two
-    // events in the order the ladder already describes, and nothing is out of reach.
-    //
-    // What allowing it would cost is concrete. A `rev` may be capability-authorised, and a
-    // management capability's `res` is normally a wildcard — so one event from a device that was
-    // never given the profile sub-seed would make the root tier unable to sign anything at all,
-    // straight across the tier boundary the spec draws. It would also leave a head whose own `k`
-    // the resolver must refuse, which every reader of `keys` would then have to intersect with
-    // `deny` for itself; see the invariant on `KeyState.deny`.
+    // A key target may not name a key this position currently publishes. `resolve` is head-only, so
+    // a key still in `k` is one the profile asserts it signs with *now*; the event that stops that is
+    // `rotate` (whose pre-rotation commitment the leaked-key holder cannot forge), and denial is for
+    // what the rotate leaves behind — the historic path, which survives a rotate. So: rotate-then-deny.
+    // Allowing it would let one cap-authorised revoke (wildcard `res`) from a device that never held
+    // the sub-seed disable the root tier, and leave a head whose own `k` the resolver must refuse.
     const deniedKey = keyFromTarget(rev.event.x)
     if (
       deniedKey != null &&
@@ -401,8 +333,8 @@ function stepEvent(
     }
     const deny = new Set(prior.deny)
     deny.add(rev.event.x)
-    // `keyGen`/`keySeq` ride along in the spread: a revoke establishes no key, so the active
-    // position is still wherever the last icp/rot put it.
+    // `keyGen`/`keySeq` ride along in the spread: a revoke establishes no key, so the active position
+    // is still wherever the last icp/rot put it.
     const state: KeyState = { ...prior, seq: rev.event.s, deny, digest: digestOf(rev.event) }
 
     if (rev.event.cap != null) {
@@ -414,15 +346,11 @@ function stepEvent(
     return { status: 'ok', state }
   }
 
-  // Unknown type. Criticality lives in the envelope precisely so this decision can be made
-  // without understanding `t`. Failing closed on a critical event is what stops a verifier that
-  // does not understand `rev` from accepting a revoked device.
-  //
-  // Only an explicit `crit: false` means "skip me". `crit` is wire data like everything else here,
-  // and an absent member reads as `undefined` — falsy — so a truthiness test let an attacker who
-  // simply *omitted* the flag claim the skip path for an event nobody could have understood. A
-  // criticality that cannot be read is not a criticality, so anything but `false` fails closed;
-  // the two reasons separate "declared critical" from "declared nothing".
+  // Unknown type. Criticality lives in the envelope so this decision needs no understanding of `t`;
+  // failing closed on a critical event stops a verifier that does not understand `rev` accepting a
+  // revoked device. Only an explicit `crit: false` skips: `crit` is wire data, an absent member is
+  // falsy, so a truthiness test would let an attacker claim the skip path by *omitting* the flag. The
+  // two reasons separate "declared critical" from "declared nothing".
   if (event.crit !== false) {
     return {
       status: 'fail',
@@ -432,39 +360,30 @@ function stepEvent(
     }
   }
 
-  // A skipped event is the only one the fold accepts without verifying a signature — it cannot,
-  // since it does not know the type's rules — so it must not be allowed to claim a position it did
-  // not earn. `p` is already checked above; without this, `g` and `s` were free wire data on an
+  // A skipped event is the only one accepted without a signature check, so it must not claim a
+  // position it did not earn. `p` is checked above; without this, `g`/`s` were free wire data on an
   // unsigned event, and anything ordering branches by the raw head could be handed
-  // `Number.MAX_SAFE_INTEGER` by someone holding no key material at all. Nothing an honest peer
-  // appends is at any position but the next one.
+  // `Number.MAX_SAFE_INTEGER` by someone holding no key material.
   if (event.g !== prior.gen || event.s !== prior.seq + 1) {
     return { status: 'fail', reason: 'sequence gap' }
   }
 
-  // Non-critical: skip, carrying state forward unchanged so positions stay aligned with the input
-  // array. `seq` deliberately does not advance — the skipped event established nothing — so a run
-  // of consecutive skipped events all claim the same `s`.
+  // Non-critical: skip, carrying state forward so positions stay aligned with the input array. `seq`
+  // deliberately does not advance — the skipped event established nothing — so a run of skipped
+  // events all claim the same `s`.
   return { status: 'ok', state: { ...prior, digest: prior.digest }, skipped: true }
 }
 
 /**
  * How many events a log may carry that this version cannot understand, beyond the number it can.
  *
- * A skipped event is the only one the fold accepts without verifying a signature, and it advances
- * neither `seq` nor the digest — so nothing about it is authenticated and nothing chains it in. A
- * peer relaying a log can therefore insert them anywhere, in any number, and the log still folds to
- * the same head: 500 unsigned events fold clean and produce 502 states. The resolver is not a cache
- * and re-folds on every resolution, and a group replays the whole log at every welcome, so an
- * unbounded skip path makes log size — and with it the verifier's CPU and memory — an attacker's
- * choice rather than the profile's.
- *
- * Bounded against the log's own real length rather than by an absolute cap, so the ceiling stays
- * proportional to work the verifier was going to do anyway. The slack is what keeps this
- * forward-compatible in the small: a v1 verifier meeting a log whose first events include a few
- * non-critical types from a later version still folds it, which is the whole reason the skip path
- * exists. A log that needs more than that from a verifier which understands none of it is one the
- * verifier should refuse rather than replay.
+ * A skipped event is accepted without a signature and advances neither `seq` nor the digest, so
+ * nothing about it is authenticated: a relaying peer can insert any number anywhere and the log still
+ * folds to the same head. The resolver re-folds on every resolution and a group replays the whole log
+ * at every welcome, so an unbounded skip path makes log size — and the verifier's CPU/memory — an
+ * attacker's choice. Bounded against the log's own real length so the ceiling stays proportional to
+ * work the verifier was doing anyway; the slack keeps a v1 verifier able to fold a log with a few
+ * later-version non-critical types near the front, which is the whole point of the skip path.
  */
 export const MAX_SKIPPED_SLACK = 8
 
@@ -473,10 +392,9 @@ export const TOO_MANY_UNKNOWN_EVENTS = 'too many unknown events'
 
 /**
  * The running budget for skipped events, shared by both fold entry points so the two cannot drift.
- *
- * `understood` counts the events this fold validated — the inception is the first — and `skipped`
- * the ones it carried past. The bound is checked as each skipped event arrives rather than at the
- * end, so a padded log stops being folded at the point it exceeds the budget instead of after.
+ * `understood` counts validated events (the inception is the first), `skipped` the ones carried past.
+ * Checked as each skipped event arrives, so a padded log stops folding at the point it exceeds the
+ * budget rather than after.
  */
 function skipBudget(): { understood(): void; skip(): boolean } {
   let understood = 1
@@ -497,8 +415,8 @@ type FoldInit =
   | { ok: false; result: FoldResult }
 
 /**
- * Validate the inception and seed the state array both fold entry points start from. Shared so
- * the sync/async split begins only where the two loops actually differ.
+ * Validate the inception and seed the state array both fold entry points start from. Shared so the
+ * sync/async split begins only where the two loops differ.
  */
 function initFold(did: string, events: Array<SignedEvent>): FoldInit {
   if (!Array.isArray(events)) {
@@ -513,9 +431,8 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
   }
   const first = events[0] as SignedEvent<InceptionEvent>
   // Unobservable, like `reset must restart the sequence`: `verifyInception` checks `t` too and
-  // rejects the same log with `invalid inception`. Kept for the same reason — `t` is wire data and
-  // this is the check that states what a log must open with — and recorded as unreachable so the
-  // next reader does not go looking for the test that elicits it.
+  // rejects the same log with `invalid inception`. Kept because `t` is wire data and this states what
+  // a log must open with; recorded as unreachable so the next reader does not hunt for the test.
   if (first.event.t !== 'icp') {
     return { ok: false, result: fail('first event must be an inception', 0) }
   }
@@ -532,11 +449,9 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
         gen: first.event.g,
         seq: first.event.s,
         keyGen: first.event.g,
-        // The derivation index, not the event position — the two are the same number for every
-        // inception this package builds (`s` is 0), and `keySeq` means the index either way. An
-        // inception is self-certifying, so a body carrying any `s` at all is a valid log for the
-        // DID it hashes to; writing `s` here would hand such a log a `KeyState` naming a key it
-        // never committed, which is the conflation Amendment A removed everywhere else.
+        // The derivation index, not the event position — the same number for every inception this
+        // package builds (`s` is 0). Writing `s` here would hand a self-certifying log carrying any
+        // `s` a `KeyState` naming a key it never committed.
         keySeq: 0,
         keys: first.event.k,
         agreement: first.event.ka,
@@ -550,15 +465,13 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
 }
 
 /**
- * Fold a controller's log into per-position key state.
+ * Fold a controller's log into per-position key state. `states[i]` is the state *after* `events[i]`,
+ * which a verifier evaluating at position `i` must use — that is what makes the deny set
+ * position-dependent: clearing a DID later never retroactively validates its earlier actions.
  *
- * `states[i]` is the state *after* `events[i]`, which is what a verifier evaluating at log
- * position `i` must use. That is what makes the deny set position-dependent: clearing a DID at a
- * later position never retroactively validates its earlier actions.
- *
- * Synchronous, so it stays usable on the apply path of an offline verifier. A capability-
- * authorised revoke needs async verification it cannot do inline, so it fails closed here rather
- * than trusting a capability it cannot check — use `foldLogAsync` when one may be present.
+ * Synchronous, so it stays usable on an offline verifier's apply path. A capability-authorised revoke
+ * needs async verification, so it fails closed here rather than trusting an unchecked capability — use
+ * `foldLogAsync` when one may be present.
  */
 export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
   const init = initFold(did, events)
@@ -590,9 +503,9 @@ export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
 }
 
 /**
- * Async counterpart of {@link foldLog}. Shares {@link stepEvent} with the sync fold, so the only
- * difference is what happens with a capability-authorised revoke: this entry point can await
- * `options.verifyCapability` for it instead of failing closed.
+ * Async counterpart of {@link foldLog}. Shares {@link stepEvent}, so the only difference is a
+ * capability-authorised revoke: this entry point awaits `options.verifyCapability` instead of failing
+ * closed.
  */
 export async function foldLogAsync(
   did: string,
@@ -615,23 +528,19 @@ export async function foldLogAsync(
       if (options.verifyCapability == null) {
         return fail(`${CAPABILITY_REVOKE_NEEDS_VERIFIER}: ${outcome.cap}`, i)
       }
-      // The fold is total by contract, and a verifier is caller-supplied code that TypeScript
-      // cannot police across a package boundary or a stale build. Both ways it can break that
-      // contract are handled here: throwing, and answering with the wrong shape — the previous
-      // `null`/key-object contract, or a rejection carrying no reason. Each must come back as a
-      // `FoldResult` with a real reason, never as an exception escaping the loop and never as a
-      // `reason` of `undefined`, which is a failure a caller can neither log nor match on.
-      //
-      // Our own adapter documents that it never throws; a third party's need not, and a throw is
-      // not evidence that the capability authorises anything.
+      // The fold is total by contract; a verifier is caller-supplied code TypeScript cannot police
+      // across a package boundary or a stale build. Both ways it can break the contract — throwing,
+      // and answering with the wrong shape — come back as a `FoldResult` with a real reason, never an
+      // escaping exception or an `undefined` reason. Our adapter never throws; a third party's need
+      // not, and a throw is not evidence the capability authorises anything.
       let authorisation: CapabilityAuthorisation
       try {
         authorisation = await options.verifyCapability(
           outcome.cap,
           did,
           outcome.target,
-          // A copy: `states` keeps growing as the fold proceeds, and this resolver must keep
-          // answering for the position it was built at even if the verifier holds on to it.
+          // A copy: `states` keeps growing, and this resolver must keep answering for the position it
+          // was built at even if the verifier holds on to it.
           createStateResolver(did, [...states]),
         )
       } catch (cause) {
@@ -646,9 +555,9 @@ export async function foldLogAsync(
       if (!authorisation.authorised) {
         return fail(authorisation.reason, i)
       }
-      // The capability authorises its audience, not its bearer. Checked here rather than left to
-      // the verifier so that a verifier which simply forgot cannot make the fold accept a revoke
-      // from anyone who read the log — see `CapabilityAuthorisation`.
+      // The capability authorises its audience, not its bearer. Checked here rather than left to the
+      // verifier so a verifier that simply forgot cannot make the fold accept a revoke from anyone
+      // who read the log — see `CapabilityAuthorisation`.
       if (!verifyEventSignedBy(outcome.signed, authorisation.audienceKey)) {
         return fail(REVOKE_NOT_SIGNED_BY_AUDIENCE, i)
       }
@@ -671,16 +580,11 @@ export function keyStateAt(result: FoldResult, position: number): KeyState | und
 }
 
 /**
- * The deny set of `state` with `drop` removed — what to pass as a rotate's `denySnapshot` when the
- * intent is to prune a few entries rather than to replace the set.
- *
- * A rotate's `d` replaces the accumulated set outright, so pruning by hand means writing out
- * everything that stays. Miss one and the profile silently un-revokes a device or un-retires a
- * leaked key, with nothing in the log to say so — the same shape as building an allow-list by
- * remembering what to keep. This builds it from the fold's own answer instead.
- *
- * Entries in `drop` that the state does not carry are ignored: a caller pruning what is already
- * gone has the set it asked for.
+ * The deny set of `state` with `drop` removed — what to pass as a rotate's `denySnapshot` to prune a
+ * few entries rather than replace the set. A rotate's `d` replaces the accumulated set outright, so
+ * pruning by hand means writing out everything that stays; miss one and the profile silently
+ * un-revokes a device or un-retires a leaked key. This builds it from the fold's own answer instead.
+ * Entries in `drop` the state does not carry are ignored.
  */
 export function pruneDenySet(state: KeyState, drop: Iterable<string>): Array<string> {
   const dropped = new Set(drop)

@@ -155,27 +155,21 @@ export type ControllerImplementation = {
   /** Self-addressing digest of a canonicalized value. Several assertions need to compute one. */
   digestOf: (value: unknown) => string
   /**
-   * Test-support only, not part of the wire protocol: the recovery private key for a seed and
-   * profile. Every implementation of this protocol derives one internally to sign a reset; this
-   * exposes it so the root-override group can build a reset whose signature is genuinely valid
-   * but signed by a key the inception never committed to — the only way to isolate the recovery
-   * digest check from signature verification without either breaking the signature (a splice) or
-   * failing the chain check first (an untouched foreign branch).
+   * Test-support only, not the wire protocol: the recovery private key. Lets the root-override group
+   * build a reset whose signature is genuinely valid but signed by a key the inception never
+   * committed to — the only way to isolate the recovery digest check from signature verification.
    */
   recoveryPrivateKey: (seed: Uint8Array, profile: number) => Uint8Array
   /**
-   * Test-support only, not part of the wire protocol: the authority (signing) private key for a
-   * seed, profile, and key position. Lets the agreement-key group build an inception whose
-   * signature genuinely verifies and whose DID genuinely matches, but whose declared `ka` is
-   * empty — isolating the empty-agreement-set check from signature and DID verification the same
-   * way `recoveryPrivateKey` isolates the root-override check above.
+   * Test-support only, not the wire protocol: the authority signing private key at a position. Lets
+   * the agreement-key group build an inception that genuinely verifies and matches its DID but
+   * declares an empty `ka`, isolating that check like `recoveryPrivateKey` does the root-override one.
    */
   authorityPrivateKey: (seed: Uint8Array, profile: number, gen: number, seq: number) => Uint8Array
   /**
-   * Test-support only: the *public* half of the same key. The capability group needs it to answer
-   * as a verifier would — a capability pins its audience's signing key, and the fold checks the
-   * revoke's own signature against it, so a suite that could not name that key could only exercise
-   * the rejecting direction.
+   * Test-support only: the *public* half of the same key. The capability group needs it to answer as
+   * a verifier would (a capability pins its audience's signing key, and the fold checks the revoke's
+   * signature against it), else the suite could only exercise the rejecting direction.
    */
   authorityPublicKey: (seed: Uint8Array, profile: number, gen: number, seq: number) => Uint8Array
   /** Test-support only: sign an event with arbitrary private keys. Used only for the forgeries above. */

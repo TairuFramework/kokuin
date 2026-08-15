@@ -32,12 +32,10 @@ const verifiedTokens = new WeakSet<object>()
 // token, so the value captured at verification time is the one the re-bind compares against.
 const verifiedTokenData = new WeakMap<object, string>()
 
-// Tokens whose signature was checked against a key the issuer has since rotated away — verified
-// with `historic: true`. Membership is the reason the fast path above cannot be taken for them: a
-// later `verifyToken` of the same object *without* `historic` is asking the stricter question, and
-// answering it from a weaker check is the fail-open direction. Re-verification is the answer, not a
-// rejection, because the strict question may well pass. The reverse — a strictly verified token
-// re-checked historically — needs nothing: the strict answer already implies the loose one.
+// Tokens verified with `historic: true` — against a key the issuer has since rotated away.
+// Membership blocks the fast path: a later `verifyToken` without `historic` asks the stricter
+// question, and answering it from a weaker check is fail-open, so it re-verifies (which may pass).
+// The reverse needs nothing — a strict answer already implies the loose one.
 const historicallyVerifiedTokens = new WeakSet<object>()
 
 export type VerifyTokenOptions = TimeValidationOptions & {
@@ -45,12 +43,10 @@ export type VerifyTokenOptions = TimeValidationOptions & {
   resolver?: DIDResolver
   cache?: DIDCache
   /**
-   * DID methods that need external resolution to verify an issuer.
-   *
-   * `did:key` and `did:peer:4` need no entry — the first carries its key in the identifier, the
-   * second in its document. A method whose key set is a projection of state held elsewhere —
-   * `did:kokuin:`, whose keys come from folding a key event log — cannot be verified without one,
-   * and a token issued by such a DID fails with `Unknown DID` when no registry is passed.
+   * DID methods that need external resolution to verify an issuer. `did:key` and `did:peer:4` need no
+   * entry (they carry their key in the identifier or document); a method whose key set is a projection
+   * of state held elsewhere — `did:kokuin:` — cannot be verified without one, and fails with `Unknown
+   * DID` when no registry is passed.
    */
   methods?: MethodRegistry
   /**
@@ -63,23 +59,15 @@ export type VerifyTokenOptions = TimeValidationOptions & {
    */
   audience?: DIDString | Array<DIDString>
   /**
-   * Verify against a key the issuer has already rotated away, as well as its current ones.
-   * Defaults to `false`.
+   * Verify against a key the issuer has already rotated away, as well as its current ones. Defaults
+   * to `false` — the safe question: the signature must be from a key the issuer holds **now**, so a
+   * rotated-away (leaked) key mints nothing. Opting in asks whether the issuer held the key **at some
+   * point**, which a past-issued capability or revocation record needs to survive routine key hygiene.
    *
-   * A token is an artefact its issuer minted at a moment in the past, and for a method whose key
-   * set rotates — `did:kokuin:` — those are two different questions. The default asks the safe one:
-   * the signature must be from a key the issuer holds **now**, so a key that has been rotated away
-   * (because it leaked, say) mints nothing that verifies. Opting in asks the other: the signature
-   * must be from a key the issuer held **at some point**, which is what an already-issued
-   * capability or revocation record needs in order to survive the issuer's routine key hygiene.
-   *
-   * Set it only when the token being verified was issued in the past and is not itself the proof
-   * that a live party holds a key. It is not a compatibility switch: on this path it is the
-   * difference between "a compromised key mints nothing" and "a compromised key mints anything
-   * until the profile resets".
-   *
-   * A method resolver that publishes no `resolveHistoric` rejects with `UnresolvableIssuerError`
-   * rather than answering the current-key question instead — see `DIDMethodResolver.resolveHistoric`.
+   * Set it only for a past-issued token that is not itself proof a live party holds a key. Not a
+   * compatibility switch: it is the difference between "a compromised key mints nothing" and "mints
+   * anything until the profile resets". A resolver with no `resolveHistoric` rejects with
+   * `UnresolvableIssuerError` rather than answering the current-key question.
    */
   historic?: boolean
   /**

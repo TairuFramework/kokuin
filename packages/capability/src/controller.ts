@@ -24,86 +24,55 @@ import {
 } from './index.js'
 
 /**
- * What the fold does when the capability does not authorise the revoke at all. Every rejection
- * before the audience key is reached collapses into this one: the fold treats it as a failed log,
- * so the difference between "expired" and "wrong resource" changes nothing a caller can act on.
+ * The fold rejected the revoke before reaching the audience key. Every pre-audience rejection
+ * collapses here: "expired" vs "wrong resource" changes nothing a caller can act on.
  */
 export const REVOKE_NOT_AUTHORISED = 'capability does not authorise this revoke'
 
 /**
- * What the fold does when the capability authorises the revoke but pins no audience key. Distinct
- * from {@link REVOKE_NOT_AUTHORISED} on purpose: the grant is sound and the *capability* is malformed for
- * this use, which is a minting bug in whoever issued it, not a rejected delegation. Distinct from
- * the fold's `revoke is not signed by the capability audience` too — that one means a pin was
- * present and the signature was somebody else's.
+ * The grant is sound but pins no audience key -- a minting bug, not a rejected delegation. Distinct
+ * from the fold's `revoke is not signed by the capability audience`, where a pin was present and the
+ * signature was somebody else's.
  */
 export const REVOKE_NO_AUDIENCE_KEY = 'capability pins no audience key'
 
 /**
- * What the fold does when the capability pins a key its audience's own identifier does not carry.
+ * The pinned key (`cnf`) is not one the audience's (`aud`) identifier carries. Authority follows
+ * `cnf`, revocation follows `aud`; unless they are the same party the capability grants authority
+ * the deny set cannot reach.
  *
- * Authority on this path follows `cnf` — the pinned key is what the revoke event is checked against
- * — while revocation follows `aud`, which is what a `rev` event names and what the deny set holds.
- * Nothing makes the two the same party unless this does, and a capability where they differ is a
- * revoke authority that revoking cannot reach: deny the DID in `aud` and the key in `cnf` carries
- * on, deny the key's own DID and the capability never named it.
+ * Checked against the identifier itself, **never by resolving** it -- resolving is the bug `cnf`
+ * exists to remove, and a third party's routine key rotation would otherwise make the log unfoldable
+ * forever. So only identifiers that carry a key qualify: a `did:key`, and a `did:peer:4` long form
+ * (its `authentication` keys). An audience whose identifier carries no key (a `did:kokuin:` profile,
+ * a short-form `did:peer:4`) is refused, not passed unbound -- the shape that once accepted the
+ * mismatch is given up deliberately as authority nothing can reach.
  *
  * Its own reason rather than {@link REVOKE_NO_AUDIENCE_KEY}: a pin is present and well formed, and
- * what is wrong is the binding. Both are minting bugs, and a minter told "pins no audience key"
- * about a capability that plainly pins one would look for the wrong thing.
- *
- * The audience is **never resolved** to establish this — resolving is the bug `cnf` exists to
- * remove, and a third party's routine key rotation would otherwise make a profile's log unfoldable
- * forever. The binding is therefore checked against the audience identifier itself, and reaches
- * exactly the identifiers that carry a key: a `did:key`, and a `did:peer:4` long form (its
- * `authentication` keys). Mint for one of those whenever the audience is a device.
- *
- * **An audience whose identifier carries no key is refused here**, and this is the same reason: a
- * `did:kokuin:` profile or a short-form `did:peer:4` cannot be tied to its pin without a lookup, so
- * accepting one meant accepting a pin nobody had checked — an authority that denying the `aud`
- * cannot reach, which is precisely the hole the binding exists to close. It was once accepted with
- * the mismatch left open, to keep one profile holding a management capability over another
- * workable. That shape is given up deliberately: it is unbound authority by construction, the tiers
- * this design draws put a *device* in the audience of a management capability, and a hole that only
- * a speculative shape needs is not worth carrying in a wire format this hard to change.
- *
- * The refusal lands at verification, which for a log already carrying such a revoke means an
- * unfoldable log. Mint-side, {@link assertRevokeCapabilityAudience} is the same rule applied where
- * the mistake is cheap — call it before issuing anything that grants `revoke`.
+ * what is wrong is the binding. Refusal lands at verification (an unfoldable log); the mint-side
+ * twin {@link assertRevokeCapabilityAudience} applies the same rule where the mistake is cheap.
  */
 export const REVOKE_AUDIENCE_KEY_MISMATCH = 'capability pins a key the audience does not carry'
 
 /**
- * What a verifier answers when it is called without the log position it must verify at.
+ * The verifier was called without the log position it must verify at (the fourth argument).
  *
- * The fourth argument is required, and this is the runtime half of that: a type cannot stop an
- * *older* `@kokuin/controller` from calling with three arguments, and nothing in the package graph
- * ties the two versions together — `@kokuin/capability` depends on `@kokuin/token` alone. Without
- * this, that call falls back to whatever registry the caller configured, which is the pre-fix
- * behaviour: a registry answering with an early prefix authorises a revoke by a device the log
- * revoked later. Failing closed makes version skew a rejected log rather than a silent bypass.
- *
- * Its own reason rather than {@link REVOKE_NOT_AUTHORISED}, because it says nothing about the
- * capability: the grant was never evaluated.
+ * Required, and enforced at runtime: a type cannot stop an older `@kokuin/controller` calling with
+ * three arguments, and nothing ties the two package versions together. Without the position the call
+ * falls back to the caller's registry -- the pre-fix behaviour, where an early prefix authorises a
+ * revoke by a device the log revoked later. Failing closed makes version skew a rejected log, not a
+ * silent bypass.
  */
 export const REVOKE_NO_POSITION = 'capability verifier was called without a log position'
 
 /**
- * What the fold does when the capability authorising the revoke never expires.
+ * The authorising capability never expires. An omitted `exp` is permanent, not merely long: the only
+ * remedy left is the deny set (the owner noticing and acting), where a bounded grant lapses on its
+ * own whether or not anyone noticed.
  *
- * `exp` is optional in the capability schema, and an omitted one is not a long grant but a permanent
- * one: it authorises log revokes for the life of the profile. The only remedy against a capability
- * that never lapses is the deny set — the owner noticing and acting — where a bounded one lapses on
- * its own whether anybody noticed or not. That asymmetry is the whole argument: revocation reaches
- * an offline verifier best-effort, expiry unconditionally.
- *
- * Presence is mandated; length is not. The management capability is minted by the *root*, which is
- * cold — a Ledger, or a mnemonic in a safe — so a short ceiling would mean reaching for the hardware
- * every week, and a rule that makes the secure path inconvenient is a rule that gets worked around.
- * A ceiling is available to callers who want one through `maxLifetimeSeconds`.
- *
- * Its own reason rather than {@link REVOKE_NOT_AUTHORISED}: the delegation is sound and the
- * capability is malformed for this use, which is a minting bug like {@link REVOKE_NO_AUDIENCE_KEY}.
+ * Presence is mandated; length is not. The management capability is minted by the cold root (a
+ * Ledger, a mnemonic in a safe), so a short ceiling would mean reaching for the hardware weekly and
+ * get worked around. Callers wanting a ceiling pass `maxLifetimeSeconds`.
  */
 export const REVOKE_UNBOUNDED_LIFETIME = 'capability authorising a revoke sets no expiry'
 
@@ -114,23 +83,16 @@ export const REVOKE_LIFETIME_TOO_LONG = 'capability authorising a revoke outlive
 const KEY_LENGTHS: Record<string, number> = { EdDSA: 32, ES256: 33 }
 
 /**
- * Build the `cnf` claim pinning an audience's signing key — see {@link ConfirmationClaim}.
+ * Build the `cnf` claim pinning an audience's signing key -- see {@link ConfirmationClaim}.
  *
- * The key is encoded exactly as a controller log encodes the keys in `k` — multicodec-tagged, then
- * multibase. Deliberately not a second spelling: the two get compared by a human reading a log next
- * to a capability, and `@kokuin/capability` cannot import the controller's encoder without a cycle,
- * so the format is shared rather than the code. A test asserts the two agree byte for byte.
+ * Encoded exactly as a controller log encodes `k` (multicodec-tagged, then multibase), so a human
+ * can compare a log against a capability by eye; the format is shared rather than the code, since
+ * importing the controller's encoder would cycle. A test asserts the two agree byte for byte.
  *
- * Call it at **mint** time, with the key the audience is known to hold — for a `did:key` audience
- * that key is in the identifier, and for anything else it is whatever `resolveIssuer` answers with
- * at that moment. That moment is the point: the pin is what the issuer saw when it granted, and it
- * never has to be looked up again.
- *
- * On the controller-revoke path the pin is additionally checked against the audience's *identifier*
- * — the only way to tie the party that wields the capability to the party the deny set can name
- * without resolving anything. Mint for a `did:key` audience, or for a `did:peer:4` **long form**: a
- * short form is a hash of the document and carries no key, so a pin against one cannot be checked
- * at all. See {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
+ * Call at mint time, with the key the audience holds -- from the identifier for a `did:key`, from
+ * `resolveIssuer` for anything else. On the revoke path the pin is also checked against the
+ * audience's *identifier*, so mint for a `did:key` or a `did:peer:4` **long form**: a short form is
+ * a hash and carries no key. See {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
  */
 export function audienceConfirmation(key: ResolvedSigningKey): ConfirmationClaim {
   const codec = CODECS[key.alg]
@@ -141,7 +103,7 @@ export function audienceConfirmation(key: ResolvedSigningKey): ConfirmationClaim
 }
 
 /**
- * The key a {@link ConfirmationClaim} names. Throws on anything it does not recognise — a missing
+ * The key a {@link ConfirmationClaim} names. Throws on anything it does not recognise -- a missing
  * or non-string `kid`, an unreadable multibase, an unknown codec, a wrong-length payload.
  */
 function confirmedKey(cnf: ConfirmationClaim | undefined): ResolvedSigningKey {
@@ -164,17 +126,13 @@ function confirmedKey(cnf: ConfirmationClaim | undefined): ResolvedSigningKey {
 const MAX_KEY_ENCODED = 64
 
 /**
- * The signing keys a DID carries in the identifier itself, or `null` when it carries none.
+ * The signing keys a DID carries in its identifier, or `null` when it carries none. `did:key` is its
+ * key; a `did:peer:4` long form embeds the document, so its `authentication` keys (signing is what
+ * the pin is for) are readable from the string. Anything network-backed answers `null` rather than
+ * looking up -- see {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
  *
- * `did:key` **is** its key. A `did:peer:4` long form embeds the document, so the keys its
- * `authentication` relationship names are readable from the string alone — and `authentication` is
- * the right relationship because signing is what the audience will do with the pinned key. Anything
- * else — a `did:peer:4` short form, a `did:kokuin:`, anything network-backed — needs a lookup, and
- * answering `null` rather than performing one is the whole point: see
- * {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
- *
- * Throws on an identifier that claims to carry a key and does not — a malformed `did:key`, an
- * undecodable long form. The caller treats that as no match.
+ * Throws on an identifier that claims to carry a key and does not; the caller treats that as no
+ * match.
  */
 function identifierKeys(did: string): Array<ResolvedSigningKey> | null {
   if (did.startsWith('did:key:')) {
@@ -195,8 +153,8 @@ function identifierKeys(did: string): Array<ResolvedSigningKey> | null {
     try {
       info = getAlgorithmAndPublicKey(decodeMultibase(method.publicKeyMultibase))
     } catch {
-      // A legal-but-unsupported multibase, or a key of another kind: it is not the pinned key
-      // either way, and one unreadable entry must not hide a readable one further down.
+      // Legal-but-unsupported multibase, or another key kind: not the pin either way, and one
+      // unreadable entry must not hide a readable one below.
       continue
     }
     if (info != null) {
@@ -215,13 +173,10 @@ function isSameKey(a: ResolvedSigningKey, b: ResolvedSigningKey): boolean {
 }
 
 /**
- * Whether the pinned key fails to name the audience — the binding that keeps the party wielding the
- * capability and the party the deny set can name the same one. Never resolves the audience; see
- * {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
- *
- * An audience whose identifier carries no key at all fails this, rather than passing unbound. A pin
- * nobody can check is not a weaker binding than a wrong one, it is no binding: the capability names
- * a party the deny set can reach and hands the authority to a key it cannot.
+ * Whether the pinned key fails to name the audience -- the binding that keeps the party wielding the
+ * capability and the party the deny set can name the same one. Never resolves the audience. An
+ * identifier carrying no key at all fails this rather than passing unbound: a pin nobody can check is
+ * no binding. See {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
  */
 function contradictsAudience(aud: unknown, pinned: ResolvedSigningKey): boolean {
   if (typeof aud !== 'string') {
@@ -231,28 +186,24 @@ function contradictsAudience(aud: unknown, pinned: ResolvedSigningKey): boolean 
   try {
     carried = identifierKeys(aud)
   } catch {
-    // An identifier that claims to carry a key and does not: whatever the pin is, it is not that
-    // audience's key, and nothing about this can start working later.
+    // Claims to carry a key and does not: whatever the pin is, it is not this audience's, and nothing
+    // about it starts working later.
     return true
   }
   return carried == null || !carried.some((key) => isSameKey(key, pinned))
 }
 
 /**
- * Refuse to mint a capability granting `revoke` whose audience cannot be bound to its own key.
+ * Refuse at mint time to grant `revoke` to an audience that cannot be bound to its own key -- the
+ * same rule {@link createControllerCapabilityVerifier} enforces at verification, where the cost is
+ * an unfoldable log and a DID that stops resolving rather than a cheap error.
  *
- * The same rule {@link createControllerCapabilityVerifier} applies, applied where getting it wrong
- * is cheap. At verification the cost is an unfoldable log and a profile whose DID stops resolving;
- * here it is an error at the moment of issuance, with the capability not yet in anybody's hands.
+ * Two ways to fail: no `cnf` pin, and a pin the audience's identifier does not carry (including an
+ * audience that carries no key, such as a `did:kokuin:` profile or a short-form `did:peer:4`). Name
+ * the audience by a `did:key`, or a `did:peer:4` **long form**.
  *
- * Two ways to fail: no `cnf` pin at all, and a pin the audience's identifier does not carry —
- * including an audience that carries no key, such as a `did:kokuin:` profile or a short-form
- * `did:peer:4`. Name the audience by a `did:key`, or by a `did:peer:4` **long form** whose
- * `authentication` holds the key.
- *
- * Not called from `createCapability`: `act: 'revoke'` is an ordinary application action for
- * everything that is not a controller log, and a general mint API has no business deciding which of
- * the two a caller meant. Call it yourself when minting for the log.
+ * Not called from `createCapability`: `act: 'revoke'` is an ordinary action for everything that is
+ * not a controller log. Call it yourself when minting for the log.
  */
 export function assertRevokeCapabilityAudience(payload: {
   aud?: unknown
@@ -273,44 +224,34 @@ export function assertRevokeCapabilityAudience(payload: {
 }
 
 /**
- * What a capability verifier answers a cap-bearing revoke with — structurally the controller
- * fold's `CapabilityAuthorisation`, which this package cannot import without a cycle. The test
- * passes the built verifier straight into `foldLogAsync` and typechecks, so the two cannot drift.
+ * What a cap-bearing revoke verifier answers -- structurally the controller fold's
+ * `CapabilityAuthorisation`, which this package cannot import without a cycle. A test passes the
+ * built verifier straight into `foldLogAsync` and typechecks, so the two cannot drift.
  */
 export type CapabilityAuthorisation =
   | { authorised: true; audienceKey: ResolvedSigningKey }
   | { authorised: false; reason: string }
 
 /**
- * The registry to verify this capability through: the subject answered by the fold's own resolver,
- * everything else by the caller's.
+ * The registry to verify this capability through: the subject via the fold's own position resolver,
+ * everything else via the caller's.
  *
- * The subject's entry **shadows** any same-method entry the caller supplied, and that shadowing is
- * the point. A capability authorising a revoke is issued by the profile whose log carries it, so
- * both questions asked of the subject here — which key signed the capability, and whether the
- * subject has revoked its audience — have to be answered at the log position being verified.
- * `subjectAtPosition` is the only answer that is at that position: a caller's registry is
- * configured once, per DID, with no way to know which event is asking, so it can only be right for
- * one event of a log and is silently wrong for every other. The direction it is wrong in is the
- * dangerous one — a stale prefix does not error, it applies a revoke a denied device authored.
+ * The subject's entry **shadows** any same-method entry the caller supplied. A capability
+ * authorising a revoke is issued by the profile whose log carries it, so both questions asked of the
+ * subject -- which key signed the capability, and whether the subject has revoked its audience --
+ * must be answered at the position being verified. A caller's registry is configured once per DID
+ * and cannot know which event is asking, so it is silently wrong for every position but one, in the
+ * dangerous direction: it applies a revoke a denied device authored. A delegate that is another
+ * profile of the same method still resolves through the caller's registry.
  *
- * The subject's own entry only answers for the subject, so a delegate in the chain that happens to
- * be another profile of the same method still resolves through the caller's registry.
+ * **Cost, stated plainly: inside the fold, the caller's own `resolve` and `resolveDenySet` for the
+ * subject are not consulted.** That is strictly better authority -- derived from the very events
+ * being authenticated on a self-certifying DID, and position-aware, which no registry is. A caller
+ * still gets a say through the `verifyToken` hook, which throws to reject.
  *
- * **What shadowing costs, stated plainly: inside the fold, a caller's own `resolve` and
- * `resolveDenySet` for the subject are not consulted at all.** A policy resolver that denies a DID
- * out of band, or one that refuses to answer for this profile, has no effect here — the fold's
- * answer is derived from the very events it is authenticating on a self-certifying DID, which is
- * strictly better authority than anything a registry can be configured with, and unlike a registry
- * it knows which position is asking. A caller wanting a say on this path still has one: the
- * `verifyToken` hook runs on the capability the event names, and throwing from it rejects the
- * revoke.
- *
- * `resolveAgreementKey` is deliberately absent: this registry exists for issuer resolution and the
- * deny set, and nothing on a capability path encrypts. A missing `resolveDenySet` on the fallback
- * side answers with the empty set, which is exactly what an absent member already means to
- * `checkCapability`; on the **subject** side it throws, because there the empty set would be the
- * fold's own rule switched off by a caller.
+ * `resolveAgreementKey` is absent: nothing on a capability path encrypts. A missing `resolveDenySet`
+ * on the fallback side means the empty set (an absent member already does, to `checkCapability`); on
+ * the **subject** side it throws, since there the empty set would switch the fold's own rule off.
  */
 function registryForSubject(
   subject: string,
@@ -330,16 +271,11 @@ function registryForSubject(
       }
       return await resolver.resolve(did, header)
     },
-    // Forwarded, not dropped. A capability is archived material — see `HISTORIC_ISSUANCE` in
-    // `index.ts` — so `verifyToken` asks this member for it, and a wrapper that forwarded only
-    // `resolve` would make every capability-authorised revoke fail closed: an unfoldable log, and
-    // the profile's DID permanently unresolvable. The same trap `resolveDenySet` documents, in the
-    // availability direction rather than the bypass one.
-    //
-    // Absent on the position resolver, this member is absent here too, and `resolveIssuerWithDoc`
-    // refuses rather than silently falling back to `resolve`. That is the fail-closed answer: a
-    // fold whose position resolver cannot answer the historic question rejects the log rather than
-    // answering a different one. `createStateResolver` always publishes it.
+    // Forwarded, not dropped: a capability is archived material (`HISTORIC_ISSUANCE` in `index.ts`),
+    // so `verifyToken` asks this member for it. Forwarding only `resolve` would fail every
+    // cap-authorised revoke closed -- an unfoldable log, the DID permanently unresolvable. Absent on
+    // the position resolver, absent here, and `resolveIssuerWithDoc` refuses rather than silently
+    // falling back to `resolve`. `createStateResolver` always publishes it.
     resolveHistoric:
       subjectAtPosition.resolveHistoric == null && fallback?.resolveHistoric == null
         ? undefined
@@ -351,41 +287,31 @@ function registryForSubject(
             return await resolver.resolveHistoric(did, header)
           },
     async resolveDenySet(did) {
-      // Only ever asked about a capability's `sub`, which every capability on this path has already
-      // been checked to share with `subject` — so this is the fold's own deny set at the position
-      // being verified, and it is the whole of the rule inside the fold.
-      //
-      // Absent, that arm **throws**: `createStateResolver` always publishes one, so a position
-      // resolver without it is a broken caller — a third-party fold that wrapped it and forwarded
-      // only the member its author knew about. Answering the empty set there would read as "nobody
-      // is revoked" and turn a denied manager into an authorised one, which is the deny set
-      // disabled from outside the package that owns it. The throw fails the whole verification
-      // closed, which for a fold means an unfoldable log: loud, and the only answer that cannot be
-      // a bypass. There is no third option — with no deny set there is nothing to decide from.
+      // Only ever asked about a capability's `sub`, already checked to equal `subject` -- so this is
+      // the fold's own deny set at the verified position, the whole of the rule inside the fold.
+      // Absent, throw: `createStateResolver` always publishes one, so its absence is a broken caller
+      // that forwarded only the member it knew. The empty set would read as "nobody revoked" and
+      // turn a denied manager authorised -- the deny set disabled from outside the package. Throwing
+      // fails closed (an unfoldable log); with no deny set there is no third option.
       if (did === subject) {
         if (subjectAtPosition.resolveDenySet == null) {
           throw new Error(`Position resolver for ${subject} publishes no deny set`)
         }
         return await subjectAtPosition.resolveDenySet(did)
       }
-      // The fallback arm is for a delegate of the same method resolved through the caller's
-      // registry. It exists for the type more than for a reachable case, and an empty set is what
-      // an absent member already means to `checkCapability` everywhere outside a fold.
+      // Fallback arm: a same-method delegate resolved through the caller's registry. Empty set is
+      // what an absent member already means to `checkCapability` outside a fold.
       return (await fallback?.resolveDenySet?.(did)) ?? new Set<string>()
     },
   }
-  // First, so `findMethodResolver` — which answers with the first entry of a matching method —
-  // reaches it rather than the caller's.
+  // First, so `findMethodResolver` (first matching-method entry wins) reaches it, not the caller's.
   return [entry, ...others]
 }
 
 /**
- * A capability-authorised revoke verifier, in the shape a controller fold injects.
- *
- * Named for what it serves, not for what it imports: this file imports nothing from
- * `@kokuin/controller`, which depends on this package's siblings and would be a cycle. The fold
- * takes the callback as an option for exactly that reason, and this is the one real implementation
- * of it — kubun and kumiai must not each grow their own.
+ * A capability-authorised revoke verifier, in the shape a controller fold injects. Named for what it
+ * serves, not what it imports: importing `@kokuin/controller` would cycle, so the fold takes this as
+ * an option. The one real implementation -- kubun and kumiai must not each grow their own.
  */
 export type ControllerCapabilityVerifier = (
   cap: string,
@@ -394,79 +320,49 @@ export type ControllerCapabilityVerifier = (
   /**
    * A resolver for `subject` at the log position being verified, supplied by the fold.
    *
-   * **Required.** It is the whole of what makes a capability-authorised revoke checkable at the
-   * position it sits at, and there is no correct answer without it — a caller invoking this
-   * directly has to fold the log to obtain one, at which point the fold is calling it anyway. An
-   * implementation handed nothing here must refuse; see {@link REVOKE_NO_POSITION}.
+   * **Required.** There is no correct answer without it, and obtaining one means folding the log
+   * anyway -- at which point the fold is calling this. An implementation handed nothing here must
+   * refuse; see {@link REVOKE_NO_POSITION}.
    */
   subjectAtPosition: DIDMethodResolver,
 ) => Promise<CapabilityAuthorisation>
 
 /**
- * Build the `verifyCapability` callback a `did:kokuin:` fold needs for a revoke authorised by a
- * capability rather than by the profile's own authority key.
+ * Build the `verifyCapability` callback a `did:kokuin:` fold needs when a revoke is authorised by a
+ * capability rather than the profile's own authority key.
  *
- * The returned function checks, in order:
+ * Checks, in order:
  *
- * 1. that the serialized capability verifies as a token — against the profile's key state at the
- *    log position being verified, which the fold supplies as the fourth argument;
- * 2. that its `sub` is the controller the fold is running for. This is the binding that stops a
- *    capability minted for one profile from authorising a revoke on another: `act` and `res` say
- *    nothing about *whose* device is being denied;
- * 3. that it grants `{ act: 'revoke', res: <the target DID> }` — including through a delegation
- *    chain, and including a wildcard `res` such as the management capability's. A delegated
- *    capability must carry its parents in its own `cap` claim, since that is where
- *    `checkCapability` walks the chain from; naming a parent only at mint time leaves nothing for
- *    a verifier that sees the event alone;
- * 4. that it pins a signing key in `cnf`, and that the key does not contradict the audience's own
- *    identifier. Authority on this path follows the pin and revocation follows `aud`; the binding
- *    is what makes them the same party, and without it a capability could name a revokable audience
- *    while handing the authority to a key no `rev` event can reach. See
- *    {@link REVOKE_AUDIENCE_KEY_MISMATCH} for why the audience is checked from its identifier
- *    rather than resolved, which audiences that reaches, and what it asks of a minter.
+ * 1. the serialized capability verifies as a token, against the profile's key state at the log
+ *    position (the fold supplies it as the fourth argument);
+ * 2. its `sub` is the controller the fold runs for -- the binding that stops a capability minted for
+ *    one profile authorising a revoke on another (`act`/`res` say nothing about *whose* device);
+ * 3. it grants `{ act: 'revoke', res: <target DID> }`, through any delegation chain and including a
+ *    wildcard `res`. A delegated capability must carry its parents in its own `cap` claim, since
+ *    that is where `checkCapability` walks from;
+ * 4. it pins a `cnf` key that does not contradict the audience's own identifier. Authority follows
+ *    the pin, revocation follows `aud`, and the binding makes them one party; see
+ *    {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
  *
- * All four passing yields that pinned key. Handing it back rather than a bare `true` is what lets
- * the fold check the revoke event's own signature against it — the audience binding, which nothing
- * on this side of the split can do, because the event is not an argument here and never should be.
+ * All four yield the pinned key, handed back (not a bare `true`) so the fold can check the revoke
+ * event's own signature against it -- the event is not, and must not be, an argument here.
  *
- * **The pin is mandatory here, is never resolved, and must be the audience's own key.** Looking the
- * audience up instead would make
- * the *audience's* routine key rotation stop the revoke from verifying, and a revoke that stops
- * verifying makes the whole log unfoldable and the profile's DID permanently unresolvable — a
- * third party bricking an identity by rotating their own key. A capability with no `cnf` is
- * rejected with {@link REVOKE_NO_AUDIENCE_KEY} rather than falling back to resolution, because the
- * fallback is the bug. So is a `cnf` that is present but unreadable — no member this understands,
- * a non-string `kid`, an unknown codec, a wrong-length key.
+ * **The pin is mandatory, never resolved, and must be the audience's own key.** Resolving instead
+ * would let the audience's routine rotation stop the revoke verifying, which makes the whole log
+ * unfoldable and the DID unresolvable -- a third party bricking an identity by rotating their own
+ * key. A missing or unreadable `cnf` is rejected ({@link REVOKE_NO_AUDIENCE_KEY}), not resolved.
  *
- * It never throws: a fold that rejected rather than returned would turn every verification failure
- * into an exception on the caller's resolve path.
+ * Never throws: a rejection must not become an exception on the caller's resolve path.
  *
- * **The subject is never resolved through the caller's registry.** The capability is issued by the
- * very profile whose log carries the revoke, and both questions asked of that profile — which key
- * signed the capability, and whether it has revoked the capability's audience — have to be answered
- * at the position of the event being verified. The fold hands that answer over as
- * `subjectAtPosition` and it shadows any entry the caller supplied for the same method, because a
- * registry configured once per DID cannot be right for more than one position of a log: it has no
- * way to know which event is asking. See {@link registryForSubject}, and
- * `FoldOptions.verifyCapability` in `@kokuin/controller`.
- *
- * That also means `loadLog` answers with the whole log and this verifier needs no resolver of the
- * profile at all — the recursion that made a prefix necessary no longer exists, because verifying
- * the capability no longer resolves the DID being folded.
- *
- * **The fourth argument is required, and its absence is refused rather than worked around.** There
- * is no correct answer without it: falling back to the caller's registry is the pre-fix behaviour,
- * where a registry answering with an early prefix authorises a revoke by a device the log revoked
- * later. Every fold supplies one; an older `@kokuin/controller` calling with three arguments —
- * nothing in the package graph ties the two versions together — gets {@link REVOKE_NO_POSITION} and
- * an unfoldable log rather than a silent bypass. Invoking this directly is therefore not a
- * supported shortcut around folding: obtaining the argument *is* folding.
+ * The subject is never resolved through the caller's registry -- see {@link registryForSubject}, and
+ * `FoldOptions.verifyCapability` in `@kokuin/controller`. The fourth argument is required; its
+ * absence is {@link REVOKE_NO_POSITION}, not a worked-around fallback. Invoking this directly is no
+ * shortcut around folding: obtaining that argument *is* folding.
  *
  * @param options forwarded to `verifyToken` and `checkCapability`. `methods` is needed only for a
- * link in the chain whose own DID method cannot be resolved from the identifier alone — another
- * profile as an intermediate delegate, say. `resolver` and `cache` travel with it for a
- * `did:peer:4` link, and `verifyToken` (the hook) runs on every capability including the one named
- * in the event, which is where a revocation check goes.
+ * chain link whose DID method cannot be resolved from the identifier alone (another profile as an
+ * intermediate delegate); `resolver`/`cache` travel with it for a `did:peer:4` link, and the
+ * `verifyToken` hook runs on every capability including the one the event names.
  */
 export function createControllerCapabilityVerifier(
   options: DelegationChainOptions & { maxLifetimeSeconds?: number } = {},
@@ -477,24 +373,21 @@ export function createControllerCapabilityVerifier(
     target: string,
     subjectAtPosition: DIDMethodResolver,
   ): Promise<CapabilityAuthorisation> {
-    // Typed as required, and checked anyway. TypeScript cannot police this argument across a
-    // package boundary or a stale build, and `@kokuin/capability` has no runtime dependency on
-    // `@kokuin/controller` to keep the two versions in step — so an older fold calling with three
-    // arguments is a real shape. Falling back to `options.methods` for the subject would be exactly
-    // the bypass this parameter exists to close: a registry answering with an early prefix
-    // authorises a revoke by a device the log revoked later. Refuse instead.
+    // Typed required, checked anyway: TypeScript cannot police this across a package boundary or a
+    // stale build, and there is no runtime version link. Falling back to `options.methods` here is
+    // exactly the bypass this argument closes -- an early prefix authorising a revoke the log later
+    // revoked. Refuse.
     if (subjectAtPosition == null) {
       return { authorised: false, reason: REVOKE_NO_POSITION }
     }
-    // The subject is resolved at the position being verified, whatever the caller configured —
-    // see {@link registryForSubject}.
+    // Subject resolved at the verified position, whatever the caller configured -- see
+    // {@link registryForSubject}.
     const methods = registryForSubject(subject, subjectAtPosition, options.methods)
     const chainOptions: DelegationChainOptions = { ...options, methods }
     let pinned: ConfirmationClaim | undefined
     let audience: unknown
-    // Reported after the try below rather than thrown inside it, so a capability that never expires
-    // is told apart from a rejected grant — the two are different bugs in different places, and one
-    // of them is the minter's. See {@link REVOKE_UNBOUNDED_LIFETIME}.
+    // Reported after the try, not thrown inside it, so a never-expiring capability is told apart from
+    // a rejected grant -- different bugs, one the minter's. See {@link REVOKE_UNBOUNDED_LIFETIME}.
     let lifetime: string | undefined
     try {
       const capability = await verifyToken<CapabilityPayload>(cap, {
@@ -502,17 +395,15 @@ export function createControllerCapabilityVerifier(
         cache: options.cache,
         resolver: options.resolver,
         methods,
-        // The capability was issued at some position of this very log, and the revoke that names it
-        // sits later — possibly after a rotate. Verifying it against the prefix head's keys alone
-        // would make the profile's own routine rotation unfold its own log. See `HISTORIC_ISSUANCE`
-        // in `index.ts`; the prefix is still the position, so nothing after this event is in scope.
+        // Issued at some position of this log, and the revoke names it later (maybe post-rotate).
+        // Verifying against the prefix head's keys alone would let routine rotation unfold the log.
+        // The prefix is still the position, so nothing after this event is in scope.
         historic: true,
       })
       assertCapabilityToken(capability)
-      // `checkCapability` runs the hook on every capability it verifies, but it verifies the
-      // *parents* of the one handed to it — this one it takes as already established. Running it
-      // here is what keeps a revocation check from having a hole exactly at the capability the
-      // event names, which is the only one present when the grant is not delegated further.
+      // `checkCapability` verifies the *parents* of the capability handed to it, taking this one as
+      // established -- so run the hook here too, else the revocation check has a hole exactly at the
+      // capability the event names (the only one present when the grant is not delegated further).
       await options.verifyToken?.(capability, cap)
 
       if (normalizeDID(capability.payload.sub) !== normalizeDID(subject)) {
@@ -532,21 +423,17 @@ export function createControllerCapabilityVerifier(
       pinned = capability.payload.cnf
       audience = capability.payload.aud
     } catch {
-      // Every failure is the same answer here, including the two `@kokuin/token` keeps apart:
-      // `UnresolvableIssuerError` (nothing was learned about the capability) and
-      // `IssuerKeyNotFoundError` (the issuer resolved and the capability is bad). The distinction
-      // exists because a caller that treats "could not check" as "checked and fine" fails open —
-      // and this caller does the opposite with both. A rejection makes the fold reject the whole
-      // log, so an unverifiable capability leaves the controller unresolvable rather than silently
-      // applying a revoke nobody could check.
+      // Every failure is the same answer, including `@kokuin/token`'s two: `UnresolvableIssuerError`
+      // ("could not check") and `IssuerKeyNotFoundError` ("resolved, bad"). Both reject -- a
+      // rejection makes the fold reject the whole log, so an unverifiable capability leaves the
+      // controller unresolvable rather than silently applying an uncheckable revoke.
       return { authorised: false, reason: REVOKE_NOT_AUTHORISED }
     }
 
     if (lifetime != null) {
       return { authorised: false, reason: lifetime }
     }
-    // Outside the catch above so a malformed pin is reported as a malformed pin, rather than
-    // disappearing into the generic rejection that every other failure shares.
+    // Outside the catch so a malformed pin reports as one, not the generic rejection.
     if (pinned == null) {
       return { authorised: false, reason: REVOKE_NO_AUDIENCE_KEY }
     }
@@ -556,10 +443,9 @@ export function createControllerCapabilityVerifier(
     } catch {
       return { authorised: false, reason: REVOKE_NO_AUDIENCE_KEY }
     }
-    // The pin is well formed; it still has to name the audience. Authority follows the pinned key
-    // and revocation follows `aud`, so a capability where they are different parties is one the
-    // deny set cannot reach — see {@link REVOKE_AUDIENCE_KEY_MISMATCH}. Checked against the
-    // identifier alone, never by resolving the audience.
+    // Pin is well formed; it must still name the audience. Authority follows the pin, revocation
+    // follows `aud`, so a mismatch is authority the deny set cannot reach. Checked against the
+    // identifier, never by resolving. See {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
     if (contradictsAudience(audience, audienceKey)) {
       return { authorised: false, reason: REVOKE_AUDIENCE_KEY_MISMATCH }
     }

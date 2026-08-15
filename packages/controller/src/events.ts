@@ -6,13 +6,17 @@ import { canonicalBytes, digestOf, isCanonicalizable } from './canonical.js'
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from './derivation.js'
 import { decodeKey, encodeKey, tryDecodeKey } from './keys.js'
 
-// Re-exported so the barrel stays unchanged for existing consumers — the encoding now lives in
-// `keys.ts`, tagged with a multicodec prefix.
+// Re-exported to keep the barrel stable; the encoding now lives in `keys.ts`, multicodec-tagged.
 export { decodeKey, encodeKey }
 
 export const DID_PREFIX = 'did:kokuin:'
 
 export type EventType = 'icp' | 'rot' | 'rev'
+
+// Guard rule this file applies throughout: a total guard stays when the shape it rejects can reach
+// it from `JSON.parse` (a log arrives from a peer or untrusted store, so TypeScript rules nothing
+// out), even if no test can kill it; it goes only when that shape provably cannot reach it, pinned
+// by a test. Such guards state what the code accepts rather than relying on what runs beneath them.
 
 export type EventCommon = {
   /** Inception format version. Absent must never be inferred; always written. */
@@ -27,8 +31,8 @@ export type EventCommon = {
   /** Digest of the previous event. Absent on inception. */
   p?: string
   /**
-   * Criticality. Lives in the common envelope so a verifier can read it without understanding
-   * `t`. An unknown event fails the fold closed when true, and is skipped when false.
+   * Criticality. In the common envelope so a verifier reads it without understanding `t`. An unknown
+   * event fails the fold closed when true, and is skipped when false.
    */
   crit: boolean
 }
@@ -38,31 +42,20 @@ export type InceptionEvent = EventCommon & {
   /** Current authority public keys, multicodec-tagged and multibase-encoded. */
   k: Array<string>
   /**
-   * Key agreement public keys — an OR set, never combined. Encrypting to this profile means
-   * encrypting to one of these. Carries no pre-rotation commitment: an exposed agreement key
-   * discloses past ciphertexts but confers no authority.
+   * Key agreement public keys -- an OR set, never combined. Carries no pre-rotation commitment: an
+   * exposed agreement key discloses past ciphertexts but confers no authority.
    */
   ka: Array<string>
   /** Digests of the next public keys — pre-rotation. */
   n: Array<string>
-  /**
-   * Signing threshold: how many of `k` must sign. **Must equal `k.length`** — see
-   * {@link isEnforcedThreshold}.
-   */
+  /** Signing threshold: how many of `k` must sign. **Must equal `k.length`** — see {@link isEnforcedThreshold}. */
   kt: number
-  /**
-   * Rotation threshold: how many of the keys `n` commits must sign the next rotate. **Must equal
-   * `n.length`** — see {@link isEnforcedThreshold}.
-   */
+  /** Rotation threshold: how many of `n` must sign the next rotate. **Must equal `n.length`.** */
   nt: number
   /**
-   * Digest of the recovery key. Root-retained, and **immutable for the life of the DID** — the
-   * only event that can carry one is this one, and this one is the DID.
-   *
-   * A rotate used to carry an optional `r` documented as a recovery-commitment update. Nothing
-   * read it: `verifyReset` checked the inception's value regardless, so the original recovery key
-   * could never be retired while `KeyState.recovery` reported a different one. It is gone, and a
-   * rotate carrying one is refused rather than ignored — see {@link RotateEvent}.
+   * Digest of the recovery key. Root-retained, **immutable for the life of the DID** — the only
+   * event that can carry one is this one, and this one is the DID. A rotate carrying `r` is refused
+   * rather than ignored — see {@link RotateEvent}.
    */
   r: string
 }
@@ -72,9 +65,8 @@ export type SignedEvent<E extends EventCommon = EventCommon> = {
   /** base64url ed25519 signatures over the canonical event bytes, positional against `event.k`. */
   sigs: Array<string>
   /**
-   * The revealed recovery public key, present only on a reset. Pre-rotation means the recovery
-   * key is committed as a digest and unpublished until used, so a reset must reveal it for the
-   * commitment to be checkable.
+   * The revealed recovery public key, present only on a reset. The recovery key is committed as a
+   * digest and unpublished until used, so a reset must reveal it for the commitment to be checkable.
    */
   recoveryKey?: string
 }
@@ -85,37 +77,24 @@ export function signEvent(event: EventCommon, privateKeys: Array<Uint8Array>): A
 }
 
 /**
- * Whether a published threshold agrees with what the fold actually enforces.
+ * Whether a published threshold agrees with what the fold enforces.
  *
- * `kt` and `nt` were published, digested into the event — and therefore into the DID, for an
- * inception — declared in the type with real semantics, and read by nothing. The fold enforces
- * n-of-n and only n-of-n: {@link verifySignatures} requires one valid signature per published key,
- * and {@link verifyRotate} requires every key the prior event committed to be revealed and to sign.
- * So the only threshold these fields can truthfully carry is the size of the set they govern, and
- * anything else — `99`, `0`, `-5`, `"banana"`, `null`, an absent member — is an event whose own
- * declaration contradicts the rule it will be judged by.
- *
- * That is a malformed event rather than a policy this package might one day honour. Inside a wire
- * format fixed by the DID derivation, a field nothing reads is a trap for the next reader; a field
- * pinned to what is enforced is a fact. If quorum ever lands, the check moves with the enforcement
- * and every log written until then still means what it said.
- *
- * The comparison is `===` against the length, so a string `"1"` fails: the value is wire data, and
- * a threshold that has to be coerced to be read is not a threshold.
+ * `kt`/`nt` are published and digested into the event (and, for an inception, the DID), but the fold
+ * enforces n-of-n and nothing else: one valid signature per published key, every committed key
+ * revealed and signing. So the only threshold these fields can truthfully carry is the size of the
+ * set they govern; anything else is an event whose declaration contradicts the rule judging it. A
+ * field nothing reads is a trap for the next reader inside a wire format fixed by the DID; if quorum
+ * ever lands, the check moves with the enforcement. `===` against the length, so `"1"` fails.
  */
 function isEnforcedThreshold(threshold: unknown, keys: Array<string>): boolean {
   return threshold === keys.length
 }
 
 /**
- * A published key list: an array of strings.
- *
- * `k`, `n`, `ka` and the deny snapshot are read straight off a parsed event and carried into the
- * folded state, so an absent or scalar member has to be rejected where it is published rather than
- * where it is next read — a state holding a non-array `n` throws in the *next* rotate, one event
- * away from the log that caused it, and a state holding a non-array `k` is a `KeyState` whose type
- * lies. A log arrives from a network peer or an untrusted store, so none of these shapes is ruled
- * out by TypeScript.
+ * A published key list: an array of strings. `k`, `n`, `ka` and the deny snapshot are carried into
+ * the folded state, so a bad shape must be rejected where it is published, not one event away where
+ * it is next read (a non-array `n` would throw in the *next* rotate; a non-array `k` is a `KeyState`
+ * whose type lies).
  */
 function isKeyList(value: unknown): value is Array<string> {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
@@ -123,8 +102,8 @@ function isKeyList(value: unknown): value is Array<string> {
 
 /**
  * A key agreement set is valid when non-empty and every entry is a well-formed X25519-tagged key.
- * Shared by every event that carries `ka` — inception, rotate, and reset all publish or republish
- * the agreement key set, and a verifier must reject the same malformed shapes everywhere it appears.
+ * Shared by every event that carries `ka` (inception, rotate, reset), which must reject the same
+ * malformed shapes everywhere.
  */
 function verifyAgreementKeys(ka: Array<string>): boolean {
   if (!isKeyList(ka) || ka.length === 0) {
@@ -140,17 +119,12 @@ function verifyAgreementKeys(ka: Array<string>): boolean {
 }
 
 /**
- * Total: a malformed signature or key yields false rather than throwing.
- *
- * That includes an event body the canonicalizer refuses. This function is exported and documented
- * total, and `canonicalBytes` below is a throw for a body carrying a non-finite number or nesting
- * past `MAX_CANONICAL_DEPTH` — both of which arrive from `JSON.parse`. The fold's envelope guard
- * already rejects such a body one layer out, so this check is unreachable through `foldLog`; it
- * stays because a direct caller reaches this function with a parsed body and nothing else, and
- * because "total" has to be true of the export rather than of one path into it.
- *
- * `false` is the honest answer: a body with no canonical encoding has no bytes for a signature to
- * be over, so no signature verifies against it.
+ * Total: a malformed signature or key yields false rather than throwing, including a body the
+ * canonicalizer refuses. `canonicalBytes` throws on a non-finite number or nesting past
+ * `MAX_CANONICAL_DEPTH` (both from `JSON.parse`); the fold's envelope guard rejects such a body one
+ * layer out, so this is unreachable through `foldLog` but stays because the export is documented
+ * total and a direct caller reaches it with a parsed body. `false` is honest: a body with no
+ * canonical encoding has no bytes for a signature to be over.
  */
 export function verifySignatures(
   event: EventCommon,
@@ -184,39 +158,21 @@ export function verifySignatures(
 }
 
 /**
- * Whether one of an event's signatures was made by `key`.
+ * Whether one of an event's signatures was made by `key` — the counterpart of
+ * {@link verifySignatures} for a signer the *event* does not name (resolved from a DID elsewhere). A
+ * capability-authorised revoke needs exactly this: its author is the capability's `aud`, which the
+ * fold cannot resolve, so it is handed the key and checks the signature itself.
  *
- * The counterpart of {@link verifySignatures} for a signer the *event* does not name: that one
- * checks signatures positionally against a published key set, this one asks whether a particular
- * key — resolved from a DID elsewhere — is among the authors. A capability-authorised revoke needs
- * exactly this and nothing more: its author is the capability's `aud`, which the fold cannot
- * resolve, so it is handed the key and checks the signature itself.
- *
- * Total: a malformed signature, an event body with no canonical encoding, or an algorithm this
- * log's events cannot be signed with all yield `false`. Only EdDSA is accepted, because that is all
- * {@link signEvent} produces — an ES256 audience therefore cannot author a revoke, which fails
- * closed and is the honest answer until events grow a second signature algorithm.
+ * Total, EdDSA only — all {@link signEvent} produces. An ES256 audience therefore cannot author a
+ * revoke, which fails closed until events grow a second signature algorithm.
  */
 export function verifyEventSignedBy(signed: SignedEvent, key: ResolvedSigningKey): boolean {
-  // `sigs` needs no array check of its own, and this is the rule the whole file applies: **a guard
-  // stays when the value it inspects can reach it in the shape it rejects, even if no test can
-  // kill it; it is removed only when that value cannot reach it at all, and the unreachability is
-  // pinned by a test.** Both arms of the check below are unkillable under it and stay: a
-  // non-EdDSA key would fail `ed25519.verify` inside the `catch` anyway, and `[].some()` is
-  // already `false`. They state what this function accepts rather than relying on what the code
-  // beneath them happens to do. Here it cannot: this function is unexported, the fold is its only caller,
-  // and `isSignedEventShape` has already established that `sigs` is an array of strings —
-  // `deleted-guards.test.ts` walks every non-array `sigs` shape to the envelope guard and shows it
-  // stopping there. "Unkillable" alone is not the test: several guards below are unkillable and
-  // stay, because the shapes they reject do arrive from `JSON.parse` and only reach a rejection at
-  // all because something checks.
+  // Both arms are unkillable through the fold (`isSignedEventShape` already established `sigs` is a
+  // string array; a non-EdDSA key would fail `ed25519.verify`; `[].some()` is `false`) and both stay
+  // by the file's guard rule: a direct caller reaches this with a parsed body.
   if (key.alg !== 'EdDSA' || signed.sigs.length === 0) {
     return false
   }
-  // Unreachable through the fold — `isSignedEventShape` has already established that this body can
-  // be canonicalized — and kept by the rule stated above: the value it inspects reaches it in the
-  // shape it rejects whenever a caller reaches this function with a parsed body directly, and
-  // `canonicalBytes` is a throw rather than an answer for one.
   if (!isCanonicalizable(signed.event)) {
     return false
   }
@@ -231,11 +187,8 @@ export function verifyEventSignedBy(signed: SignedEvent, key: ResolvedSigningKey
 }
 
 /**
- * Deterministic inception. Contains only seed-derived and canonical material — no timestamp, no
- * nonce, no user label — so its hash, and therefore the DID, is a pure function of the seed and
- * the profile index.
- *
- * A user label must never be added here. The DID depends on every byte, so a mistyped label on
+ * Deterministic inception. Only seed-derived, canonical material — no timestamp, nonce, or label —
+ * so the DID is a pure function of the seed and profile index. Never add a label: a mistyped one on
  * recovery would reproduce a different DID.
  */
 export function createInception(seed: Uint8Array, profile: number): SignedEvent<InceptionEvent> {
@@ -245,11 +198,9 @@ export function createInception(seed: Uint8Array, profile: number): SignedEvent<
 }
 
 /**
- * The inception body alone, unsigned.
- *
- * Split out because {@link createRotate} needs the DID this seed and profile index produce in order
- * to know whether it is the log's root, and signing an inception it will throw away to find out is
- * the one expensive step in building one.
+ * The inception body alone, unsigned. Split out because {@link createRotate} needs the DID this seed
+ * and profile produce to know whether it is the log's root, and signing a throwaway inception to
+ * find out is the one expensive step.
  */
 function inceptionEvent(seed: Uint8Array, profile: number): InceptionEvent {
   const current = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
@@ -280,14 +231,9 @@ export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string
   if (signed.event.t !== 'icp' || signed.event.i !== undefined) {
     return false
   }
-  // `k`, `n` and `r` go straight into the folded state, where the *next* event reads them — a null
-  // `n` throws inside the following rotate, one event away from the log that caused it.
-  //
-  // The `k` check is unkillable: `verifySignatures` below rejects the same shapes with the same
-  // `invalid inception`. It stays anyway, by the rule stated at {@link verifyEventSignedBy} — an
-  // inception is self-certifying, so *any* `k` an attacker writes is a body they can sign, and this
-  // is the guard that says what a published key list must be rather than the one that happens to
-  // read it next.
+  // An inception is self-certifying: *any* body an attacker writes is a valid log for the DID it
+  // hashes to, which is why the thresholds and key lists it publishes must mean something. `k`/`n`/`r`
+  // go straight into the folded state where the next event reads them.
   if (
     !isKeyList(signed.event.k) ||
     !isKeyList(signed.event.n) ||
@@ -295,8 +241,6 @@ export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string
   ) {
     return false
   }
-  // An inception is self-certifying, so *any* body an attacker writes is a valid log for the DID it
-  // hashes to — which is exactly why the thresholds it publishes have to mean something.
   if (
     !isEnforcedThreshold(signed.event.kt, signed.event.k) ||
     !isEnforcedThreshold(signed.event.nt, signed.event.n)
@@ -317,9 +261,7 @@ export type RotateEvent = EventCommon & {
   t: 'rot'
   /** Keys the prior event pre-committed, now revealed, multicodec-tagged and multibase-encoded. */
   k: Array<string>
-  /**
-   * Key agreement public keys — an OR set, never combined. Carries no pre-rotation commitment.
-   */
+  /** Key agreement public keys — an OR set, never combined. Carries no pre-rotation commitment. */
   ka: Array<string>
   /** Digests of the next public keys — pre-rotation. */
   n: Array<string>
@@ -328,16 +270,10 @@ export type RotateEvent = EventCommon & {
   /** Rotation threshold: how many of `n` must sign the next rotate. **Must equal `n.length`.** */
   nt: number
   /**
-   * Seal: an anchored external digest, pinning a high-value grant to this log position.
-   *
-   * Opaque to the fold **by design**, and that is the difference between this and the `r` that was
-   * removed: a seal's whole job is to be an anchor whose meaning belongs to whatever produced it,
-   * and nothing in the key state can contradict it. What the fold owes it is that it cannot ride in
-   * as something other than a digest string — a non-string `a` is a malformed event, checked in
-   * {@link isPublishedRotate} — so a reader that finds one can read it as one.
-   *
-   * Not surfaced in `KeyState`: it belongs to a position, not to the key state, and the events are
-   * in the caller's hands already.
+   * Seal: an anchored external digest pinning a high-value grant to this position. Opaque to the fold
+   * by design — its meaning belongs to whatever produced it, and nothing in the key state can
+   * contradict it. The fold owes it only that it cannot ride in as a non-string (checked in
+   * {@link isPublishedRotate}). Not surfaced in `KeyState`: it belongs to a position, not the keys.
    */
   a?: string
   /** Deny-set snapshot. Replaces the accumulated set, pruning it. */
@@ -347,60 +283,40 @@ export type RotateEvent = EventCommon & {
 export type CreateRotateOptions = {
   seal?: string
   /**
-   * The complete deny set this rotate leaves behind — **a replacement, not an addition**.
-   *
-   * Named for what it is because the fold does exactly what it says: `d` present replaces the
-   * accumulated set, `d` absent carries it forward. A caller who writes one entry meaning "also deny
-   * this" silently drops every entry the log had accumulated, which un-revokes the devices *and*
-   * un-retires the leaked keys the profile had denied — no error, no event, and nothing in the
-   * resulting log that says anything was lost. That is the whole reason to prune from a rotate at
-   * all (nothing else can), and the whole reason it must be spelled loudly.
-   *
-   * Build it from the folded state rather than by hand: {@link pruneDenySet} takes the current
-   * `KeyState` and the entries to drop and returns the rest. `[]` is the deliberate "clear
-   * everything" — what a cold rotate does to recover from a management tier gone bad.
-   *
-   * A rotate cannot establish a key its own snapshot denies; the fold refuses such an event rather
-   * than publishing a head whose keys resolve to nothing.
+   * The complete deny set this rotate leaves behind — **a replacement, not an addition**. `d` present
+   * replaces the accumulated set, `d` absent carries it forward. A caller writing one entry meaning
+   * "also deny this" silently drops every accumulated entry — un-revoking devices and un-retiring
+   * leaked keys — with no error and nothing in the log saying anything was lost. Build it from the
+   * folded state with {@link pruneDenySet}. `[]` is the deliberate "clear everything" a cold rotate
+   * does to recover from a bad management tier. A rotate cannot establish a key its own snapshot
+   * denies; the fold refuses such an event.
    */
   denySnapshot?: Array<string>
   /**
-   * Where the currently-active authority key lives — the position of the last `icp`/`rot`, which
-   * is the fold's `keyGen`/`keySeq`.
+   * Where the currently-active authority key lives — the position of the last `icp`/`rot`, i.e. the
+   * fold's `keyGen`/`keySeq`.
    *
-   * Defaults to `prior`'s own position, which is right only while the log's sequence and its
-   * derivation index still coincide: a `rev` advances `s` and establishes no key (Amendment A), so
-   * after the first revoke in a generation the two part company **and never rejoin**. It is not
-   * enough to pass this for the rotate that sits directly on a revoke — every rotate after one
-   * needs it too, because `s` stays ahead of the derivation index for the rest of the generation.
-   *
-   * Left optional rather than made required, and checked instead: {@link createRotate} verifies the
-   * key it is about to reveal against `prior`'s own pre-rotation commitment and throws when they
-   * disagree. That covers the wrong default and a wrong value alike, and it covers them for exactly
-   * the events the fold would reject — so the position is optional where it is provably right, and
-   * an error rather than an unfoldable event where it is not. Take it from `KeyState.keyGen` and
-   * `KeyState.keySeq`; those are the fold's own answer.
+   * Defaults to `prior`'s position, right only while sequence and derivation index still coincide: a
+   * `rev` advances `s` and establishes no key, so after the first revoke of a generation the two part
+   * company **and never rejoin**. Every rotate after a revoke needs this, not just the one directly
+   * on it. Optional rather than required because {@link createRotate} verifies the key it reveals
+   * against `prior`'s commitment and throws on disagreement — provably right where omitted, an error
+   * (not an unfoldable event) where not. Take it from `KeyState.keyGen`/`keySeq`.
    */
   keyPosition?: { gen: number; seq: number }
 }
 
 /**
- * A rotate reveals the keys the prior event pre-committed and commits the next set. Signed by the
- * newly revealed keys, per KERI, which is what makes a stolen current key unable to rotate.
+ * A rotate reveals the keys the prior event pre-committed and commits the next set, signed by the
+ * newly revealed keys (per KERI — what makes a stolen current key unable to rotate). Reproducible
+ * from the seed alone unless it carries a seal or deny snapshot.
  *
- * Reproducible from the seed alone unless it carries a seal or a deny snapshot.
- *
- * **Throws rather than emitting an event the fold will reject.** The key a rotate reveals has to be
- * the one `prior` pre-committed in `n`, and `options.keyPosition` is what decides which key gets
- * derived — so a wrong or defaulted-wrong position used to produce a well-formed, correctly signed
- * event that no fold would ever accept, with nothing said at emit time. The two are checked against
- * each other here: `prior.n` is the commitment and it is right there in the argument.
- *
- * When `prior` carries no commitment to check against — a `rev`, which establishes no key —
- * `keyPosition` is required, because there the default is provably wrong: it would derive a key one
- * past the *revoke*, which nothing ever pre-committed. That case cannot be verified from `prior`
- * alone, so it is the one place the caller is trusted, and `KeyState.keyGen`/`keySeq` is where the
- * value comes from.
+ * **Throws rather than emitting an event the fold will reject.** The revealed key must be the one
+ * `prior` committed in `n`, and `options.keyPosition` decides which key gets derived — so a wrong
+ * position used to produce a well-formed, signed event no fold would accept. The two are checked
+ * against each other here. When `prior` carries no commitment (a `rev`), `keyPosition` is required:
+ * the default would derive a key one past the *revoke*, which nothing committed, and this is the one
+ * case unverifiable from `prior` alone.
  */
 export function createRotate(
   seed: Uint8Array,
@@ -411,16 +327,14 @@ export function createRotate(
 ): SignedEvent<RotateEvent> {
   const gen = prior.g
   const seq = prior.s + 1
-  // The pre-rotation commitment the revealed key must match, when `prior` carries one. An `icp` and
-  // a `rot` do; a `rev` does not, and neither does a hand-built prior of any other shape.
+  // The commitment the revealed key must match, when `prior` carries one. An `icp`/`rot` does; a
+  // `rev` and any hand-built prior of another shape does not.
   const commitment = (prior as { n?: unknown }).n
   const committed = isKeyList(commitment) && commitment.length > 0 ? commitment : undefined
-  // Every check below asks "will my own log reject this event", and that question only has an
-  // answer when this seed *is* the log's root. When it is not — a forgery built for a test, a
-  // hand-mutated prior, a profile this seed never inceptioned — a mismatch says nothing about the
-  // position, because the commitment was written by somebody else's key material entirely. Refusing
-  // there would turn this generator into something that cannot build a foreign rotate at all, which
-  // is a thing the conformance suite legitimately does; the fold is the layer that rejects it.
+  // The checks below only have an answer when this seed *is* the log's root — otherwise the
+  // commitment was written by somebody else's key material and a mismatch says nothing. Refusing
+  // there would stop this generator building a foreign rotate at all (which the conformance suite
+  // legitimately does); the fold is the layer that rejects it.
   const root = didFromInception(inceptionEvent(seed, profile)) === did
   if (root && committed == null && options.keyPosition == null) {
     throw new Error(
@@ -428,10 +342,9 @@ export function createRotate(
         'KeyState.keyGen / keySeq for the position the last icp/rot established',
     )
   }
-  // The log position and the derivation position are the same thing only until the first revoke —
-  // see `CreateRotateOptions.keyPosition`. The key this rotate reveals is the one the last icp/rot
-  // pre-committed, which sits one past *its* position, and the agreement key lands at the same
-  // index so that `KeyState.keyGen`/`keySeq` names it for a recipient re-deriving from the seed.
+  // The key this rotate reveals is the one the last icp/rot committed, one past *its* position; the
+  // agreement key lands at the same index so `KeyState.keyGen`/`keySeq` names it for a recipient
+  // re-deriving from the seed. See `CreateRotateOptions.keyPosition` for why these diverge from `s`.
   const keyGen = options.keyPosition?.gen ?? gen
   const keySeq = (options.keyPosition?.seq ?? prior.s) + 1
   const current = deriveKeyPair(seed, authorityPath(profile, keyGen, keySeq), 'EdDSA')
@@ -439,9 +352,8 @@ export function createRotate(
   const agreement = deriveKeyPair(seed, agreementPath(profile, keyGen, keySeq), 'X25519')
 
   if (root && committed != null) {
-    // Exactly what `verifyRotate` will check, checked here where the caller can still act on it.
-    // The arity first: this generator emits a single key, so a prior committing any other number
-    // of them has no rotate this function can produce.
+    // Exactly what `verifyRotate` checks, checked here where the caller can still act. Arity first:
+    // this generator emits a single key, so a prior committing any other number has no rotate here.
     const revealed = encodeKey(current.publicKey, 'EdDSA')
     if (committed.length !== 1 || digestOf(revealed) !== committed[0]) {
       throw new Error(
@@ -476,16 +388,13 @@ export function createRotate(
 
 /**
  * Whether the members a rotate publishes into the folded state have the shape the fold will carry.
+ * Shared by {@link verifyRotate} and {@link verifyReset}: both hand `k`/`n`/`d` to the next
+ * `KeyState`, and a reset verifies against the recovery key not `k`, so without this it could publish
+ * a key set of any shape.
  *
- * Shared by {@link verifyRotate} and {@link verifyReset}: the two verify different signatures over
- * the same event body, and both hand `k`, `n` and `d` straight to the next `KeyState`. A reset
- * in particular never verifies against `k` — it verifies against the revealed recovery key — so
- * without this it is the one event that can publish a key set of any shape at all.
- *
- * `r` is refused outright here, which is the runtime half of removing it from {@link RotateEvent}.
- * The type stops this package writing one; only a check stops a peer from putting one on the wire,
- * and a member the fold silently ignores is exactly the field-that-lies this removal is about — a
- * reader seeing `r` on a rotate would take the recovery key to have moved when nothing moved it.
+ * `r` is refused outright — the runtime half of removing it from {@link RotateEvent}. A member the
+ * fold silently ignored would be the field-that-lies this removal is about: a reader seeing `r` on a
+ * rotate would take the recovery key to have moved when nothing moved it.
  */
 function isPublishedRotate(event: RotateEvent): boolean {
   return (
@@ -493,19 +402,19 @@ function isPublishedRotate(event: RotateEvent): boolean {
     isKeyList(event.n) &&
     isEnforcedThreshold(event.kt, event.k) &&
     isEnforcedThreshold(event.nt, event.n) &&
-    // A seal is opaque to the fold, but it is still a digest string on the wire — see
-    // `RotateEvent.a`. A non-string one is a member a reader would have to guess at.
+    // A seal is opaque but still a digest string on the wire (see `RotateEvent.a`); a non-string one
+    // is a member a reader would have to guess at.
     (event.a == null || typeof event.a === 'string') &&
     (event as { r?: unknown }).r === undefined &&
-    // The deny snapshot replaces the accumulated set, so the fold builds a `Set` from it. A scalar
-    // `d` is not iterable and throws there; a string `d` would silently become a set of characters.
+    // The snapshot replaces the accumulated set, so the fold builds a `Set` from it: a scalar `d`
+    // throws, a string `d` would silently become a set of characters.
     (event.d == null || isKeyList(event.d))
   )
 }
 
 /**
- * A rotate is valid when it chains to the prior digest, its revealed keys match the prior
- * event's pre-rotation commitment, and its signatures verify against those keys.
+ * A rotate is valid when it chains to the prior digest, its revealed keys match the prior event's
+ * pre-rotation commitment, and its signatures verify against those keys.
  */
 export function verifyRotate(
   signed: SignedEvent<RotateEvent>,
@@ -536,17 +445,15 @@ export function verifyRotate(
  * A reset: a rotate signed by the recovery key that increments the generation and discards
  * everything under the prior one, including every capability minted there.
  *
- * Anchored to the inception rather than to the log head, which the root recomputes from the seed
- * alone — the recovery key lives on the root-retained derivation branch and its digest is
- * committed in the deterministic inception, so a restored mnemonic can author one with no log
- * knowledge or availability at all. Carries no options: no seal, and `d` is always `[]`, so a
- * reset is a pure function of `(seed, profile, gen)` — two blind resets at the same generation
- * produce identical bytes and resolve as idempotent re-derivation rather than duplicity.
+ * Anchored to the inception, not the log head: the recovery key lives on the root-retained
+ * derivation branch and its digest is committed in the deterministic inception, so a restored
+ * mnemonic can author one with no log knowledge or availability. Carries no options — no seal, `d`
+ * always `[]` — so a reset is a pure function of `(seed, profile, gen)`, and two blind resets at one
+ * generation produce identical bytes that resolve as idempotent re-derivation, not duplicity.
  *
- * The root does not need to know the current generation; it only needs to eventually exceed it,
- * since no attacker can author a competing reset at any generation. A blind root starts at
- * `gen = 1` and retries higher if it learns of one — the cost is a round trip, never loss of
- * control.
+ * The root need not know the current generation, only eventually exceed it (no attacker can author a
+ * competing reset at any generation): a blind root starts at `gen = 1` and retries higher if it
+ * learns of one — the cost is a round trip, never loss of control.
  */
 export function createReset(
   seed: Uint8Array,
@@ -589,17 +496,13 @@ export function createReset(
 }
 
 /**
- * A reset verifies against the committed recovery digest, not against the pre-rotation set. Both
- * values it needs — the anchor digest and the recovery commitment — come from the inception
- * itself, so passing the inception event makes the pairing impossible to get wrong.
- *
- * The inception is the *only* place either value can come from, and that is a property rather than
- * a simplification. A reset anchors to the inception so a root holding nothing but its seed can
- * author one with no log knowledge and no log availability; if the recovery commitment could be
- * moved by a later event, the root would have to read the log to find out which key to sign with,
- * and the one recovery path that survives losing the log would be gone. `recoveryPath(profile)`
- * carries no index for the same reason — there is one recovery key per profile, for its lifetime.
- * See {@link RotateEvent} for what was removed and why.
+ * A reset verifies against the committed recovery digest, not the pre-rotation set. Both values it
+ * needs — the anchor digest and the recovery commitment — come from the inception, the *only* place
+ * either can: that is what lets a root holding nothing but its seed author one with no log
+ * availability. If the commitment could move, the root would have to read the log to know which key
+ * to sign with, and the one recovery path that survives losing the log would be gone.
+ * `recoveryPath(profile)` carries no index for the same reason — one recovery key per profile, for
+ * its lifetime. See {@link RotateEvent} for what was removed.
  */
 export function verifyReset(signed: SignedEvent<RotateEvent>, inception: InceptionEvent): boolean {
   const { event, sigs } = signed
@@ -609,13 +512,10 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
   if (!isPublishedRotate(event)) {
     return false
   }
-  // A reset carries an empty deny set and nothing else optional — see {@link createReset}. The
-  // idempotency the branch selector relies on ("two blind resets at one generation produce identical
-  // bytes, so they de-duplicate rather than fork") lives in the generator, which always emits `d: []`
-  // and no seal; enforcing it here too keeps a reset carrying a non-empty `d` or a seal from folding
-  // as a valid reset that clears-then-repopulates the deny set or anchors where a reset never should.
-  // Only the recovery-key holder can sign one, so this is not an attacker's event — it is the one
-  // rule that makes "blind reset" mean the same bytes for every holder of the same seed.
+  // A reset carries an empty deny set and no seal (see {@link createReset}) — the idempotency the
+  // branch selector relies on. Only the recovery-key holder can sign one, so this is not an
+  // attacker's event; it is the rule that makes "blind reset" mean the same bytes for every holder of
+  // the seed. Enforced here too so a reset carrying a non-empty `d` or a seal cannot fold as valid.
   if (event.a !== undefined || event.d == null || event.d.length !== 0) {
     return false
   }
@@ -625,9 +525,8 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
   if (!verifyAgreementKeys(event.ka)) {
     return false
   }
-  // The recovery key is committed as a digest in the inception and is not published until it is
-  // used, so a reset must carry the revealed key on the signed envelope for the commitment to be
-  // checkable.
+  // The recovery key is committed as a digest and unpublished until used, so a reset must carry the
+  // revealed key on the envelope for the commitment to be checkable.
   const revealed = signed.recoveryKey
   if (revealed == null || digestOf(revealed) !== inception.r) {
     return false
@@ -636,13 +535,10 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
 }
 
 /**
- * How a `rev` target names a **key** rather than a DID: `#<the multibase key exactly as it appears
- * in `k`>`, which is the same spelling a token's `kid` uses for the same key.
- *
- * One spelling for one thing. A `kid` already names a key this way, the form is unambiguous against
- * `did:…` on sight, and both the fragment and the deny set are wire-visible and effectively
- * permanent — so a bare multibase string is not a second accepted encoding here any more than it is
- * for `kid`.
+ * How a `rev` target names a **key** rather than a DID: `#<the multibase key exactly as it appears in
+ * `k`>`, the same spelling a token's `kid` uses. One spelling for one thing — unambiguous against
+ * `did:…` on sight, so a bare multibase string is not a second accepted encoding, any more than for
+ * `kid`.
  */
 export const KEY_TARGET_PREFIX = '#'
 
@@ -652,12 +548,10 @@ export function keyTarget(key: string): string {
 }
 
 /**
- * The key a `rev` target names, or `null` when the target names a DID instead.
- *
- * Total on any string: a target that is neither form is simply not a key target, and lands in the
- * deny set as the opaque identifier it is. The fold does not validate the body against multibase —
- * a `#` followed by something no key set contains denies nothing, exactly as a `did:` naming nobody
- * denies nobody, and rejecting it would only add a way for a well-formed log to stop folding.
+ * The key a `rev` target names, or `null` when it names a DID instead. Total on any string: a target
+ * of neither form lands in the deny set as the opaque identifier it is. The body is not validated
+ * against multibase — a `#` naming nothing denies nothing, exactly as a `did:` naming nobody does,
+ * and rejecting it would only add a way for a well-formed log to stop folding.
  */
 export function keyFromTarget(target: string): string | null {
   return target.startsWith(KEY_TARGET_PREFIX) ? target.slice(KEY_TARGET_PREFIX.length) : null
@@ -668,17 +562,14 @@ export type RevokeEvent = EventCommon & {
   /**
    * What to deny, in one of two spellings, never a capability `jti`.
    *
-   * A **DID** — `did:…` — denies a holder: no capability whose `aud` is that DID is valid from this
-   * position onward. A device DID, and one entry covers that device's life.
+   * A **DID** (`did:…`) denies a holder: no capability whose `aud` is that DID is valid from this
+   * position onward — one entry covers a device's life. A **key** ({@link keyTarget}) denies a
+   * signer: nothing this profile signed with that key verifies from this position onward, and it
+   * names a key of *this* profile (the deny set is the subject's own).
    *
-   * A **key** — {@link keyTarget}, i.e. `#<the multibase key exactly as it appears in `k`>` — denies
-   * a signer: nothing this profile signed with that key verifies from this position onward. It
-   * names a key of *this* profile, since the deny set is the subject's own; denying somebody else
-   * is what the DID form is for.
-   *
-   * The two are enforced at opposite ends of the same set, which is why one field carries both: the
-   * DID form is read by `@kokuin/capability` against a capability's `aud`, and the key form by the
-   * resolver against the key a `kid` selects. Neither spelling can be mistaken for the other.
+   * One field carries both because they are enforced at opposite ends of the same set: the DID form
+   * by `@kokuin/capability` against a capability's `aud`, the key form by the resolver against the
+   * key a `kid` selects. Neither spelling can be mistaken for the other.
    */
   x: string
   /** A serialized capability authorising a non-authority signer. Verified in the fold. */
@@ -686,27 +577,22 @@ export type RevokeEvent = EventCommon & {
 }
 
 /**
- * Revoke a DID or a key — see {@link RevokeEvent.x} for the two spellings and what each denies.
+ * Revoke a DID or a key — see {@link RevokeEvent.x} for the two spellings.
  *
- * Naming the device DID rather than a `jti` makes this one entry per device for that device's
- * life — it covers capabilities the verifier has never seen and covers future re-mints, where
- * per-`jti` revocation would grow with every renewal.
+ * Naming the device DID rather than a `jti` makes this one entry per device for its life — covering
+ * capabilities the verifier has never seen and future re-mints, where per-`jti` revocation would grow
+ * with every renewal. A key target retires a leaked key for material it *already* signed: `rotate`
+ * only retires it for new issuance (`resolve` is head-only), but already-issued material verifies
+ * through `resolveHistoric`, which survives a rotate by design, so a thief holding a rotated-away key
+ * could still mint one that verified. Retirement is therefore explicit, keeping the promise that a
+ * routine rotate does not invalidate already-issued material intact.
  *
- * A key target is what retires a leaked key for material it already signed. `rotate` retires it for
- * *new* issuance — `resolve` is head-only — but already-issued capabilities and revocation records
- * are verified through `resolveHistoric`, which by design survives a rotate, so a thief holding a
- * rotated-away key could still mint one that verified. Retirement is therefore explicit rather than
- * a side effect of rotation: the design's promise that a routine rotate does not invalidate
- * already-issued material is load-bearing and stays intact.
+ * **A key the profile currently publishes cannot be denied** — the fold rejects it (see the `rev`
+ * branch of `stepEvent`). Rotate first, then deny the key the rotate retired.
  *
- * **A key the profile currently publishes cannot be denied** — the fold rejects such an event; see
- * the `rev` branch of `stepEvent`. Rotate first, then deny the key the rotate retired.
- *
- * `prior` answers "what is the next sequence number and what do I chain to"; `keyPosition`
- * separately answers "where does the currently-active authority key live". They coincide only
- * for an `icp`/`rot` prior, which establish a key at their own `s` — a `rev` prior establishes no
- * key at all, so a revoke chained onto a revoke must still point at the last `icp`/`rot`
- * position, not at the prior revoke's own `s`.
+ * `prior` answers "next sequence, what to chain to"; `keyPosition` separately answers "where the
+ * active authority key lives". They coincide only for an `icp`/`rot` prior — a `rev` establishes no
+ * key, so a revoke on a revoke still points at the last `icp`/`rot` position.
  */
 export function createRevoke(
   seed: Uint8Array,
@@ -734,23 +620,17 @@ export type CreateRevokeOptions = {
  * Revoke a DID, signing with an Ed25519 key the caller already holds rather than deriving one from
  * the profile seed.
  *
- * This is the builder for the actor a capability-authorised revoke exists for: a device holding a
- * management capability, whose whole point (spec, "authority tiers") is that it never receives the
- * profile sub-seed. `createRevoke` can only sign as the profile itself, so without this the feature
- * had no API — a consumer's only route was to re-implement the event's signing convention against
- * `canonicalBytes`, per consumer, which is the duplication `createControllerCapabilityVerifier`
- * exists to prevent on the verifying side.
+ * The builder for the actor a capability-authorised revoke exists for: a device holding a management
+ * capability, which by design never receives the profile sub-seed. `createRevoke` can only sign as
+ * the profile itself, so without this the feature had no API but re-implementing the signing
+ * convention per consumer — the duplication `createControllerCapabilityVerifier` prevents on the
+ * verifying side.
  *
- * The key is the audience key the capability pins in `cnf`, and the fold checks the event's
- * signature against exactly that — so the two must be the same key. Ed25519 only, because that is
- * all the log's events can be signed with.
- *
- * Takes the private key rather than an identity because no identity type in this stack can sign
- * raw bytes: `SigningIdentity` signs JWTs, `KeyAgreementIdentity` agrees keys, and a `KeyStore`
- * entry hands back exactly this — the same shape `createSigningIdentity` takes.
- *
- * Produces byte-identical output to {@link createRevoke} given the same key, and there is no
- * `keyPosition`: the position exists only to *derive* a key from a seed.
+ * The key is the audience key the capability pins in `cnf`, and the fold checks the event's signature
+ * against exactly that, so the two must match. Ed25519 only. Takes the private key rather than an
+ * identity because no identity type here signs raw bytes — a `KeyStore` entry hands back exactly this
+ * shape. Byte-identical to {@link createRevoke} given the same key; no `keyPosition`, which exists
+ * only to derive a key from a seed.
  */
 export function createRevokeWithKey(
   privateKey: Uint8Array,

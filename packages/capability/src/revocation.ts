@@ -62,18 +62,11 @@ export type RevocationOptions = {
   cache?: DIDCache
 }
 
-// Spread into both `verifyToken` calls, so the two paths cannot drift apart. Typed as a `Pick` of
-// `VerifyTokenOptions` rather than re-spelled inline: it keeps the three names tied to the source
-// of truth, and makes the set this forwards legible next to the set `verifyToken` accepts. It does
-// not force a future field on `VerifyTokenOptions` to be considered here — nothing in the type
-// system can — but it puts the two lists side by side for whoever adds one.
-//
-// `historic` is set rather than forwarded: a revocation record is an artefact its issuer minted at
-// some point in the past, and the whole point of holding one is that it stays checkable afterwards.
-// Without it, an issuer whose key set rotates — `did:kokuin:` — would have every record it ever
-// signed stop verifying at its next routine rotate, which on this path reads as "not revoked". See
-// `DIDMethodResolver.resolveHistoric` for what accepting a superseded key does and does not
-// establish, and note that a `reset` still invalidates the record: it discards the generation.
+// Spread into both `verifyToken` calls so the two paths cannot drift. `historic` is set, not
+// forwarded: a revocation record is a past-minted artefact that must stay checkable, so without it a
+// rotating issuer (`did:kokuin:`) would have every record it signed stop verifying at its next
+// routine rotate — reading here as "not revoked". A `reset` still invalidates it (it discards the
+// generation). See `DIDMethodResolver.resolveHistoric`.
 function verifyOptions(
   options?: RevocationOptions,
 ): Pick<VerifyTokenOptions, 'methods' | 'resolver' | 'cache' | 'historic'> {
@@ -104,29 +97,21 @@ export function createMemoryRevocationBackend(options?: RevocationOptions): Revo
 }
 
 /**
- * Does this record name a key its issuer published and has since **denied**?
+ * Does this record name a key its issuer published and has since **denied**? The distinction keeps
+ * the remedy for a leaked key from undoing the profile's own revocations: revoking a key makes every
+ * record it signed stop verifying, and the catch below reads that as "not evidence of anything" — so
+ * without this, denying a compromised key silently resurrects every capability its records revoked.
  *
- * The distinction this draws is what keeps the remedy for a leaked key from undoing the profile's
- * own revocations. Revoking a key makes every record that key signed stop verifying, and the catch
- * below reads a verification failure as "not evidence of anything" — so denying a compromised key
- * silently resurrected every capability its records had revoked, on the one path that must never
- * fail open.
+ * A record naming a never-published key is still a forgery, ignored (anyone can mint one — the
+ * plant-a-record DoS the catch stops). A **denied** key is different: producing the record needed the
+ * private half of a key the DID published, so only the issuer or whoever compromised it could, and
+ * honouring it only ever subtracts authority. The thief's planted revocations surviving the remedy is
+ * the bounded harm.
  *
- * A record naming a key the log never published is still a forgery, and still ignored: anyone can
- * mint one for any `jti`, which is exactly the plant-a-record denial of service the catch exists to
- * stop. A record naming a **denied** key is not that. Producing it required the private half of a
- * key the DID itself published, so the only party who could have written it is the issuer or
- * whoever compromised it — and honouring it can only ever subtract authority, never grant any.
- * Between "the owner's revocations lapse the moment they act on a compromise" and "the thief's
- * planted revocations survive that remedy", the second is the bounded harm.
- *
- * Only reachable for a `did:kokuin:` issuer, whose resolver publishes a deny set. A method with no
- * deny set answers `false` and nothing changes for it. The `kid` and the deny set's key entries are
- * the same spelling — `#<the multibase key as it appears in `k`>` — so this is a membership test,
- * never an enumeration: the set is heterogeneous and also holds revoked DIDs.
- *
- * A resolver that has a deny set and cannot produce it throws, which fails closed — the same
- * direction `assertAudienceNotRevoked` takes for the same reason.
+ * Only reachable for a `did:kokuin:` issuer, whose resolver publishes a deny set; other methods answer
+ * `false`. `kid` and the deny set's key entries share one spelling, so this is a membership test. A
+ * resolver that has a deny set and cannot produce it throws — fails closed, like
+ * `assertAudienceNotRevoked`.
  */
 async function namesADeniedKey(
   record: RevocationRecord,
@@ -163,32 +148,21 @@ export function createRevocationChecker(
     try {
       verified = await verifyToken<RevocationClaims>(record, verifyOptions(options))
     } catch (error) {
-      // The two failures are not symmetric, and collapsing them is a fail-open.
+      // The two failures are not symmetric; collapsing them fails open. An *invalidly signed* record
+      // is evidence of nothing (anyone can mint one), so it is ignored — the `return` below. An
+      // *unresolvable issuer* is different: the record may be genuine and we cannot tell, so "could
+      // not check" must propagate rather than pass.
       //
-      // An *invalidly signed* record is evidence of nothing: anyone can mint one for any `jti`,
-      // so ignoring it is the only safe reading — hence the `return` below, and the reason this
-      // catch exists at all.
-      //
-      // An *unresolvable issuer* is different: a record may well be genuine and revoke this
-      // token, and we simply cannot tell. "I could not check" is not evidence of non-revocation,
-      // so it must propagate and fail the verification rather than pass it. For a `did:kokuin:`
-      // issuer this is every record until `options.methods` carries its resolver.
-      //
-      // Gate that on the record's *unverified* `iss` naming this token's issuer. Reading an
-      // unverified claim is sound here because of which way it decides: a record claiming some
-      // *other* issuer could not revoke this token even with a perfect signature, so swallowing
-      // it loses nothing; only a record claiming *this token's* issuer leaves revocation
-      // genuinely unknown. Without the gate, the backend — an untrusted extension point, which
-      // is why this re-verifies at all — could deny any capability by returning a record naming
+      // Gated on the record's *unverified* `iss` naming this token's issuer, which is sound because of
+      // which way it decides: a record claiming another issuer could not revoke this token anyway.
+      // Without the gate, the untrusted backend could deny any capability by returning a record naming
       // an unresolvable DID it invented.
       const sameIssuer = normalizeDID(record.payload.iss) === normalizeDID(token.payload.iss)
       if (isUnresolvableIssuerError(error) && sameIssuer) {
         throw error
       }
-      // A third reading, between the two above: the record is signed by a key this issuer once
-      // published and has since revoked. Not "evidence of nothing" — see {@link namesADeniedKey}.
-      // Checked after the two cheap classifications and only for this token's own issuer, since a
-      // record naming anyone else could not revoke this token however it was signed.
+      // A third reading: signed by a key this issuer published and has since revoked — not "evidence
+      // of nothing", see {@link namesADeniedKey}. Only for this token's own issuer.
       if (
         isIssuerKeyNotFoundError(error) &&
         sameIssuer &&

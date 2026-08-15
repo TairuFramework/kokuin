@@ -13,23 +13,16 @@ import type { KeyState } from './fold.js'
 export const DID_METHOD = DID_PREFIX.slice('did:'.length, -1)
 
 /**
- * The `kid` fragment's body, or `null` when the header names no key.
+ * The `kid` fragment's body, or `null` when the header names no key. Format is `#<the multibase key
+ * exactly as it appears in `k`>`, matched against the folded key sets by membership — an index-based
+ * fragment would mean whatever the key set said at the time, and a token outlives that. The bare key
+ * without `#` is rejected, not accepted as a second spelling.
  *
- * The format is `#<the multibase key exactly as it appears in `k`>` — a fragment whose body is the
- * key itself, matched against the folded key sets by membership. An index-based fragment was
- * rejected for this: an index means whatever the key set said at the time, and a token outlives
- * the state that gave its `kid` meaning.
- *
- * The bare key without the leading `#` is rejected rather than accepted as a second spelling: the
- * fragment form is wire-visible and effectively permanent, so it has exactly one spelling.
- *
- * Every rejection on this path — here and in both selectors below — is an `IssuerKeyNotFoundError`,
- * not the plain error the rest of this file throws: the DID *was* resolved and its log *did* fold —
- * what failed is the key the token named. The distinction is load-bearing, not cosmetic.
- * `resolveIssuerWithDoc` retypes everything else a method resolver throws as
- * `UnresolvableIssuerError`, and `@kokuin/capability`'s revocation checker denies a capability on
- * that type; since `kid` is an unauthenticated header field, a fabricated record naming this DID
- * and any invented key would otherwise deny every capability this controller ever issued.
+ * Every rejection on this path is an `IssuerKeyNotFoundError`, not the plain error the rest of this
+ * file throws: the DID resolved and its log folded — what failed is the key. Load-bearing, because
+ * `resolveIssuerWithDoc` retypes everything else as `UnresolvableIssuerError`, on which
+ * `@kokuin/capability` *denies* a capability; since `kid` is unauthenticated, a fabricated record
+ * naming this DID and any invented key would otherwise deny every capability this controller issued.
  */
 function keyFromKid(did: string, kid: string | undefined): string | null {
   if (kid == null) {
@@ -42,24 +35,15 @@ function keyFromKid(did: string, kid: string | undefined): string | null {
 }
 
 /**
- * The key a token's `kid` names, out of the **head's** key set alone — what `resolve` answers.
+ * The key a token's `kid` names, out of the **head's** key set alone — what `resolve` answers, and
+ * the only question authenticating a live signer may ask ("can this profile sign with this key
+ * *now*"). A key the profile rotated away is not an answer, which is what makes a `rotate` retire a
+ * leaked authority key for new issuance — the middle rung of the `revoke → rotate → reset` ladder.
  *
- * This is the question "can this profile sign with this key *now*", and it is the only one that
- * authenticating a live signer may ask. A key the profile has rotated away is not an answer to it,
- * whatever the reason for the rotation was — and the reason that matters is compromise: with the
- * head-only rule, a `rotate` actually retires a leaked authority key for new issuance, which is
- * what makes the middle rung of the `revoke → rotate → reset` remedy ladder mean anything. Before
- * the split this scanned the whole generation, so a thief holding a rotated-away key went on
- * minting fresh, fully verifying tokens until the profile reset.
- *
- * A `kid` naming a key that is not in the head's `k` — including one this profile published
- * earlier — is an error, never a fall back to `keys[0]`, which would check the signature against a
- * key the token never claimed. A `kid` absent resolves to the head's first key: volunteering one
- * when the token names nothing is not the same as accepting one it names, and `resolve` can only
- * answer with a single key.
- *
- * Verifying material the profile issued *in the past* is {@link historicSigningKey}, reached only
- * by an explicit `resolveHistoric`.
+ * A `kid` naming a key not in the head's `k` (including one published earlier) is an error, **never
+ * a fall back to `keys[0]`**, which would check the signature against a key the token never claimed.
+ * An absent `kid` resolves to the head's first key: volunteering one is not the same as accepting one
+ * the token names. Past-issued material is {@link historicSigningKey}, via explicit `resolveHistoric`.
  */
 function headSigningKey(did: string, states: Array<KeyState>, kid?: string): string {
   const head = states[states.length - 1]
@@ -77,24 +61,16 @@ function headSigningKey(did: string, states: Array<KeyState>, kid?: string): str
 
 /**
  * The key a token's `kid` names, out of **every position in the current generation** — what
- * `resolveHistoric` answers.
+ * `resolveHistoric` answers. It accepts a key the profile has since rotated away, so it establishes
+ * "this profile did once hold this key", never "holds". The right answer for material minted in the
+ * past (an already-issued capability, a revocation record), because a routine `rotate` must not
+ * invalidate what the profile issued to third parties who cannot know it rotated; the wrong answer
+ * for a live signer.
  *
- * A different question from {@link headSigningKey}, and the caller has to have said which one it
- * is asking. This one accepts a key the profile has since rotated away, so what it establishes is
- * "this profile did once hold this key", never "this profile holds this key". That is the right
- * answer for an artefact minted in the past — an already-issued capability, a revocation record, an
- * archived grant — because a routine `rotate` must not invalidate material the profile has already
- * issued to third parties who cannot know a rotation happened. It is the wrong answer for anything
- * that authenticates a live signer, where a stolen-and-rotated-away key would still pass.
- *
- * A `reset` is what invalidates: the spec reserves that blast radius for it ("discards everything
- * under the prior generation, including every capability minted there"). `gen` never decreases
- * across the fold, so the scan stops dead at the first state from an earlier generation rather than
- * continuing through it.
- *
- * The scan runs backwards from the head, because the head's own key set is the overwhelmingly
- * common answer. A `kid` naming a key this profile never published, and one from a superseded
- * generation, are errors — never a fall back to `keys[0]`, for the same reason as above.
+ * A `reset` is what invalidates (it discards everything under the prior generation), and `gen` never
+ * decreases, so the backwards scan stops dead at the first earlier-generation state. Runs backwards
+ * because the head's own key set is the common answer. A `kid` naming a never-published key, or one
+ * from a superseded generation, is an error — never a fall back to `keys[0]`.
  */
 function historicSigningKey(did: string, states: Array<KeyState>, kid?: string): string {
   const head = states[states.length - 1]
@@ -113,47 +89,34 @@ function historicSigningKey(did: string, states: Array<KeyState>, kid?: string):
 }
 
 /**
- * What a token signed by a key the profile has revoked is rejected with. The `#`-prefixed key
- * follows after `: `, so match with `startsWith`.
+ * What a token signed by a revoked key is rejected with. The `#`-prefixed key follows after `: `, so
+ * match with `startsWith`.
  */
 export const KEY_REVOKED = 'kid names a key the controller has revoked'
 
 /**
- * The signing key `header` names, out of an already-folded log.
+ * The signing key `header` names, out of an already-folded log. `historic` picks which question above
+ * is asked, and defaults to the safe one.
  *
- * `historic` picks which of the two questions above is being asked, and defaults to the safe one.
- * See {@link headSigningKey} and {@link historicSigningKey}.
+ * **A revoked key answers neither question.** A `rev` naming `#<key>` retires a key for material it
+ * has *already* signed, and this is where that bites — every `did:kokuin:` signature check reaches a
+ * resolved key through here, so the denial covers `verifyToken` on both `historic` settings, every
+ * capability and revocation record `@kokuin/capability` verifies, and the fold's own cap-authorised
+ * revoke. The historic arm is the live one: a revoked key is never in the head's `k` (the
+ * `KeyState.deny` invariant), so only the backwards scan can select one, and without this
+ * `resolveHistoric` would accept a leaked key forever.
  *
- * **A revoked key answers neither question.** A `rev` naming `#<key>` (see `RevokeEvent.x`) is what
- * retires a key for material it has *already* signed, and this is where that bites — every
- * `did:kokuin:` signature check in this stack reaches a resolved key through this function, so
- * making the denial bite here covers `verifyToken` on both settings of `historic`, every capability
- * and revocation record `@kokuin/capability` verifies, and the fold's own capability-authorised
- * revoke, which resolves through `createStateResolver` below.
+ * The head arm cannot be reached from a log this package folded, but is not decoration: `states`
+ * arrives from the caller, and the invariant is the fold's property, not the array's — a
+ * caller-built state whose head publishes a key it also denies resolves to nothing here.
  *
- * The historic arm is the one the feature exists for, and the one that is live in ordinary use: a
- * revoked key is never in the head's `k` — that is the invariant on `KeyState.deny` — so only the
- * backwards scan can select one. Without this check, `resolveHistoric` would go on accepting a
- * leaked key forever, because surviving a rotate is precisely what it promises; a `rotate` retires
- * a key for new issuance and can retire it for nothing else.
- *
- * The head arm cannot be reached from a log this package folded, and is not therefore decoration:
- * `createStateResolver` is handed a `states` array by its caller, and the invariant is the fold's
- * property, not the array's. A caller-built or third-party-folded state whose head publishes a key
- * it also denies resolves to nothing here rather than to the key.
- *
- * **Evaluated against the head's deny set, never against the position the key was selected at.** A
- * denial is a statement about the key, not about one event, and the position an artefact carries is
- * author-supplied — a thief would otherwise present a token whose `kid` resolves at a position
- * before the revoke and be answered from there. This is the same reasoning
- * `assertAudienceNotRevoked` documents for `aud`, and it is deliberately *not* how a DID denial
- * behaves inside the fold: there `states[i]` is consulted at position `i`, because the position
- * being verified is the whole question — an event is authored at one place in the log, and a later
- * clearing must not retroactively validate it. Both rules coexist because they answer different
- * questions: "was this author allowed to act here" versus "is this key usable now".
- *
- * Inside the fold the two coincide anyway: `createStateResolver` is handed the prefix
- * `states[0..i-1]`, so its head *is* the position being verified.
+ * **Evaluated against the head's deny set, never the position the key was selected at.** A denial is
+ * about the key, not one event, and the position an artefact carries is author-supplied — else a
+ * thief presents a token resolving at a position before the revoke. Deliberately *not* how a DID
+ * denial behaves inside the fold, where `states[i]` is consulted at position `i` because "was this
+ * author allowed to act *here*" is the whole question; the two rules answer different questions.
+ * Inside the fold they coincide anyway: `createStateResolver` gets the prefix `states[0..i-1]`, so
+ * its head *is* the position being verified.
  */
 export function signingKeyFrom(
   did: string,
@@ -168,10 +131,9 @@ export function signingKeyFrom(
   const selected = historic
     ? historicSigningKey(did, states, header.kid)
     : headSigningKey(did, states, header.kid)
-  // An `IssuerKeyNotFoundError` like every other rejection on this path, and for the same reason:
-  // the DID resolved and its log folded, and what failed is the key. Retyping it as unresolvable
-  // would let a `kid` — an unauthenticated header field — make this controller read as unresolvable
-  // to every fail-closed caller. See {@link keyFromKid}.
+  // `IssuerKeyNotFoundError` like every rejection here: the DID resolved and the log folded, and what
+  // failed is the key. Retyping it unresolvable would let a `kid` (unauthenticated) make this
+  // controller read as unresolvable to every fail-closed caller. See {@link keyFromKid}.
   if (head.deny.has(keyTarget(selected))) {
     throw new IssuerKeyNotFoundError(`Controller ${did} ${KEY_REVOKED}: ${keyTarget(selected)}`)
   }
@@ -183,17 +145,13 @@ export function signingKeyFrom(
 }
 
 /**
- * The head's key agreement set, out of an already-folded log, minus anything it has revoked.
+ * The head's key agreement set, minus anything it has revoked. A `rev` may name an agreement key as
+ * readily as a signing one (the target spelling is the key, not its purpose), and these are the keys
+ * a *sender* encrypts to — encrypting to a revoked key is the one outcome a denial must prevent.
  *
- * A `rev` may name an agreement key as readily as a signing one — the target spelling is the key,
- * not the key's purpose — so leaving this unfiltered would make exactly that denial inert while
- * every other one bit. These are the keys a *sender* encrypts to, and encrypting to a key the
- * recipient has revoked is the one outcome a denial must prevent.
- *
- * Like the signing side, this cannot be reached from a log this package folded — see the invariant
- * on `KeyState.deny` — and, like it, `states` arrives from the caller. Filtering the set to empty is
- * the honest answer for a state that denies everything it publishes; `@kokuin/jwe` reports "no
- * supported key agreement algorithm" and encrypts nothing, which is the fail-closed direction.
+ * Like the signing side, unreachable from a log this package folded (the `KeyState.deny` invariant)
+ * but `states` arrives from the caller. Filtering to empty is the honest answer for a state that
+ * denies everything it publishes: `@kokuin/jwe` then encrypts nothing, the fail-closed direction.
  */
 export function agreementKeysFrom(
   did: string,
@@ -213,18 +171,14 @@ export function agreementKeysFrom(
 }
 
 /**
- * A `DIDMethodResolver` answering for exactly one profile, out of state that is already folded.
+ * A `DIDMethodResolver` answering for exactly one profile, out of already-folded state. The fold
+ * hands one to a capability-authorised revoke's verifier, built from the states *before* the event
+ * being verified — the prefix contract made unforgettable: the verifier no longer needs a
+ * position-aware registry, because the fold supplies the answer. See `FoldOptions.verifyCapability`.
  *
- * The fold hands one of these to a capability-authorised revoke's verifier, built from the states
- * *before* the event being verified. That is what makes the prefix contract unforgettable: the
- * verifier no longer needs a registry that knows which position it is at, because the only party
- * that knows — the fold — supplies the answer. See `FoldOptions.verifyCapability`.
- *
- * Answers only for `did`. Any other identifier is an `Unknown DID`, so a caller merging this into
- * a wider registry can fall back to its own resolver for a delegate that happens to be another
- * `did:kokuin:` profile, and can never accidentally serve one profile's key state for another's.
- *
- * Not a cache and not a snapshot of a live log: the states are the caller's, fixed at construction.
+ * Answers only for `did`; any other identifier is `Unknown DID`, so a caller merging this into a
+ * wider registry falls back to its own resolver for another `did:kokuin:` delegate and never serves
+ * one profile's state for another's. Not a cache: the states are the caller's, fixed at construction.
  */
 export function createStateResolver(did: string, states: Array<KeyState>): DIDMethodResolver {
   function statesFor(asked: string): Array<KeyState> {
@@ -238,10 +192,8 @@ export function createStateResolver(did: string, states: Array<KeyState>): DIDMe
     async resolve(asked: string, header: ResolveIssuerHeader = {}): Promise<ResolvedSigningKey> {
       return signingKeyFrom(asked, statesFor(asked), header)
     },
-    // The head of *this prefix*, not of the log: these states end at the position the fold is
-    // verifying. A capability the profile issued before that position is exactly the archived
-    // material `resolveHistoric` exists for — it must survive a rotate the profile made in between
-    // — so a fold verifying one asks this member. See `signingKeyFrom`.
+    // The head of *this prefix*, not the log: these states end at the position the fold is verifying.
+    // A capability issued before that position is the archived material `resolveHistoric` exists for.
     async resolveHistoric(
       asked: string,
       header: ResolveIssuerHeader = {},

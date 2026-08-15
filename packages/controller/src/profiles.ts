@@ -16,15 +16,11 @@ const CONSONANTS = 'bdfghjkmnprstvwz'
 const VOWELS = 'aeou'
 
 /**
- * A three-syllable handle derived from the DID itself. No stored data and no wordlist to keep in
- * sync across apps — which is what lets a cold picker label profiles with no network and no cache.
- *
- * Each syllable is consonant-vowel-consonant, so the handle is pronounceable and can be read out
- * or written down. 16 x 4 x 16 per syllable gives 1024 combinations, about 30 bits across three —
- * ample to tell a handful of profiles apart, and not a security boundary.
- *
- * A user label must never feed the DID, so this is the inverse: the label is a function of the
- * identifier, not the other way round.
+ * A three-syllable handle derived from the DID itself — no stored data, no wordlist, so a cold picker
+ * can label profiles with no network or cache. Each syllable is consonant-vowel-consonant, so it is
+ * pronounceable; ~30 bits across three, ample to tell a handful of profiles apart and not a security
+ * boundary. The label is a function of the identifier, never the reverse (a user label must never
+ * feed the DID).
  */
 export function handleForDID(did: string): string {
   const digest = sha256(encoder.encode(did))

@@ -48,25 +48,14 @@ export const DEFAULT_MAX_DELEGATION_DEPTH = 4
 export const DEFAULT_MAX_DEVICE_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 
 /**
- * Every capability this package verifies is checked against the keys its issuer held **at some
- * point**, not only the ones it holds now — `verifyToken`'s `historic` option.
- *
- * A capability is an artefact the subject minted in the past and handed to somebody else, and the
- * point of holding one is that it keeps working. For an issuer whose key set rotates —
- * `did:kokuin:`, whose keys are a projection of a key event log — the default question ("is this a
- * key the issuer holds now") would make a routine `rotate` invalidate every capability the profile
- * had ever issued, including ones held by third parties who cannot know a rotation happened. The
- * spec reserves that blast radius for `reset`, which bumps the generation and does still invalidate
- * them.
- *
- * What it costs, stated plainly: a capability signed by an authority key that leaked and was
- * rotated away still verifies here. It is not a live proof of possession and never was — the holder
- * is the `aud`, and what proves the holder is the signature on the invocation token or the `cnf`
- * pin, neither of which this widens. Denying the leaked key's issuance of *new* material is the
- * default `resolve` on the other side of the split, and denying a holder is the deny set.
- *
- * A single constant rather than a literal at each call site, so the three cannot drift apart and
- * the reasoning is written once.
+ * Verify every capability against the keys its issuer held **at some point**, not only now
+ * (`verifyToken`'s `historic` option). A capability is a past-minted artefact meant to keep working,
+ * so for a rotating issuer (`did:kokuin:`) the "holds now" question would make a routine `rotate`
+ * invalidate every capability the profile ever issued; the spec reserves that blast radius for
+ * `reset`. What it costs: a leaked-and-rotated-away key's capability still verifies here — but it was
+ * never a live proof of possession (the holder is `aud`, proven by the invocation signature or `cnf`
+ * pin), and denying the key's *new* issuance is the default `resolve`, denying a holder the deny set.
+ * A single constant so the three call sites cannot drift.
  */
 const HISTORIC_ISSUANCE = true
 
@@ -129,38 +118,27 @@ export type CapabilityPayload = Permission & {
   iat?: number
   jti?: string
   /**
-   * Proof-of-possession key the audience must hold, pinned at mint time. See
-   * {@link ConfirmationClaim}.
-   *
-   * Optional in general: a capability whose holder proves itself by signing a token needs nothing
-   * here, since the token names its own issuer. It is **required** by
-   * `createControllerCapabilityVerifier`, where the holder proves itself by signing a raw key
-   * event that names nobody, and where resolving the audience instead would let that audience's
-   * own key rotation make the profile unresolvable forever.
+   * Proof-of-possession key the audience must hold, pinned at mint time — see
+   * {@link ConfirmationClaim}. Optional in general (a holder proving itself by signing a token needs
+   * nothing here), but **required** by `createControllerCapabilityVerifier`, where the holder signs a
+   * raw key event naming nobody and resolving the audience instead would let its key rotation brick
+   * the profile.
    */
   cnf?: ConfirmationClaim
 }
 
 /**
- * RFC 7800's `cnf` (confirmation) claim: the key the presenter of this token must prove possession
- * of. The registered claim for exactly this job, so the wire format is a standard one rather than
- * a house invention — worth getting right before anything publishes, since wire format is the
- * hardest thing to change afterwards.
+ * RFC 7800's `cnf` (confirmation) claim: the key the presenter must prove possession of. The
+ * registered claim for the job, so the wire format is standard rather than a house invention.
  *
- * The member is `kid` rather than `jwk`. RFC 7800 §3.4 leaves `kid`'s content application-specific
- * and expects the recipient to be able to turn it into a key; here the identifier **is** the key —
- * a multicodec-tagged, multibase-encoded public key, self-describing and requiring no lookup —
- * which is the same `kid` convention `did:kokuin:` already fixed for token headers, and the same
- * encoding a controller log uses for the keys in `k`. `cnf.jwk` is the strictly by-value member and
- * would be defensible, but it would put a second encoding of the same key next to the one this
- * stack already has, add JWK serialisation and canonical comparison to a package with neither, and
- * buy nothing that the tagged multibase form does not already carry.
+ * The member is `kid`, not `jwk`: here the identifier **is** the key (multicodec-tagged multibase,
+ * self-describing, no lookup) — the same `kid` convention `did:kokuin:` fixed for headers and the
+ * encoding a controller log uses for `k`. `cnf.jwk` would add a second encoding, JWK serialisation,
+ * and canonical comparison, buying nothing the tagged form does not.
  *
- * Only `kid` is understood. Any other member — including a legitimate RFC 7800 `jwk`, `jwe` or
- * `jku` — fails closed rather than being resolved, because resolving is the bug this claim exists
- * to remove. The type stays open so that carrying one is a typing question rather than a cast: the
- * claim's extensibility has to be real in the type, not only on the wire, or "add `jwk` alongside
- * later" is a promise TypeScript will not let a caller keep.
+ * Only `kid` is understood; any other member (a legitimate `jwk`, `jwe`, `jku`) fails closed rather
+ * than resolving, because resolving is the bug this claim removes. The type stays open so carrying
+ * one is a typing question, not a cast — the extensibility has to be real in the type, not only wire.
  */
 export type ConfirmationClaim = { kid?: string; [member: string]: unknown }
 
@@ -179,21 +157,13 @@ function isStringOrStringArray(value: unknown): value is string | Array<string> 
   return false
 }
 
-// Valid pattern: alphanumeric, hyphens, underscores, dots, colons, the DID fragment marker, slashes,
-// and a trailing wildcard. Components are separated by '/'. Wildcard '*' is only valid as the entire
-// last component.
-//
-// `#` is here because a resource may be a key. A `did:kokuin:` `rev` event names its target either
-// as a DID or as `#<the multibase key exactly as it appears in `k`>` — the `kid` spelling — and the
-// revoke permission is `{ act: 'revoke', res: <target> }`. Without `#` the *only* grant that could
-// authorise revoking a key would be `res: '*'`, since a wildcard has to be a whole component: an
-// owner delegating "you may retire this one leaked key" would have had to delegate "you may revoke
-// anything", which is the opposite of what an attenuated grant is for.
-//
-// Widening this set cannot invalidate an existing capability, and `#` is inert to the matcher —
-// components are compared whole, only `/` separates and only a standalone `*` wildcards, so `#abc`
-// matches `#abc` and nothing else. It is not a licence for arbitrary punctuation: each addition has
-// to name the resource vocabulary that needs it.
+// Valid component: alphanumeric, `-_.:#`. Components are '/'-separated; '*' wildcards only as a whole
+// last component. `#` is here because a resource may be a key — a `did:kokuin:` `rev` names its
+// target as a DID or `#<key>`, and `{ act: 'revoke', res: <target> }`. Without `#` the only grant
+// that could revoke a key would be `res: '*'`, so "retire this one leaked key" would mean "revoke
+// anything". `#` is inert to the matcher (components compared whole), so widening this set cannot
+// invalidate an existing capability. Not a licence for arbitrary punctuation: each addition names the
+// vocabulary that needs it.
 const VALID_COMPONENT_RE = /^[a-zA-Z0-9_\-.:#]+$/
 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional check for control characters
 const CONTROL_CHAR_RE = /[\x00-\x1f]/
@@ -452,12 +422,9 @@ export function assertValidIssuedAt(payload: { iat?: number }, atTime?: number):
 }
 
 /**
- * Reject a token that is not yet valid.
- *
- * The third registered time claim, and the one this package had no check for. `verifyToken` enforces
- * it on every token it verifies, so a chain link is covered — but a payload handed straight to
- * `checkCapability` never passes through `verifyToken` here, and `exp` and `iat` were the only two
- * such a payload was checked for.
+ * Reject a token that is not yet valid — the third registered time claim. `verifyToken` enforces it
+ * on every token it verifies, so a chain link is covered, but a payload handed straight to
+ * `checkCapability` never passes through it and was checked only for `exp` and `iat`.
  */
 export function assertValidNotBefore(payload: { nbf?: number }, atTime?: number): void {
   if (payload.nbf != null && payload.nbf > (atTime ?? now())) {
@@ -498,53 +465,36 @@ export const DENY_SET_UNAVAILABLE =
   'Invalid capability: no resolver for the subject, so its deny set cannot be checked'
 
 /**
- * Whether a DID's own identifier carries the material needed to verify against it, so that no
- * registry entry is required and no deny set can be silently skipped.
- *
- * `did:key` **is** its key. `did:peer` is self-contained in the same sense: a long form embeds the
- * document, a short form is a hash of one, and neither has a published deny set for this package to
- * miss. Every other method resolves through the registry, which is where a deny set lives — so its
- * absence means the question was not asked rather than answered.
- *
- * A prefix test rather than a registry lookup, deliberately: the point is to catch the caller who
- * supplied *no* registry, and asking the registry that is missing cannot do that.
+ * Whether a DID's identifier carries its own verification material, so no registry entry is required
+ * and no deny set can be silently skipped. `did:key` **is** its key; `did:peer` is self-contained
+ * (long form embeds the doc, short form hashes one) and neither has a deny set to miss. Every other
+ * method resolves through the registry, where a deny set lives, so its absence means the question was
+ * not asked. A prefix test, not a registry lookup: the point is to catch the caller who supplied *no*
+ * registry, which asking the missing registry cannot do.
  */
 function carriesOwnKeys(did: string): boolean {
   return did.startsWith('did:key:') || did.startsWith('did:peer:')
 }
 
 /**
- * Reject a capability whose audience the subject has revoked.
+ * Reject a capability whose audience the subject has revoked. A `did:kokuin:` subject publishes a
+ * deny set in its own key event log ("no capability whose `aud` is that DID is valid from this
+ * position onward"), and nothing else turns that set into a denial (importing the log would cycle),
+ * so the rule travels through `DIDMethodResolver.resolveDenySet` on the registry.
  *
- * The subject of a capability is the party whose resources it grants, and a `did:kokuin:` subject
- * publishes a deny set in its own key event log: "no capability whose `aud` is that DID is valid
- * from this position onward". Nothing else in this stack turns that set into a denial — the log is
- * a `@kokuin/controller` concern and this package cannot import it without a cycle — so the rule
- * travels through `DIDMethodResolver.resolveDenySet` on the registry callers already pass for
- * resolution.
+ * Evaluated against the subject's **current** state, never a position the capability names: `iat` is
+ * backdatable, so a holder could otherwise pick a moment before it was revoked.
  *
- * Evaluated against the subject's **current** state, never against a position the capability names:
- * `iat` is author-supplied and backdatable, so a holder could otherwise choose a moment before it
- * was revoked.
+ * Silent when the subject's method publishes no deny set. A resolver that *has* one and cannot
+ * produce it throws (fails closed). **Not silent when no registry could answer for the subject at
+ * all** — that once matched a chain (the root link is issued by the subject, needing the registry)
+ * but not the `iss === sub` arm, where the caller verified the token itself, so a caller resolving a
+ * `did:kokuin:` subject with their own resolver then omitting `methods` got no enforcement and no
+ * indication. The subject's own method is the test (see {@link carriesOwnKeys}).
  *
- * Silent when the subject's method publishes no deny set — a method with no revocation concept has
- * nothing to enforce. A resolver that *has* a deny set and cannot produce it throws, which fails the
- * chain closed.
- *
- * **Not silent when no registry could answer for the subject at all.** That was justified by "a
- * subject that needs one is a subject `verifyToken` could not have resolved either", which holds for
- * a chain — the root link is issued by the subject, so resolving it needs the registry — and does
- * not hold for the `iss === sub` arm of `checkCapability`, where the caller verified the token
- * itself and hands over a payload. A caller who resolved a `did:kokuin:` subject with their own
- * resolver and then omitted `methods` here got no deny-set enforcement and no indication of it. The
- * subject's own method is the test: `did:key` and `did:peer` carry their material in the identifier
- * and have no deny set to miss, and anything else has one this call cannot see.
- *
- * This is the *holder* half of the set. A `did:kokuin:` deny set also carries `#<multibase key>`
- * entries denying the subject's own signing keys, which are enforced where a key is resolved rather
- * than here — `verifyToken` on every link of the chain already refuses one, and this function could
- * not: it sees `aud`, not the key that signed. The two forms cannot be mistaken for each other, so
- * matching by membership stays exact; enumerating the set would not.
+ * The *holder* half of the set. `#<key>` entries denying the subject's own keys are enforced where a
+ * key is resolved (`verifyToken` on every link), not here — this sees `aud`, not the signing key. The
+ * two forms cannot collide, so membership matching stays exact.
  */
 async function assertAudienceNotRevoked(
   payload: { sub?: unknown; aud?: unknown },
@@ -575,17 +525,12 @@ async function assertAudienceNotRevoked(
 
 /**
  * The grant a `checkCapability` payload makes on its own behalf, or `undefined` when it makes none.
- *
- * That payload is one of two things. An **invocation** names no permission of its own: its whole
- * authority is the chain in `cap`, and the request is what the leaf of that chain has to cover. A
- * **capability presented directly** carries the grant it was minted with — which is what
- * `createControllerCapabilityVerifier` hands over, because a key event carries the capability and no
- * invocation token to wrap it in. Only the second has claims of its own to enforce.
- *
- * `act` and `res` together are what tell the two apart: the pair every capability carries, and that
- * no invocation shape in this stack does (enkaku's names its procedure in `prc`, kubun's names
- * nothing). Dropping the pair is not an escape — a payload without it *is* an invocation, and an
- * invocation's request has always been checked against the leaf capability in `cap`.
+ * The payload is either an **invocation** (no permission of its own; its authority is the `cap`
+ * chain) or a **capability presented directly** (carries its minted grant — what
+ * `createControllerCapabilityVerifier` hands over, a key event having no invocation to wrap it). Only
+ * the second has claims to enforce. `act`+`res` tell them apart: every capability carries the pair,
+ * no invocation shape here does. Dropping it is no escape — a payload without it *is* an invocation,
+ * whose request is checked against the leaf in `cap`.
  */
 function presentedGrant(payload: SignedPayload): Permission | undefined {
   const { act, res } = payload as { act?: unknown; res?: unknown }
@@ -607,14 +552,10 @@ export async function checkDelegationChain(
     throw new Error(`Invalid capability: delegation chain exceeds maximum depth of ${maxDepth}`)
   }
 
-  // Every link passes through here as `payload` — the first parent on the way in from
-  // `checkCapability`, and each further parent as the recursion walks up — so one call covers the
-  // whole chain above the payload `checkCapability` was handed. A revoked *intermediate* is the
-  // case a per-leaf check would miss. The audience of a capability presented directly to
-  // `checkCapability` is below that walk and is checked there, not here.
-  //
-  // After the depth bound, not before: this one may fold a log, and the bound is what stops a
-  // caller-supplied chain from deciding how much of that work happens.
+  // Every link passes through here as `payload`, so one call covers the whole chain above the payload
+  // `checkCapability` was handed — a revoked *intermediate* is what a per-leaf check misses. After the
+  // depth bound, not before: this may fold a log, and the bound stops a caller-supplied chain
+  // deciding how much of that work happens.
   await assertAudienceNotRevoked(payload, options)
 
   if (capabilities.length === 0) {
@@ -647,19 +588,14 @@ export async function checkDelegationChain(
 }
 
 /**
- * Check that `payload` authorises `permission`.
+ * Check that `payload` authorises `permission`. `payload` is either an invocation (authority is
+ * entirely the `cap` chain) or a capability presented directly (carries its own grant — a
+ * `did:kokuin:` revoke event has no invocation to wrap it, so
+ * `createControllerCapabilityVerifier` presents the capability itself). See {@link presentedGrant}.
  *
- * `payload` is either an invocation — a token naming the capabilities it invokes in `cap`, whose
- * authority is entirely that chain — or a capability presented directly, which carries a grant of
- * its own. The second is not the exotic case: a `did:kokuin:` revoke event names a capability and
- * has no invocation token to wrap it in, so `createControllerCapabilityVerifier` presents the
- * capability itself. See {@link presentedGrant} for how the two are told apart, and why an attacker
- * gains nothing by presenting one as the other.
- *
- * A presented capability's own claims bind exactly like any other link's: the request must be
- * within *its* grant and not merely within its parent's, and its audience is subject to the
- * subject's deny set. Checking only its ancestors made attenuation at the last hop a no-op and left
- * the deny set blind to the one party actually holding the capability.
+ * A presented capability's own claims bind like any link's: the request must be within *its* grant,
+ * not merely its parent's, and its audience is subject to the deny set. Checking only its ancestors
+ * made attenuation at the last hop a no-op and left the deny set blind to the actual holder.
  */
 export async function checkCapability(
   permission: Permission,
@@ -677,9 +613,9 @@ export async function checkCapability(
     assertNonExpired(payload, time)
     assertValidNotBefore(payload as { nbf?: number }, time)
     assertValidIssuedAt(payload as { iat?: number }, time)
-    // This branch never reaches `checkDelegationChain`, so it needs the audience check of its own.
-    // It is also the shape `createControllerCapabilityVerifier` takes: an undelegated management
-    // capability, minted by the profile for one of its own devices, is exactly `iss === sub`.
+    // This branch never reaches `checkDelegationChain`, so it needs its own audience check. Also the
+    // shape `createControllerCapabilityVerifier` takes: an undelegated management capability minted by
+    // the profile for its own device is exactly `iss === sub`.
     await assertAudienceNotRevoked(payload, options)
 
     // Validate that the token grants the requested permission
@@ -706,12 +642,10 @@ export async function checkCapability(
     if (!hasPermission(permission, grant)) {
       throw new Error('Invalid capability: permission not granted')
     }
-    // A presented capability's own time claims are checked nowhere else. It never passes through
-    // `verifyToken` here — the caller verified it and handed over the payload — and the chain walk
-    // below starts at its parent, so an expired, not-yet-valid or future-dated capability was
-    // accepted on this arm at any reference time. The same three claims the `iss === sub` arm
-    // above checks, at the same `time`, because the two arms differ in how authority is derived
-    // and not in when a token is valid.
+    // A presented capability's own time claims are checked nowhere else: it never passes through
+    // `verifyToken` here and the walk below starts at its parent, so without this an expired,
+    // not-yet-valid or future-dated capability was accepted on this arm. Same three claims and `time`
+    // as the `iss === sub` arm — the arms differ in how authority is derived, not when a token is valid.
     assertNonExpired(payload, time)
     assertValidNotBefore(payload as { nbf?: number }, time)
     assertValidIssuedAt(payload as { iat?: number }, time)
@@ -725,12 +659,10 @@ export async function checkCapability(
   if (head == null) {
     throw new Error('Invalid payload: no capability')
   }
-  // Count `head` against the bound here, because this entry point peels it off before
-  // `checkDelegationChain` applies the bound to what is left. Without this the default of four
-  // admits five links — one more than "maximum delegation links an offline verifier will walk"
-  // says, and the extra one is free to an attacker who controls the chain's length. The bound
-  // inside `checkDelegationChain` stays as it is: a direct caller passes the whole chain, so
-  // there `capabilities.length` already is the link count.
+  // Count `head` against the bound here, since this entry point peels it off before
+  // `checkDelegationChain` applies the bound to the rest — without this, four admits five links, the
+  // extra one free to an attacker controlling chain length. The bound inside `checkDelegationChain`
+  // stays: a direct caller passes the whole chain, so there `capabilities.length` is the link count.
   const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH
   if (tail.length + 1 > maxDepth) {
     throw new Error(`Invalid capability: delegation chain exceeds maximum depth of ${maxDepth}`)
@@ -750,20 +682,18 @@ export async function checkCapability(
     await options.verifyToken(capability, head)
   }
 
-  // The presented capability's audience is the party that actually holds it, and it is the one
-  // audience the walk below never reaches — `checkDelegationChain` starts at the parent, whose
-  // `aud` is the delegating party. Without this a device the subject has revoked keeps invoking
-  // through one level of delegation. After the parent has verified, matching the reason the same
-  // check sits after the depth bound in `checkDelegationChain`: resolving a deny set may fold a
-  // log, and nothing a caller supplies should decide how much of that work happens.
+  // The presented capability's audience is the actual holder, and the one audience the walk never
+  // reaches (`checkDelegationChain` starts at the parent). Without this a device the subject revoked
+  // keeps invoking through one delegation level. After the parent verifies, and after the depth bound,
+  // for the same reason as in `checkDelegationChain`: a deny set may fold a log.
   if (grant != null) {
     await assertAudienceNotRevoked(payload, options)
   }
 
-  // Against its own grant when it has one: the parent has to cover what the presented capability
-  // grants, not merely what this request asks for. The two together are the attenuation rule —
-  // request within the grant, grant within the parent — and spreading `permission` over the payload
-  // collapsed them into the second, discarding whatever narrowing the last hop applied.
+  // Against its own grant when it has one: the parent must cover what the presented capability grants,
+  // not merely this request. Both together are the attenuation rule (request within grant, grant
+  // within parent); spreading `permission` over the payload collapsed them, dropping the last hop's
+  // narrowing.
   const toCapability = (
     grant == null ? { ...payload, ...permission } : payload
   ) as CapabilityPayload
@@ -771,10 +701,9 @@ export async function checkCapability(
   await checkDelegationChain(capability.payload, tail, { ...options, atTime: time })
 }
 
-// Re-exported so catching the fail-closed throw needs nothing but this package. `@kokuin/token`
-// is a plain dependency here, not a peer, so a consumer without it would otherwise have to add a
-// direct dependency on token to name the error — the very duplication that makes a cross-copy
-// `instanceof` unreliable.
+// Re-exported so catching the fail-closed throw needs nothing but this package: `@kokuin/token` is a
+// plain dependency, not a peer, so a consumer would otherwise add a direct token dependency to name
+// the error — the duplication that makes a cross-copy `instanceof` unreliable.
 export {
   isUnresolvableIssuerError,
   UnresolvableIssuerError,
