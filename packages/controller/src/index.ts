@@ -13,6 +13,7 @@
 export {
   canonicalBytes,
   digestOf,
+  isCanonicalizable,
   MAX_CANONICAL_DEPTH,
   verifyDigest,
   withinCanonicalDepth,

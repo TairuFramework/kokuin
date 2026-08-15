@@ -2,7 +2,7 @@ import type { DIDString, ResolvedSigningKey } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { base64urlnopad } from '@scure/base'
 
-import { canonicalBytes, digestOf } from './canonical.js'
+import { canonicalBytes, digestOf, isCanonicalizable } from './canonical.js'
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from './derivation.js'
 import { decodeKey, encodeKey, tryDecodeKey } from './keys.js'
 
@@ -102,7 +102,19 @@ function verifyAgreementKeys(ka: Array<string>): boolean {
   return true
 }
 
-/** Total: a malformed signature or key yields false rather than throwing. */
+/**
+ * Total: a malformed signature or key yields false rather than throwing.
+ *
+ * That includes an event body the canonicalizer refuses. This function is exported and documented
+ * total, and `canonicalBytes` below is a throw for a body carrying a non-finite number or nesting
+ * past `MAX_CANONICAL_DEPTH` — both of which arrive from `JSON.parse`. The fold's envelope guard
+ * already rejects such a body one layer out, so this check is unreachable through `foldLog`; it
+ * stays because a direct caller reaches this function with a parsed body and nothing else, and
+ * because "total" has to be true of the export rather than of one path into it.
+ *
+ * `false` is the honest answer: a body with no canonical encoding has no bytes for a signature to
+ * be over, so no signature verifies against it.
+ */
 export function verifySignatures(
   event: EventCommon,
   sigs: Array<string>,
@@ -112,6 +124,9 @@ export function verifySignatures(
     return false
   }
   if (sigs.length !== keys.length || sigs.length === 0) {
+    return false
+  }
+  if (!isCanonicalizable(event)) {
     return false
   }
   const bytes = canonicalBytes(event)
@@ -140,10 +155,10 @@ export function verifySignatures(
  * exactly this and nothing more: its author is the capability's `aud`, which the fold cannot
  * resolve, so it is handed the key and checks the signature itself.
  *
- * Total: a malformed signature, or an algorithm this log's events cannot be signed with, yields
- * `false`. Only EdDSA is accepted, because that is all {@link signEvent} produces — an ES256
- * audience therefore cannot author a revoke, which fails closed and is the honest answer until
- * events grow a second signature algorithm.
+ * Total: a malformed signature, an event body with no canonical encoding, or an algorithm this
+ * log's events cannot be signed with all yield `false`. Only EdDSA is accepted, because that is all
+ * {@link signEvent} produces — an ES256 audience therefore cannot author a revoke, which fails
+ * closed and is the honest answer until events grow a second signature algorithm.
  */
 export function verifyEventSignedBy(signed: SignedEvent, key: ResolvedSigningKey): boolean {
   // `sigs` needs no array check of its own, and this is the rule the whole file applies: **a guard
@@ -159,6 +174,13 @@ export function verifyEventSignedBy(signed: SignedEvent, key: ResolvedSigningKey
   // stay, because the shapes they reject do arrive from `JSON.parse` and only reach a rejection at
   // all because something checks.
   if (key.alg !== 'EdDSA' || signed.sigs.length === 0) {
+    return false
+  }
+  // Unreachable through the fold — `isSignedEventShape` has already established that this body can
+  // be canonicalized — and kept by the rule stated above: the value it inspects reaches it in the
+  // shape it rejects whenever a caller reaches this function with a parsed body directly, and
+  // `canonicalBytes` is a throw rather than an answer for one.
+  if (!isCanonicalizable(signed.event)) {
     return false
   }
   const bytes = canonicalBytes(signed.event)

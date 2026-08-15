@@ -13,6 +13,10 @@ describe('public surface', () => {
       // its own needs both the limit and the total predicate the fold uses to stay off it.
       'MAX_CANONICAL_DEPTH',
       'withinCanonicalDepth',
+      // Depth is only one of the ways `canonicalBytes` throws, and the other one — a non-finite
+      // number — reaches it straight off the wire. This is the predicate that answers the whole
+      // question, and the one the fold's envelope guard asks.
+      'isCanonicalizable',
       'authorityPath',
       'agreementPath',
       'recoveryPath',

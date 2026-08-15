@@ -1,6 +1,6 @@
 import type { DIDMethodResolver, ResolvedSigningKey } from '@kokuin/token'
 
-import { digestOf, withinCanonicalDepth } from './canonical.js'
+import { digestOf, isCanonicalizable } from './canonical.js'
 import {
   type InceptionEvent,
   type RevokeEvent,
@@ -184,12 +184,17 @@ export const CAPABILITY_REVOKE_NEEDS_VERIFIER = 'capability-authorised revoke ne
  * Only the envelope is checked here. What the event *body* must contain depends on `t`, so that
  * stays with each verifier.
  *
- * The body's nesting *depth* is checked here too, and it is the one size question this guard asks.
- * Every path out of this function canonicalizes the whole body — the signature check hashes it,
- * `digestOf` chains it — and the canonicalizer recurses once per level, so an event carrying a
- * member the fold never reads still decides how much stack it uses. `JSON.parse` accepts unbounded
- * depth, so that is ordinary wire input. Shape and size are the same failure here: an event body
- * this package could not have produced and cannot hash is a malformed event.
+ * Whether the body can be canonicalized at all is checked here too. Every path out of this function
+ * canonicalizes the whole body — the signature check hashes it, `digestOf` chains it — so a body
+ * the canonicalizer refuses is one this function's callers cannot proceed on, and both of the ways
+ * it refuses arrive as ordinary wire input. Nesting: the canonicalizer recurses once per level and
+ * `JSON.parse` accepts unbounded depth, so an event carrying a member the fold never reads still
+ * decides how much stack it uses. Numbers: `1e400` parses to `Infinity`, which has no encoding —
+ * and reached `canonicalize` as a *throw*, from inside a fold documented total, which one hostile
+ * branch used to take `resolveBranches` down for every honest branch beside it.
+ *
+ * Both are the same failure as a bad shape: an event body this package could not have produced and
+ * cannot hash is a malformed event, and says so with a `FoldResult` rather than an exception.
  */
 function isSignedEventShape(value: unknown): value is SignedEvent {
   if (value == null || typeof value !== 'object') {
@@ -205,9 +210,9 @@ function isSignedEventShape(value: unknown): value is SignedEvent {
   if (signed.recoveryKey !== undefined && typeof signed.recoveryKey !== 'string') {
     return false
   }
-  // The body is what gets canonicalized, and it is canonicalized as the top-level value — so the
-  // depth counted here is the depth the canonicalizer will count.
-  return withinCanonicalDepth(signed.event)
+  // The body is what gets canonicalized, and it is canonicalized as the top-level value — so what
+  // is judged here is exactly what the canonicalizer will be handed.
+  return isCanonicalizable(signed.event)
 }
 
 type StepOutcome =

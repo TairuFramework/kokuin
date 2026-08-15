@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'vitest'
 
-import { canonicalBytes, MAX_CANONICAL_DEPTH, withinCanonicalDepth } from '../src/canonical.js'
+import {
+  canonicalBytes,
+  digestOf,
+  isCanonicalizable,
+  MAX_CANONICAL_DEPTH,
+  withinCanonicalDepth,
+} from '../src/canonical.js'
 import { authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
 import {
   createInception,
@@ -651,6 +657,60 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
     const cyclic: Record<string, unknown> = {}
     cyclic.self = cyclic
     expect(withinCanonicalDepth(cyclic)).toBe(false)
+  })
+
+  test('isCanonicalizable agrees with canonicalBytes on every reason it throws', () => {
+    // The predicate the fold's envelope guard asks. `withinCanonicalDepth` answers only the depth
+    // half, and the other half — a non-finite number — arrives from `JSON.parse` just as readily,
+    // which is how a throw escaped a fold documented total.
+    const refused: Array<[string, unknown]> = [
+      ['Infinity from the wire', JSON.parse('{"junk":1e400}')],
+      ['-Infinity from the wire', JSON.parse('{"junk":-1e400}')],
+      ['NaN', { junk: Number.NaN }],
+      ['Infinity nested in an array', { k: [1, Number.POSITIVE_INFINITY] }],
+      ['a bigint', { junk: 1n }],
+      ['a function', { junk: () => 1 }],
+      ['a symbol', { junk: Symbol('x') }],
+      ['a class instance', { junk: new Date() }],
+      ['too deep', nest(MAX_CANONICAL_DEPTH)],
+    ]
+    for (const [label, value] of refused) {
+      expect(isCanonicalizable(value), label).toBe(false)
+      expect(() => canonicalBytes(value), label).toThrow()
+    }
+
+    const accepted: Array<[string, unknown]> = [
+      ['a plain event body', { v: 1, t: 'icp', k: ['zAbc'], crit: true }],
+      ['null', { junk: null }],
+      // `undefined` members are dropped by the canonicalizer rather than encoded, so they are not
+      // a reason to refuse — the predicate has to mirror that or it rejects bodies that encode.
+      ['an undefined member', { junk: undefined, v: 1 }],
+      ['-0', JSON.parse('{"junk":-0}')],
+      ['2^53 + 1', JSON.parse('{"junk":9007199254740993}')],
+      ['1e21', JSON.parse('{"junk":1e21}')],
+      ['a null-prototype object', Object.assign(Object.create(null), { v: 1 })],
+      ['at the depth bound', nest(MAX_CANONICAL_DEPTH - 1)],
+    ]
+    for (const [label, value] of accepted) {
+      expect(isCanonicalizable(value), label).toBe(true)
+      expect(() => canonicalBytes(value), label).not.toThrow()
+    }
+
+    // The two spellings this canonicalizer deliberately does not separate, pinned so that a change
+    // to either is deliberate. `-0` encodes as `0` (JCS / ES6 `Number::toString`), and `JSON.parse`
+    // collapses 2^53 + 1 to 2^53 before anything here sees it — so in both cases the shared digest
+    // names one value rather than two.
+    expect(digestOf({ n: -0 })).toBe(digestOf({ n: 0 }))
+    expect(digestOf(JSON.parse('{"n":9007199254740993}'))).toBe(
+      digestOf(JSON.parse('{"n":9007199254740992}')),
+    )
+    expect(digestOf(JSON.parse('{"n":1e2}'))).toBe(digestOf({ n: 100 }))
+  })
+
+  test('a cyclic value is answered rather than hung, by both predicates', () => {
+    const cyclic: Record<string, unknown> = {}
+    cyclic.self = cyclic
+    expect(isCanonicalizable(cyclic)).toBe(false)
   })
 })
 
