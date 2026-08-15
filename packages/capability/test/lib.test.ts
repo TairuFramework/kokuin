@@ -1374,6 +1374,120 @@ describe('verifyToken hook', () => {
   })
 })
 
+describe('checkCapability() - a capability presented directly rather than invoked', () => {
+  // The shape `createControllerCapabilityVerifier` hands over: a key event names a capability and
+  // carries no invocation token, so the capability's own payload is what reaches `checkCapability`.
+  // Its own claims are the last hop of the chain and have to bind like any other link's.
+  async function presented(): Promise<{
+    root: ReturnType<typeof randomIdentity>
+    manager: ReturnType<typeof randomIdentity>
+    device: ReturnType<typeof randomIdentity>
+    leaf: CapabilityPayload
+    parent: string
+  }> {
+    const root = randomIdentity()
+    const manager = randomIdentity()
+    const device = randomIdentity()
+    // root → manager: write anything. manager → device: write `doc/1` only.
+    const parent = stringifyToken(
+      await createCapability(root, {
+        sub: root.id,
+        aud: manager.id,
+        act: 'write',
+        res: '*',
+        exp: now() + 3600,
+      }),
+    )
+    const leafToken = await createCapability(
+      manager,
+      {
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: 'doc/1',
+        exp: now() + 3600,
+        cap: [parent],
+      },
+      undefined,
+      { parentCapability: parent },
+    )
+    return { root, manager, device, leaf: leafToken.payload as CapabilityPayload, parent }
+  }
+
+  test('the presented capability grants what it names', async () => {
+    const { leaf } = await presented()
+    await expect(
+      checkCapability({ act: 'write', res: 'doc/1' }, leaf as never),
+    ).resolves.not.toThrow()
+  })
+
+  test('a request the presented capability does not name is refused, whatever its parent grants', async () => {
+    const { leaf } = await presented()
+    // The parent grants `write *`, so before the presented capability's own `res` was checked this
+    // was accepted — the narrowing at the last hop was a no-op.
+    await expect(checkCapability({ act: 'write', res: 'doc/999' }, leaf as never)).rejects.toThrow(
+      'Invalid capability: permission not granted',
+    )
+  })
+
+  test('an action the presented capability does not name is refused', async () => {
+    const { root, manager, device, parent } = await presented()
+    // Hand-signed: the mint path refuses a different action, and an attacker holding the key
+    // signs whatever it likes. Only `act` differs from the capability the mint path would produce.
+    const widened = await manager.signToken({
+      sub: root.id,
+      aud: device.id,
+      act: 'read',
+      res: '*',
+      exp: now() + 3600,
+      cap: [parent],
+    })
+    await expect(checkCapability({ act: 'write', res: 'doc/1' }, widened.payload)).rejects.toThrow(
+      'Invalid capability: permission not granted',
+    )
+  })
+
+  test('the parent still has to cover the presented capability, not merely the request', async () => {
+    const { root, manager, device, parent } = await presented()
+    // A leaf claiming more than its parent granted: `delete` was never delegated. The request is
+    // within the leaf, so only the leaf-against-parent comparison can refuse it.
+    const overreaching = await manager.signToken({
+      sub: root.id,
+      aud: device.id,
+      act: ['write', 'delete'],
+      res: '*',
+      exp: now() + 3600,
+      cap: [parent],
+    })
+    await expect(
+      checkCapability({ act: 'delete', res: 'doc/1' }, overreaching.payload),
+    ).rejects.toThrow('Invalid capability: permission mismatch')
+  })
+
+  test('an invocation names no grant of its own and is still checked against its chain', async () => {
+    const root = randomIdentity()
+    const device = randomIdentity()
+    const capability = stringifyToken(
+      await createCapability(root, {
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: 'doc/1',
+        exp: now() + 3600,
+      }),
+    )
+    // The invocation shape: `act`/`res` absent, authority entirely in `cap`. Dropping the pair is
+    // no escape — the leaf capability of the chain is what the request is checked against.
+    const invocation = { iss: device.id, sub: root.id, cap: [capability] }
+    await expect(
+      checkCapability({ act: 'write', res: 'doc/1' }, invocation as never),
+    ).resolves.not.toThrow()
+    await expect(
+      checkCapability({ act: 'write', res: 'doc/999' }, invocation as never),
+    ).rejects.toThrow('Invalid capability: permission mismatch')
+  })
+})
+
 describe('assertCapabilityToken with non-token input', () => {
   test('throws a domain error, not a TypeError', () => {
     expect(() => assertCapabilityToken(null)).toThrow('Invalid token: not a capability')

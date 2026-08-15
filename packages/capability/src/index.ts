@@ -477,6 +477,28 @@ async function assertAudienceNotRevoked(
   }
 }
 
+/**
+ * The grant a `checkCapability` payload makes on its own behalf, or `undefined` when it makes none.
+ *
+ * That payload is one of two things. An **invocation** names no permission of its own: its whole
+ * authority is the chain in `cap`, and the request is what the leaf of that chain has to cover. A
+ * **capability presented directly** carries the grant it was minted with — which is what
+ * `createControllerCapabilityVerifier` hands over, because a key event carries the capability and no
+ * invocation token to wrap it in. Only the second has claims of its own to enforce.
+ *
+ * `act` and `res` together are what tell the two apart: the pair every capability carries, and that
+ * no invocation shape in this stack does (enkaku's names its procedure in `prc`, kubun's names
+ * nothing). Dropping the pair is not an escape — a payload without it *is* an invocation, and an
+ * invocation's request has always been checked against the leaf capability in `cap`.
+ */
+function presentedGrant(payload: SignedPayload): Permission | undefined {
+  const { act, res } = payload as { act?: unknown; res?: unknown }
+  if (!isStringOrStringArray(act) || !isStringOrStringArray(res)) {
+    return undefined
+  }
+  return { act, res }
+}
+
 export async function checkDelegationChain(
   payload: CapabilityPayload,
   capabilities: Array<string>,
@@ -489,9 +511,11 @@ export async function checkDelegationChain(
     throw new Error(`Invalid capability: delegation chain exceeds maximum depth of ${maxDepth}`)
   }
 
-  // Every link passes through here as `payload` — the leaf on the way in from `checkCapability`,
-  // and each parent as the recursion walks up — so one call covers the whole chain. A revoked
-  // *intermediate* is the case a per-leaf check would miss.
+  // Every link passes through here as `payload` — the first parent on the way in from
+  // `checkCapability`, and each further parent as the recursion walks up — so one call covers the
+  // whole chain above the payload `checkCapability` was handed. A revoked *intermediate* is the
+  // case a per-leaf check would miss. The audience of a capability presented directly to
+  // `checkCapability` is below that walk and is checked there, not here.
   //
   // After the depth bound, not before: this one may fold a log, and the bound is what stops a
   // caller-supplied chain from deciding how much of that work happens.
@@ -524,6 +548,21 @@ export async function checkDelegationChain(
   await checkDelegationChain(next.payload, tail, { ...options, atTime })
 }
 
+/**
+ * Check that `payload` authorises `permission`.
+ *
+ * `payload` is either an invocation — a token naming the capabilities it invokes in `cap`, whose
+ * authority is entirely that chain — or a capability presented directly, which carries a grant of
+ * its own. The second is not the exotic case: a `did:kokuin:` revoke event names a capability and
+ * has no invocation token to wrap it in, so `createControllerCapabilityVerifier` presents the
+ * capability itself. See {@link presentedGrant} for how the two are told apart, and why an attacker
+ * gains nothing by presenting one as the other.
+ *
+ * A presented capability's own claims bind exactly like any other link's: the request must be
+ * within *its* grant and not merely within its parent's, and its audience is subject to the
+ * subject's deny set. Checking only its ancestors made attenuation at the last hop a no-op and left
+ * the deny set blind to the one party actually holding the capability.
+ */
 export async function checkCapability(
   permission: Permission,
   payload: SignedPayload,
@@ -560,6 +599,14 @@ export async function checkCapability(
     return
   }
 
+  // The grant the payload makes on its own behalf, when it makes one. Checked before anything is
+  // resolved or verified: it costs nothing, and a request outside the presented grant is refused
+  // whatever its ancestors say.
+  const grant = presentedGrant(payload)
+  if (grant != null && !hasPermission(permission, grant)) {
+    throw new Error('Invalid capability: permission not granted')
+  }
+
   if (payload.cap == null) {
     throw new Error('Invalid payload: no capability')
   }
@@ -581,7 +628,23 @@ export async function checkCapability(
     await options.verifyToken(capability, head)
   }
 
-  const toCapability = { ...payload, ...permission } as CapabilityPayload
+  // The presented capability's audience is the party that actually holds it, and it is the one
+  // audience the walk below never reaches — `checkDelegationChain` starts at the parent, whose
+  // `aud` is the delegating party. Without this a device the subject has revoked keeps invoking
+  // through one level of delegation. After the parent has verified, matching the reason the same
+  // check sits after the depth bound in `checkDelegationChain`: resolving a deny set may fold a
+  // log, and nothing a caller supplies should decide how much of that work happens.
+  if (grant != null) {
+    await assertAudienceNotRevoked(payload, options)
+  }
+
+  // Against its own grant when it has one: the parent has to cover what the presented capability
+  // grants, not merely what this request asks for. The two together are the attenuation rule —
+  // request within the grant, grant within the parent — and spreading `permission` over the payload
+  // collapsed them into the second, discarding whatever narrowing the last hop applied.
+  const toCapability = (
+    grant == null ? { ...payload, ...permission } : payload
+  ) as CapabilityPayload
   assertValidDelegation(capability.payload, toCapability, time)
   await checkDelegationChain(capability.payload, tail, { ...options, atTime: time })
 }

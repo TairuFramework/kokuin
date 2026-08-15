@@ -314,6 +314,70 @@ describe('a capability presented directly, without an invocation', () => {
       checkCapability({ act: 'revoke', res: 'doc/1' }, cap.payload, { methods }),
     ).rejects.toThrow(/audience is revoked/)
   })
+
+  test('a delegated one is rejected once its own audience is revoked', async () => {
+    // The delegated branch, where the chain walk starts at the *parent*: only the presented
+    // capability's own audience check catches this, because `delegate` appears nowhere above it.
+    const manager = randomIdentity()
+    const rootRaw = stringifyToken(
+      await createCapability(
+        controller,
+        { sub: did, aud: manager.id, act: 'revoke', res: '*', exp: now() + 3600 },
+        undefined,
+        { methods },
+      ),
+    )
+    const leaf = await createCapability(
+      manager,
+      { sub: did, aud: delegate.id, act: 'revoke', res: '*', exp: now() + 3600, cap: [rootRaw] },
+      undefined,
+      { parentCapability: rootRaw, methods },
+    )
+
+    // Control: nobody revoked, and the same presented capability authorises.
+    await expect(
+      checkCapability({ act: 'revoke', res: 'doc/1' }, leaf.payload, { methods }),
+    ).resolves.toBeUndefined()
+
+    // Control: revoking the *manager* — the audience the chain walk does reach — is refused, so
+    // the deny set is live for this capability whichever link carries the revoked audience.
+    log = [inception, revokeOf(manager.id)]
+    await expect(
+      checkCapability({ act: 'revoke', res: 'doc/1' }, leaf.payload, { methods }),
+    ).rejects.toThrow(`Invalid capability: audience is revoked by the subject: ${manager.id}`)
+
+    log = [inception, revokeOf(delegate.id)]
+    await expect(
+      checkCapability({ act: 'revoke', res: 'doc/1' }, leaf.payload, { methods }),
+    ).rejects.toThrow(`Invalid capability: audience is revoked by the subject: ${delegate.id}`)
+  })
+
+  test('a delegated one grants only what it names, not what its parent named', async () => {
+    // The parent grants `revoke *`; the leaf narrows to `doc/1`. Presenting the leaf for anything
+    // else has to fail on the leaf's own `res`, since the parent covers it.
+    const manager = randomIdentity()
+    const rootRaw = stringifyToken(
+      await createCapability(
+        controller,
+        { sub: did, aud: manager.id, act: 'revoke', res: '*', exp: now() + 3600 },
+        undefined,
+        { methods },
+      ),
+    )
+    const leaf = await createCapability(
+      manager,
+      { sub: did, aud: delegate.id, act: 'revoke', res: 'doc/1', exp: now() + 3600, cap: [rootRaw] },
+      undefined,
+      { parentCapability: rootRaw, methods },
+    )
+
+    await expect(
+      checkCapability({ act: 'revoke', res: 'doc/1' }, leaf.payload, { methods }),
+    ).resolves.toBeUndefined()
+    await expect(
+      checkCapability({ act: 'revoke', res: 'doc/2' }, leaf.payload, { methods }),
+    ).rejects.toThrow('Invalid capability: permission not granted')
+  })
 })
 
 describe('the deny set inside the fold: who may author a capability-authorised revoke', () => {
