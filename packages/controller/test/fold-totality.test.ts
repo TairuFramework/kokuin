@@ -602,23 +602,25 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
 
   // 5000 is past the stack, not merely past the bound: before the guard each of these threw a
   // `RangeError` out of the fold. The member is one no verifier reads, so nothing but the envelope
-  // guard has a reason to look at it.
-  const wire = (value: unknown) => JSON.parse(JSON.stringify(value)) as Array<SignedEvent>
+  // guard has a reason to look at it. `nest` builds the deep member directly (see there) — a
+  // `JSON.stringify` clone of it here would itself recurse per level and exhaust the stack at suite
+  // collection on a runtime with a smaller default stack (Node 24), so the fixtures use the plain
+  // wire-form value as-is.
   const abyss = () => nest(5000)
   const chasms: Array<[string, Array<SignedEvent>, FoldResult]> = [
     [
       'an inception carrying an unread member 5000 levels deep',
-      wire([{ ...icp, event: { ...icp.event, zz: abyss() } }]),
+      [{ ...icp, event: { ...icp.event, zz: abyss() } }] as Array<SignedEvent>,
       { ok: false, reason: 'malformed event', index: 0 },
     ],
     [
       'a rotate carrying an unread member 5000 levels deep',
-      wire([icp, { ...rot, event: { ...rot.event, zz: abyss() } }]),
+      [icp, { ...rot, event: { ...rot.event, zz: abyss() } }] as Array<SignedEvent>,
       { ok: false, reason: 'malformed event', index: 1 },
     ],
     [
       'a revoke carrying an unread member 5000 levels deep',
-      wire([
+      [
         icp,
         {
           ...createRevoke({
@@ -641,7 +643,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
             zz: abyss(),
           },
         },
-      ]),
+      ] as Array<SignedEvent>,
       { ok: false, reason: 'malformed event', index: 1 },
     ],
   ]
@@ -682,7 +684,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
         keyPosition: inceptionKeyPosition,
       }),
     ]
-    const hostile = wire([icp, { ...rot, event: { ...rot.event, a: abyss() } }])
+    const hostile = [icp, { ...rot, event: { ...rot.event, a: abyss() } }] as Array<SignedEvent>
 
     const clean = resolveBranches(did, [forkA, forkB])
     expect(clean.ok).toBe(false)
