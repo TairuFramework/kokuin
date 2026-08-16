@@ -54,8 +54,8 @@ describe('canonicalBytes()', () => {
 
   test('sorts non-ASCII keys lexicographically', () => {
     const obj: Record<string, number> = {}
-    obj['ß'] = 1
-    obj['ä'] = 2
+    obj.ß = 1
+    obj.ä = 2
     expect(decoder.decode(canonicalBytes(obj))).toBe('{"ß":1,"ä":2}')
   })
 
