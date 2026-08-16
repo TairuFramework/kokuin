@@ -1,7 +1,16 @@
+import { isFullIdentity } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
-import { authorityPath, deriveKeyPair } from '../src/derivation.js'
-import { createInception, createRevoke, createRotate, didFromInception } from '../src/events.js'
+import { digestOf } from '../src/canonical.js'
+import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
+import {
+  createInception,
+  createRevoke,
+  createRotate,
+  didFromInception,
+  type InceptionEvent,
+  signEvent,
+} from '../src/events.js'
 import type { CapabilityAuthorisation } from '../src/fold.js'
 import { createControllerIdentity, createControllerIdentityAsync } from '../src/identity.js'
 import { encodeKey } from '../src/keys.js'
@@ -348,5 +357,56 @@ describe('createControllerIdentityAsync()', () => {
         log: [inception],
       }),
     ).rejects.toThrow(/is not one of the current authority keys/)
+  })
+})
+
+describe('controller identity is a FullIdentity', () => {
+  test('the seed path yields signing and key agreement bound to the controller DID', async () => {
+    const seed = new Uint8Array(32).fill(11)
+    const profile = 0
+    const inception = createInception(seed, profile)
+    const did = didFromInception(inception.event)
+
+    const identity = createControllerIdentity({ seed, profile, log: [inception] })
+
+    expect(identity.id).toBe(did)
+    expect(isFullIdentity(identity)).toBe(true)
+    // Signing still stamps the authority kid. `event.k[0]` is already the multibase-encoded key.
+    const token = await identity.signToken({ sub: 'x' })
+    expect(token.header.kid).toBe(`#${inception.event.k[0]}`)
+  })
+
+  test('rejects a state whose agreement set omits the derived key', () => {
+    const seed = new Uint8Array(32).fill(12)
+    const profile = 0
+    // Hand-built and re-signed (see `two-key-log.ts`), publishing a valid-but-foreign agreement
+    // key: mutating `ka` on an already-signed inception without re-signing would fail the fold's
+    // signature check first, not the agreement-membership check this test targets.
+    const current = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
+    const next = deriveKeyPair(seed, authorityPath(profile, 0, 1), 'EdDSA')
+    const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
+    const foreignAgreement = deriveKeyPair(
+      new Uint8Array(32).fill(13),
+      agreementPath(profile, 0, 0),
+      'X25519',
+    )
+    const event: InceptionEvent = {
+      v: 1,
+      t: 'icp',
+      g: 0,
+      s: 0,
+      crit: true,
+      k: [encodeKey(current.publicKey, 'EdDSA')],
+      ka: [encodeKey(foreignAgreement.publicKey, 'X25519')],
+      n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
+      kt: 1,
+      nt: 1,
+      r: digestOf(encodeKey(recovery.publicKey, 'EdDSA')),
+    }
+    const tampered = { event, sigs: signEvent(event, [current.privateKey]) }
+
+    expect(() => createControllerIdentity({ seed, profile, log: [tampered] })).toThrow(
+      /agreement key is not one of the current agreement keys/,
+    )
   })
 })

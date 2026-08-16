@@ -224,6 +224,11 @@ export function didFromInception(event: InceptionEvent): DIDString {
   return `${DID_PREFIX}${digestOf(event)}`
 }
 
+/** The did:kokuin: identifier a seed and profile produce, without signing an inception. */
+export function didFor(seed: Uint8Array, profile: number): DIDString {
+  return didFromInception(inceptionEvent(seed, profile))
+}
+
 export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string): boolean {
   if (signed.event.t !== 'icp' || signed.event.i !== undefined) {
     return false

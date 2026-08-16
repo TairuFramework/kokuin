@@ -44,6 +44,7 @@
   },
   "devDependencies": {
     "@kokuin/controller-conformance": "workspace:^",
+    "@kokuin/deterministic": "workspace:^",
     "@kokuin/jwe": "workspace:^"
   },
   "publishConfig": {

@@ -38,6 +38,7 @@ export {
   createFullIdentity,
   createIdentity,
   createKeyAgreementIdentity,
+  createKeyAgreementIdentityForDID,
   createSigningIdentity,
   createSigningIdentityForDID,
   type FullIdentity,
