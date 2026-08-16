@@ -60,19 +60,19 @@ describe('canonicalBytes()', () => {
   })
 
   test('rejects Date objects instead of encoding them as empty objects', () => {
-    expect(() => canonicalBytes({ a: new Date() })).toThrow(/plain objects/)
+    expect(() => canonicalBytes({ a: new Date() })).toThrow(/non-plain/)
   })
 
   test('rejects Map objects instead of encoding them as empty objects', () => {
-    expect(() => canonicalBytes({ a: new Map() })).toThrow(/plain objects/)
+    expect(() => canonicalBytes({ a: new Map() })).toThrow(/non-plain/)
   })
 
   test('rejects Uint8Array instead of encoding numeric keys', () => {
-    expect(() => canonicalBytes({ a: new Uint8Array([1, 2, 3]) })).toThrow(/plain objects/)
+    expect(() => canonicalBytes({ a: new Uint8Array([1, 2, 3]) })).toThrow(/non-plain/)
   })
 
   test('throws on undefined values in arrays rather than encoding as null', () => {
-    expect(() => canonicalBytes({ a: [1, undefined, 2] })).toThrow(/unsupported/)
+    expect(() => canonicalBytes({ a: [1, undefined, 2] })).toThrow(/not canonicalizable/)
   })
 })
 

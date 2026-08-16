@@ -1,53 +1,19 @@
 import { decodeMultibase, encodeMultibase, multihashSHA256, verifyMultihash } from '@kokuin/token'
+import { canonicalize } from '@sozai/json'
 
 const encoder = new TextEncoder()
 
 /**
- * Deepest nesting these functions will encode (top-level value is depth 1). `canonicalize` recurses
- * once per level, so without a bound the depth of untrusted input decides stack use: `JSON.parse` is
- * iterative and accepts unbounded depth, so a few kilobytes of `[[[[…]]]]` on the wire is a
- * `RangeError` thrown from a function every event passes through — and from inside `resolveBranches`,
- * where one hostile branch would take duplicity detection down for every honest one.
- *
- * A bound rather than a `try`/`catch`: catching would still let an attacker drive the stack to
- * exhaustion once per event, and would have to sit at every call site. 64 is far above anything this
- * stack canonicalizes (an event body reaches depth 3) and far below the ~10⁴ frames a JS stack holds.
- * Raising it is safe; lowering below 3 is not. It never changes the encoding of a value it accepts.
+ * Deepest nesting {@link canonicalBytes} will encode (top-level value is depth 1). The RFC 8785
+ * encoder recurses once per level and, like `JSON.stringify`, only fails at native stack exhaustion —
+ * a few kilobytes of `[[[[…]]]]` on the wire would be a `RangeError` thrown from a function every
+ * event passes through, and from inside `resolveBranches` where one hostile branch would take
+ * duplicity detection down for every honest one. So `canonicalBytes` rejects on this bound *before*
+ * encoding rather than catching a `RangeError` (which still drives the stack to exhaustion once per
+ * event). 64 is far above anything this stack canonicalizes (an event body reaches depth 3) and far
+ * below the ~10⁴ frames a JS stack holds. Raising it is safe; lowering below 3 is not.
  */
 export const MAX_CANONICAL_DEPTH = 64
-
-function canonicalize(value: unknown, depth: number): string {
-  if (depth > MAX_CANONICAL_DEPTH) {
-    throw new Error(`Canonicalization: value nests deeper than ${MAX_CANONICAL_DEPTH}`)
-  }
-  if (value === null) {
-    return 'null'
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) {
-      throw new Error('Canonicalization: numbers must be finite')
-    }
-    return JSON.stringify(value)
-  }
-  if (typeof value === 'string' || typeof value === 'boolean') {
-    return JSON.stringify(value)
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((entry) => canonicalize(entry, depth + 1)).join(',')}]`
-  }
-  if (typeof value === 'object') {
-    const proto = Object.getPrototypeOf(value)
-    if (proto !== Object.prototype && proto !== null) {
-      throw new Error('Canonicalization: only plain objects are supported')
-    }
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalize(v, depth + 1)}`)
-    return `{${entries.join(',')}}`
-  }
-  throw new Error(`Canonicalization: unsupported value type ${typeof value}`)
-}
 
 /**
  * Whether {@link canonicalBytes} could encode this value without exceeding
@@ -117,14 +83,26 @@ export function isCanonicalizable(value: unknown, depth = 1): boolean {
 }
 
 /**
- * JCS-style canonical bytes: keys sorted lexicographically, no insignificant whitespace, `undefined`
- * properties dropped so an absent optional field never encodes as `null`. The DID is the hash of
- * these bytes, so any change here moves every identifier the stack has issued — effectively frozen.
- * Throws for a value past {@link MAX_CANONICAL_DEPTH}; untrusted callers reject with
- * {@link withinCanonicalDepth} first.
+ * RFC 8785 (JCS) canonical bytes via `@sozai/json`: keys sorted, no insignificant whitespace,
+ * `undefined` properties dropped so an absent optional field never encodes as `null`. The DID is the
+ * hash of these bytes, so any change here moves every identifier the stack has issued — frozen.
+ *
+ * Validated by {@link isCanonicalizable} before encoding, not left to the encoder: `@sozai/json`
+ * fails a deep value only at native stack exhaustion (see {@link MAX_CANONICAL_DEPTH}) and *encodes*
+ * a `Date`/`Map`/typed array rather than refusing it. The guard rejects every value the old encoder
+ * did — non-finite, non-plain, unrepresentable, or past the depth bound — so a wrong digest fails
+ * loud here instead of silently naming a value the wire form can never carry. It also makes the
+ * throw set exactly {@link isCanonicalizable}'s `false` set, the totality `verifyDigest` relies on.
  */
 export function canonicalBytes(value: unknown): Uint8Array {
-  return encoder.encode(canonicalize(value, 1))
+  if (!isCanonicalizable(value)) {
+    throw new Error(
+      'Canonicalization: value is not canonicalizable (non-finite, non-plain, unrepresentable, or ' +
+        `nests deeper than ${MAX_CANONICAL_DEPTH})`,
+    )
+  }
+  // Never `undefined`: `isCanonicalizable` has already rejected the values with no JSON form.
+  return encoder.encode(canonicalize(value) as string)
 }
 
 /** Self-addressing digest: multibase(multihash(canonical bytes)). */

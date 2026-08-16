@@ -51,6 +51,9 @@ catalogs:
     '@sozai/codec':
       specifier: ^0.4.0
       version: 0.4.0
+    '@sozai/json':
+      specifier: ^0.1.1
+      version: 0.1.1
     '@sozai/lock':
       specifier: ^0.1.0
       version: 0.1.0
@@ -187,6 +190,9 @@ importers:
       '@scure/base':
         specifier: 'catalog:'
         version: 2.3.0
+      '@sozai/json':
+        specifier: 'catalog:'
+        version: 0.1.1
       micro-key-producer:
         specifier: 'catalog:'
         version: 0.10.0
