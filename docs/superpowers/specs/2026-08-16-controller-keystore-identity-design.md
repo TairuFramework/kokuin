@@ -57,13 +57,15 @@ DID for a controller.
 
 Add the missing mirror:
 
-- `createKeyAgreementIdentityForDID(did, privateKey): KeyAgreementIdentity` -- reuses the existing
-  X25519 ECDH `agreeKey` logic, but sets `id = did`.
-- `createFullIdentityForDID(did, signingKey, agreementKey): FullIdentity` -- a thin merge of
-  `createSigningIdentityForDID` and `createKeyAgreementIdentityForDID`, so a caller holding a fixed
-  DID and its two keys assembles a `FullIdentity` in one call.
+- `createKeyAgreementIdentityForDID(did, x25519PrivateKey): KeyAgreementIdentity` -- runs ECDH
+  directly on a raw X25519 scalar (not an Ed25519 key to Montgomery-convert, as
+  `createKeyAgreementIdentity` does -- a controller derives an independent agreement keypair), but
+  sets `id = did`.
 
-These are the only additions token needs; the ECDH maths already exists.
+This is the only addition token needs; the ECDH maths already exists. There is deliberately no
+`createFullIdentityForDID` merge helper: the controller kid-stamps its signing half before merging,
+so it composes the `FullIdentity` from the signing and agreement pieces itself rather than from a
+pre-merged constructor that would have nowhere to stamp the kid.
 
 ### 2. Controller: FullIdentity from folded state
 
@@ -77,8 +79,8 @@ Extend `identityForState` to, in addition to deriving the authority Ed25519 key:
 - derive the X25519 key at `agreementPath(profile, state.keyGen, state.keySeq)`,
 - verify its encoded public half is a member of `state.agreement` (the agreement analogue of the
   existing "derived key is one of the current authority keys" check -- fail closed on mismatch),
-- return a `FullIdentity` built with `createFullIdentityForDID`, still `kid`-stamped with the
-  authority key.
+- return a `FullIdentity` merging the `kid`-stamped signing identity with
+  `createKeyAgreementIdentityForDID(did, agreementPrivateKey)`.
 
 The two seed-based entry points -- `createControllerIdentity` and
 `createControllerIdentityAsync` -- now return `FullIdentity`.
@@ -111,8 +113,8 @@ Flow:
 4. Return `await createControllerIdentityAsync({ seed, profile, log, options })`, which folds the
    log and yields the `FullIdentity`.
 
-A convenience overload takes `{ keyStore, keyID, profile, logStore, options? }` and calls
-`keyStore.entry(keyID)` before delegating to the `entry` form.
+A `KeyStore` caller passes `keyStore.entry(keyID)` as `entry` -- a one-liner, so no separate
+store+keyID overload is added.
 
 `entry` is typed `KeyEntry<Uint8Array>`, which `node`, `electron`, `expo`, and `deterministic`
 entries satisfy. `browser`'s compound `CryptoKey` record does not, so it does not type-check against
@@ -125,9 +127,8 @@ this utility -- the deferral is enforced by the type, not left to documentation.
   the correct authority key and DID each time.
 - **Decryption round-trip**: encrypt to the returned identity's DID and decrypt through its
   `agreeKey`, proving the FullIdentity actually decrypts (the gap this design closes).
-- **Token unit tests** for `createKeyAgreementIdentityForDID` / `createFullIdentityForDID`: `id`
-  equals the supplied DID, and `agreeKey` produces the same shared secret as
-  `createKeyAgreementIdentity` on the same key.
+- **Token unit tests** for `createKeyAgreementIdentityForDID`: `id` equals the supplied DID, and
+  `agreeKey` reaches the same shared secret a sender computes with the recipient's X25519 public key.
 - **One integration test** driving `provideControllerIdentity` through a real `node` (or
   `deterministic`) `KeyStore`, end to end.
 - Keystore-conformance is untouched -- no keystore changes.
