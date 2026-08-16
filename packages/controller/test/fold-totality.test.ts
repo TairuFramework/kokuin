@@ -610,12 +610,12 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   const chasms: Array<[string, Array<SignedEvent>, FoldResult]> = [
     [
       'an inception carrying an unread member 5000 levels deep',
-      [{ ...icp, event: { ...icp.event, zz: abyss() } }] as Array<SignedEvent>,
+      [{ ...icp, event: { ...icp.event, zz: abyss() } }] as unknown as Array<SignedEvent>,
       { ok: false, reason: 'malformed event', index: 0 },
     ],
     [
       'a rotate carrying an unread member 5000 levels deep',
-      [icp, { ...rot, event: { ...rot.event, zz: abyss() } }] as Array<SignedEvent>,
+      [icp, { ...rot, event: { ...rot.event, zz: abyss() } }] as unknown as Array<SignedEvent>,
       { ok: false, reason: 'malformed event', index: 1 },
     ],
     [
@@ -643,7 +643,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
             zz: abyss(),
           },
         },
-      ] as Array<SignedEvent>,
+      ] as unknown as Array<SignedEvent>,
       { ok: false, reason: 'malformed event', index: 1 },
     ],
   ]
@@ -684,7 +684,10 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
         keyPosition: inceptionKeyPosition,
       }),
     ]
-    const hostile = [icp, { ...rot, event: { ...rot.event, a: abyss() } }] as Array<SignedEvent>
+    const hostile = [
+      icp,
+      { ...rot, event: { ...rot.event, a: abyss() } },
+    ] as unknown as Array<SignedEvent>
 
     const clean = resolveBranches(did, [forkA, forkB])
     expect(clean.ok).toBe(false)
