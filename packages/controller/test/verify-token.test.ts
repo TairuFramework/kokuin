@@ -157,7 +157,7 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
   })
 
   test('a token signed by a revoked key is rejected under historic resolution too', async () => {
-    // The end-to-end shape of the escalation `packages/capability/test/zzown-historic-mint.test.ts`
+    // The end-to-end shape of the escalation `packages/capability/test/own-historic-mint.test.ts`
     // demonstrates, at the plain-token layer where there is no capability chain to blame. A leaked
     // key that the profile has rotated away still verifies with `historic: true` — it must, or
     // every already-issued capability dies at the next rotate. Denying the key is the event that

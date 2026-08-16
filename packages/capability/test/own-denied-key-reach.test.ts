@@ -209,7 +209,7 @@ describe('a key the profile has revoked', () => {
     // every capability a profile issued by planting one per `jti`.
     //
     // What it missed is that the two cases are distinguishable. A key the log never published is a
-    // forgery and is still ignored (that DoS is unchanged, and `zzown-key-denial-check.test.ts`
+    // forgery and is still ignored (that DoS is unchanged, and `own-key-denial-check.test.ts`
     // holds it). A key the log published and has since denied is not: producing the record required
     // that key's private half, and honouring a revocation only ever subtracts authority. Leaving it
     // as it was meant the remedy for a compromise silently resurrected revoked grants, which is
