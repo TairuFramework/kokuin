@@ -158,6 +158,25 @@ export function createKeyAgreementIdentity(privateKey: Uint8Array): KeyAgreement
 }
 
 /**
+ * A key-agreement identity for a **raw X25519 private key** under a caller-supplied DID.
+ *
+ * The counterpart of {@link createSigningIdentityForDID} for the agreement half. Two differences from
+ * {@link createKeyAgreementIdentity}: the identifier is supplied (a `did:kokuin:` key rotates under a
+ * fixed inception digest, so `id` cannot be a function of the key), and the input is the X25519 scalar
+ * itself rather than an Ed25519 key to Montgomery-convert — a controller derives an independent
+ * agreement keypair, not the Montgomery form of its signing key.
+ */
+export function createKeyAgreementIdentityForDID(
+  id: DIDString,
+  x25519PrivateKey: Uint8Array,
+): KeyAgreementIdentity {
+  async function agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array> {
+    return x25519.getSharedSecret(x25519PrivateKey, ephemeralPublicKey)
+  }
+  return { id, agreeKey }
+}
+
+/**
  * Create a full identity (signing + key agreement) from an Ed25519 private key.
  */
 export function createFullIdentity(privateKey: Uint8Array): FullIdentity {

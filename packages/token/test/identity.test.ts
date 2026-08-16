@@ -1,4 +1,4 @@
-import { ed25519 } from '@noble/curves/ed25519.js'
+import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, it, test } from 'vitest'
 
 import type {
@@ -10,6 +10,7 @@ import type {
 import {
   createFullIdentity,
   createIdentity,
+  createKeyAgreementIdentityForDID,
   createSigningIdentity,
   isFullIdentity,
   isKeyAgreementIdentity,
@@ -253,5 +254,25 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
       { embedLongForm: true },
     )
     expect(t2.payload.iss).toBe(identity.id)
+  })
+})
+
+describe('createKeyAgreementIdentityForDID', () => {
+  test('binds the supplied DID and agrees on the raw X25519 scalar', async () => {
+    const recipientPriv = x25519.utils.randomSecretKey()
+    const did = 'did:kokuin:zExampleControllerDigest'
+    const identity = createKeyAgreementIdentityForDID(did, recipientPriv)
+
+    expect(identity.id).toBe(did)
+
+    // A sender agreeing with the recipient's X25519 public key must reach the same secret the
+    // identity reaches with the sender's ephemeral public key.
+    const senderPriv = x25519.utils.randomSecretKey()
+    const recipientPub = x25519.getPublicKey(recipientPriv)
+    const senderPub = x25519.getPublicKey(senderPriv)
+
+    const senderSecret = x25519.getSharedSecret(senderPriv, recipientPub)
+    const recipientSecret = await identity.agreeKey(senderPub)
+    expect(recipientSecret).toEqual(senderSecret)
   })
 })
