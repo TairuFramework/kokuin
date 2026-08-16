@@ -4,12 +4,12 @@ import { digestOf } from '../src/canonical.js'
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
 import {
   didFromInception,
-  encodeKey,
   type InceptionEvent,
   type SignedEvent,
   signEvent,
 } from '../src/events.js'
 import { foldLog } from '../src/fold.js'
+import { encodeKey } from '../src/keys.js'
 
 const seedA = new Uint8Array(32).fill(1)
 const seedB = new Uint8Array(32).fill(23)

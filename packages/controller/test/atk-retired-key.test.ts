@@ -7,9 +7,9 @@ import {
   createReset,
   createRotate,
   didFromInception,
-  encodeKey,
   type SignedEvent,
 } from '../src/events.js'
+import { encodeKey } from '../src/keys.js'
 import { createControllerResolver } from '../src/resolver.js'
 
 const seed = new Uint8Array(32).fill(1)

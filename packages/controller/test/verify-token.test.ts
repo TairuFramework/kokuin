@@ -6,10 +6,10 @@ import {
   createReset,
   createRevoke,
   createRotate,
-  decodeKey,
   didFromInception,
 } from '../src/events.js'
 import { createControllerIdentity } from '../src/identity.js'
+import { decodeKey } from '../src/keys.js'
 import { createControllerResolver } from '../src/resolver.js'
 import { buildTwoKeyLog } from './two-key-log.js'
 

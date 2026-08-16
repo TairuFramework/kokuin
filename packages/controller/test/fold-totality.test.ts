@@ -15,7 +15,6 @@ import {
   createRotate,
   didFromInception,
   type EventCommon,
-  encodeKey,
   type InceptionEvent,
   type RotateEvent,
   type SignedEvent,
@@ -25,6 +24,7 @@ import {
   verifySignatures,
 } from '../src/events.js'
 import { type FoldResult, foldLog, foldLogAsync } from '../src/fold.js'
+import { encodeKey } from '../src/keys.js'
 import { resolveBranches } from '../src/supersede.js'
 
 // A log arrives from a network peer or an untrusted store, so every shape below is reachable from

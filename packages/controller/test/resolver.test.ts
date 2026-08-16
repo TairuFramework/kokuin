@@ -7,11 +7,11 @@ import {
   createReset,
   createRevoke,
   createRotate,
-  decodeKey,
   didFromInception,
   type SignedEvent,
 } from '../src/events.js'
 import { type CapabilityAuthorisation, foldLog } from '../src/fold.js'
+import { decodeKey } from '../src/keys.js'
 import { createControllerResolver } from '../src/resolver.js'
 import { createStateResolver } from '../src/state-resolver.js'
 import { buildTwoKeyLog, strangerKey } from './two-key-log.js'

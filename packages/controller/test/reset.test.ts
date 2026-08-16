@@ -8,12 +8,12 @@ import {
   createRevoke,
   createRotate,
   didFromInception,
-  encodeKey,
   signEvent,
   verifyReset,
   verifyRotate,
 } from '../src/events.js'
 import { foldLog } from '../src/fold.js'
+import { encodeKey } from '../src/keys.js'
 
 const seed = new Uint8Array(32).fill(1)
 

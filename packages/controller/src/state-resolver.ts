@@ -6,8 +6,9 @@ import {
   type ResolveIssuerHeader,
 } from '@kokuin/token'
 
-import { DID_PREFIX, decodeKey, keyTarget } from './events.js'
+import { DID_PREFIX, keyTarget } from './events.js'
 import type { KeyState } from './fold.js'
+import { decodeKey } from './keys.js'
 
 /** The method segment of {@link DID_PREFIX}, so the two cannot drift. */
 export const DID_METHOD = DID_PREFIX.slice('did:'.length, -1)

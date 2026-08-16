@@ -7,13 +7,13 @@ import {
   createReset,
   createRotate,
   didFromInception,
-  encodeKey,
   type RotateEvent,
   type SignedEvent,
   signEvent,
   verifyReset,
 } from '../src/events.js'
 import { foldLog } from '../src/fold.js'
+import { encodeKey } from '../src/keys.js'
 
 const ownerSeed = new Uint8Array(32).fill(1)
 const newRootSeed = new Uint8Array(32).fill(77)

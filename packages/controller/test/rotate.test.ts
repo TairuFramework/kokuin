@@ -7,12 +7,12 @@ import {
   createRevoke,
   createRotate,
   didFromInception,
-  encodeKey,
   signEvent,
   verifyRotate,
   verifySignatures,
 } from '../src/events.js'
 import { foldLog, keyStateAt } from '../src/fold.js'
+import { encodeKey } from '../src/keys.js'
 
 const seed = new Uint8Array(32).fill(1)
 

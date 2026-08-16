@@ -34,11 +34,9 @@ export {
   createRevokeWithKey,
   createRotate,
   DID_PREFIX,
-  decodeKey,
   didFromInception,
   type EventCommon,
   type EventType,
-  encodeKey,
   type InceptionEvent,
   KEY_TARGET_PREFIX,
   keyFromTarget,
@@ -84,6 +82,8 @@ export {
   createControllerIdentityWithKeyAsync,
 } from './identity.js'
 export {
+  decodeKey,
+  encodeKey,
   type KeyAlgorithm,
   type TaggedKey,
   tryDecodeKey,

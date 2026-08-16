@@ -7,8 +7,9 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js'
 
 import { authorityPath, deriveKeyPair } from './derivation.js'
-import { didFromInception, encodeKey, type InceptionEvent, type SignedEvent } from './events.js'
+import { didFromInception, type InceptionEvent, type SignedEvent } from './events.js'
 import type { FoldOptions, KeyState } from './fold.js'
+import { encodeKey } from './keys.js'
 import { currentState, currentStateAsync } from './state.js'
 
 const CONTEXT = 'Controller identity'

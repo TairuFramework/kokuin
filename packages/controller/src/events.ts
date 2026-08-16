@@ -4,10 +4,7 @@ import { base64urlnopad } from '@scure/base'
 
 import { canonicalBytes, digestOf, isCanonicalizable } from './canonical.js'
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from './derivation.js'
-import { decodeKey, encodeKey, tryDecodeKey } from './keys.js'
-
-// Re-exported to keep the barrel stable; the encoding now lives in `keys.ts`, multicodec-tagged.
-export { decodeKey, encodeKey }
+import { encodeKey, tryDecodeKey } from './keys.js'
 
 export const DID_PREFIX = 'did:kokuin:'
 

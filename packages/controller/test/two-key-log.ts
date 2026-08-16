@@ -4,11 +4,11 @@ import { digestOf } from '../src/canonical.js'
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
 import {
   didFromInception,
-  encodeKey,
   type InceptionEvent,
   type SignedEvent,
   signEvent,
 } from '../src/events.js'
+import { encodeKey } from '../src/keys.js'
 
 /** The co-signer's seed. Not a controller seed anywhere else in the suite. */
 const COSIGNER_SEED = new Uint8Array(32).fill(23)

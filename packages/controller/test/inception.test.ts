@@ -4,11 +4,11 @@ import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
   didFromInception,
-  encodeKey,
   type InceptionEvent,
   signEvent,
   verifyInception,
 } from '../src/events.js'
+import { encodeKey } from '../src/keys.js'
 
 const seedA = new Uint8Array(32).fill(1)
 const seedB = new Uint8Array(32).fill(2)

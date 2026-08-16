@@ -1,15 +1,10 @@
 import { describe, expect, test } from 'vitest'
 
 import { authorityPath, deriveKeyPair } from '../src/derivation.js'
-import {
-  createInception,
-  createRevoke,
-  createRotate,
-  didFromInception,
-  encodeKey,
-} from '../src/events.js'
+import { createInception, createRevoke, createRotate, didFromInception } from '../src/events.js'
 import type { CapabilityAuthorisation } from '../src/fold.js'
 import { createControllerIdentity, createControllerIdentityAsync } from '../src/identity.js'
+import { encodeKey } from '../src/keys.js'
 import { buildTwoKeyLog } from './two-key-log.js'
 
 const seed = new Uint8Array(32).fill(7)

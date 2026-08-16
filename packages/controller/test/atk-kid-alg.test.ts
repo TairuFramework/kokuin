@@ -8,9 +8,9 @@ import {
   createReset,
   createRotate,
   didFromInception,
-  encodeKey,
   type SignedEvent,
 } from '../src/events.js'
+import { encodeKey } from '../src/keys.js'
 import { createControllerResolver } from '../src/resolver.js'
 
 // ATTACK on `kid` selection, the algorithm/typ header and Ed25519 malleability.

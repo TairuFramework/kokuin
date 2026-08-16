@@ -16,11 +16,11 @@ import {
   createRevoke,
   createRotate,
   didFromInception,
-  encodeKey,
   type SignedEvent,
 } from '../src/events.js'
 import { foldLog } from '../src/fold.js'
 import { createControllerIdentity } from '../src/identity.js'
+import { encodeKey } from '../src/keys.js'
 import { createControllerResolver } from '../src/resolver.js'
 
 // A `rotate` is routine hygiene; a `reset` is the recovery hammer. The spec reserves "discards
