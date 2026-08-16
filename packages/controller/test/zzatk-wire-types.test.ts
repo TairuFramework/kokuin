@@ -64,7 +64,7 @@ describe('wire types the fold never checks', () => {
 
     let seenType = 'never called'
     const result = await foldLogAsync(did, [icp, forged], {
-      verifyCapability: async (cap) => {
+      verifyCapability: async ({ cap }) => {
         seenType = `${typeof cap}: ${JSON.stringify(cap)}`
         return { authorised: false, reason: 'declined' }
       },
@@ -101,7 +101,7 @@ describe('wire types the fold never checks', () => {
     } as unknown as SignedEvent
     let reached: unknown = 'never called'
     await foldLogAsync(did, [icp, wellFormed], {
-      verifyCapability: async (cap) => {
+      verifyCapability: async ({ cap }) => {
         reached = cap
         return { authorised: false, reason: 'declined' }
       },

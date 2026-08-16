@@ -132,7 +132,7 @@ describe('capability-authorised revoke', () => {
   test('the async fold accepts one when the injected verifier approves', async () => {
     const { icp, did } = build()
     const result = await foldLogAsync(did, [icp, capRevoke(did, icp)], {
-      verifyCapability: async (capability, subject, target) => {
+      verifyCapability: async ({ cap: capability, subject, target }) => {
         expect(subject).toBe(did)
         expect(target).toBe(stolen)
         return capability === cap
@@ -266,7 +266,7 @@ describe('capability-authorised revoke', () => {
 
     let retained: DIDMethodResolver | undefined
     const result = await foldLogAsync(did, [icp, first, second], {
-      verifyCapability: async (_cap, subject, _target, subjectAtPosition) => {
+      verifyCapability: async ({ subject, subjectAtPosition }) => {
         retained = subjectAtPosition
         expect(subject).toBe(did)
         // The state before event 2: `zEarlier` is denied, `stolen` is not — the revoke naming it

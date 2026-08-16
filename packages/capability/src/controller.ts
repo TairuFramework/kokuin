@@ -309,14 +309,14 @@ function registryForSubject(
 }
 
 /**
- * A capability-authorised revoke verifier, in the shape a controller fold injects. Named for what it
- * serves, not what it imports: importing `@kokuin/controller` would cycle, so the fold takes this as
- * an option. The one real implementation -- kubun and kumiai must not each grow their own.
+ * What a controller fold hands its verifier. Structurally the fold's `VerifyCapabilityParams`, kept
+ * as a local definition rather than an import: importing `@kokuin/controller` would cycle, so the
+ * fold takes the verifier as an option and the two shapes match by structure.
  */
-export type ControllerCapabilityVerifier = (
-  cap: string,
-  subject: string,
-  target: string,
+export type ControllerCapabilityVerifierParams = {
+  cap: string
+  subject: string
+  target: string
   /**
    * A resolver for `subject` at the log position being verified, supplied by the fold.
    *
@@ -324,7 +324,16 @@ export type ControllerCapabilityVerifier = (
    * anyway -- at which point the fold is calling this. An implementation handed nothing here must
    * refuse; see {@link REVOKE_NO_POSITION}.
    */
-  subjectAtPosition: DIDMethodResolver,
+  subjectAtPosition: DIDMethodResolver
+}
+
+/**
+ * A capability-authorised revoke verifier, in the shape a controller fold injects. Named for what it
+ * serves, not what it imports. The one real implementation -- kubun and kumiai must not each grow
+ * their own.
+ */
+export type ControllerCapabilityVerifier = (
+  params: ControllerCapabilityVerifierParams,
 ) => Promise<CapabilityAuthorisation>
 
 /**
@@ -367,12 +376,12 @@ export type ControllerCapabilityVerifier = (
 export function createControllerCapabilityVerifier(
   options: DelegationChainOptions & { maxLifetimeSeconds?: number } = {},
 ): ControllerCapabilityVerifier {
-  return async function verifyControllerCapability(
-    cap: string,
-    subject: string,
-    target: string,
-    subjectAtPosition: DIDMethodResolver,
-  ): Promise<CapabilityAuthorisation> {
+  return async function verifyControllerCapability({
+    cap,
+    subject,
+    target,
+    subjectAtPosition,
+  }: ControllerCapabilityVerifierParams): Promise<CapabilityAuthorisation> {
     // Typed required, checked anyway: TypeScript cannot police this across a package boundary or a
     // stale build, and there is no runtime version link. Falling back to `options.methods` here is
     // exactly the bypass this argument closes -- an early prefix authorising a revoke the log later

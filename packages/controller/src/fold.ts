@@ -100,12 +100,15 @@ export type FoldOptions = {
    * for the profile, and answers `Unknown DID` for anything else so a verifier can merge it into a
    * wider registry for a chain's delegates. See {@link CapabilityAuthorisation}.
    */
-  verifyCapability?: (
-    cap: string,
-    subject: string,
-    target: string,
-    subjectAtPosition: DIDMethodResolver,
-  ) => Promise<CapabilityAuthorisation>
+  verifyCapability?: (params: VerifyCapabilityParams) => Promise<CapabilityAuthorisation>
+}
+
+/** What the fold hands {@link FoldOptions.verifyCapability} — see that member for each field. */
+export type VerifyCapabilityParams = {
+  cap: string
+  subject: string
+  target: string
+  subjectAtPosition: DIDMethodResolver
 }
 
 /**
@@ -535,14 +538,14 @@ export async function foldLogAsync(
       // not, and a throw is not evidence the capability authorises anything.
       let authorisation: CapabilityAuthorisation
       try {
-        authorisation = await options.verifyCapability(
-          outcome.cap,
-          did,
-          outcome.target,
+        authorisation = await options.verifyCapability({
+          cap: outcome.cap,
+          subject: did,
+          target: outcome.target,
           // A copy: `states` keeps growing, and this resolver must keep answering for the position it
           // was built at even if the verifier holds on to it.
-          createStateResolver(did, [...states]),
-        )
+          subjectAtPosition: createStateResolver(did, [...states]),
+        })
       } catch (cause) {
         return fail(
           `${CAPABILITY_VERIFIER_FAILED}: ${cause instanceof Error ? cause.message : String(cause)}`,

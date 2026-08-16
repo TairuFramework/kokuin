@@ -133,16 +133,21 @@ describe('ATTACK: the injected resolver seam', () => {
     const verify = createControllerCapabilityVerifier({ methods: prefixMethods })
     // Fold once with a pass-through that captures the real resolver the fold builds.
     await foldLogAsync(did, [inception, revokeManager, attack], {
-      verifyCapability: async (c, subject, t, atPosition) => {
+      verifyCapability: async ({ cap: c, subject, target: t, subjectAtPosition: atPosition }) => {
         captured = atPosition
-        return await verify(c, subject, t, atPosition)
+        return await verify({ cap: c, subject, target: t, subjectAtPosition: atPosition })
       },
     })
     expect(captured).toBeDefined()
     if (captured == null) return
 
-    const full = await verify(cap, did, target, captured)
-    const stripped = await verify(cap, did, target, dropDenySet(captured))
+    const full = await verify({ cap, subject: did, target, subjectAtPosition: captured })
+    const stripped = await verify({
+      cap,
+      subject: did,
+      target,
+      subjectAtPosition: dropDenySet(captured),
+    })
 
     // CONTROL — the same two calls at a position where nobody is revoked: both authorise, so the
     // difference above is the deny set and not the wrapper.
@@ -155,14 +160,19 @@ describe('ATTACK: the injected resolver seam', () => {
       cap,
     })
     await foldLogAsync(did, [inception, clean], {
-      verifyCapability: async (c, subject, t, atPosition) => {
+      verifyCapability: async ({ cap: c, subject, target: t, subjectAtPosition: atPosition }) => {
         cleanPosition = atPosition
-        return await verify(c, subject, t, atPosition)
+        return await verify({ cap: c, subject, target: t, subjectAtPosition: atPosition })
       },
     })
     if (cleanPosition == null) return
-    const cleanFull = await verify(cap, did, target, cleanPosition)
-    const cleanStripped = await verify(cap, did, target, dropDenySet(cleanPosition))
+    const cleanFull = await verify({ cap, subject: did, target, subjectAtPosition: cleanPosition })
+    const cleanStripped = await verify({
+      cap,
+      subject: did,
+      target,
+      subjectAtPosition: dropDenySet(cleanPosition),
+    })
     // REWRITTEN after the fix (c1c0c4f), which removed this control's premise. As written it
     // asserted that a stripped resolver authorises at a clean position, so that the refusal below
     // could be attributed to the deny set rather than to the wrapper. The decided fix makes a
@@ -205,9 +215,14 @@ describe('ATTACK: the injected resolver seam', () => {
       cap,
     })
     await foldLogAsync(did, [inception, clean], {
-      verifyCapability: async (c, s, t, atPosition) => {
+      verifyCapability: async ({
+        cap: c,
+        subject: s,
+        target: t,
+        subjectAtPosition: atPosition,
+      }) => {
         atPosition1 = atPosition
-        return await verify(c, s, t, atPosition)
+        return await verify({ cap: c, subject: s, target: t, subjectAtPosition: atPosition })
       },
     })
 
@@ -215,16 +230,26 @@ describe('ATTACK: the injected resolver seam', () => {
       'undefined fourth argument': await (
         verify as unknown as (c: string, s: string, t: string) => Promise<unknown>
       )(cap, did, target),
-      'null fourth argument': await verify(cap, did, target, null as unknown as DIDMethodResolver),
-      'a resolver for another DID': await verify(cap, did, target, {
-        method: 'kokuin',
-        resolve: async () => {
-          throw new Error('Unknown DID')
+      'null fourth argument': await verify({
+        cap,
+        subject: did,
+        target,
+        subjectAtPosition: null as unknown as DIDMethodResolver,
+      }),
+      'a resolver for another DID': await verify({
+        cap,
+        subject: did,
+        target,
+        subjectAtPosition: {
+          method: 'kokuin',
+          resolve: async () => {
+            throw new Error('Unknown DID')
+          },
+          resolveDenySet: async () => new Set<string>(),
         },
-        resolveDenySet: async () => new Set<string>(),
       }),
       'the legitimate earlier position (control)': atPosition1
-        ? await verify(cap, did, target, atPosition1)
+        ? await verify({ cap, subject: did, target, subjectAtPosition: atPosition1 })
         : undefined,
     }
 

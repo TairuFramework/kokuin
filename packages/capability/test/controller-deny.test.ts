@@ -26,6 +26,7 @@ import { beforeEach, describe, expect, test } from 'vitest'
 
 import {
   audienceConfirmation,
+  type ControllerCapabilityVerifierParams,
   checkCapability,
   createCapability,
   createControllerCapabilityVerifier,
@@ -525,20 +526,24 @@ describe('the deny set inside the fold: who may author a capability-authorised r
       ['no registry', undefined],
     ] as Array<[string, MethodRegistry | undefined]>) {
       const verify = createControllerCapabilityVerifier({ methods: configured })
-      const threeArgs = verify as unknown as (
-        cap: string,
-        subject: string,
-        target: string,
-      ) => Promise<unknown>
-      await expect(threeArgs(cap, did, deviceX), name).resolves.toEqual({
+      // A caller that omits the required `subjectAtPosition` (a stale build, say): its absence is
+      // REVOKE_NO_POSITION, not a worked-around fallback. Cast because the type forbids omitting it.
+      await expect(
+        verify({
+          cap,
+          subject: did,
+          target: deviceX,
+        } as unknown as ControllerCapabilityVerifierParams),
+        name,
+      ).resolves.toEqual({
         authorised: false,
         reason: REVOKE_NO_POSITION,
       })
     }
 
     // Unconditional rather than a denial that happens to coincide with this manager's revocation:
-    // the same capability, held by a manager nothing has revoked, refuses the same way through the
-    // three-argument call and folds through the four-argument one.
+    // the same capability, held by a manager nothing has revoked, refuses the same way with no
+    // `subjectAtPosition` and folds through the four-argument fold path.
     const clean = createRevokeWithKey({
       privateKey: manager.privateKey,
       did,
@@ -547,12 +552,13 @@ describe('the deny set inside the fold: who may author a capability-authorised r
       cap,
     })
     const verify = createControllerCapabilityVerifier()
-    const threeArgs = verify as unknown as (
-      cap: string,
-      subject: string,
-      target: string,
-    ) => Promise<unknown>
-    await expect(threeArgs(cap, did, deviceX)).resolves.toEqual({
+    await expect(
+      verify({
+        cap,
+        subject: did,
+        target: deviceX,
+      } as unknown as ControllerCapabilityVerifierParams),
+    ).resolves.toEqual({
       authorised: false,
       reason: REVOKE_NO_POSITION,
     })
@@ -583,9 +589,9 @@ describe('the deny set inside the fold: who may author a capability-authorised r
     // agree with an implementation that consults nothing.
     let atPosition: DIDMethodResolver | undefined
     await foldLogAsync(did, [inception, revokeManager, attack], {
-      verifyCapability: async (c, subject, target, position) => {
+      verifyCapability: async ({ cap: c, subject, target, subjectAtPosition: position }) => {
         atPosition = position
-        return await verify(c, subject, target, position)
+        return await verify({ cap: c, subject, target, subjectAtPosition: position })
       },
     })
     if (atPosition == null) throw new Error('the fold supplied no position resolver')
@@ -599,11 +605,15 @@ describe('the deny set inside the fold: who may author a capability-authorised r
     // the real one does, so a refusal below is the missing deny set and nothing else.
     expect(await stripped.resolve(did, {})).toEqual(await atPosition.resolve(did, {}))
 
-    expect(await verify(cap, did, deviceX, atPosition)).toEqual({
+    expect(
+      await verify({ cap, subject: did, target: deviceX, subjectAtPosition: atPosition }),
+    ).toEqual({
       authorised: false,
       reason: 'capability does not authorise this revoke',
     })
-    expect(await verify(cap, did, deviceX, stripped)).toEqual({
+    expect(
+      await verify({ cap, subject: did, target: deviceX, subjectAtPosition: stripped }),
+    ).toEqual({
       authorised: false,
       reason: 'capability does not authorise this revoke',
     })
@@ -619,16 +629,20 @@ describe('the deny set inside the fold: who may author a capability-authorised r
       cap,
     })
     await foldLogAsync(did, [inception, clean], {
-      verifyCapability: async (c, subject, target, position) => {
+      verifyCapability: async ({ cap: c, subject, target, subjectAtPosition: position }) => {
         cleanPosition = position
-        return await verify(c, subject, target, position)
+        return await verify({ cap: c, subject, target, subjectAtPosition: position })
       },
     })
     if (cleanPosition == null) throw new Error('the fold supplied no position resolver')
-    expect(await verify(cap, did, deviceX, cleanPosition)).toMatchObject({ authorised: true })
+    expect(
+      await verify({ cap, subject: did, target: deviceX, subjectAtPosition: cleanPosition }),
+    ).toMatchObject({ authorised: true })
     // And stripped of its deny set, the same clean position refuses too: with nothing to decide
     // from, "unknown" is a refusal. That is the cost of the rule, paid by a broken caller only.
-    expect(await verify(cap, did, deviceX, stripped)).toMatchObject({ authorised: false })
+    expect(
+      await verify({ cap, subject: did, target: deviceX, subjectAtPosition: stripped }),
+    ).toMatchObject({ authorised: false })
   })
 
   test('a capability minted for one profile cannot revoke on another', async () => {

@@ -709,7 +709,11 @@ export {
   UnresolvableIssuerError,
 } from '@kokuin/token'
 
-export type { CapabilityAuthorisation, ControllerCapabilityVerifier } from './controller.js'
+export type {
+  CapabilityAuthorisation,
+  ControllerCapabilityVerifier,
+  ControllerCapabilityVerifierParams,
+} from './controller.js'
 export {
   assertRevokeCapabilityAudience,
   audienceConfirmation,

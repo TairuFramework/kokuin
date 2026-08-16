@@ -496,7 +496,7 @@ describe('a malformed event its own author signed', () => {
       const seen: Array<unknown> = []
       await expect(
         foldLogAsync(did, [icp, evil], {
-          verifyCapability: async (cap) => {
+          verifyCapability: async ({ cap }) => {
             seen.push(cap)
             throw new Error(`cap is ${typeof cap}`)
           },
@@ -513,7 +513,7 @@ describe('a malformed event its own author signed', () => {
     const seen: Array<unknown> = []
     await expect(
       foldLogAsync(did, [icp, good], {
-        verifyCapability: async (cap) => {
+        verifyCapability: async ({ cap }) => {
           seen.push(cap)
           return { authorised: false, reason: 'declined' }
         },

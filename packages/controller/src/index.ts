@@ -68,6 +68,7 @@ export {
   pruneDenySet,
   REVOKE_NOT_SIGNED_BY_AUDIENCE,
   TOO_MANY_UNKNOWN_EVENTS,
+  type VerifyCapabilityParams,
 } from './fold.js'
 export {
   authoritativeStates,

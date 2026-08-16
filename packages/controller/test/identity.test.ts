@@ -262,7 +262,7 @@ describe('createControllerIdentityAsync()', () => {
       profile: 0,
       log,
       options: {
-        verifyCapability: async (capability, subject, target) => {
+        verifyCapability: async ({ cap: capability, subject, target }) => {
           seen.push([capability, subject, target])
           return authorised
         },

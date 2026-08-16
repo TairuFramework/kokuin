@@ -280,7 +280,7 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
     const seen: Array<Array<string>> = []
     const resolver = createControllerResolver({
       loadLog: async () => log,
-      verifyCapability: async (capability, subject, target) => {
+      verifyCapability: async ({ cap: capability, subject, target }) => {
         seen.push([capability, subject, target])
         return authorised
       },
