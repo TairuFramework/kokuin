@@ -1,12 +1,14 @@
 import {
+  createKeyAgreementIdentityForDID,
   createSigningIdentityForDID,
   type DIDString,
+  type FullIdentity,
   type SigningIdentity,
   type SignTokenOptions,
 } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 
-import { authorityPath, deriveKeyPair } from './derivation.js'
+import { agreementPath, authorityPath, deriveKeyPair } from './derivation.js'
 import { didFromInception, type InceptionEvent, type SignedEvent } from './events.js'
 import type { FoldOptions, KeyState } from './fold.js'
 import { encodeKey } from './keys.js'
@@ -106,22 +108,30 @@ function identityForState({
   profile: number
   did: DIDString
   state: KeyState
-}): SigningIdentity {
-  if (state.keys.length === 0) {
-    throw new Error(`Controller ${did} has no signing key`)
-  }
-  const { privateKey, publicKey } = deriveKeyPair(
-    seed,
-    authorityPath(profile, state.keyGen, state.keySeq),
-    'EdDSA',
-  )
-  return identityForKey({
-    privateKey,
-    publicKey,
+}): FullIdentity {
+  const authority = deriveKeyPair(seed, authorityPath(profile, state.keyGen, state.keySeq), 'EdDSA')
+  const signing = identityForKey({
+    privateKey: authority.privateKey,
+    publicKey: authority.publicKey,
     did,
     state,
     mismatch: 'derived key is not one of the current authority keys',
   })
+  // The agreement key sits at the same (keyGen, keySeq) as the authority key — both icp and rot
+  // derive them at matching indices, and a rev carries the agreement set forward — so one position
+  // locates both. Verified against the folded set, failing closed like the authority membership check.
+  const agreement = deriveKeyPair(
+    seed,
+    agreementPath(profile, state.keyGen, state.keySeq),
+    'X25519',
+  )
+  const encoded = encodeKey(agreement.publicKey, 'X25519')
+  if (!state.agreement.includes(encoded)) {
+    throw new Error(
+      `${CONTEXT}: derived agreement key is not one of the current agreement keys of ${did}`,
+    )
+  }
+  return { ...signing, ...createKeyAgreementIdentityForDID(did, agreement.privateKey) }
 }
 
 export type CreateControllerIdentityParams = {
@@ -155,7 +165,7 @@ export function createControllerIdentity({
   seed,
   profile,
   log,
-}: CreateControllerIdentityParams): SigningIdentity {
+}: CreateControllerIdentityParams): FullIdentity {
   const did = didFromLog(log)
   return identityForState({ seed, profile, did, state: currentState(did, log, CONTEXT) })
 }
@@ -177,7 +187,7 @@ export async function createControllerIdentityAsync({
   profile,
   log,
   options,
-}: CreateControllerIdentityAsyncParams): Promise<SigningIdentity> {
+}: CreateControllerIdentityAsyncParams): Promise<FullIdentity> {
   const did = didFromLog(log)
   return identityForState({
     seed,
