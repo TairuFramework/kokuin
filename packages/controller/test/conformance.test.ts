@@ -5,11 +5,13 @@ import { describe, expect, test } from 'vitest'
 import { digestOf } from '../src/canonical.js'
 import { authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
 import {
+  type CreateRotateOptions,
   createInception,
   createReset,
   createRevoke,
   createRotate,
   didFromInception,
+  type EventCommon,
   // `signEvent` stays unexported from the package's public barrel (`src/index.ts`) — it is an
   // internal signing primitive, not part of the wire protocol. Importing it directly from
   // `events.js` here is legitimate: this is a test file, not a consumer of the public API, and
@@ -56,12 +58,28 @@ const suite: ConformanceSuite = {
   test,
 }
 
+// The conformance contract stays positional; the real functions now take a params object, so the
+// two that changed are bridged here. `createReset`/`createInception` are unchanged and pass through.
 const implementation = {
   name: '@kokuin/controller',
   createInception,
-  createRotate,
+  createRotate: (
+    seed: Uint8Array,
+    profile: number,
+    did: string,
+    prior: EventCommon,
+    options?: CreateRotateOptions,
+  ) => createRotate({ seed, profile, did, prior, options }),
   createReset,
-  createRevoke,
+  createRevoke: (
+    seed: Uint8Array,
+    profile: number,
+    did: string,
+    prior: EventCommon,
+    target: string,
+    keyPosition: { gen: number; seq: number },
+    options?: { cap?: string },
+  ) => createRevoke({ seed, profile, did, prior, target, keyPosition, cap: options?.cap }),
   didFromInception,
   foldLog,
   resolveBranches,

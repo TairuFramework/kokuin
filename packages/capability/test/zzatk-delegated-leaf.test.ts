@@ -29,7 +29,7 @@ import {
 const controllerSeed = new Uint8Array(32).fill(3)
 const inception = createInception(controllerSeed, 0)
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity(controllerSeed, 0, [inception])
+const controller = createControllerIdentity({ seed: controllerSeed, profile: 0, log: [inception] })
 const inceptionKeyPosition = { gen: 0, seq: 0 }
 
 const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
@@ -102,14 +102,22 @@ describe('ATTACK: the leaf of a delegation chain, presented directly to checkCap
     const leaf = await mintLeaf(manager, device, root, 'revoke', bystander)
 
     // The attack: device revokes `target`, which its own capability does not name.
-    const attack = createRevokeWithKey(device.privateKey, did, inception.event, target, {
+    const attack = createRevokeWithKey({
+      privateKey: device.privateKey,
+      did,
+      prior: inception.event,
+      target,
       cap: leaf,
     })
     const attacked = await foldWith([inception, attack])
 
     // CONTROL A1a — same leaf, same device, revoking what the leaf DOES name. Proves the grant
     // path itself works, so a rejection above would be the attenuation and nothing else.
-    const legit = createRevokeWithKey(device.privateKey, did, inception.event, bystander, {
+    const legit = createRevokeWithKey({
+      privateKey: device.privateKey,
+      did,
+      prior: inception.event,
+      target: bystander,
       cap: leaf,
     })
     const legitResult = await foldWith([inception, legit])
@@ -119,7 +127,11 @@ describe('ATTACK: the leaf of a delegation chain, presented directly to checkCap
     // against the parent, so the ONLY invalid thing in A1 is the leaf's own narrowing.
     const narrowRoot = await mintRoot(manager, bystander)
     const narrowLeaf = await mintLeaf(manager, device, narrowRoot, 'revoke', bystander)
-    const blocked = createRevokeWithKey(device.privateKey, did, inception.event, target, {
+    const blocked = createRevokeWithKey({
+      privateKey: device.privateKey,
+      did,
+      prior: inception.event,
+      target,
       cap: narrowLeaf,
     })
     const blockedResult = await foldWith([inception, blocked])
@@ -148,7 +160,11 @@ describe('ATTACK: the leaf of a delegation chain, presented directly to checkCap
       }),
     )
 
-    const attack = createRevokeWithKey(device.privateKey, did, inception.event, target, {
+    const attack = createRevokeWithKey({
+      privateKey: device.privateKey,
+      did,
+      prior: inception.event,
+      target,
       cap: leaf,
     })
     const result = await foldWith([inception, attack])
@@ -156,7 +172,11 @@ describe('ATTACK: the leaf of a delegation chain, presented directly to checkCap
     // CONTROL A2a — root granting `read` only: the request really is checked against the parent.
     const readRoot = await mintRoot(manager, '*', 'read')
     const readLeaf = await mintLeaf(manager, device, readRoot, 'read', '*')
-    const blocked = createRevokeWithKey(device.privateKey, did, inception.event, target, {
+    const blocked = createRevokeWithKey({
+      privateKey: device.privateKey,
+      did,
+      prior: inception.event,
+      target,
       cap: readLeaf,
     })
     const blockedResult = await foldWith([inception, blocked])
@@ -172,37 +192,49 @@ describe('ATTACK: the leaf of a delegation chain, presented directly to checkCap
     const leaf = await mintLeaf(manager, device, root, 'revoke', '*')
 
     // The profile revokes the DEVICE, at event 1.
-    const revokeDevice = createRevoke(
-      controllerSeed,
-      0,
+    const revokeDevice = createRevoke({
+      seed: controllerSeed,
+      profile: 0,
       did,
-      inception.event,
-      device.id,
-      inceptionKeyPosition,
-    )
-    const attack = createRevokeWithKey(device.privateKey, did, revokeDevice.event, target, {
+      prior: inception.event,
+      target: device.id,
+      keyPosition: inceptionKeyPosition,
+    })
+    const attack = createRevokeWithKey({
+      privateKey: device.privateKey,
+      did,
+      prior: revokeDevice.event,
+      target,
       cap: leaf,
     })
     const attacked = await foldWith([inception, revokeDevice, attack])
 
     // CONTROL A3a — revoke the MANAGER instead. Its aud is on the chain that IS walked, so this
     // proves the deny-set machinery is live in exactly this fold, with the same capability.
-    const revokeManager = createRevoke(
-      controllerSeed,
-      0,
+    const revokeManager = createRevoke({
+      seed: controllerSeed,
+      profile: 0,
       did,
-      inception.event,
-      manager.id,
-      inceptionKeyPosition,
-    )
-    const managerAttack = createRevokeWithKey(device.privateKey, did, revokeManager.event, target, {
+      prior: inception.event,
+      target: manager.id,
+      keyPosition: inceptionKeyPosition,
+    })
+    const managerAttack = createRevokeWithKey({
+      privateKey: device.privateKey,
+      did,
+      prior: revokeManager.event,
+      target,
       cap: leaf,
     })
     const managerResult = await foldWith([inception, revokeManager, managerAttack])
     expect(managerResult.ok).toBe(false)
 
     // CONTROL A3b — nobody revoked: the same event folds.
-    const clean = createRevokeWithKey(device.privateKey, did, inception.event, target, {
+    const clean = createRevokeWithKey({
+      privateKey: device.privateKey,
+      did,
+      prior: inception.event,
+      target,
       cap: leaf,
     })
     const cleanResult = await foldWith([inception, clean])

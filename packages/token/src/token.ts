@@ -142,13 +142,13 @@ export async function verifySignedPayload<
           if (cached != null) return cached
           return resolver != null ? resolver(did) : undefined
         }
-  const { alg, publicKey, peer4Doc } = await resolveIssuerWithDoc(
-    payload.iss,
-    { kid: header.kid },
-    effectiveResolver,
+  const { alg, publicKey, peer4Doc } = await resolveIssuerWithDoc({
+    iss: payload.iss,
+    header: { kid: header.kid },
+    resolver: effectiveResolver,
     methods,
-    { historic },
-  )
+    historic,
+  })
   const verify = getVerifier(alg, verifiers)
   const message = typeof data === 'string' ? fromUTF(data) : data
   const verified = await verify(signature, message, publicKey)

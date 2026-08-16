@@ -32,14 +32,21 @@ import {
 const seed = new Uint8Array(32).fill(41)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const rotate = createRotate(seed, 0, did, inception.event)
+const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
 const leakedKey = inception.event.k[0]
 
 describe('key revocation, independently', () => {
   test('the denial stops the leaked key and leaves the live key working', async () => {
-    const revoke = createRevoke(seed, 0, did, rotate.event, keyTarget(leakedKey), {
-      gen: 0,
-      seq: 1,
+    const revoke = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: rotate.event,
+      target: keyTarget(leakedKey),
+      keyPosition: {
+        gen: 0,
+        seq: 1,
+      },
     })
     const denied: MethodRegistry = [
       createControllerResolver({
@@ -49,7 +56,7 @@ describe('key revocation, independently', () => {
 
     // Minted by the leaked key, before the denial existed.
     const thief = await randomIdentity()
-    const stolenIdentity = createControllerIdentity(seed, 0, [inception])
+    const stolenIdentity = createControllerIdentity({ seed, profile: 0, log: [inception] })
     const stolen = stringifyToken(
       await createCapability(stolenIdentity, {
         sub: did,
@@ -72,7 +79,7 @@ describe('key revocation, independently', () => {
     }
 
     // CONTROL — the live key, same log, same shape. If this also fails the denial proves nothing.
-    const owner = createControllerIdentity(seed, 0, [inception, rotate, revoke])
+    const owner = createControllerIdentity({ seed, profile: 0, log: [inception, rotate, revoke] })
     const good = await randomIdentity()
     const honest = stringifyToken(
       await createCapability(owner, {
@@ -107,7 +114,7 @@ describe('key revocation, independently', () => {
         loadLog: async (asked) => (asked === did ? [inception, rotate] : undefined),
       }),
     ]
-    const issuer = createControllerIdentity(seed, 0, [inception])
+    const issuer = createControllerIdentity({ seed, profile: 0, log: [inception] })
     const holder = await randomIdentity()
     const grant = stringifyToken(
       await createCapability(issuer, {
@@ -139,9 +146,16 @@ describe('key revocation, independently', () => {
 
     const beforeDenial = await invoke(before)
 
-    const revoke = createRevoke(seed, 0, did, rotate.event, keyTarget(leakedKey), {
-      gen: 0,
-      seq: 1,
+    const revoke = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: rotate.event,
+      target: keyTarget(leakedKey),
+      keyPosition: {
+        gen: 0,
+        seq: 1,
+      },
     })
     const after: MethodRegistry = [
       createControllerResolver({
@@ -165,8 +179,8 @@ describe('key revocation, independently', () => {
         loadLog: async (asked) => (asked === did ? [inception, rotate] : undefined),
       }),
     ]
-    const live = createControllerIdentity(seed, 0, [inception, rotate])
-    const leaked = createControllerIdentity(seed, 0, [inception])
+    const live = createControllerIdentity({ seed, profile: 0, log: [inception, rotate] })
+    const leaked = createControllerIdentity({ seed, profile: 0, log: [inception] })
     const holder = await randomIdentity()
     const grant = stringifyToken(
       await createCapability(live, {
@@ -201,9 +215,16 @@ describe('key revocation, independently', () => {
 
     const beforeDenial = await invoke(before)
 
-    const revoke = createRevoke(seed, 0, did, rotate.event, keyTarget(leakedKey), {
-      gen: 0,
-      seq: 1,
+    const revoke = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: rotate.event,
+      target: keyTarget(leakedKey),
+      keyPosition: {
+        gen: 0,
+        seq: 1,
+      },
     })
     const after: MethodRegistry = [
       createControllerResolver({
@@ -220,9 +241,16 @@ describe('key revocation, independently', () => {
     // The plant-a-record denial of service the swallow exists to stop. An untrusted backend hands
     // back a record signed by a key this DID never had, claiming to revoke a live grant. If
     // honouring denied-key records had widened into honouring unverifiable ones, this would deny.
-    const revoke = createRevoke(seed, 0, did, rotate.event, keyTarget(leakedKey), {
-      gen: 0,
-      seq: 1,
+    const revoke = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: rotate.event,
+      target: keyTarget(leakedKey),
+      keyPosition: {
+        gen: 0,
+        seq: 1,
+      },
     })
     const methods: MethodRegistry = [
       createControllerResolver({
@@ -230,7 +258,7 @@ describe('key revocation, independently', () => {
       }),
     ]
 
-    const live = createControllerIdentity(seed, 0, [inception, rotate, revoke])
+    const live = createControllerIdentity({ seed, profile: 0, log: [inception, rotate, revoke] })
     const holder = await randomIdentity()
     const grant = stringifyToken(
       await createCapability(live, {

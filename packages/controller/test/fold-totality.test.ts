@@ -38,13 +38,26 @@ const other = 'did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
 
 const icp = createInception(seed, 0)
 const did = didFromInception(icp.event)
-const rot = createRotate(seed, 0, did, icp.event)
+const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
 const reset = createReset(seed, 0, 1)
 const inceptionKeyPosition = { gen: 0, seq: 0 }
-const capRevoke = createRevoke(seed, 0, did, icp.event, target, inceptionKeyPosition, {
+const capRevoke = createRevoke({
+  seed,
+  profile: 0,
+  did,
+  prior: icp.event,
+  target,
+  keyPosition: inceptionKeyPosition,
   cap: 'a-serialized-capability',
 })
-const revoke = createRevoke(seed, 0, did, icp.event, target, inceptionKeyPosition)
+const revoke = createRevoke({
+  seed,
+  profile: 0,
+  did,
+  prior: icp.event,
+  target,
+  keyPosition: inceptionKeyPosition,
+})
 
 /** A copy of `signed` with one member of its event removed — a field a peer simply did not send. */
 function withoutEventMember(signed: SignedEvent, member: string): unknown {
@@ -446,7 +459,7 @@ describe('a malformed event its own author signed', () => {
     // The commitment goes into `KeyState.next`, which the *next* rotate reads — one event away
     // from the log that caused it. Rejecting at publication is what keeps that read safe.
     const [forgedDid, forged] = signedInception('n', null)
-    const following = createRotate(seed, 0, forgedDid, forged.event)
+    const following = createRotate({ seed, profile: 0, did: forgedDid, prior: forged.event })
     expect(foldLog(forgedDid, [forged, following])).toEqual({
       ok: false,
       reason: 'invalid inception',
@@ -608,9 +621,23 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
       wire([
         icp,
         {
-          ...createRevoke(seed, 0, did, icp.event, target, inceptionKeyPosition),
+          ...createRevoke({
+            seed,
+            profile: 0,
+            did,
+            prior: icp.event,
+            target,
+            keyPosition: inceptionKeyPosition,
+          }),
           event: {
-            ...createRevoke(seed, 0, did, icp.event, target, inceptionKeyPosition).event,
+            ...createRevoke({
+              seed,
+              profile: 0,
+              did,
+              prior: icp.event,
+              target,
+              keyPosition: inceptionKeyPosition,
+            }).event,
             zz: abyss(),
           },
         },
@@ -633,8 +660,28 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   test('one hostile branch no longer kills duplicity detection for the well-formed ones', () => {
     // The denial of service `isSignedEventShape`'s docstring names: a thief who cannot produce a
     // valid event crashing duplicity resolution for every well-formed branch beside it.
-    const forkA = [icp, createRevoke(seed, 0, did, icp.event, target, inceptionKeyPosition)]
-    const forkB = [icp, createRevoke(seed, 0, did, icp.event, other, inceptionKeyPosition)]
+    const forkA = [
+      icp,
+      createRevoke({
+        seed,
+        profile: 0,
+        did,
+        prior: icp.event,
+        target,
+        keyPosition: inceptionKeyPosition,
+      }),
+    ]
+    const forkB = [
+      icp,
+      createRevoke({
+        seed,
+        profile: 0,
+        did,
+        prior: icp.event,
+        target: other,
+        keyPosition: inceptionKeyPosition,
+      }),
+    ]
     const hostile = wire([icp, { ...rot, event: { ...rot.event, a: abyss() } }])
 
     const clean = resolveBranches(did, [forkA, forkB])
@@ -740,8 +787,28 @@ describe('resolveBranches() survives a hostile branch', () => {
   // Two well-formed branches that genuinely fork, plus one an attacker fabricated. Before the shape
   // guards the fabricated branch threw a TypeError out of `resolveBranches`, which is a denial of
   // service on the one mechanism that exists to detect a key-takeover fork.
-  const forkA = [icp, createRevoke(seed, 0, did, icp.event, target, inceptionKeyPosition)]
-  const forkB = [icp, createRevoke(seed, 0, did, icp.event, other, inceptionKeyPosition)]
+  const forkA = [
+    icp,
+    createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target,
+      keyPosition: inceptionKeyPosition,
+    }),
+  ]
+  const forkB = [
+    icp,
+    createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: other,
+      keyPosition: inceptionKeyPosition,
+    }),
+  ]
   const hostile = [icp, withoutEventMember(rot, 'k')] as Array<SignedEvent>
 
   test('still reports duplicity among the well-formed branches', () => {

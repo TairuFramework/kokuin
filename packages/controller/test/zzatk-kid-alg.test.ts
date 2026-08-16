@@ -40,7 +40,7 @@ const k0 = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
 const k1 = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
 const o0 = deriveKeyPair(otherSeed, authorityPath(0, 0, 0), 'EdDSA')
 
-const rotated = createRotate(seed, 0, did, inception.event)
+const rotated = createRotate({ seed, profile: 0, did, prior: inception.event })
 const reset = createReset(seed, 0, 1)
 
 function registryFor(log: Array<SignedEvent>, otherLog: Array<SignedEvent> = [otherInception]) {

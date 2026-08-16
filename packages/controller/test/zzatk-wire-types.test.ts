@@ -47,7 +47,14 @@ describe('wire types the fold never checks', () => {
   // and the control below — which already showed `x` being checked — now shows the two agreeing.
   test('ROW 3 (closed): `cap` is checked in `stepEvent`, like `x` right above it', async () => {
     const { icp, did } = build()
-    const rev = createRevoke(delegateSeed, 0, did, icp.event, target, { gen: 0, seq: 0 })
+    const rev = createRevoke({
+      seed: delegateSeed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target,
+      keyPosition: { gen: 0, seq: 0 },
+    })
     // One field mutated: `cap` set to a non-string. `x` is type-checked in `stepEvent`; `cap` is
     // not, and it crosses a `(cap: string, ...)` callback boundary.
     const forged = {

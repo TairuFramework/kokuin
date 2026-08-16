@@ -145,7 +145,7 @@ describe('the recovery commitment is fixed at inception', () => {
 
   test('a rotate carrying `r` is refused, at every position and by both verifiers', () => {
     const { inception, did } = setup()
-    const rot = createRotate(seed, 0, did, inception.event)
+    const rot = createRotate({ seed, profile: 0, did, prior: inception.event })
     const withRecovery = { ...rot.event, r: digestOf('anything at all') }
     const key = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
     const forged = { event: withRecovery, sigs: signEvent(withRecovery, [key.privateKey]) }
@@ -187,10 +187,17 @@ describe('the recovery commitment is fixed at inception', () => {
     // Including across a reset, which opens a new generation under the same root — and this is the
     // value `verifyReset` enforces, so the state and the verifier agree by construction now.
     const { inception, did } = setup()
-    const rot = createRotate(seed, 0, did, inception.event)
-    const rev = createRevoke(seed, 0, did, rot.event, target, { gen: 0, seq: 1 })
+    const rot = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const rev = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: rot.event,
+      target,
+      keyPosition: { gen: 0, seq: 1 },
+    })
     const reset = createReset(seed, 0, 1)
-    const after = createRotate(seed, 0, did, reset.event)
+    const after = createRotate({ seed, profile: 0, did, prior: reset.event })
 
     const result = foldLog(did, [inception, rot, rev, reset, after])
     expect(result.ok).toBe(true)

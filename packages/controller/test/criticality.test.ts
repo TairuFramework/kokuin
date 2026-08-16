@@ -32,7 +32,15 @@ function build() {
 
 /** A cap-bearing revoke signed by the delegate, chained onto the inception. */
 function capRevoke(did: string, icp: ReturnType<typeof createInception>) {
-  return createRevoke(delegateSeed, 0, did, icp.event, stolen, { gen: 0, seq: 0 }, { cap })
+  return createRevoke({
+    seed: delegateSeed,
+    profile: 0,
+    did,
+    prior: icp.event,
+    target: stolen,
+    keyPosition: { gen: 0, seq: 0 },
+    cap,
+  })
 }
 
 function unknownEvent(did: string, prior: ReturnType<typeof createInception>, crit: boolean) {
@@ -238,16 +246,23 @@ describe('capability-authorised revoke', () => {
     // fold's own boundary, with a stub verifier, so it holds independently of what
     // `@kokuin/capability` does with the answer.
     const { icp, did } = build()
-    const first = createRevoke(seed, 0, did, icp.event, 'did:key:zEarlier', { gen: 0, seq: 0 })
-    const second = createRevoke(
-      delegateSeed,
-      0,
+    const first = createRevoke({
+      seed,
+      profile: 0,
       did,
-      first.event,
-      stolen,
-      { gen: 0, seq: 0 },
-      { cap },
-    )
+      prior: icp.event,
+      target: 'did:key:zEarlier',
+      keyPosition: { gen: 0, seq: 0 },
+    })
+    const second = createRevoke({
+      seed: delegateSeed,
+      profile: 0,
+      did,
+      prior: first.event,
+      target: stolen,
+      keyPosition: { gen: 0, seq: 0 },
+      cap,
+    })
 
     let retained: DIDMethodResolver | undefined
     const result = await foldLogAsync(did, [icp, first, second], {

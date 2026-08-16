@@ -25,7 +25,7 @@ import {
 const seed = new Uint8Array(32).fill(7)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity(seed, 0, [inception])
+const controller = createControllerIdentity({ seed, profile: 0, log: [inception] })
 const inceptionKeyPosition = { gen: 0, seq: 0 }
 const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
@@ -51,7 +51,14 @@ function foldWith(events: Array<SignedEvent>) {
 }
 
 function revokeOf(who: string): SignedEvent {
-  return createRevoke(seed, 0, did, inception.event, who, inceptionKeyPosition)
+  return createRevoke({
+    seed,
+    profile: 0,
+    did,
+    prior: inception.event,
+    target: who,
+    keyPosition: inceptionKeyPosition,
+  })
 }
 
 describe('ATTACK: the cnf pin', () => {
@@ -72,13 +79,23 @@ describe('ATTACK: the cnf pin', () => {
     // position, revoked or not, and the control can no longer be satisfied alongside the attack.
     // What it now establishes is the same thing at the new boundary: the refusal is caused by the
     // binding and not by the deny set, because nobody is revoked here.
-    const clean = createRevokeWithKey(holder.privateKey, did, inception.event, target, { cap })
+    const clean = createRevokeWithKey({
+      privateKey: holder.privateKey,
+      did,
+      prior: inception.event,
+      target,
+      cap,
+    })
     const cleanResult = await foldWith([inception, clean])
     expect(cleanResult.ok).toBe(false)
 
     // CONTROL E1a — revoke the DID in `aud`: the deny set bites, proving it is live here.
     const revokeNominal = revokeOf(nominal.id)
-    const afterNominal = createRevokeWithKey(holder.privateKey, did, revokeNominal.event, target, {
+    const afterNominal = createRevokeWithKey({
+      privateKey: holder.privateKey,
+      did,
+      prior: revokeNominal.event,
+      target,
       cap,
     })
     const nominalResult = await foldWith([inception, revokeNominal, afterNominal])
@@ -86,7 +103,13 @@ describe('ATTACK: the cnf pin', () => {
 
     // ATTACK — revoke the DID of the key that actually wields the capability.
     const revokeHolder = revokeOf(holder.id)
-    const attack = createRevokeWithKey(holder.privateKey, did, revokeHolder.event, target, { cap })
+    const attack = createRevokeWithKey({
+      privateKey: holder.privateKey,
+      did,
+      prior: revokeHolder.event,
+      target,
+      cap,
+    })
     const attacked = await foldWith([inception, revokeHolder, attack])
 
     expect(attacked.ok, 'UNREVOKABLE HOLDER: revoking the pinned key holder does nothing').toBe(
@@ -102,7 +125,11 @@ describe('ATTACK: the cnf pin', () => {
     // CONTROL — the unmutated pin folds.
     const okResult = await foldWith([
       inception,
-      createRevokeWithKey(device.privateKey, did, inception.event, target, {
+      createRevokeWithKey({
+        privateKey: device.privateKey,
+        did,
+        prior: inception.event,
+        target,
         cap: await mint(device.id, good),
       }),
     ])
@@ -133,7 +160,13 @@ describe('ATTACK: the cnf pin', () => {
       const cap = await mint(device.id, cnf)
       const result = await foldWith([
         inception,
-        createRevokeWithKey(device.privateKey, did, inception.event, target, { cap }),
+        createRevokeWithKey({
+          privateKey: device.privateKey,
+          did,
+          prior: inception.event,
+          target,
+          cap,
+        }),
       ])
       results.push([name, result.ok ? 'ACCEPTED' : result.reason])
     }

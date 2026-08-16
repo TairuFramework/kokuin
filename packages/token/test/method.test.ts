@@ -70,18 +70,31 @@ describe('DIDMethodResolver.resolveHistoric', () => {
   }
 
   test('the default asks `resolve`, never `resolveHistoric`', async () => {
-    const result = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [bothMembers])
+    const result = await resolveIssuerWithDoc({
+      iss: 'did:kokuin:zABC',
+      header: {},
+      resolver: undefined,
+      methods: [bothMembers],
+    })
     expect(result.publicKey).toEqual(publicKey)
   })
 
   test('`historic: true` asks `resolveHistoric`, and nothing else does', async () => {
     // The two members answer with different keys, so this cannot pass by both being consulted.
-    const result = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [bothMembers], {
+    const result = await resolveIssuerWithDoc({
+      iss: 'did:kokuin:zABC',
+      header: {},
+      resolver: undefined,
+      methods: [bothMembers],
       historic: true,
     })
     expect(result.publicKey).toEqual(historicKey)
     // An explicit `false` and an absent `mode` are the same ask.
-    const off = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [bothMembers], {
+    const off = await resolveIssuerWithDoc({
+      iss: 'did:kokuin:zABC',
+      header: {},
+      resolver: undefined,
+      methods: [bothMembers],
       historic: false,
     })
     expect(off.publicKey).toEqual(publicKey)
@@ -92,18 +105,33 @@ describe('DIDMethodResolver.resolveHistoric', () => {
     // *permissive* `resolve` — the whole-generation scan — so answering the historic ask from it
     // would be exactly the behaviour the split removed, silently and for every such resolver.
     await expect(
-      resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [kokuinResolver], { historic: true }),
+      resolveIssuerWithDoc({
+        iss: 'did:kokuin:zABC',
+        header: {},
+        resolver: undefined,
+        methods: [kokuinResolver],
+        historic: true,
+      }),
     ).rejects.toThrow(/cannot resolve historic keys/)
     // Control: the identical registry entry, the identical DID, answering the non-historic ask.
     // The refusal above is the missing member and not the resolver being unusable.
-    const control = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [kokuinResolver])
+    const control = await resolveIssuerWithDoc({
+      iss: 'did:kokuin:zABC',
+      header: {},
+      resolver: undefined,
+      methods: [kokuinResolver],
+    })
     expect(control.publicKey).toEqual(publicKey)
   })
 
   test('the refusal is an UnresolvableIssuerError — "could not check", not "checked and bad"', async () => {
     // A fail-closed caller keys on this type. Nothing was learned about the artefact: the method
     // simply cannot answer the question that was asked.
-    const error = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [kokuinResolver], {
+    const error = await resolveIssuerWithDoc({
+      iss: 'did:kokuin:zABC',
+      header: {},
+      resolver: undefined,
+      methods: [kokuinResolver],
       historic: true,
     }).then(
       () => undefined,
@@ -115,22 +143,33 @@ describe('DIDMethodResolver.resolveHistoric', () => {
 
   test('`did:key` ignores the mode entirely — its key is in the identifier', async () => {
     const did = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-    const historic = await resolveIssuerWithDoc(did, {}, undefined, undefined, { historic: true })
-    const current = await resolveIssuerWithDoc(did)
+    const historic = await resolveIssuerWithDoc({
+      iss: did,
+      header: {},
+      resolver: undefined,
+      methods: undefined,
+      historic: true,
+    })
+    const current = await resolveIssuerWithDoc({ iss: did })
     expect(historic.publicKey).toEqual(current.publicKey)
   })
 })
 
 describe('resolveIssuerWithDoc() with an injected method', () => {
   test('delegates an unknown method to its resolver', async () => {
-    const result = await resolveIssuerWithDoc('did:kokuin:zABC', {}, undefined, [kokuinResolver])
+    const result = await resolveIssuerWithDoc({
+      iss: 'did:kokuin:zABC',
+      header: {},
+      resolver: undefined,
+      methods: [kokuinResolver],
+    })
     expect(result.alg).toBe('EdDSA')
     expect(result.publicKey).toEqual(publicKey)
   })
 
   test('still resolves did:key without any registry', async () => {
     const did = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-    const result = await resolveIssuerWithDoc(did)
+    const result = await resolveIssuerWithDoc({ iss: did })
     expect(result.alg).toBe('EdDSA')
     expect(result.publicKey.length).toBe(32)
   })
@@ -141,12 +180,19 @@ describe('resolveIssuerWithDoc() with an injected method', () => {
       resolve: async () => ({ alg: 'EdDSA', publicKey }),
     }
     const did = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-    const result = await resolveIssuerWithDoc(did, {}, undefined, [override])
+    const result = await resolveIssuerWithDoc({
+      iss: did,
+      header: {},
+      resolver: undefined,
+      methods: [override],
+    })
     expect(result.publicKey).toEqual(publicKey)
   })
 
   test('an unknown method with no registry reports the DID, not a codec error', async () => {
-    await expect(resolveIssuerWithDoc('did:kokuin:zABC')).rejects.toThrow(/did:kokuin:zABC/)
+    await expect(resolveIssuerWithDoc({ iss: 'did:kokuin:zABC' })).rejects.toThrow(
+      /did:kokuin:zABC/,
+    )
   })
 
   test('a registered method takes precedence over the built-in did:peer:4 path', async () => {
@@ -171,7 +217,12 @@ describe('resolveIssuerWithDoc() with an injected method', () => {
       resolve: async () => ({ alg: 'EdDSA', publicKey }),
     }
 
-    const result = await resolveIssuerWithDoc(longForm, { kid: '#key-0' }, undefined, [override])
+    const result = await resolveIssuerWithDoc({
+      iss: longForm,
+      header: { kid: '#key-0' },
+      resolver: undefined,
+      methods: [override],
+    })
     expect(result.publicKey).toEqual(publicKey)
     expect(result.publicKey).not.toEqual(embeddedPub)
   })

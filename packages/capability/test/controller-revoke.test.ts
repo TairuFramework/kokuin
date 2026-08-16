@@ -80,7 +80,12 @@ type Controller = {
 function buildController(seed: Uint8Array): Controller {
   const inception = createInception(seed, 0)
   const did = didFromInception(inception.event)
-  return { did, inception, identity: createControllerIdentity(seed, 0, [inception]), seed }
+  return {
+    did,
+    inception,
+    identity: createControllerIdentity({ seed, profile: 0, log: [inception] }),
+    seed,
+  }
 }
 
 const controller = buildController(controllerSeed)
@@ -145,15 +150,15 @@ async function foldWithCapability(
   cap: string,
   options: { signerSeed?: Uint8Array; deny?: string } = {},
 ): Promise<FoldResult> {
-  const revoke = createRevoke(
-    options.signerSeed ?? delegateSeed,
-    0,
-    controller.did,
-    controller.inception.event,
-    options.deny ?? target,
-    inceptionKeyPosition,
-    { cap },
-  )
+  const revoke = createRevoke({
+    seed: options.signerSeed ?? delegateSeed,
+    profile: 0,
+    did: controller.did,
+    prior: controller.inception.event,
+    target: options.deny ?? target,
+    keyPosition: inceptionKeyPosition,
+    cap,
+  })
   return await foldLogAsync(controller.did, [controller.inception, revoke], {
     verifyCapability: createControllerCapabilityVerifier({ methods }),
   })
@@ -295,15 +300,15 @@ describe('createControllerCapabilityVerifier()', () => {
     // never be checked at all if this call site did not run it.
     const cap = await mintCapability()
     const seen: Array<string> = []
-    const revoke = createRevoke(
-      delegateSeed,
-      0,
-      controller.did,
-      controller.inception.event,
+    const revoke = createRevoke({
+      seed: delegateSeed,
+      profile: 0,
+      did: controller.did,
+      prior: controller.inception.event,
       target,
-      inceptionKeyPosition,
-      { cap },
-    )
+      keyPosition: inceptionKeyPosition,
+      cap,
+    })
     const events = [controller.inception, revoke]
 
     const observed = await foldLogAsync(controller.did, events, {
@@ -463,13 +468,13 @@ describe('createControllerCapabilityVerifier()', () => {
       aud: peer.longForm,
       cnf: audienceConfirmation({ alg: 'EdDSA', publicKey: peer.publicKey }),
     })
-    const revoke = createRevokeWithKey(
-      peer.privateKey,
-      controller.did,
-      controller.inception.event,
+    const revoke = createRevokeWithKey({
+      privateKey: peer.privateKey,
+      did: controller.did,
+      prior: controller.inception.event,
       target,
-      { cap: bound },
-    )
+      cap: bound,
+    })
     await expect(
       foldLogAsync(controller.did, [controller.inception, revoke], {
         verifyCapability: createControllerCapabilityVerifier({ methods }),
@@ -507,15 +512,15 @@ describe('createControllerCapabilityVerifier()', () => {
     })
 
     const seen: Array<string> = []
-    const revoke = createRevoke(
-      delegateSeed,
-      0,
-      controller.did,
-      controller.inception.event,
+    const revoke = createRevoke({
+      seed: delegateSeed,
+      profile: 0,
+      did: controller.did,
+      prior: controller.inception.event,
       target,
-      inceptionKeyPosition,
-      { cap: leaf },
-    )
+      keyPosition: inceptionKeyPosition,
+      cap: leaf,
+    })
     const result = await foldLogAsync(controller.did, [controller.inception, revoke], {
       verifyCapability: createControllerCapabilityVerifier({
         methods,
@@ -544,15 +549,15 @@ describe('createControllerCapabilityVerifier()', () => {
     // cannot change. The hazard is gone rather than merely avoided, and the mechanism that removed
     // it is still the one under test: no registry is configured at all below, and the revoke folds.
     const cap = await mintCapability()
-    const revoke = createRevoke(
-      delegateSeed,
-      0,
-      controller.did,
-      controller.inception.event,
+    const revoke = createRevoke({
+      seed: delegateSeed,
+      profile: 0,
+      did: controller.did,
+      prior: controller.inception.event,
       target,
-      inceptionKeyPosition,
-      { cap },
-    )
+      keyPosition: inceptionKeyPosition,
+      cap,
+    })
     const result = await foldLogAsync(controller.did, [controller.inception, revoke], {
       // No `methods`: the controller is answered by the resolver the fold supplies, and the audience
       // is answered by its own identifier. Nothing here can reach the network or a registry.
@@ -587,15 +592,15 @@ describe('createControllerCapabilityVerifier()', () => {
     const longLived = await mintCapability({ exp: now() + 365 * 24 * 3600 })
     await expect(foldWithCapability(longLived)).resolves.toMatchObject({ ok: true })
 
-    const revoke = createRevoke(
-      delegateSeed,
-      0,
-      controller.did,
-      controller.inception.event,
+    const revoke = createRevoke({
+      seed: delegateSeed,
+      profile: 0,
+      did: controller.did,
+      prior: controller.inception.event,
       target,
-      inceptionKeyPosition,
-      { cap: longLived },
-    )
+      keyPosition: inceptionKeyPosition,
+      cap: longLived,
+    })
     const result = await foldLogAsync(controller.did, [controller.inception, revoke], {
       verifyCapability: createControllerCapabilityVerifier({ maxLifetimeSeconds: 24 * 3600 }),
     })
@@ -614,13 +619,13 @@ describe('createControllerCapabilityVerifier()', () => {
       cnf: audienceConfirmation({ alg: 'EdDSA', publicKey: device.publicKey }),
     })
 
-    const revoke = createRevokeWithKey(
-      device.privateKey,
-      controller.did,
-      controller.inception.event,
+    const revoke = createRevokeWithKey({
+      privateKey: device.privateKey,
+      did: controller.did,
+      prior: controller.inception.event,
       target,
-      { cap },
-    )
+      cap,
+    })
     const result = await foldLogAsync(controller.did, [controller.inception, revoke], {
       verifyCapability: createControllerCapabilityVerifier({ methods }),
     })
@@ -632,13 +637,13 @@ describe('createControllerCapabilityVerifier()', () => {
     // Control: another seedless device, holding no capability naming it, cannot author the same
     // revoke — so what folded above is the grant, not merely the new builder.
     const outsiderDevice = randomIdentity()
-    const stolen = createRevokeWithKey(
-      outsiderDevice.privateKey,
-      controller.did,
-      controller.inception.event,
+    const stolen = createRevokeWithKey({
+      privateKey: outsiderDevice.privateKey,
+      did: controller.did,
+      prior: controller.inception.event,
       target,
-      { cap },
-    )
+      cap,
+    })
     await expect(
       foldLogAsync(controller.did, [controller.inception, stolen], {
         verifyCapability: createControllerCapabilityVerifier({ methods }),
@@ -701,15 +706,15 @@ describe('createControllerCapabilityVerifier()', () => {
     // the very profile being folded. The fold hands the verifier a resolver for that profile at the
     // position being verified, so the one DID a caller cannot configure correctly is the one it
     // never has to.
-    const revoke = createRevoke(
-      delegateSeed,
-      0,
-      controller.did,
-      controller.inception.event,
+    const revoke = createRevoke({
+      seed: delegateSeed,
+      profile: 0,
+      did: controller.did,
+      prior: controller.inception.event,
       target,
-      inceptionKeyPosition,
-      { cap: await mintCapability() },
-    )
+      keyPosition: inceptionKeyPosition,
+      cap: await mintCapability(),
+    })
     const result = await foldLogAsync(controller.did, [controller.inception, revoke], {
       verifyCapability: createControllerCapabilityVerifier(),
     })
@@ -736,15 +741,15 @@ describe('createControllerCapabilityVerifier()', () => {
       parentCapability: root,
       cap: [root],
     })
-    const revoke = createRevoke(
-      delegateSeed,
-      0,
-      controller.did,
-      controller.inception.event,
+    const revoke = createRevoke({
+      seed: delegateSeed,
+      profile: 0,
+      did: controller.did,
+      prior: controller.inception.event,
       target,
-      inceptionKeyPosition,
-      { cap: leaf },
-    )
+      keyPosition: inceptionKeyPosition,
+      cap: leaf,
+    })
     const events = [controller.inception, revoke]
 
     await expect(

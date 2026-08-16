@@ -89,12 +89,18 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
     }
     const foldOptions = { verifyCapability: options.verifyCapability }
     if (options.history == null) {
-      return await allStatesAsync(did, events, CONTEXT, foldOptions)
+      return await allStatesAsync({ did, events, context: CONTEXT, options: foldOptions })
     }
     // Compared against what this party last accepted, so a truncated log — folding cleanly, missing
     // the revoke that matters — is refused. See `LogStore`.
     const seen = await options.history.get(did)
-    const { log, states } = await authoritativeStates(did, events, seen, CONTEXT, foldOptions)
+    const { log, states } = await authoritativeStates({
+      did,
+      loaded: events,
+      seen,
+      context: CONTEXT,
+      options: foldOptions,
+    })
     // Only after it has folded, and only in the memory-keeping direction: a log that lost never
     // reaches here, so the store never moves backwards.
     await options.history.set(did, log)
@@ -131,7 +137,7 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
     // The head's key set only: a profile that rotated away from a key answers "no" for it here, which
     // is what makes `rotate` retire a leaked authority key rather than add one beside it.
     async resolve(did: string, header: ResolveIssuerHeader = {}): Promise<ResolvedSigningKey> {
-      return signingKeyFrom(did, await loadStates(did), header)
+      return signingKeyFrom({ did, states: await loadStates(did), header })
     },
     // Every key set within the current generation, for a caller verifying past-issued material. A
     // `rotate` must not invalidate those; a `reset` still does, and the scan stops at the generation
@@ -140,7 +146,7 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
       did: string,
       header: ResolveIssuerHeader = {},
     ): Promise<ResolvedSigningKey> {
-      return signingKeyFrom(did, await loadStates(did), header, true)
+      return signingKeyFrom({ did, states: await loadStates(did), header, historic: true })
     },
     async resolveDenySet(did: string): Promise<ReadonlySet<string>> {
       // The head's set, deliberately, not the state at any position a capability names: `iat` is

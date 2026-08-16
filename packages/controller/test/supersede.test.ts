@@ -37,7 +37,7 @@ function build() {
 describe('resolveBranches()', () => {
   test('a longer branch at the same generation wins on sequence', () => {
     const { did, icp } = build()
-    const rot = createRotate(seed, 0, did, icp.event)
+    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
     const result = resolveBranches(did, [[icp], [icp, rot]])
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -46,8 +46,15 @@ describe('resolveBranches()', () => {
 
   test('a higher generation wins outright over a longer lower generation', () => {
     const { did, icp } = build()
-    const rot = createRotate(seed, 0, did, icp.event)
-    const rev = createRevoke(seed, 0, did, rot.event, victim, { gen: 0, seq: 1 })
+    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rev = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: rot.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 1 },
+    })
     const reset = createReset(seed, 0, 1)
     const result = resolveBranches(did, [
       [icp, rot, rev],
@@ -62,9 +69,16 @@ describe('resolveBranches()', () => {
     const { did, icp } = build()
     // The thief holds the current authority key — established by the inception at (0, 0) — and
     // revokes the owner's other device.
-    const thiefRevoke = createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })
+    const thiefRevoke = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 0 },
+    })
     // The owner rotates using the pre-committed next keys at the same position.
-    const ownerRotate = createRotate(seed, 0, did, icp.event)
+    const ownerRotate = createRotate({ seed, profile: 0, did, prior: icp.event })
     const result = resolveBranches(did, [
       [icp, thiefRevoke],
       [icp, ownerRotate],
@@ -77,8 +91,15 @@ describe('resolveBranches()', () => {
 
   test('order of presentation does not change the winner', () => {
     const { did, icp } = build()
-    const thiefRevoke = createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })
-    const ownerRotate = createRotate(seed, 0, did, icp.event)
+    const thiefRevoke = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 0 },
+    })
+    const ownerRotate = createRotate({ seed, profile: 0, did, prior: icp.event })
     const a = resolveBranches(did, [
       [icp, ownerRotate],
       [icp, thiefRevoke],
@@ -94,8 +115,22 @@ describe('resolveBranches()', () => {
 
   test('two current-key events at the same position are duplicity, not a merge', () => {
     const { did, icp } = build()
-    const revokeA = createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })
-    const revokeB = createRevoke(seed, 0, did, icp.event, 'did:key:zOther', { gen: 0, seq: 0 })
+    const revokeA = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 0 },
+    })
+    const revokeB = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: 'did:key:zOther',
+      keyPosition: { gen: 0, seq: 0 },
+    })
     const result = resolveBranches(did, [
       [icp, revokeA],
       [icp, revokeB],
@@ -108,8 +143,8 @@ describe('resolveBranches()', () => {
 
   test('re-derivation is idempotent, so identical branches are not duplicity', () => {
     const { did, icp } = build()
-    const a = createRotate(seed, 0, did, icp.event)
-    const b = createRotate(seed, 0, did, icp.event)
+    const a = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const b = createRotate({ seed, profile: 0, did, prior: icp.event })
     const result = resolveBranches(did, [
       [icp, a],
       [icp, b],
@@ -135,11 +170,18 @@ describe('resolveBranches()', () => {
       const thief: Array<SignedEvent> = [icp]
       let prior: EventCommon = icp.event
       for (let n = 0; n < length; n++) {
-        const rev = createRevoke(seed, 0, did, prior, `${victim}${n}`, { gen: 0, seq: 0 })
+        const rev = createRevoke({
+          seed,
+          profile: 0,
+          did,
+          prior,
+          target: `${victim}${n}`,
+          keyPosition: { gen: 0, seq: 0 },
+        })
         thief.push(rev)
         prior = rev.event
       }
-      const owner = [icp, createRotate(seed, 0, did, icp.event)]
+      const owner = [icp, createRotate({ seed, profile: 0, did, prior: icp.event })]
 
       const result = resolveBranches(did, [thief, owner])
       expect(result.ok).toBe(true)
@@ -159,9 +201,30 @@ describe('resolveBranches()', () => {
   // about at all.
   test('duplicity is reported at the divergence point, not at the heads', () => {
     const { did, icp } = build()
-    const forkA = createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })
-    const forkB = createRevoke(seed, 0, did, icp.event, 'did:key:zOther', { gen: 0, seq: 0 })
-    const forkBNext = createRevoke(seed, 0, did, forkB.event, 'did:key:zThird', { gen: 0, seq: 0 })
+    const forkA = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 0 },
+    })
+    const forkB = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: 'did:key:zOther',
+      keyPosition: { gen: 0, seq: 0 },
+    })
+    const forkBNext = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: forkB.event,
+      target: 'did:key:zThird',
+      keyPosition: { gen: 0, seq: 0 },
+    })
     const result = resolveBranches(did, [
       [icp, forkA],
       [icp, forkB, forkBNext],
@@ -180,7 +243,17 @@ describe('resolveBranches()', () => {
   // a key-takeover fork.
   test('a branch whose only extension is a skipped event cannot force duplicity', () => {
     const { did, icp } = build()
-    const honest = [icp, createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })]
+    const honest = [
+      icp,
+      createRevoke({
+        seed,
+        profile: 0,
+        did,
+        prior: icp.event,
+        target: victim,
+        keyPosition: { gen: 0, seq: 0 },
+      }),
+    ]
     const noise = [
       icp,
       {
@@ -231,7 +304,7 @@ describe('resolveBranches()', () => {
   // wire, so a branch padded with one used to read as a position ahead of the branch it is padding.
   test('a branch padded with a skipped event does not outrank the branch it pads', () => {
     const { did, icp } = build()
-    const rot = createRotate(seed, 0, did, icp.event)
+    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
     const honest = [icp, rot]
     // Appended by someone holding no key material: an unknown, non-critical, unsigned event at the
     // next sequence position, which is all the fold can ask of a type it cannot verify.
@@ -264,9 +337,23 @@ describe('resolveBranches()', () => {
   // three branches are presented must not change that the owner's rotate wins.
   test('a superseding rotate wins a three-way tie regardless of presentation order', () => {
     const { did, icp } = build()
-    const thiefA = createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })
-    const thiefB = createRevoke(seed, 0, did, icp.event, 'did:key:zOtherVictim', { gen: 0, seq: 0 })
-    const owner = createRotate(seed, 0, did, icp.event)
+    const thiefA = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 0 },
+    })
+    const thiefB = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: 'did:key:zOtherVictim',
+      keyPosition: { gen: 0, seq: 0 },
+    })
+    const owner = createRotate({ seed, profile: 0, did, prior: icp.event })
     const branches = [
       [icp, thiefA],
       [icp, thiefB],
@@ -294,15 +381,15 @@ describe('resolveBranches()', () => {
 describe('resolveBranchesAsync()', () => {
   function capLog() {
     const { did, icp } = build()
-    const revoke = createRevoke(
-      delegateSeed,
-      0,
+    const revoke = createRevoke({
+      seed: delegateSeed,
+      profile: 0,
       did,
-      icp.event,
-      victim,
-      { gen: 0, seq: 0 },
-      { cap },
-    )
+      prior: icp.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 0 },
+      cap,
+    })
     return { did, icp, revoke, branch: [icp, revoke] }
   }
 
@@ -325,7 +412,14 @@ describe('resolveBranchesAsync()', () => {
 
   test('reports duplicity on a cap-bearing fork, which the sync form could not see at all', async () => {
     const { did, icp, revoke } = capLog()
-    const rival = createRevoke(seed, 0, did, icp.event, 'did:key:zOther', { gen: 0, seq: 0 })
+    const rival = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: 'did:key:zOther',
+      keyPosition: { gen: 0, seq: 0 },
+    })
     const branches = [
       [icp, revoke],
       [icp, rival],
@@ -356,11 +450,29 @@ describe('resolveBranchesAsync()', () => {
     // it is rejected and the branch is filtered like any other invalid one, which is what keeps
     // the answer from being a denial of service on duplicity detection.
     const { did, icp } = capLog()
-    const honest = [icp, createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })]
+    const honest = [
+      icp,
+      createRevoke({
+        seed,
+        profile: 0,
+        did,
+        prior: icp.event,
+        target: victim,
+        keyPosition: { gen: 0, seq: 0 },
+      }),
+    ]
     const forged = [
       icp,
       {
-        ...createRevoke(seed, 0, did, icp.event, 'did:key:zForged', { gen: 0, seq: 0 }, { cap }),
+        ...createRevoke({
+          seed,
+          profile: 0,
+          did,
+          prior: icp.event,
+          target: 'did:key:zForged',
+          keyPosition: { gen: 0, seq: 0 },
+          cap,
+        }),
         sigs: [],
       },
     ]
@@ -385,8 +497,15 @@ describe('resolveBranchesAsync()', () => {
 
   test('matches the sync form on every log that carries no capability', async () => {
     const { did, icp } = build()
-    const rot = createRotate(seed, 0, did, icp.event)
-    const thief = createRevoke(seed, 0, did, icp.event, victim, { gen: 0, seq: 0 })
+    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const thief = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 0 },
+    })
     const reset = createReset(seed, 0, 1)
     for (const branches of [
       [[icp]],

@@ -42,8 +42,14 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
   test('ROW 1 (closed): after two rotations, the ORIGINAL key mints nothing that verifies', async () => {
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate(seed, 0, did, icp.event)
-    const rot2 = createRotate(seed, 0, did, rot1.event, { keyPosition: { gen: 0, seq: 1 } })
+    const rot1 = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot2 = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: rot1.event,
+      options: { keyPosition: { gen: 0, seq: 1 } },
+    })
     const log = [icp, rot1, rot2]
 
     // The stolen key is the inception's — (gen 0, seq 0) — two rotations behind the head.
@@ -66,7 +72,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
   test('ROW 2 (control): a `kid` the profile NEVER published is refused', async () => {
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate(seed, 0, did, icp.event)
+    const rot1 = createRotate({ seed, profile: 0, did, prior: icp.event })
     const log = [icp, rot1]
     const stranger = await mintWithKeyAt(did, 0, 0, strangerSeed)
     let error: unknown
@@ -79,7 +85,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
   test('ROW 3 (control): after a RESET the same retired key is refused', async () => {
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate(seed, 0, did, icp.event)
+    const rot1 = createRotate({ seed, profile: 0, did, prior: icp.event })
     const reset = createReset(seed, 0, 1)
     const stolen = await mintWithKeyAt(did, 0, 0)
 
@@ -105,7 +111,13 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     // names *audiences*, and the fold carries every past key set forward inside the generation.
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate(seed, 0, did, icp.event, { denySnapshot: [] })
+    const rot1 = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { denySnapshot: [] },
+    })
     const stolen = await mintWithKeyAt(did, 0, 0)
     let error: unknown
     const verified = await verifyToken(stolen, { methods: registry([icp, rot1], did) }).catch(
@@ -124,8 +136,14 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     // artefact says so, and gets the whole current generation.
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate(seed, 0, did, icp.event)
-    const rot2 = createRotate(seed, 0, did, rot1.event, { keyPosition: { gen: 0, seq: 1 } })
+    const rot1 = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot2 = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: rot1.event,
+      options: { keyPosition: { gen: 0, seq: 1 } },
+    })
     const log = [icp, rot1, rot2]
 
     const issued = await mintWithKeyAt(did, 0, 0)

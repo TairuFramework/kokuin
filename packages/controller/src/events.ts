@@ -306,6 +306,14 @@ export type CreateRotateOptions = {
   keyPosition?: { gen: number; seq: number }
 }
 
+export type CreateRotateParams = {
+  seed: Uint8Array
+  profile: number
+  did: string
+  prior: EventCommon
+  options?: CreateRotateOptions
+}
+
 /**
  * A rotate reveals the keys the prior event pre-committed and commits the next set, signed by the
  * newly revealed keys (per KERI — what makes a stolen current key unable to rotate). Reproducible
@@ -318,13 +326,13 @@ export type CreateRotateOptions = {
  * the default would derive a key one past the *revoke*, which nothing committed, and this is the one
  * case unverifiable from `prior` alone.
  */
-export function createRotate(
-  seed: Uint8Array,
-  profile: number,
-  did: string,
-  prior: EventCommon,
-  options: CreateRotateOptions = {},
-): SignedEvent<RotateEvent> {
+export function createRotate({
+  seed,
+  profile,
+  did,
+  prior,
+  options = {},
+}: CreateRotateParams): SignedEvent<RotateEvent> {
   const gen = prior.g
   const seq = prior.s + 1
   // The commitment the revealed key must match, when `prior` carries one. An `icp`/`rot` does; a
@@ -576,6 +584,17 @@ export type RevokeEvent = EventCommon & {
   cap?: string
 }
 
+export type CreateRevokeParams = {
+  seed: Uint8Array
+  profile: number
+  did: string
+  prior: EventCommon
+  target: string
+  keyPosition: { gen: number; seq: number }
+  /** A serialized capability authorising this signer, when the signer is not an authority key. */
+  cap?: string
+}
+
 /**
  * Revoke a DID or a key — see {@link RevokeEvent.x} for the two spellings.
  *
@@ -594,24 +613,33 @@ export type RevokeEvent = EventCommon & {
  * active authority key lives". They coincide only for an `icp`/`rot` prior — a `rev` establishes no
  * key, so a revoke on a revoke still points at the last `icp`/`rot` position.
  */
-export function createRevoke(
-  seed: Uint8Array,
-  profile: number,
-  did: string,
-  prior: EventCommon,
-  target: string,
-  keyPosition: { gen: number; seq: number },
-  options: CreateRevokeOptions = {},
-): SignedEvent<RevokeEvent> {
+export function createRevoke({
+  seed,
+  profile,
+  did,
+  prior,
+  target,
+  keyPosition,
+  cap,
+}: CreateRevokeParams): SignedEvent<RevokeEvent> {
   const current = deriveKeyPair(
     seed,
     authorityPath(profile, keyPosition.gen, keyPosition.seq),
     'EdDSA',
   )
-  return createRevokeWithKey(current.privateKey, did, prior, target, options)
+  return createRevokeWithKey({ privateKey: current.privateKey, did, prior, target, cap })
 }
 
 export type CreateRevokeOptions = {
+  /** A serialized capability authorising this signer, when the signer is not an authority key. */
+  cap?: string
+}
+
+export type CreateRevokeWithKeyParams = {
+  privateKey: Uint8Array
+  did: string
+  prior: EventCommon
+  target: string
   /** A serialized capability authorising this signer, when the signer is not an authority key. */
   cap?: string
 }
@@ -632,13 +660,13 @@ export type CreateRevokeOptions = {
  * shape. Byte-identical to {@link createRevoke} given the same key; no `keyPosition`, which exists
  * only to derive a key from a seed.
  */
-export function createRevokeWithKey(
-  privateKey: Uint8Array,
-  did: string,
-  prior: EventCommon,
-  target: string,
-  options: CreateRevokeOptions = {},
-): SignedEvent<RevokeEvent> {
+export function createRevokeWithKey({
+  privateKey,
+  did,
+  prior,
+  target,
+  cap,
+}: CreateRevokeWithKeyParams): SignedEvent<RevokeEvent> {
   const event: RevokeEvent = {
     v: 1,
     t: 'rev',
@@ -648,7 +676,7 @@ export function createRevokeWithKey(
     p: digestOf(prior),
     crit: true,
     x: target,
-    cap: options.cap,
+    cap,
   }
 
   return { event, sigs: signEvent(event, [privateKey]) }

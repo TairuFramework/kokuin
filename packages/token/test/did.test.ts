@@ -136,7 +136,7 @@ describe('resolveIssuerWithDoc() resolver doc bound', () => {
     }
     const shortForm = 'did:peer:4zQmNotTheMatchingHash'
     const resolver = async () => bigDoc as never
-    await expect(resolveIssuerWithDoc(shortForm, {}, resolver)).rejects.toThrow(
+    await expect(resolveIssuerWithDoc({ iss: shortForm, header: {}, resolver })).rejects.toThrow(
       'did:peer:4 resolver doc too large',
     )
   })
@@ -155,6 +155,8 @@ describe('resolveIssuerWithDoc() resolver doc bound', () => {
       authentication: ['#key-0'],
     })
     const resolver = async () => doc
-    await expect(resolveIssuerWithDoc(shortForm, {}, resolver)).resolves.toBeDefined()
+    await expect(
+      resolveIssuerWithDoc({ iss: shortForm, header: {}, resolver }),
+    ).resolves.toBeDefined()
   })
 })

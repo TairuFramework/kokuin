@@ -60,8 +60,28 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
     const { inception, did } = build()
     // Two honest, conflicting revokes at position 1: a genuine fork, and the finding that matters.
     const honest = [
-      [inception, createRevoke(seed, 0, did, inception.event, 'did:key:zA', { gen: 0, seq: 0 })],
-      [inception, createRevoke(seed, 0, did, inception.event, 'did:key:zB', { gen: 0, seq: 0 })],
+      [
+        inception,
+        createRevoke({
+          seed,
+          profile: 0,
+          did,
+          prior: inception.event,
+          target: 'did:key:zA',
+          keyPosition: { gen: 0, seq: 0 },
+        }),
+      ],
+      [
+        inception,
+        createRevoke({
+          seed,
+          profile: 0,
+          did,
+          prior: inception.event,
+          target: 'did:key:zB',
+          keyPosition: { gen: 0, seq: 0 },
+        }),
+      ],
     ]
 
     // CONTROL — the fork alone. This is what must survive the attacker's presence.
@@ -98,7 +118,7 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
 
   test('the forged branch cannot become the winner', () => {
     const { inception, did } = build()
-    const honest = [inception, createRotate(seed, 0, did, inception.event)]
+    const honest = [inception, createRotate({ seed, profile: 0, did, prior: inception.event })]
     const forged: SignedEvent = {
       event: {
         v: 1,
@@ -149,7 +169,7 @@ describe('unsigned padding cannot grow a log without limit', () => {
     // The ceiling is proportional to work the verifier was going to do anyway, so a long honest log
     // is not held to the same absolute count as a two-event one.
     const { inception, did } = build()
-    const rot = createRotate(seed, 0, did, inception.event)
+    const rot = createRotate({ seed, profile: 0, did, prior: inception.event })
     const log = [
       inception,
       rot,
@@ -163,10 +183,30 @@ describe('pruning a deny set cannot silently drop the rest of it', () => {
   test('pruneDenySet keeps what a hand-written snapshot loses', () => {
     const { inception, did } = build()
     const device = 'did:key:zDevice'
-    const revoked = createRevoke(seed, 0, did, inception.event, device, { gen: 0, seq: 0 })
+    const revoked = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      target: device,
+      keyPosition: { gen: 0, seq: 0 },
+    })
     const leaked = keyTarget(inception.event.k[0])
-    const rot = createRotate(seed, 0, did, revoked.event, { keyPosition: { gen: 0, seq: 0 } })
-    const denied = createRevoke(seed, 0, did, rot.event, leaked, { gen: 0, seq: 1 })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: revoked.event,
+      options: { keyPosition: { gen: 0, seq: 0 } },
+    })
+    const denied = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: rot.event,
+      target: leaked,
+      keyPosition: { gen: 0, seq: 1 },
+    })
     const folded = foldLog(did, [inception, revoked, rot, denied])
     expect(folded.ok).toBe(true)
     if (!folded.ok) return
@@ -175,9 +215,15 @@ describe('pruning a deny set cannot silently drop the rest of it', () => {
 
     // THE HAZARD — a caller who reads `denySnapshot` as "also deny this" writes one entry and
     // silently un-retires the leaked key. Nothing rejects it: this is a legal event.
-    const byHand = createRotate(seed, 0, did, denied.event, {
-      keyPosition: { gen: state.keyGen, seq: state.keySeq },
-      denySnapshot: [device],
+    const byHand = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: denied.event,
+      options: {
+        keyPosition: { gen: state.keyGen, seq: state.keySeq },
+        denySnapshot: [device],
+      },
     })
     const lost = foldLog(did, [inception, revoked, rot, denied, byHand])
     expect(lost.ok).toBe(true)
@@ -185,9 +231,15 @@ describe('pruning a deny set cannot silently drop the rest of it', () => {
     expect(lost.states[4].deny.has(leaked), 'the leaked key is no longer denied').toBe(false)
 
     // THE FIX — built from the fold's own answer, so only what was named is dropped.
-    const pruned = createRotate(seed, 0, did, denied.event, {
-      keyPosition: { gen: state.keyGen, seq: state.keySeq },
-      denySnapshot: pruneDenySet(state, [device]),
+    const pruned = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: denied.event,
+      options: {
+        keyPosition: { gen: state.keyGen, seq: state.keySeq },
+        denySnapshot: pruneDenySet(state, [device]),
+      },
     })
     const kept = foldLog(did, [inception, revoked, rot, denied, pruned])
     expect(kept.ok).toBe(true)
@@ -200,11 +252,11 @@ describe('pruning a deny set cannot silently drop the rest of it', () => {
 describe('signing as the profile without the root seed', () => {
   test('the current authority key alone produces a verifiable token', async () => {
     const { inception, did } = build()
-    const log = [inception, createRotate(seed, 0, did, inception.event)]
+    const log = [inception, createRotate({ seed, profile: 0, did, prior: inception.event })]
     // What a device is given: one private key, no seed, no profile index.
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
 
-    const identity = createControllerIdentityWithKey(current.privateKey, log)
+    const identity = createControllerIdentityWithKey({ privateKey: current.privateKey, log })
     expect(identity.id).toBe(did)
     const token = stringifyToken(await identity.signToken({ hello: 'world' }))
     const resolver = createControllerResolver({ loadLog: async () => log })
@@ -213,7 +265,7 @@ describe('signing as the profile without the root seed', () => {
 
     // CONTROL — a key the head does not publish is refused at construction, not at verification.
     const retired = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
-    expect(() => createControllerIdentityWithKey(retired.privateKey, log)).toThrow(
+    expect(() => createControllerIdentityWithKey({ privateKey: retired.privateKey, log })).toThrow(
       /not one of the current authority keys/,
     )
   })
@@ -233,7 +285,14 @@ describe('a truncated log is refused when one further along has been seen', () =
     const device = 'did:key:zThief'
     const full = [
       inception,
-      createRevoke(seed, 0, did, inception.event, device, { gen: 0, seq: 0 }),
+      createRevoke({
+        seed,
+        profile: 0,
+        did,
+        prior: inception.event,
+        target: device,
+        keyPosition: { gen: 0, seq: 0 },
+      }),
     ]
     const truncated = [inception]
 
@@ -250,7 +309,14 @@ describe('a truncated log is refused when one further along has been seen', () =
     const { inception, did } = build()
     const full = [
       inception,
-      createRevoke(seed, 0, did, inception.event, 'did:key:zThief', { gen: 0, seq: 0 }),
+      createRevoke({
+        seed,
+        profile: 0,
+        did,
+        prior: inception.event,
+        target: 'did:key:zThief',
+        keyPosition: { gen: 0, seq: 0 },
+      }),
     ]
     const resolver = await resolverOver([full, [...full]])
     await resolver.resolveDenySet?.(did)
@@ -262,7 +328,14 @@ describe('a truncated log is refused when one further along has been seen', () =
     const first = [inception]
     const later = [
       inception,
-      createRevoke(seed, 0, did, inception.event, 'did:key:zThief', { gen: 0, seq: 0 }),
+      createRevoke({
+        seed,
+        profile: 0,
+        did,
+        prior: inception.event,
+        target: 'did:key:zThief',
+        keyPosition: { gen: 0, seq: 0 },
+      }),
     ]
     const resolver = await resolverOver([first, later])
     await resolver.resolveDenySet?.(did)
@@ -278,14 +351,21 @@ describe('a truncated log is refused when one further along has been seen', () =
     let thiefBranch: Array<SignedEvent> = [inception]
     let prior: SignedEvent = inception
     for (let i = 0; i < 5; i++) {
-      const rev: SignedEvent = createRevoke(seed, 0, did, prior.event, `did:key:zVictim${i}`, {
-        gen: 0,
-        seq: 0,
+      const rev: SignedEvent = createRevoke({
+        seed,
+        profile: 0,
+        did,
+        prior: prior.event,
+        target: `did:key:zVictim${i}`,
+        keyPosition: {
+          gen: 0,
+          seq: 0,
+        },
       })
       thiefBranch = [...thiefBranch, rev]
       prior = rev
     }
-    const recovery = [inception, createRotate(seed, 0, did, inception.event)]
+    const recovery = [inception, createRotate({ seed, profile: 0, did, prior: inception.event })]
 
     const resolver = await resolverOver([thiefBranch, recovery])
     const first = await resolver.resolveDenySet?.(did)
@@ -319,7 +399,15 @@ describe('the truncation guard fails closed when the stored log needs a verifier
     const did = didFromInception(icp.event)
     // Signed by the delegate, so only the capability it carries authorises it — foldable only async
     // and only with a verifier.
-    const rev = createRevoke(delegateSeed, 0, did, icp.event, device, { gen: 0, seq: 0 }, { cap })
+    const rev = createRevoke({
+      seed: delegateSeed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: device,
+      keyPosition: { gen: 0, seq: 0 },
+      cap,
+    })
     return { icp, did, full: [icp, rev] as Array<SignedEvent> }
   }
 

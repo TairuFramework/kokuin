@@ -30,7 +30,7 @@ describe('a rotated-away authority key, at the capability path', () => {
     const seed = new Uint8Array(32).fill(31)
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate(seed, 0, did, inception.event)
+    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
     const fullLog = [inception, rotate]
 
     // The verifier sees the WHOLE log: the profile has rotated, so the inception key is retired.
@@ -40,7 +40,7 @@ describe('a rotated-away authority key, at the capability path', () => {
 
     // The thief signs as the profile using only the PREFIX — i.e. with the rotated-away key,
     // naming it in `kid`. This is what holding a leaked, since-rotated authority key gives you.
-    const stolen = createControllerIdentity(seed, 0, [inception])
+    const stolen = createControllerIdentity({ seed, profile: 0, log: [inception] })
     const thiefDevice = await randomIdentity()
 
     const minted = await createCapability(stolen, {
@@ -85,9 +85,16 @@ describe('a rotated-away authority key, at the capability path', () => {
     // the leaked KEY rather than a device DID. Retirement is explicit precisely because rotation
     // is not allowed to be what retires.
     const leakedKey = inception.event.k[0]
-    const revoke = createRevoke(seed, 0, did, rotate.event, keyTarget(leakedKey), {
-      gen: 0,
-      seq: 1,
+    const revoke = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: rotate.event,
+      target: keyTarget(leakedKey),
+      keyPosition: {
+        gen: 0,
+        seq: 1,
+      },
     })
     const remediedLog = [inception, rotate, revoke]
     const remedied: MethodRegistry = [
@@ -114,7 +121,7 @@ describe('a rotated-away authority key, at the capability path', () => {
     // profile currently holds still grants. Without this row a rejection above could just as well
     // be the third event making the log unfoldable, or historic resolution collapsing outright —
     // both of which would "pass" the assertion while denying every honest holder too.
-    const owner = createControllerIdentity(seed, 0, remediedLog)
+    const owner = createControllerIdentity({ seed, profile: 0, log: remediedLog })
     const honestDevice = await randomIdentity()
     const honest = stringifyToken(
       await createCapability(owner, {

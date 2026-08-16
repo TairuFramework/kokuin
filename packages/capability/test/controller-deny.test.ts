@@ -44,7 +44,7 @@ import {
 const seed = new Uint8Array(32).fill(31)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity(seed, 0, [inception])
+const controller = createControllerIdentity({ seed, profile: 0, log: [inception] })
 
 /** The authority key the inception establishes lives at gen 0 / seq 0. */
 const inceptionKeyPosition = { gen: 0, seq: 0 }
@@ -60,7 +60,14 @@ const methods: MethodRegistry = [
 
 /** A revoke denying `target`, chained onto the inception and signed by the profile. */
 function revokeOf(target: string): SignedEvent {
-  return createRevoke(seed, 0, did, inception.event, target, inceptionKeyPosition)
+  return createRevoke({
+    seed,
+    profile: 0,
+    did,
+    prior: inception.event,
+    target,
+    keyPosition: inceptionKeyPosition,
+  })
 }
 
 async function mintFor(audience: SigningIdentity, signer = controller): Promise<string> {
@@ -150,7 +157,13 @@ describe('a capability whose audience the profile has revoked', () => {
     log = [
       inception,
       revoke,
-      createRotate(seed, 0, did, revoke.event, { keyPosition: inceptionKeyPosition }),
+      createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: revoke.event,
+        options: { keyPosition: inceptionKeyPosition },
+      }),
     ]
 
     await expect(invoke(delegate, cap)).rejects.toThrow(/audience is revoked/)
@@ -164,9 +177,15 @@ describe('a capability whose audience the profile has revoked', () => {
     log = [
       inception,
       revoke,
-      createRotate(seed, 0, did, revoke.event, {
-        keyPosition: inceptionKeyPosition,
-        denySnapshot: [],
+      createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: revoke.event,
+        options: {
+          keyPosition: inceptionKeyPosition,
+          denySnapshot: [],
+        },
       }),
     ]
 
@@ -180,7 +199,7 @@ describe('a capability whose audience the profile has revoked', () => {
 
     // The capability has to be re-minted: a reset discards the prior generation, so one signed
     // under it no longer resolves at all. What this asserts is that the denial itself is gone.
-    const regranted = await mintFor(delegate, createControllerIdentity(seed, 0, log))
+    const regranted = await mintFor(delegate, createControllerIdentity({ seed, profile: 0, log }))
     await expect(invoke(delegate, regranted)).resolves.toBeUndefined()
   })
 
@@ -401,7 +420,11 @@ describe('the deny set inside the fold: who may author a capability-authorised r
     const manager = randomIdentity()
     const cap = await manageCap(manager)
     const revokeManager = revokeOf(manager.id)
-    const attack = createRevokeWithKey(manager.privateKey, did, revokeManager.event, deviceX, {
+    const attack = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: revokeManager.event,
+      target: deviceX,
       cap,
     })
     const attacked = [inception, revokeManager, attack]
@@ -428,7 +451,13 @@ describe('the deny set inside the fold: who may author a capability-authorised r
 
     // Control: the same manager, the same capability, the same revoke of X — with the manager not
     // revoked. So what fails above is the denial and not the grant.
-    const clean = createRevokeWithKey(manager.privateKey, did, inception.event, deviceX, { cap })
+    const clean = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: inception.event,
+      target: deviceX,
+      cap,
+    })
     const folded = await foldLogAsync(did, [inception, clean], {
       verifyCapability: createControllerCapabilityVerifier(),
     })
@@ -444,8 +473,20 @@ describe('the deny set inside the fold: who may author a capability-authorised r
     // `loadLog` answering with the whole log, one verifier.
     const manager = randomIdentity()
     const cap = await manageCap(manager)
-    const first = createRevokeWithKey(manager.privateKey, did, inception.event, deviceX, { cap })
-    const second = createRevokeWithKey(manager.privateKey, did, first.event, deviceY, { cap })
+    const first = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: inception.event,
+      target: deviceX,
+      cap,
+    })
+    const second = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: first.event,
+      target: deviceY,
+      cap,
+    })
     log = [inception, first, second]
 
     const resolver = createControllerResolver({
@@ -498,7 +539,13 @@ describe('the deny set inside the fold: who may author a capability-authorised r
     // Unconditional rather than a denial that happens to coincide with this manager's revocation:
     // the same capability, held by a manager nothing has revoked, refuses the same way through the
     // three-argument call and folds through the four-argument one.
-    const clean = createRevokeWithKey(manager.privateKey, did, inception.event, deviceX, { cap })
+    const clean = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: inception.event,
+      target: deviceX,
+      cap,
+    })
     const verify = createControllerCapabilityVerifier()
     const threeArgs = verify as unknown as (
       cap: string,
@@ -523,7 +570,11 @@ describe('the deny set inside the fold: who may author a capability-authorised r
     const manager = randomIdentity()
     const cap = await manageCap(manager)
     const revokeManager = revokeOf(manager.id)
-    const attack = createRevokeWithKey(manager.privateKey, did, revokeManager.event, deviceX, {
+    const attack = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: revokeManager.event,
+      target: deviceX,
       cap,
     })
     const verify = createControllerCapabilityVerifier({ methods: registryFor([inception]) })
@@ -560,7 +611,13 @@ describe('the deny set inside the fold: who may author a capability-authorised r
     // Control: at a position where nobody is revoked, the real resolver authorises — so the refusal
     // above is not this capability being rejected everywhere.
     let cleanPosition: DIDMethodResolver | undefined
-    const clean = createRevokeWithKey(manager.privateKey, did, inception.event, deviceX, { cap })
+    const clean = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: inception.event,
+      target: deviceX,
+      cap,
+    })
     await foldLogAsync(did, [inception, clean], {
       verifyCapability: async (c, subject, target, position) => {
         cleanPosition = position
@@ -582,7 +639,7 @@ describe('the deny set inside the fold: who may author a capability-authorised r
     const otherDid = didFromInception(otherInception.event)
     const manager = randomIdentity()
     const foreign = await createCapability(
-      createControllerIdentity(otherSeed, 0, [otherInception]),
+      createControllerIdentity({ seed: otherSeed, profile: 0, log: [otherInception] }),
       {
         sub: otherDid,
         aud: manager.id,
@@ -594,7 +651,11 @@ describe('the deny set inside the fold: who may author a capability-authorised r
       undefined,
       { methods: registryFor([otherInception]) },
     )
-    const revoke = createRevokeWithKey(manager.privateKey, did, inception.event, deviceX, {
+    const revoke = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: inception.event,
+      target: deviceX,
       cap: stringifyToken(foreign),
     })
 
@@ -715,7 +776,13 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
     const cap = await manageCap(manager)
     log = [
       inception,
-      createRevokeWithKey(manager.privateKey, did, inception.event, deviceX, { cap }),
+      createRevokeWithKey({
+        privateKey: manager.privateKey,
+        did,
+        prior: inception.event,
+        target: deviceX,
+        cap,
+      }),
     ]
 
     let hookCalls = 0
@@ -763,7 +830,14 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
 describe('the deny set the resolver exposes', () => {
   test('is the head state, and carries every revoke in the current generation', async () => {
     const first = revokeOf(delegate.id)
-    const second = createRevoke(seed, 0, did, first.event, bystander.id, inceptionKeyPosition)
+    const second = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: first.event,
+      target: bystander.id,
+      keyPosition: inceptionKeyPosition,
+    })
     log = [inception, first, second]
 
     const denied = await methods[0].resolveDenySet?.(did)

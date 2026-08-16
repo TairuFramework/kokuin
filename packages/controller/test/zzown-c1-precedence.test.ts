@@ -27,13 +27,18 @@ describe('branch precedence: current-key revokes never outrank the owning rotate
     const thief: Array<SignedEvent> = [inception]
     let prior: EventCommon = inception.event
     for (let n = 0; n < 3; n++) {
-      const rev = createRevokeWithKey(stolen.privateKey, did, prior, `did:kokuin:zVictim${n}`)
+      const rev = createRevokeWithKey({
+        privateKey: stolen.privateKey,
+        did,
+        prior,
+        target: `did:kokuin:zVictim${n}`,
+      })
       thief.push(rev)
       prior = rev.event
     }
 
     // The owner recovers with the pre-committed next key: one rotate off the inception.
-    const owner = [inception, createRotate(seed, 0, did, inception.event)]
+    const owner = [inception, createRotate({ seed, profile: 0, did, prior: inception.event })]
 
     // Both branches fold on their own; the question is which resolution keeps.
     expect(foldLog(did, thief).ok).toBe(true)

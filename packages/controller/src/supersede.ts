@@ -159,12 +159,17 @@ function commonSpine(a: FoldedBranch, b: FoldedBranch): number {
  * race against a thief holding a current key regardless of who published first or how far ahead: a
  * stolen current key cannot rotate but can sign revokes all day, so length must not decide this.
  */
-function supersedes(
-  candidate: SignedEvent,
-  incumbent: SignedEvent,
-  priorDigest: string,
-  priorNext: Array<string>,
-): boolean {
+function supersedes({
+  candidate,
+  incumbent,
+  priorDigest,
+  priorNext,
+}: {
+  candidate: SignedEvent
+  incumbent: SignedEvent
+  priorDigest: string
+  priorNext: Array<string>
+}): boolean {
   if (candidate.event.t !== 'rot') {
     return false
   }
@@ -237,12 +242,12 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
         if (j === i) {
           return true
         }
-        return supersedes(
+        return supersedes({
           candidate,
-          other[0].branch[other[0].spine[divergence]],
-          prior.digest,
-          prior.next,
-        )
+          incumbent: other[0].branch[other[0].spine[divergence]],
+          priorDigest: prior.digest,
+          priorNext: prior.next,
+        })
       })
       if (dominatesAll) {
         if (dominant !== -1) {

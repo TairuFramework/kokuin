@@ -30,7 +30,7 @@ import {
 const seed = new Uint8Array(32).fill(23)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity(seed, 0, [inception])
+const controller = createControllerIdentity({ seed, profile: 0, log: [inception] })
 const inceptionKeyPosition = { gen: 0, seq: 0 }
 const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
@@ -59,7 +59,14 @@ async function manageCap(holder: { id: string; publicKey: Uint8Array }): Promise
 }
 
 function revokeOf(who: string): SignedEvent {
-  return createRevoke(seed, 0, did, inception.event, who, inceptionKeyPosition)
+  return createRevoke({
+    seed,
+    profile: 0,
+    did,
+    prior: inception.event,
+    target: who,
+    keyPosition: inceptionKeyPosition,
+  })
 }
 
 /** A wrapper of the kind the docs warn about: forwards `resolve`, drops `resolveDenySet`. */
@@ -76,7 +83,11 @@ describe('ATTACK: the injected resolver seam', () => {
     const manager = randomIdentity()
     const cap = await manageCap(manager)
     const revokeManager = revokeOf(manager.id)
-    const attack = createRevokeWithKey(manager.privateKey, did, revokeManager.event, target, {
+    const attack = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: revokeManager.event,
+      target,
       cap,
     })
     const log = [inception, revokeManager, attack]
@@ -90,7 +101,13 @@ describe('ATTACK: the injected resolver seam', () => {
 
     // CONTROL — the same wrapper, the same capability, with the manager NOT revoked: the fold
     // accepts, so what fails above is the denial and not the wrapper breaking resolution.
-    const clean = createRevokeWithKey(manager.privateKey, did, inception.event, target, { cap })
+    const clean = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: inception.event,
+      target,
+      cap,
+    })
     const cleanResult = await foldLogAsync(did, [inception, clean], {
       verifyCapability: createControllerCapabilityVerifier({ methods: wrapped }),
     })
@@ -104,7 +121,11 @@ describe('ATTACK: the injected resolver seam', () => {
     const manager = randomIdentity()
     const cap = await manageCap(manager)
     const revokeManager = revokeOf(manager.id)
-    const attack = createRevokeWithKey(manager.privateKey, did, revokeManager.event, target, {
+    const attack = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: revokeManager.event,
+      target,
       cap,
     })
 
@@ -126,7 +147,13 @@ describe('ATTACK: the injected resolver seam', () => {
     // CONTROL — the same two calls at a position where nobody is revoked: both authorise, so the
     // difference above is the deny set and not the wrapper.
     let cleanPosition: DIDMethodResolver | undefined
-    const clean = createRevokeWithKey(manager.privateKey, did, inception.event, target, { cap })
+    const clean = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: inception.event,
+      target,
+      cap,
+    })
     await foldLogAsync(did, [inception, clean], {
       verifyCapability: async (c, subject, t, atPosition) => {
         cleanPosition = atPosition
@@ -157,7 +184,11 @@ describe('ATTACK: the injected resolver seam', () => {
     const manager = randomIdentity()
     const cap = await manageCap(manager)
     const revokeManager = revokeOf(manager.id)
-    const attack = createRevokeWithKey(manager.privateKey, did, revokeManager.event, target, {
+    const attack = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: revokeManager.event,
+      target,
       cap,
     })
 
@@ -166,7 +197,13 @@ describe('ATTACK: the injected resolver seam', () => {
     // event fail, and it must not make a later, illegitimate one pass.
     let atPosition1: DIDMethodResolver | undefined
     const verify = createControllerCapabilityVerifier({ methods: prefixMethods })
-    const clean = createRevokeWithKey(manager.privateKey, did, inception.event, target, { cap })
+    const clean = createRevokeWithKey({
+      privateKey: manager.privateKey,
+      did,
+      prior: inception.event,
+      target,
+      cap,
+    })
     await foldLogAsync(did, [inception, clean], {
       verifyCapability: async (c, s, t, atPosition) => {
         atPosition1 = atPosition

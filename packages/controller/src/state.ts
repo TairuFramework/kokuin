@@ -31,12 +31,17 @@ export function currentState(did: string, events: Array<SignedEvent>, context: s
  * not: a verifier has to answer about keys the log has since rotated away, since a token outlives the
  * state that gave its `kid` meaning.
  */
-export async function allStatesAsync(
-  did: string,
-  events: Array<SignedEvent>,
-  context: string,
-  options?: FoldOptions,
-): Promise<Array<KeyState>> {
+export async function allStatesAsync({
+  did,
+  events,
+  context,
+  options,
+}: {
+  did: string
+  events: Array<SignedEvent>
+  context: string
+  options?: FoldOptions
+}): Promise<Array<KeyState>> {
   return foldedStates(did, context, await foldLogAsync(did, events, options))
 }
 
@@ -44,11 +49,16 @@ export async function allStatesAsync(
  * Current state via {@link foldLogAsync}, which can await `options.verifyCapability` for a
  * capability-authorised revoke instead of failing closed on it.
  */
-export async function currentStateAsync(
-  did: string,
-  events: Array<SignedEvent>,
-  context: string,
-  options?: FoldOptions,
-): Promise<KeyState> {
+export async function currentStateAsync({
+  did,
+  events,
+  context,
+  options,
+}: {
+  did: string
+  events: Array<SignedEvent>
+  context: string
+  options?: FoldOptions
+}): Promise<KeyState> {
   return lastState(did, context, await foldLogAsync(did, events, options))
 }

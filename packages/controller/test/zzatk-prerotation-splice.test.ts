@@ -31,7 +31,7 @@ describe('pre-rotation bypass attempts', () => {
   const { icp, did } = build(seedA)
 
   test('a rotate revealing a key that was never committed is refused', () => {
-    const honest = createRotate(seedA, 0, did, icp.event)
+    const honest = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
     const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 1), 'EdDSA')
     const body: RotateEvent = { ...honest.event, k: [encodeKey(thief.publicKey, 'EdDSA')] }
     const forged: SignedEvent<RotateEvent> = {
@@ -46,7 +46,7 @@ describe('pre-rotation bypass attempts', () => {
   })
 
   test('a rotate re-revealing the CURRENT key (no rotation at all) is refused', () => {
-    const honest = createRotate(seedA, 0, did, icp.event)
+    const honest = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
     const current = deriveKeyPair(seedA, authorityPath(0, 0, 0), 'EdDSA')
     const body: RotateEvent = { ...honest.event, k: [...icp.event.k] }
     const forged: SignedEvent<RotateEvent> = {
@@ -58,14 +58,14 @@ describe('pre-rotation bypass attempts', () => {
 
   test('the commitment cannot be satisfied by a differently-encoded spelling of the same key', () => {
     // `n` commits `digestOf(<the multibase string>)`, so the encoding is part of the commitment.
-    const honest = createRotate(seedA, 0, did, icp.event)
+    const honest = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
     const spelled = honest.event.k[0]
     expect(digestOf(spelled)).toBe(icp.event.n[0])
     expect(digestOf(spelled.toUpperCase())).not.toBe(icp.event.n[0])
   })
 
   test('a rotate padding `k`/`n` to smuggle an extra key in is refused', () => {
-    const honest = createRotate(seedA, 0, did, icp.event)
+    const honest = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
     const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 0), 'EdDSA')
     const thiefKey = encodeKey(thief.publicKey, 'EdDSA')
     const body: RotateEvent = { ...honest.event, k: [...honest.event.k, thiefKey] }
@@ -82,7 +82,7 @@ describe('splicing, truncation, replay', () => {
   test("an event from another DID's log is refused by the `i` check", () => {
     const a = build(seedA)
     const b = build(seedB)
-    const foreignRotate = createRotate(seedB, 0, b.did, b.icp.event)
+    const foreignRotate = createRotate({ seed: seedB, profile: 0, did: b.did, prior: b.icp.event })
     expect(foldLog(a.did, [a.icp, foreignRotate]).ok).toBe(false)
   })
 
@@ -98,8 +98,14 @@ describe('splicing, truncation, replay', () => {
 
   test('a rotate replayed at a later position is refused', () => {
     const { icp, did } = build(seedA)
-    const rot1 = createRotate(seedA, 0, did, icp.event)
-    const rot2 = createRotate(seedA, 0, did, rot1.event, { keyPosition: { gen: 0, seq: 1 } })
+    const rot1 = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
+    const rot2 = createRotate({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: rot1.event,
+      options: { keyPosition: { gen: 0, seq: 1 } },
+    })
     expect(foldLog(did, [icp, rot1, rot2]).ok).toBe(true)
     expect(foldLog(did, [icp, rot1, rot1]).ok).toBe(false)
     expect(foldLog(did, [icp, rot2]).ok).toBe(false)
@@ -107,23 +113,44 @@ describe('splicing, truncation, replay', () => {
 
   test('a revoke replayed at a later position is refused', () => {
     const { icp, did } = build(seedA)
-    const rev = createRevoke(seedA, 0, did, icp.event, victim, { gen: 0, seq: 0 })
+    const rev = createRevoke({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 0 },
+    })
     expect(foldLog(did, [icp, rev]).ok).toBe(true)
     expect(foldLog(did, [icp, rev, rev]).ok).toBe(false)
   })
 
   test('reordering two valid events is refused', () => {
     const { icp, did } = build(seedA)
-    const rot = createRotate(seedA, 0, did, icp.event)
-    const rev = createRevoke(seedA, 0, did, rot.event, victim, { gen: 0, seq: 1 })
+    const rot = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
+    const rev = createRevoke({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: rot.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 1 },
+    })
     expect(foldLog(did, [icp, rot, rev]).ok).toBe(true)
     expect(foldLog(did, [icp, rev, rot]).ok).toBe(false)
   })
 
   test('a prefix truncation folds (by design) but loses branch selection on (gen, seq)', () => {
     const { icp, did } = build(seedA)
-    const rot = createRotate(seedA, 0, did, icp.event)
-    const rev = createRevoke(seedA, 0, did, rot.event, victim, { gen: 0, seq: 1 })
+    const rot = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
+    const rev = createRevoke({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: rot.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 1 },
+    })
     const honest = [icp, rot, rev]
     expect(foldLog(did, [icp]).ok).toBe(true)
     const r = resolveBranches(did, [[icp], honest])
@@ -134,8 +161,15 @@ describe('splicing, truncation, replay', () => {
 describe('superseding recovery abuse', () => {
   test('a stolen CURRENT key cannot outrank the owner rotate at the same position', () => {
     const { icp, did } = build(seedA)
-    const thiefRevoke = createRevoke(seedA, 0, did, icp.event, victim, { gen: 0, seq: 0 })
-    const ownerRotate = createRotate(seedA, 0, did, icp.event)
+    const thiefRevoke = createRevoke({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 0 },
+    })
+    const ownerRotate = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
     const r = resolveBranches(did, [
       [icp, thiefRevoke],
       [icp, ownerRotate],
@@ -145,8 +179,15 @@ describe('superseding recovery abuse', () => {
 
   test('a revoke can never supersede a rotate, in either presentation order', () => {
     const { icp, did } = build(seedA)
-    const rev = createRevoke(seedA, 0, did, icp.event, victim, { gen: 0, seq: 0 })
-    const rot = createRotate(seedA, 0, did, icp.event)
+    const rev = createRevoke({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: icp.event,
+      target: victim,
+      keyPosition: { gen: 0, seq: 0 },
+    })
+    const rot = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
     for (const order of [
       [
         [icp, rev],

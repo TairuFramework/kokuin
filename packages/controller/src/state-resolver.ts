@@ -118,12 +118,17 @@ export const KEY_REVOKED = 'kid names a key the controller has revoked'
  * Inside the fold they coincide anyway: `createStateResolver` gets the prefix `states[0..i-1]`, so
  * its head *is* the position being verified.
  */
-export function signingKeyFrom(
-  did: string,
-  states: Array<KeyState>,
-  header: ResolveIssuerHeader,
+export function signingKeyFrom({
+  did,
+  states,
+  header,
   historic = false,
-): ResolvedSigningKey {
+}: {
+  did: string
+  states: Array<KeyState>
+  header: ResolveIssuerHeader
+  historic?: boolean
+}): ResolvedSigningKey {
   const head = states[states.length - 1]
   if (head.keys.length === 0) {
     throw new Error(`Controller ${did} has no signing key`)
@@ -190,7 +195,7 @@ export function createStateResolver(did: string, states: Array<KeyState>): DIDMe
   return {
     method: DID_METHOD,
     async resolve(asked: string, header: ResolveIssuerHeader = {}): Promise<ResolvedSigningKey> {
-      return signingKeyFrom(asked, statesFor(asked), header)
+      return signingKeyFrom({ did: asked, states: statesFor(asked), header })
     },
     // The head of *this prefix*, not the log: these states end at the position the fold is verifying.
     // A capability issued before that position is the archived material `resolveHistoric` exists for.
@@ -198,7 +203,7 @@ export function createStateResolver(did: string, states: Array<KeyState>): DIDMe
       asked: string,
       header: ResolveIssuerHeader = {},
     ): Promise<ResolvedSigningKey> {
-      return signingKeyFrom(asked, statesFor(asked), header, true)
+      return signingKeyFrom({ did: asked, states: statesFor(asked), header, historic: true })
     },
     async resolveDenySet(asked: string): Promise<ReadonlySet<string>> {
       const known = statesFor(asked)

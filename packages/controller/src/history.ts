@@ -68,14 +68,20 @@ export function createMemoryLogStore(): LogStore {
  *
  * The states are returned so the caller does not fold twice; the log travels with them for the store.
  */
-export async function authoritativeStates(
-  did: string,
-  loaded: Array<SignedEvent>,
-  seen: Array<SignedEvent> | undefined,
-  context: string,
-  options: FoldOptions,
-): Promise<{ log: Array<SignedEvent>; states: Array<KeyState> }> {
-  const states = await allStatesAsync(did, loaded, context, options)
+export async function authoritativeStates({
+  did,
+  loaded,
+  seen,
+  context,
+  options,
+}: {
+  did: string
+  loaded: Array<SignedEvent>
+  seen: Array<SignedEvent> | undefined
+  context: string
+  options: FoldOptions
+}): Promise<{ log: Array<SignedEvent>; states: Array<KeyState> }> {
+  const states = await allStatesAsync({ did, events: loaded, context, options: options })
   if (seen == null || seen.length === 0) {
     return { log: loaded, states }
   }

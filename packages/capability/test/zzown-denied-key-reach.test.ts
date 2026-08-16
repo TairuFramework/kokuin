@@ -44,7 +44,7 @@ import {
 const seed = new Uint8Array(32).fill(53)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const rotate = createRotate(seed, 0, did, inception.event)
+const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
 /** The key the inception established, which the rotate retired and the revoke below denies. */
 const leaked = inception.event.k[0]
 /** icp → rot: the leaked key is retired for new issuance, and nothing more. */
@@ -53,7 +53,14 @@ const rotated: Array<SignedEvent> = [inception, rotate]
 const revoked: Array<SignedEvent> = [
   inception,
   rotate,
-  createRevoke(seed, 0, did, rotate.event, keyTarget(leaked), { gen: 0, seq: 1 }),
+  createRevoke({
+    seed,
+    profile: 0,
+    did,
+    prior: rotate.event,
+    target: keyTarget(leaked),
+    keyPosition: { gen: 0, seq: 1 },
+  }),
 ]
 
 function registry(log: Array<SignedEvent>): MethodRegistry {
@@ -61,9 +68,9 @@ function registry(log: Array<SignedEvent>): MethodRegistry {
 }
 
 /** Signs as the profile with the leaked key — what holding a since-rotated key gives you. */
-const thief = createControllerIdentity(seed, 0, [inception])
+const thief = createControllerIdentity({ seed, profile: 0, log: [inception] })
 /** Signs as the profile with the key it currently holds. */
-const owner = createControllerIdentity(seed, 0, revoked)
+const owner = createControllerIdentity({ seed, profile: 0, log: revoked })
 
 const holder = createSigningIdentity(new Uint8Array(32).fill(61))
 
@@ -163,15 +170,15 @@ describe('a key the profile has revoked', () => {
     const foldWith = async (cap: string) => {
       // The position here selects which key is derived from `delegateSeed` — the delegate's own,
       // the one the `cnf` above pins — not a position in the profile's key schedule.
-      const rev = createRevoke(
-        delegateSeed,
-        0,
+      const rev = createRevoke({
+        seed: delegateSeed,
+        profile: 0,
         did,
-        revoked[2].event,
+        prior: revoked[2].event,
         target,
-        { gen: 0, seq: 0 },
-        { cap },
-      )
+        keyPosition: { gen: 0, seq: 0 },
+        cap,
+      })
       // The verifier's own registry deliberately answers from the inception only — the fold's
       // prefix resolver is what must decide, and it shadows this one for the subject.
       return await foldLogAsync(did, [...revoked, rev], {

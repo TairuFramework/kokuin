@@ -210,30 +210,39 @@ export type ResolveIssuerWithDocResult = {
  */
 export type ResolveIssuerMode = { historic?: boolean }
 
+/** Params for {@link resolveIssuer} / {@link resolveIssuerWithDoc}. */
+export type ResolveIssuerParams = {
+  iss: string
+  header?: ResolveIssuerHeader
+  resolver?: DIDResolver
+  methods?: MethodRegistry
+  /** See {@link ResolveIssuerMode.historic}. */
+  historic?: boolean
+}
+
 /**
  * Resolve a token issuer (did:key or did:peer:4) and return alg + public key,
  * plus the decoded peer:4 doc when one was obtained inline or via the resolver.
  * Callers writing to a DID cache should write `peer4Doc` only after signature verification.
  *
- * `mode.historic` selects which question is asked of a `DIDMethodResolver` — see
+ * The `historic` param selects which question is asked of a `DIDMethodResolver` — see
  * {@link ResolveIssuerMode}. It reaches only the method-registry branch: `did:key` carries its key
  * in the identifier and a `did:peer:4` document is fixed by its own hash, so neither has a past key
  * set distinct from its present one.
  */
-export async function resolveIssuerWithDoc(
-  iss: string,
-  header: ResolveIssuerHeader = {},
-  resolver?: DIDResolver,
-  methods?: MethodRegistry,
-  mode: ResolveIssuerMode = {},
-): Promise<ResolveIssuerWithDocResult> {
+export async function resolveIssuerWithDoc({
+  iss,
+  header = {},
+  resolver,
+  methods,
+  historic = false,
+}: ResolveIssuerParams): Promise<ResolveIssuerWithDocResult> {
   if (methods != null) {
     const methodResolver = findMethodResolver(methods, iss)
     if (methodResolver != null) {
       // The historic question is answered only by `resolveHistoric`; a resolver without one is not
       // asked `resolve` instead, which would substitute a different question. `UnresolvableIssuerError`
       // is right — nothing was learned either way, which a fail-closed caller treats as a denial.
-      const historic = mode.historic === true
       if (historic && methodResolver.resolveHistoric == null) {
         throw new UnresolvableIssuerError(
           `DID method ${methodResolver.method} cannot resolve historic keys: ${iss}`,
@@ -327,14 +336,20 @@ function hasKeyPrefix(did: string): boolean {
 /**
  * Resolve a token issuer to [alg, publicKey]. Backward-compatible wrapper around resolveIssuerWithDoc.
  */
-export async function resolveIssuer(
-  iss: string,
-  header: ResolveIssuerHeader = {},
-  resolver?: DIDResolver,
-  methods?: MethodRegistry,
-  mode: ResolveIssuerMode = {},
-): Promise<[SignatureAlgorithm, Uint8Array]> {
-  const { alg, publicKey } = await resolveIssuerWithDoc(iss, header, resolver, methods, mode)
+export async function resolveIssuer({
+  iss,
+  header = {},
+  resolver,
+  methods,
+  historic = false,
+}: ResolveIssuerParams): Promise<[SignatureAlgorithm, Uint8Array]> {
+  const { alg, publicKey } = await resolveIssuerWithDoc({
+    iss,
+    header,
+    resolver,
+    methods,
+    historic,
+  })
   return [alg, publicKey]
 }
 

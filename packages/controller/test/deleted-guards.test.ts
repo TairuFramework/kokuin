@@ -25,7 +25,15 @@ const icp = createInception(seed, 0)
 const did = didFromInception(icp.event)
 const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 const authority = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
-const capRevoke = createRevoke(seed, 0, did, icp.event, target, { gen: 0, seq: 0 }, { cap: 'CAP' })
+const capRevoke = createRevoke({
+  seed,
+  profile: 0,
+  did,
+  prior: icp.event,
+  target,
+  keyPosition: { gen: 0, seq: 0 },
+  cap: 'CAP',
+})
 
 /**
  * A verifier that authorises everything, pinning the profile's own key — the maximally permissive

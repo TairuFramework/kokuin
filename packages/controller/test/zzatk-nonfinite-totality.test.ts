@@ -22,8 +22,15 @@ function fromWire(json: string): unknown {
 function build() {
   const icp = createInception(seed, 0)
   const did = didFromInception(icp.event)
-  const rot = createRotate(seed, 0, did, icp.event)
-  const rev = createRevoke(seed, 0, did, rot.event, deviceX, { gen: 0, seq: 1 })
+  const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+  const rev = createRevoke({
+    seed,
+    profile: 0,
+    did,
+    prior: rot.event,
+    target: deviceX,
+    keyPosition: { gen: 0, seq: 1 },
+  })
   return { icp, did, rot, rev, honest: [icp, rot, rev] }
 }
 

@@ -44,8 +44,8 @@ const D3 = 'did:key:z6MkfriQZgZXhtFA6kFHzuvhLHGRDDNzGRxeLnpKmZzHwUXR'
 
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const rotate = createRotate(seed, 0, did, inception.event)
-const rotateAgain = createRotate(seed, 0, did, rotate.event)
+const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
+const rotateAgain = createRotate({ seed, profile: 0, did, prior: rotate.event })
 const reset = createReset(seed, 0, 1)
 
 function resolverFor(log: Array<SignedEvent>) {
@@ -54,7 +54,10 @@ function resolverFor(log: Array<SignedEvent>) {
 
 /** A token signed by the identity the given log's head establishes. */
 async function tokenFrom(log: Array<SignedEvent>) {
-  return await signToken(createControllerIdentity(seed, 0, log), createUnsignedToken({ n: 1 }))
+  return await signToken(
+    createControllerIdentity({ seed, profile: 0, log }),
+    createUnsignedToken({ n: 1 }),
+  )
 }
 
 describe('a rotate keeps everything the profile has issued verifiable — under `historic`', () => {
@@ -94,7 +97,14 @@ describe('a rotate keeps everything the profile has issued verifiable — under 
   })
 
   test('a revoke does not disturb it either', async () => {
-    const revoke = createRevoke(seed, 0, did, rotate.event, device, { gen: 0, seq: 1 })
+    const revoke = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: rotate.event,
+      target: device,
+      keyPosition: { gen: 0, seq: 1 },
+    })
     const token = await tokenFrom([inception])
 
     await expect(
@@ -236,14 +246,47 @@ describe('a kid naming a key this profile never published', () => {
 // revokes (which advance `s` without establishing a key), then a rotate, then a reset, then more
 // events on the far side of the boundary. The two-rotate logs above only approach this.
 
-const rot1 = createRotate(seed, 0, did, inception.event) //      gen0 s1  keySeq 1
-const rot2 = createRotate(seed, 0, did, rot1.event) //           gen0 s2  keySeq 2
-const rev1 = createRevoke(seed, 0, did, rot2.event, D1, { gen: 0, seq: 2 }) // gen0 s3
-const rev2 = createRevoke(seed, 0, did, rev1.event, D2, { gen: 0, seq: 2 }) // gen0 s4
-const rot3 = createRotate(seed, 0, did, rev2.event, { keyPosition: { gen: 0, seq: 2 } }) // s5 kS3
-const rot4 = createRotate(seed, 0, did, reset.event) //          gen1 s1  keySeq 1
-const rev3 = createRevoke(seed, 0, did, rot4.event, D3, { gen: 1, seq: 1 }) // gen1 s2
-const rot5 = createRotate(seed, 0, did, rev3.event, { keyPosition: { gen: 1, seq: 1 } }) // s3 kS2
+const rot1 = createRotate({ seed, profile: 0, did, prior: inception.event }) //      gen0 s1  keySeq 1
+const rot2 = createRotate({ seed, profile: 0, did, prior: rot1.event }) //           gen0 s2  keySeq 2
+const rev1 = createRevoke({
+  seed,
+  profile: 0,
+  did,
+  prior: rot2.event,
+  target: D1,
+  keyPosition: { gen: 0, seq: 2 },
+}) // gen0 s3
+const rev2 = createRevoke({
+  seed,
+  profile: 0,
+  did,
+  prior: rev1.event,
+  target: D2,
+  keyPosition: { gen: 0, seq: 2 },
+}) // gen0 s4
+const rot3 = createRotate({
+  seed,
+  profile: 0,
+  did,
+  prior: rev2.event,
+  options: { keyPosition: { gen: 0, seq: 2 } },
+}) // s5 kS3
+const rot4 = createRotate({ seed, profile: 0, did, prior: reset.event }) //          gen1 s1  keySeq 1
+const rev3 = createRevoke({
+  seed,
+  profile: 0,
+  did,
+  prior: rot4.event,
+  target: D3,
+  keyPosition: { gen: 1, seq: 1 },
+}) // gen1 s2
+const rot5 = createRotate({
+  seed,
+  profile: 0,
+  did,
+  prior: rev3.event,
+  options: { keyPosition: { gen: 1, seq: 1 } },
+}) // s3 kS2
 
 const interleaved: Array<SignedEvent> = [
   inception,
@@ -317,11 +360,44 @@ describe('every event in a revoke/rotate/reset interleaving folds', () => {
 
   test('a revoke twice, a rotate, a revoke, a rotate all inside one generation folds', () => {
     // The same shape without a reset in the way — the case F-1 names.
-    const a = createRevoke(seed, 0, did, inception.event, D1, { gen: 0, seq: 0 })
-    const b = createRevoke(seed, 0, did, a.event, D2, { gen: 0, seq: 0 })
-    const c = createRotate(seed, 0, did, b.event, { keyPosition: { gen: 0, seq: 0 } })
-    const d = createRevoke(seed, 0, did, c.event, D3, { gen: 0, seq: 1 })
-    const e = createRotate(seed, 0, did, d.event, { keyPosition: { gen: 0, seq: 1 } })
+    const a = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      target: D1,
+      keyPosition: { gen: 0, seq: 0 },
+    })
+    const b = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: a.event,
+      target: D2,
+      keyPosition: { gen: 0, seq: 0 },
+    })
+    const c = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: b.event,
+      options: { keyPosition: { gen: 0, seq: 0 } },
+    })
+    const d = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: c.event,
+      target: D3,
+      keyPosition: { gen: 0, seq: 1 },
+    })
+    const e = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: d.event,
+      options: { keyPosition: { gen: 0, seq: 1 } },
+    })
     const result = foldLog(did, [inception, a, b, c, d, e])
     expect(result.ok).toBe(true)
     if (!result.ok) return

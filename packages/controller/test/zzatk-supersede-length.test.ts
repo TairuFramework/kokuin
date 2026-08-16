@@ -27,7 +27,14 @@ function thiefRun(did: string, icp: SignedEvent, length: number): Array<SignedEv
   const branch: Array<SignedEvent> = [icp]
   let prior = icp.event
   for (let i = 0; i < length; i++) {
-    const rev = createRevoke(seed, 0, did, prior, `${victim}${i}`, { gen: 0, seq: 0 })
+    const rev = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior,
+      target: `${victim}${i}`,
+      keyPosition: { gen: 0, seq: 0 },
+    })
     branch.push(rev)
     prior = rev.event
   }
@@ -40,7 +47,13 @@ function ownerRun(did: string, icp: SignedEvent, length: number): Array<SignedEv
   let prior = icp.event
   let keySeq = 0
   for (let i = 0; i < length; i++) {
-    const rot = createRotate(seed, 0, did, prior, { keyPosition: { gen: 0, seq: keySeq } })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior,
+      options: { keyPosition: { gen: 0, seq: keySeq } },
+    })
     branch.push(rot)
     prior = rot.event
     keySeq += 1

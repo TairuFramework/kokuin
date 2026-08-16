@@ -35,15 +35,15 @@ function authorityKey(gen: number, seq: number): string {
 function capLog() {
   const inception = createInception(seed, 0)
   const did = didFromInception(inception.event)
-  const revoke = createRevoke(
-    delegateSeed,
-    0,
+  const revoke = createRevoke({
+    seed: delegateSeed,
+    profile: 0,
     did,
-    inception.event,
-    device,
-    { gen: 0, seq: 0 },
-    { cap },
-  )
+    prior: inception.event,
+    target: device,
+    keyPosition: { gen: 0, seq: 0 },
+    cap,
+  })
   return { did, log: [inception, revoke], inception }
 }
 
@@ -51,7 +51,7 @@ describe('createControllerIdentity()', () => {
   test('binds the identity to the did:kokuin: DID, not a did:key:', async () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const identity = createControllerIdentity(seed, 0, [inception])
+    const identity = createControllerIdentity({ seed, profile: 0, log: [inception] })
 
     expect(identity.id).toBe(did)
 
@@ -60,7 +60,7 @@ describe('createControllerIdentity()', () => {
   })
 
   test('keeps the payload issuer guard', async () => {
-    const identity = createControllerIdentity(seed, 0, [createInception(seed, 0)])
+    const identity = createControllerIdentity({ seed, profile: 0, log: [createInception(seed, 0)] })
     await expect(
       identity.signToken({ iss: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK' }),
     ).rejects.toThrow(/issuer does not match signer/)
@@ -69,9 +69,9 @@ describe('createControllerIdentity()', () => {
   test('signs with the rotated key after a rotation, not the inception key', () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate(seed, 0, did, inception.event)
+    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
 
-    const identity = createControllerIdentity(seed, 0, [inception, rotate])
+    const identity = createControllerIdentity({ seed, profile: 0, log: [inception, rotate] })
     const publicKey = encodeKey(identity.publicKey, 'EdDSA')
 
     // The key the rotate published, which is the only one the resolver will answer with.
@@ -88,9 +88,16 @@ describe('createControllerIdentity()', () => {
     const did = didFromInception(inception.event)
     // A revoke advances `seq` to 1 but establishes no key — Amendment A. The active authority key
     // is still the inception's, at gen 0 / seq 0.
-    const revoke = createRevoke(seed, 0, did, inception.event, device, { gen: 0, seq: 0 })
+    const revoke = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      target: device,
+      keyPosition: { gen: 0, seq: 0 },
+    })
 
-    const identity = createControllerIdentity(seed, 0, [inception, revoke])
+    const identity = createControllerIdentity({ seed, profile: 0, log: [inception, revoke] })
     const publicKey = encodeKey(identity.publicKey, 'EdDSA')
 
     expect(publicKey).toBe(inception.event.k[0])
@@ -102,31 +109,35 @@ describe('createControllerIdentity()', () => {
   test('refuses a log that does not fold rather than signing with a stale key', () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate(seed, 0, did, inception.event)
+    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
     // A rotate that re-reveals the inception key instead of the pre-committed one: it does not
     // match the inception's `n`, so the fold rejects it.
     const forged = { ...rotate, event: { ...rotate.event, k: [inception.event.k[0]] } }
 
-    expect(() => createControllerIdentity(seed, 0, [inception, forged])).toThrow(/invalid rotate/)
+    expect(() => createControllerIdentity({ seed, profile: 0, log: [inception, forged] })).toThrow(
+      /invalid rotate/,
+    )
   })
 
   test('refuses an empty log', () => {
-    expect(() => createControllerIdentity(seed, 0, [])).toThrow(/empty log/)
+    expect(() => createControllerIdentity({ seed, profile: 0, log: [] })).toThrow(/empty log/)
   })
 
   test('refuses a log whose first event is not an inception', () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate(seed, 0, did, inception.event)
+    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
 
-    expect(() => createControllerIdentity(seed, 0, [rotate])).toThrow(/must be an inception/)
+    expect(() => createControllerIdentity({ seed, profile: 0, log: [rotate] })).toThrow(
+      /must be an inception/,
+    )
   })
 
   test('refuses a seed that does not control this log', () => {
     const inception = createInception(seed, 0)
     const other = new Uint8Array(32).fill(9)
 
-    expect(() => createControllerIdentity(other, 0, [inception])).toThrow(
+    expect(() => createControllerIdentity({ seed: other, profile: 0, log: [inception] })).toThrow(
       /is not one of the current authority keys/,
     )
   })
@@ -134,7 +145,7 @@ describe('createControllerIdentity()', () => {
   test('refuses the wrong profile index for this log', () => {
     const inception = createInception(seed, 0)
 
-    expect(() => createControllerIdentity(seed, 1, [inception])).toThrow(
+    expect(() => createControllerIdentity({ seed, profile: 1, log: [inception] })).toThrow(
       /is not one of the current authority keys/,
     )
   })
@@ -142,14 +153,14 @@ describe('createControllerIdentity()', () => {
   test('refuses a capability-authorised revoke it cannot verify inline', () => {
     const { log } = capLog()
 
-    expect(() => createControllerIdentity(seed, 0, log)).toThrow(/capability/)
+    expect(() => createControllerIdentity({ seed, profile: 0, log })).toThrow(/capability/)
   })
 })
 
 describe('createControllerIdentity() kid', () => {
   test('stamps the kid of the key it signs with', async () => {
     const inception = createInception(seed, 0)
-    const identity = createControllerIdentity(seed, 0, [inception])
+    const identity = createControllerIdentity({ seed, profile: 0, log: [inception] })
 
     const signed = await identity.signToken({ hello: 'world' })
     expect(signed.header.kid).toBe(`#${inception.event.k[0]}`)
@@ -158,9 +169,9 @@ describe('createControllerIdentity() kid', () => {
   test('stamps the rotated key after a rotation, not the retired one', async () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate(seed, 0, did, inception.event)
+    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
 
-    const identity = createControllerIdentity(seed, 0, [inception, rotate])
+    const identity = createControllerIdentity({ seed, profile: 0, log: [inception, rotate] })
     const signed = await identity.signToken({ hello: 'world' })
 
     expect(signed.header.kid).toBe(`#${rotate.event.k[0]}`)
@@ -170,7 +181,7 @@ describe('createControllerIdentity() kid', () => {
   test('signs with the seed-derived key when the set publishes another key first', async () => {
     // A hand-built two-key inception — see `two-key-log.ts`. The controller's key is `k[1]`.
     const { log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
-    const identity = createControllerIdentity(seed, 0, log)
+    const identity = createControllerIdentity({ seed, profile: 0, log })
 
     expect(encodeKey(identity.publicKey, 'EdDSA')).toBe(controllerKey)
     const signed = await identity.signToken({ hello: 'world' })
@@ -182,7 +193,7 @@ describe('createControllerIdentity() kid', () => {
 
   test('keeps caller header fields alongside the kid', async () => {
     const inception = createInception(seed, 0)
-    const identity = createControllerIdentity(seed, 0, [inception])
+    const identity = createControllerIdentity({ seed, profile: 0, log: [inception] })
 
     const signed = await identity.signToken(
       { hello: 'world' },
@@ -194,7 +205,7 @@ describe('createControllerIdentity() kid', () => {
 
   test('an explicit undefined kid in the caller header does not erase the stamp', async () => {
     const inception = createInception(seed, 0)
-    const identity = createControllerIdentity(seed, 0, [inception])
+    const identity = createControllerIdentity({ seed, profile: 0, log: [inception] })
 
     // Pins the spread order: under `{ kid, ...options.header }` a header carrying an explicit
     // `undefined` kid overwrites the stamp — and the mismatch guard does not fire, since
@@ -205,7 +216,7 @@ describe('createControllerIdentity() kid', () => {
 
   test('accepts a caller kid that names the key it signs with', async () => {
     const inception = createInception(seed, 0)
-    const identity = createControllerIdentity(seed, 0, [inception])
+    const identity = createControllerIdentity({ seed, profile: 0, log: [inception] })
     const kid = `#${inception.event.k[0]}`
 
     const signed = await identity.signToken({ hello: 'world' }, { header: { kid } })
@@ -214,7 +225,7 @@ describe('createControllerIdentity() kid', () => {
 
   test('refuses a caller kid naming any other key', async () => {
     const { log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
-    const identity = createControllerIdentity(seed, 0, log)
+    const identity = createControllerIdentity({ seed, profile: 0, log })
 
     // The co-signer's key is in the published set, so the resolver would accept it — but this
     // identity cannot sign with it. Silently dropping the caller's kid would mint a token whose
@@ -228,7 +239,7 @@ describe('createControllerIdentity() kid', () => {
 
   test('refuses a caller kid passed as the key-selection option too', async () => {
     const { log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
-    const identity = createControllerIdentity(seed, 0, log)
+    const identity = createControllerIdentity({ seed, profile: 0, log })
 
     // `SignTokenOptions.kid` selects among a multi-key identity's keys, and the DID-bound identity
     // underneath ignores it outright. Ignoring it here would be the same silent mis-selection as
@@ -246,10 +257,15 @@ describe('createControllerIdentityAsync()', () => {
     const { did, log, inception } = capLog()
     const seen: Array<Array<string>> = []
 
-    const identity = await createControllerIdentityAsync(seed, 0, log, {
-      verifyCapability: async (capability, subject, target) => {
-        seen.push([capability, subject, target])
-        return authorised
+    const identity = await createControllerIdentityAsync({
+      seed,
+      profile: 0,
+      log,
+      options: {
+        verifyCapability: async (capability, subject, target) => {
+          seen.push([capability, subject, target])
+          return authorised
+        },
       },
     })
 
@@ -268,11 +284,16 @@ describe('createControllerIdentityAsync()', () => {
     const { log } = capLog()
 
     await expect(
-      createControllerIdentityAsync(seed, 0, log, {
-        verifyCapability: async () => ({
-          authorised: false,
-          reason: 'capability does not authorise this revoke',
-        }),
+      createControllerIdentityAsync({
+        seed,
+        profile: 0,
+        log,
+        options: {
+          verifyCapability: async () => ({
+            authorised: false,
+            reason: 'capability does not authorise this revoke',
+          }),
+        },
       }),
     ).rejects.toThrow(/capability does not authorise this revoke/)
   })
@@ -280,17 +301,24 @@ describe('createControllerIdentityAsync()', () => {
   test('refuses the same log when no verifier is supplied', async () => {
     const { log } = capLog()
 
-    await expect(createControllerIdentityAsync(seed, 0, log)).rejects.toThrow(/needs a verifier/)
+    await expect(createControllerIdentityAsync({ seed, profile: 0, log })).rejects.toThrow(
+      /needs a verifier/,
+    )
   })
 
   test('produces the same identity as the sync entry point for a log with no capability', async () => {
     const inception = createInception(seed, 0)
-    const rotate = createRotate(seed, 0, didFromInception(inception.event), inception.event)
+    const rotate = createRotate({
+      seed,
+      profile: 0,
+      did: didFromInception(inception.event),
+      prior: inception.event,
+    })
     const log = [inception, rotate]
 
-    const identity = await createControllerIdentityAsync(seed, 0, log)
+    const identity = await createControllerIdentityAsync({ seed, profile: 0, log })
 
-    expect(identity.id).toBe(createControllerIdentity(seed, 0, log).id)
+    expect(identity.id).toBe(createControllerIdentity({ seed, profile: 0, log }).id)
     expect(encodeKey(identity.publicKey, 'EdDSA')).toBe(rotate.event.k[0])
 
     // Including the header it stamps: both entry points build the identity the same way.
@@ -301,14 +329,29 @@ describe('createControllerIdentityAsync()', () => {
   test('keeps the sync guards — an empty log, a non-inception head, a foreign seed', async () => {
     const inception = createInception(seed, 0)
 
-    await expect(createControllerIdentityAsync(seed, 0, [])).rejects.toThrow(/empty log/)
+    await expect(createControllerIdentityAsync({ seed, profile: 0, log: [] })).rejects.toThrow(
+      /empty log/,
+    )
     await expect(
-      createControllerIdentityAsync(seed, 0, [
-        createRotate(seed, 0, didFromInception(inception.event), inception.event),
-      ]),
+      createControllerIdentityAsync({
+        seed,
+        profile: 0,
+        log: [
+          createRotate({
+            seed,
+            profile: 0,
+            did: didFromInception(inception.event),
+            prior: inception.event,
+          }),
+        ],
+      }),
     ).rejects.toThrow(/must be an inception/)
     await expect(
-      createControllerIdentityAsync(new Uint8Array(32).fill(9), 0, [inception]),
+      createControllerIdentityAsync({
+        seed: new Uint8Array(32).fill(9),
+        profile: 0,
+        log: [inception],
+      }),
     ).rejects.toThrow(/is not one of the current authority keys/)
   })
 })

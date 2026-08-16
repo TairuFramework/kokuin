@@ -18,10 +18,17 @@ describe('keyless branch hijack, independent reproduction', () => {
     const did = didFromInception(inception.event)
 
     // The honest history: rotate, then revoke a device.
-    const rotate = createRotate(seed, 0, did, inception.event)
-    const revoke = createRevoke(seed, 0, did, rotate.event, 'did:key:zVictimDevice', {
-      gen: 0,
-      seq: 1,
+    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const revoke = createRevoke({
+      seed,
+      profile: 0,
+      did,
+      prior: rotate.event,
+      target: 'did:key:zVictimDevice',
+      keyPosition: {
+        gen: 0,
+        seq: 1,
+      },
     })
     const honest = [inception, rotate, revoke]
 

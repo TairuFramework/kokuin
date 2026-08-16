@@ -22,7 +22,7 @@ import { checkCapability, createCapability, now } from '../src/index.js'
 const seed = new Uint8Array(32).fill(31)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity(seed, 0, [inception])
+const controller = createControllerIdentity({ seed, profile: 0, log: [inception] })
 const inceptionKeyPosition = { gen: 0, seq: 0 }
 
 let log: Array<SignedEvent> = [inception]
@@ -31,7 +31,14 @@ const methods: MethodRegistry = [
 ]
 
 function revokeOf(target: string): SignedEvent {
-  return createRevoke(seed, 0, did, inception.event, target, inceptionKeyPosition)
+  return createRevoke({
+    seed,
+    profile: 0,
+    did,
+    prior: inception.event,
+    target,
+    keyPosition: inceptionKeyPosition,
+  })
 }
 
 async function mintFor(audienceId: string): Promise<string> {

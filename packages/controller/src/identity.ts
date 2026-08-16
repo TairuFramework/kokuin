@@ -61,13 +61,19 @@ function withKid(identity: SigningIdentity, kid: string): SigningIdentity {
  * first (co-signers' keys belong to other holders); what must hold is that the resolver can answer
  * with this key. A key outside the set signs unverifiable tokens, so fail loudly at construction.
  */
-function identityForKey(
-  privateKey: Uint8Array,
-  publicKey: Uint8Array,
-  did: DIDString,
-  state: KeyState,
-  mismatch: string,
-): SigningIdentity {
+function identityForKey({
+  privateKey,
+  publicKey,
+  did,
+  state,
+  mismatch,
+}: {
+  privateKey: Uint8Array
+  publicKey: Uint8Array
+  did: DIDString
+  state: KeyState
+  mismatch: string
+}): SigningIdentity {
   if (state.keys.length === 0) {
     // Defensive, unreachable through either fold today (`verifySignatures` rejects an empty key set,
     // `rev` carries `keys` forward). Kept so a future event type that can empty the set fails here
@@ -89,12 +95,17 @@ function identityForKey(
  * Derive the signing key the folded state establishes and bind it to the DID. Shared by the sync and
  * async seed entry points, which differ only in how they reach the state.
  */
-function identityForState(
-  seed: Uint8Array,
-  profile: number,
-  did: DIDString,
-  state: KeyState,
-): SigningIdentity {
+function identityForState({
+  seed,
+  profile,
+  did,
+  state,
+}: {
+  seed: Uint8Array
+  profile: number
+  did: DIDString
+  state: KeyState
+}): SigningIdentity {
   if (state.keys.length === 0) {
     throw new Error(`Controller ${did} has no signing key`)
   }
@@ -103,14 +114,19 @@ function identityForState(
     authorityPath(profile, state.keyGen, state.keySeq),
     'EdDSA',
   )
-  return identityForKey(
+  return identityForKey({
     privateKey,
     publicKey,
     did,
     state,
-    // The mismatch means the seed or profile is not this log's.
-    'derived key is not one of the current authority keys',
-  )
+    mismatch: 'derived key is not one of the current authority keys',
+  })
+}
+
+export type CreateControllerIdentityParams = {
+  seed: Uint8Array
+  profile: number
+  log: Array<SignedEvent>
 }
 
 /**
@@ -134,13 +150,17 @@ function identityForState(
  * @throws when the log does not fold, or when the derived key is not one of the profile's current
  * authority keys (a wrong `seed` or `profile` for this log).
  */
-export function createControllerIdentity(
-  seed: Uint8Array,
-  profile: number,
-  log: Array<SignedEvent>,
-): SigningIdentity {
+export function createControllerIdentity({
+  seed,
+  profile,
+  log,
+}: CreateControllerIdentityParams): SigningIdentity {
   const did = didFromLog(log)
-  return identityForState(seed, profile, did, currentState(did, log, CONTEXT))
+  return identityForState({ seed, profile, did, state: currentState(did, log, CONTEXT) })
+}
+
+export type CreateControllerIdentityAsyncParams = CreateControllerIdentityParams & {
+  options?: FoldOptions
 }
 
 /**
@@ -151,14 +171,24 @@ export function createControllerIdentity(
  * @param options forwarded to the async fold; without `verifyCapability` such a log still fails to
  * fold rather than being trusted.
  */
-export async function createControllerIdentityAsync(
-  seed: Uint8Array,
-  profile: number,
-  log: Array<SignedEvent>,
-  options?: FoldOptions,
-): Promise<SigningIdentity> {
+export async function createControllerIdentityAsync({
+  seed,
+  profile,
+  log,
+  options,
+}: CreateControllerIdentityAsyncParams): Promise<SigningIdentity> {
   const did = didFromLog(log)
-  return identityForState(seed, profile, did, await currentStateAsync(did, log, CONTEXT, options))
+  return identityForState({
+    seed,
+    profile,
+    did,
+    state: await currentStateAsync({ did, events: log, context: CONTEXT, options: options }),
+  })
+}
+
+export type CreateControllerIdentityWithKeyParams = {
+  privateKey: Uint8Array
+  log: Array<SignedEvent>
 }
 
 /**
@@ -179,18 +209,22 @@ export async function createControllerIdentityAsync(
  * @throws when the log does not fold, or when the key's public half is not one of the profile's
  * current authority keys — a stale log, or a key the profile has rotated away.
  */
-export function createControllerIdentityWithKey(
-  privateKey: Uint8Array,
-  log: Array<SignedEvent>,
-): SigningIdentity {
+export function createControllerIdentityWithKey({
+  privateKey,
+  log,
+}: CreateControllerIdentityWithKeyParams): SigningIdentity {
   const did = didFromLog(log)
-  return identityForKey(
+  return identityForKey({
     privateKey,
-    ed25519.getPublicKey(privateKey),
+    publicKey: ed25519.getPublicKey(privateKey),
     did,
-    currentState(did, log, CONTEXT),
-    'the supplied key is not one of the current authority keys',
-  )
+    state: currentState(did, log, CONTEXT),
+    mismatch: 'the supplied key is not one of the current authority keys',
+  })
+}
+
+export type CreateControllerIdentityWithKeyAsyncParams = CreateControllerIdentityWithKeyParams & {
+  options?: FoldOptions
 }
 
 /**
@@ -198,17 +232,18 @@ export function createControllerIdentityWithKey(
  * capability authorising a non-authority signer. The pairing is not incidental: a profile that uses
  * the management tier is the same profile whose daily signer should not hold the seed.
  */
-export async function createControllerIdentityWithKeyAsync(
-  privateKey: Uint8Array,
-  log: Array<SignedEvent>,
-  options?: FoldOptions,
-): Promise<SigningIdentity> {
+
+export async function createControllerIdentityWithKeyAsync({
+  privateKey,
+  log,
+  options,
+}: CreateControllerIdentityWithKeyAsyncParams): Promise<SigningIdentity> {
   const did = didFromLog(log)
-  return identityForKey(
+  return identityForKey({
     privateKey,
-    ed25519.getPublicKey(privateKey),
+    publicKey: ed25519.getPublicKey(privateKey),
     did,
-    await currentStateAsync(did, log, CONTEXT, options),
-    'the supplied key is not one of the current authority keys',
-  )
+    state: await currentStateAsync({ did, events: log, context: CONTEXT, options: options }),
+    mismatch: 'the supplied key is not one of the current authority keys',
+  })
 }
