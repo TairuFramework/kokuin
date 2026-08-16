@@ -14,7 +14,13 @@ export type SignatureAlgorithm = FromSchema<typeof signatureAlgorithmSchema>
 /** @internal */
 export const validateAlgorithm = createValidator(signatureAlgorithmSchema)
 
-/** @internal */
+/**
+ * The header of a signed token.
+ *
+ * Supported rather than internal: `@enkaku/protocol` composes its own message schemas out of this,
+ * `unsignedHeaderSchema` and `signedPayloadSchema` — a protocol built on kokuin tokens has to
+ * describe them in its own wire schema, and it cannot do that from a type alone.
+ */
 export const signedHeaderSchema = {
   type: 'object',
   properties: {
@@ -31,7 +37,9 @@ export type SignedHeader = FromSchema<typeof signedHeaderSchema>
 /** @internal */
 export const validateSignedHeader = createValidator(signedHeaderSchema)
 
-/** @internal */
+/**
+ * The header of an unsigned token. See {@link signedHeaderSchema} for why this is supported.
+ */
 export const unsignedHeaderSchema = {
   type: 'object',
   properties: {
@@ -59,7 +67,12 @@ export const capabilitySchema = {
   anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
 } as const satisfies Schema
 
-/** @internal */
+/**
+ * The registered claims a signed token carries. `additionalProperties` is open, so a consumer
+ * spreads `properties` into its own object schema and concatenates `required`.
+ *
+ * Supported rather than internal — see {@link signedHeaderSchema}.
+ */
 export const signedPayloadSchema = {
   type: 'object',
   properties: {
@@ -74,7 +87,12 @@ export const signedPayloadSchema = {
   required: ['iss'],
   additionalProperties: true,
 } as const satisfies Schema
-/** @internal */
+/**
+ * The registered claims of a signed token, inferred from {@link signedPayloadSchema}.
+ *
+ * Supported rather than internal, and the most widely used of these: it is what a consumer
+ * intersects its own payload type with to describe a token it issues or verifies.
+ */
 export type SignedPayload = FromSchema<typeof signedPayloadSchema>
 
 /** @internal */

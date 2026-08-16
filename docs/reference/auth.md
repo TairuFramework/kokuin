@@ -13,10 +13,10 @@ import {
   randomIdentity,
   createIdentity,
   createSigningIdentity,
-  createDecryptingIdentity,
+  createKeyAgreementIdentity,
   createFullIdentity,
   isSigningIdentity,
-  isDecryptingIdentity,
+  isKeyAgreementIdentity,
   isFullIdentity,
   isOwnIdentity,
 } from '@kokuin/token'
@@ -24,7 +24,7 @@ import type {
   Identity,
   OwnIdentity,
   SigningIdentity,
-  DecryptingIdentity,
+  KeyAgreementIdentity,
   FullIdentity,
   MultiKeyIdentity,
   IdentityKeySpec,
@@ -38,12 +38,12 @@ import type {
 | `randomIdentity()` | `OwnIdentity` | Fresh Ed25519 key pair in memory (`did:key:…`) |
 | `createIdentity(input)` | `Promise<MultiKeyIdentity>` | Multi-key `did:peer:4` identity with signing + encryption keys |
 | `createSigningIdentity(privateKey)` | `SigningIdentity` | Sign-only identity from an Ed25519 private key |
-| `createDecryptingIdentity(privateKey)` | `DecryptingIdentity` | Decrypt-only identity (JWE recipient) |
-| `createFullIdentity(privateKey)` | `FullIdentity` | Sign + decrypt from one Ed25519 private key |
+| `createKeyAgreementIdentity(privateKey)` | `KeyAgreementIdentity` | Key-agreement-only identity (JWE recipient, via `@kokuin/jwe`) |
+| `createFullIdentity(privateKey)` | `FullIdentity` | Sign + key agreement from one Ed25519 private key |
 
-**Identity hierarchy**: `OwnIdentity ⊇ FullIdentity ⊇ SigningIdentity | DecryptingIdentity`.
+**Identity hierarchy**: `OwnIdentity ⊇ FullIdentity ⊇ SigningIdentity | KeyAgreementIdentity`.
 
-Type guards: `isSigningIdentity`, `isDecryptingIdentity`, `isFullIdentity`, `isOwnIdentity`.
+Type guards: `isSigningIdentity`, `isKeyAgreementIdentity`, `isFullIdentity`, `isOwnIdentity`.
 
 The `id` field on every identity is its DID (e.g. `did:key:z6Mk…`). Because the public key is encoded in the DID, any token can be verified by extracting the key from the `iss` claim — no external key lookup required.
 
@@ -53,18 +53,24 @@ The `id` field on every identity is its DID (e.g. `did:key:z6Mk…`). Because th
 type Identity = { readonly id: string }
 
 type SigningIdentity = Identity & {
-  signToken<Payload, Header>(
+  publicKey: Uint8Array
+  signToken<Payload>(
     payload: Payload,
-    header?: Header,
-  ): Promise<SignedToken<Payload, Header>>
+    options?: SignTokenOptions,
+  ): Promise<SignedToken<Payload>>
 }
 
-type DecryptingIdentity = Identity & {
-  decrypt(jwe: string): Promise<Uint8Array>
+type SignTokenOptions = {
+  header?: Record<string, unknown>  // extra fields merged into the signed JWS header
+  kid?: string                      // pick a non-primary signing key by fragment
+  embedLongForm?: boolean           // override the did:peer:4 long-form policy
+}
+
+type KeyAgreementIdentity = Identity & {
   agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array>
 }
 
-type FullIdentity = SigningIdentity & DecryptingIdentity
+type FullIdentity = SigningIdentity & KeyAgreementIdentity
 
 type OwnIdentity = FullIdentity & { privateKey: Uint8Array }
 ```
@@ -161,6 +167,9 @@ type SignedPayload = {
 
 ### Encryption (JWE envelope modes)
 
+JWE support lives in the separate `@kokuin/jwe` package, so verify-only consumers of
+`@kokuin/token` do not pay for `@noble/ciphers`.
+
 ```typescript
 import {
   createTokenEncrypter,
@@ -168,8 +177,8 @@ import {
   decryptToken,
   wrapEnvelope,
   unwrapEnvelope,
-} from '@kokuin/token'
-import type { EnvelopeMode, TokenEncrypter } from '@kokuin/token'
+} from '@kokuin/jwe'
+import type { EnvelopeMode, TokenEncrypter } from '@kokuin/jwe'
 ```
 
 | `EnvelopeMode` | Description |
@@ -182,12 +191,12 @@ import type { EnvelopeMode, TokenEncrypter } from '@kokuin/token'
 **JWE encrypt / decrypt** (ECDH-ES + A256GCM):
 
 ```typescript
+import { randomIdentity } from '@kokuin/token'
 import {
-  randomIdentity,
   createTokenEncrypter,
   encryptToken,
   decryptToken,
-} from '@kokuin/token'
+} from '@kokuin/jwe'
 
 const recipient = randomIdentity()
 
@@ -195,7 +204,8 @@ const recipient = randomIdentity()
 const encrypter = createTokenEncrypter(recipient.id)
 const jwe = await encryptToken(encrypter, new TextEncoder().encode('secret payload'))
 
-// Recipient decrypts with their private identity
+// Recipient decrypts with their private identity — decryptToken reads only
+// recipient.agreeKey(), so any KeyAgreementIdentity (including a FullIdentity) works
 const plaintext = await decryptToken(recipient, jwe)
 console.log(new TextDecoder().decode(plaintext)) // 'secret payload'
 ```
@@ -207,14 +217,15 @@ raw output instead of building an envelope around it — for callers who want a 
 input to their own protocol (e.g. one factor among several combined via HKDF), not a JWE.
 
 ```typescript
-import { randomIdentity, deriveSharedSecret } from '@kokuin/token'
+import { randomIdentity } from '@kokuin/token'
+import { deriveSharedSecret } from '@kokuin/jwe'
 
 const recipient = randomIdentity()
 
 const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipient.id)
 // ship ephemeralPublicKey alongside whatever the secret protects
 
-// Recipient recovers the identical bytes with agreeKey (see `DecryptingIdentity` above):
+// Recipient recovers the identical bytes with agreeKey (see `KeyAgreementIdentity` above):
 const recovered = await recipient.agreeKey(ephemeralPublicKey)
 ```
 
@@ -237,13 +248,13 @@ the ephemeral private key never leaves it. Two caveats before you use the result
 **Envelope wrapping** (`jws-in-jwe` — signed, then encrypted):
 
 ```typescript
+import { randomIdentity } from '@kokuin/token'
 import {
-  randomIdentity,
   createTokenEncrypter,
   wrapEnvelope,
   unwrapEnvelope,
-} from '@kokuin/token'
-import type { EnvelopeMode } from '@kokuin/token'
+} from '@kokuin/jwe'
+import type { EnvelopeMode } from '@kokuin/jwe'
 
 const signer = randomIdentity()
 const recipient = randomIdentity()
@@ -262,35 +273,18 @@ console.log(unwrapped.mode)    // 'jws-in-jwe'
 
 ### Key rotation
 
-```typescript
-import { createRotationAssertion } from '@kokuin/token'
-import type { RotationPayload } from '@kokuin/token'
-```
+Key rotation in `did:kokuin:` keeps the identifier stable while replacing the key set. Unlike older rotation chains that required creating a new DID on each rotation, the `did:kokuin:` event log records key material transitions as cryptographically linked events without changing the identifier.
 
-`createRotationAssertion` signs a rotation claim with the **old** identity, declaring the new DID. Verifiers walking a rotation chain follow these assertions to reach the current key.
+Rotation is managed through `@kokuin/controller`. A rotation event contains:
+- **Prior event digest** (`p`): Chains to the prior event in the log
+- **Signature and agreement keys** (`k`, `ka`): The new key material being rotated into
+- **Pre-rotation commitments** (`n`): Digests of the keys the *next* rotation must reveal
 
-```typescript
-import { createIdentity, createRotationAssertion } from '@kokuin/token'
+`verifyRotate` validates a single rotate: it checks that `k` hashes to the digests the prior event committed in `n`. This creates a key takeover protection: an attacker who steals the current signing key still cannot rotate the profile, because rotation requires revealing keys that match the pre-committed digests — keys they do not possess. Chain-level operations (`foldLog` and `foldLogAsync`) walk the entire event log to establish the current key state.
 
-// Both old and new must be MultiKeyIdentity (use createIdentity)
-const oldIdentity = await createIdentity({
-  keys: [
-    { purpose: 'sig', alg: 'EdDSA' },
-    { purpose: 'kem', alg: 'X25519' },
-  ],
-})
-const newIdentity = await createIdentity({
-  keys: [
-    { purpose: 'sig', alg: 'EdDSA' },
-    { purpose: 'kem', alg: 'X25519' },
-  ],
-})
+One consequence reaches every caller of `verifyToken`, whether or not they think about controllers: a method whose key set rotates answers **two** questions, and the safe one is the default. `resolve` answers from the profile's current keys alone, so a rotated-away key stops verifying; `resolveHistoric`, reached only by `verifyToken({ historic: true })`, accepts a key that was authoritative earlier in the same generation, for material the issuer minted in the past. Use the second only for archived artefacts, never to authenticate a live signer.
 
-// Old identity signs the assertion linking it to the new one
-const assertion = await createRotationAssertion(oldIdentity, newIdentity)
-// assertion.payload.type === 'did-rotation'
-// assertion.payload.to   === newIdentity.id
-```
+See [./controller.md](./controller.md) for the method and the full event log API, and [./security.md](./security.md) for the guarantees and the rules a consumer has to follow to get them.
 
 ---
 

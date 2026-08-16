@@ -1,4 +1,16 @@
-import { randomIdentity, stringifyToken, verifyToken } from '@kokuin/token'
+import {
+  createIdentity,
+  createInMemoryDIDCache,
+  createSigningIdentityForDID,
+  type DIDMethodResolver,
+  type DIDResolver,
+  type DIDString,
+  decodePeer4,
+  randomIdentity,
+  randomPrivateKey,
+  stringifyToken,
+  verifyToken,
+} from '@kokuin/token'
 import { describe, expect, test, vi } from 'vitest'
 
 import {
@@ -664,6 +676,33 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
     ).resolves.not.toThrow()
   })
 
+  test('counts the capability checkCapability peels off against maxDepth', async () => {
+    // `checkCapability` splits `cap` into a head it verifies itself and a tail it hands to
+    // `checkDelegationChain`, so the bound applied to the tail alone admitted one more link than
+    // the default names. Five links must be refused at a default of four; four must pass.
+    const signers = Array.from({ length: 6 }, () => randomIdentity())
+    const capabilities = await buildDelegationChain(signers)
+    const invocation = {
+      iss: signers[signers.length - 1].id,
+      sub: signers[0].id,
+    } as CapabilityPayload
+
+    await expect(
+      checkCapability({ act: 'test', res: 'foo' }, {
+        ...invocation,
+        cap: [...capabilities].reverse(),
+      } as CapabilityPayload),
+    ).rejects.toThrow('delegation chain exceeds maximum depth of 4')
+
+    await expect(
+      checkCapability({ act: 'test', res: 'foo' }, {
+        ...invocation,
+        iss: signers[4].id,
+        cap: [...capabilities.slice(0, 4)].reverse(),
+      } as CapabilityPayload),
+    ).resolves.not.toThrow()
+  })
+
   test('respects custom maxDepth option', async () => {
     const signers = Array.from({ length: 5 }, () => randomIdentity())
 
@@ -891,6 +930,30 @@ describe('assertValidPattern() (M-06)', () => {
     expect(() => assertValidPattern(['test/read', 'test/write'])).not.toThrow()
     expect(() => assertValidPattern(['test/read', '../bad'])).toThrow('Invalid pattern')
   })
+
+  test('accepts a key fragment, which a revoke permission names as its resource', () => {
+    // A `did:kokuin:` `rev` may target a key, spelled `#<multibase key>`, and the revoke permission
+    // is `{ act: 'revoke', res: <target> }`. Without `#` the only grant that could authorise
+    // revoking a key would be `res: '*'` — a wildcard has to be a whole component — so delegating
+    // "retire this one leaked key" would have meant delegating "revoke anything".
+    expect(() =>
+      assertValidPattern('#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'),
+    ).not.toThrow()
+    // Still not a licence for wildcards inside a component.
+    expect(() => assertValidPattern('#z6Mk*')).toThrow('Invalid pattern')
+  })
+
+  test('a key fragment matches itself and nothing else', () => {
+    // `#` is inert to the matcher: components are compared whole. Asserted rather than assumed,
+    // because widening the character class is only safe if it adds no matching behaviour.
+    const key = '#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+    const other = '#z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
+    expect(hasPermission({ act: 'revoke', res: key }, { act: 'revoke', res: key })).toBe(true)
+    expect(hasPermission({ act: 'revoke', res: key }, { act: 'revoke', res: other })).toBe(false)
+    // A wildcard still covers it, and the fragment does not become one.
+    expect(hasPermission({ act: 'revoke', res: key }, { act: 'revoke', res: '*' })).toBe(true)
+    expect(hasPermission({ act: 'revoke', res: other }, { act: 'revoke', res: key })).toBe(false)
+  })
 })
 
 describe('createCapability() - delegation validation (C-03)', () => {
@@ -1009,6 +1072,161 @@ describe('createCapability() - delegation validation (C-03)', () => {
         { parentCapability: stringifyToken(rootCap) },
       ),
     ).rejects.toThrow('audience')
+  })
+
+  test('delegates from a did:kokuin: root when methods is provided, and fails without it', async () => {
+    // A DID whose keys cannot be recovered from the identifier -- the shape `did:kokuin:` has.
+    // The resolver here is a hand-built fake: this package must not depend on
+    // `@kokuin/controller`, and a real folded log would prove nothing extra about the option
+    // threading. Mirrors the idiom in `test/method-registry.test.ts`.
+    const profileDID = 'did:kokuin:zTestProfile' as DIDString
+    const root = createSigningIdentityForDID(profileDID, randomPrivateKey())
+    const resolver: DIDMethodResolver = {
+      method: 'kokuin',
+      resolve: async (did: string) => {
+        if (did !== profileDID) {
+          throw new Error(`Unknown DID: ${did}`)
+        }
+        return { alg: 'EdDSA', publicKey: root.publicKey }
+      },
+      // One fixed key, so historic and current coincide — but it still has to be published, since
+      // a capability is archived material and `verifyToken` asks for it.
+      resolveHistoric: async (did: string) => {
+        if (did !== profileDID) {
+          throw new Error(`Unknown DID: ${did}`)
+        }
+        return { alg: 'EdDSA', publicKey: root.publicKey }
+      },
+    }
+    const bob = randomIdentity()
+    const carol = randomIdentity()
+
+    const rootCap = await createCapability(root, {
+      sub: profileDID,
+      aud: bob.id,
+      act: '*',
+      res: 'foo/*',
+    })
+
+    const delegated = await createCapability(
+      bob,
+      {
+        sub: profileDID,
+        aud: carol.id,
+        act: 'test/read',
+        res: 'foo/bar',
+      },
+      undefined,
+      { parentCapability: stringifyToken(rootCap), methods: [resolver] },
+    )
+    expect(delegated.payload.iss).toBe(bob.id)
+    expect(delegated.payload.sub).toBe(profileDID)
+
+    // Without the registry, the did:kokuin: parent capability cannot be verified at all -- an
+    // implementation that ignores `methods` here would pass the assertion above but not this one.
+    await expect(
+      createCapability(
+        bob,
+        {
+          sub: profileDID,
+          aud: carol.id,
+          act: 'test/read',
+          res: 'foo/bar',
+        },
+        undefined,
+        { parentCapability: stringifyToken(rootCap) },
+      ),
+    ).rejects.toThrow(`Unknown DID: ${profileDID}`)
+  })
+
+  test('delegates from a did:peer:4 short-form root when cache is provided, and fails without it', async () => {
+    // The same resolution gap `methods` closes for did:kokuin: exists for a did:peer:4 short
+    // form the verifier has not seen yet -- `cache` and `resolver` travel with `methods` on
+    // `CreateCapabilityOptions` for that reason.
+    const alice = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    const bob = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    const carol = randomIdentity()
+
+    // Alice signs with her short form: without a cache entry or resolver, nothing can turn that
+    // short form back into her signing key.
+    const rootCap = await alice.signToken(
+      { sub: alice.id, aud: bob.id, act: '*', res: 'foo/*' },
+      { embedLongForm: false },
+    )
+    const cache = createInMemoryDIDCache()
+    await cache.set(alice.id, alice.doc)
+
+    // Note: no `resolver` anywhere in this test -- this isolates `cache` from `resolver`, so a
+    // future implementation that forwards `resolver` but not `cache` cannot pass this test by
+    // accident.
+    const delegated = await createCapability(
+      bob,
+      { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+      undefined,
+      { parentCapability: stringifyToken(rootCap), cache },
+    )
+    // First contact with carol: bob's own signer embeds his long form, unrelated to the option
+    // under test.
+    expect(delegated.payload.iss).toBe(bob.longForm)
+    expect(delegated.payload.sub).toBe(alice.id)
+
+    // Without the cache, an implementation that ignores it here would pass the assertion above
+    // but not this one.
+    await expect(
+      createCapability(
+        bob,
+        { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+        undefined,
+        { parentCapability: stringifyToken(rootCap) },
+      ),
+    ).rejects.toThrow(`Unknown DID: ${alice.id}`)
+  })
+
+  test('delegates from a did:peer:4 short-form root when resolver is provided, and fails without it', async () => {
+    // Isolates `resolver` from `cache`: no `cache` anywhere in this test, on either call, so a
+    // resolver-only path is the only way the short-form root capability's issuer can resolve.
+    // Models the sibling resolver-only case in `test/revocation.test.ts` (Task 26).
+    const alice = await createIdentity({
+      keys: [{ purpose: 'sig', alg: 'EdDSA' }],
+      didMethod: 'peer:4',
+    })
+    const bob = randomIdentity()
+    const carol = randomIdentity()
+
+    // Alice signs with her short form: without a resolver (or a cache entry), nothing can turn
+    // that short form back into her signing key.
+    const rootCap = await alice.signToken(
+      { sub: alice.id, aud: bob.id, act: '*', res: 'foo/*' },
+      { embedLongForm: false },
+    )
+    const doc = decodePeer4(alice.longForm).doc
+    const resolver: DIDResolver = (did: string) => (did === alice.id ? doc : undefined)
+
+    const delegated = await createCapability(
+      bob,
+      { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+      undefined,
+      { parentCapability: stringifyToken(rootCap), resolver },
+    )
+    expect(delegated.payload.iss).toBe(bob.id)
+    expect(delegated.payload.sub).toBe(alice.id)
+
+    // Without the resolver, an implementation that ignores it here would pass the assertion
+    // above but not this one.
+    await expect(
+      createCapability(
+        bob,
+        { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+        undefined,
+        { parentCapability: stringifyToken(rootCap) },
+      ),
+    ).rejects.toThrow(`Unknown DID: ${alice.id}`)
   })
 })
 
@@ -1212,6 +1430,186 @@ describe('verifyToken hook', () => {
     })
 
     expect(verifyTokenHook).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('checkCapability() - a capability presented directly rather than invoked', () => {
+  // The shape `createControllerCapabilityVerifier` hands over: a key event names a capability and
+  // carries no invocation token, so the capability's own payload is what reaches `checkCapability`.
+  // Its own claims are the last hop of the chain and have to bind like any other link's.
+  async function presented(): Promise<{
+    root: ReturnType<typeof randomIdentity>
+    manager: ReturnType<typeof randomIdentity>
+    device: ReturnType<typeof randomIdentity>
+    leaf: CapabilityPayload
+    parent: string
+  }> {
+    const root = randomIdentity()
+    const manager = randomIdentity()
+    const device = randomIdentity()
+    // root → manager: write anything. manager → device: write `doc/1` only.
+    const parent = stringifyToken(
+      await createCapability(root, {
+        sub: root.id,
+        aud: manager.id,
+        act: 'write',
+        res: '*',
+        exp: now() + 3600,
+      }),
+    )
+    const leafToken = await createCapability(
+      manager,
+      {
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: 'doc/1',
+        exp: now() + 3600,
+        cap: [parent],
+      },
+      undefined,
+      { parentCapability: parent },
+    )
+    return { root, manager, device, leaf: leafToken.payload as CapabilityPayload, parent }
+  }
+
+  test('the presented capability grants what it names', async () => {
+    const { leaf } = await presented()
+    await expect(
+      checkCapability({ act: 'write', res: 'doc/1' }, leaf as never),
+    ).resolves.not.toThrow()
+  })
+
+  test('a request the presented capability does not name is refused, whatever its parent grants', async () => {
+    const { leaf } = await presented()
+    // The parent grants `write *`, so before the presented capability's own `res` was checked this
+    // was accepted — the narrowing at the last hop was a no-op.
+    await expect(checkCapability({ act: 'write', res: 'doc/999' }, leaf as never)).rejects.toThrow(
+      'Invalid capability: permission not granted',
+    )
+  })
+
+  test('an action the presented capability does not name is refused', async () => {
+    const { root, manager, device, parent } = await presented()
+    // Hand-signed: the mint path refuses a different action, and an attacker holding the key
+    // signs whatever it likes. Only `act` differs from the capability the mint path would produce.
+    const widened = await manager.signToken({
+      sub: root.id,
+      aud: device.id,
+      act: 'read',
+      res: '*',
+      exp: now() + 3600,
+      cap: [parent],
+    })
+    await expect(checkCapability({ act: 'write', res: 'doc/1' }, widened.payload)).rejects.toThrow(
+      'Invalid capability: permission not granted',
+    )
+  })
+
+  test('the parent still has to cover the presented capability, not merely the request', async () => {
+    const { root, manager, device, parent } = await presented()
+    // A leaf claiming more than its parent granted: `delete` was never delegated. The request is
+    // within the leaf, so only the leaf-against-parent comparison can refuse it.
+    const overreaching = await manager.signToken({
+      sub: root.id,
+      aud: device.id,
+      act: ['write', 'delete'],
+      res: '*',
+      exp: now() + 3600,
+      cap: [parent],
+    })
+    await expect(
+      checkCapability({ act: 'delete', res: 'doc/1' }, overreaching.payload),
+    ).rejects.toThrow('Invalid capability: permission mismatch')
+  })
+
+  test('an invocation names no grant of its own and is still checked against its chain', async () => {
+    const root = randomIdentity()
+    const device = randomIdentity()
+    const capability = stringifyToken(
+      await createCapability(root, {
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: 'doc/1',
+        exp: now() + 3600,
+      }),
+    )
+    // The invocation shape: `act`/`res` absent, authority entirely in `cap`. Dropping the pair is
+    // no escape — the leaf capability of the chain is what the request is checked against.
+    const invocation = { iss: device.id, sub: root.id, cap: [capability] }
+    await expect(
+      checkCapability({ act: 'write', res: 'doc/1' }, invocation as never),
+    ).resolves.not.toThrow()
+    await expect(
+      checkCapability({ act: 'write', res: 'doc/999' }, invocation as never),
+    ).rejects.toThrow('Invalid capability: permission mismatch')
+  })
+
+  describe('its own time claims, one at a time', () => {
+    // A presented capability never passes through `verifyToken` here — the caller verified it and
+    // handed over the payload — and the chain walk starts at its parent, so nothing else in this
+    // package looks at these three. Each row moves exactly one claim; the parent is minted sound
+    // and identical every time, so a rejection is the claim under test and nothing around it.
+    const reference = 1700000000
+
+    async function leafWith(claims: Record<string, unknown>): Promise<CapabilityPayload> {
+      const root = randomIdentity()
+      const manager = randomIdentity()
+      const device = randomIdentity()
+      const parent = stringifyToken(
+        await createCapability(root, {
+          sub: root.id,
+          aud: manager.id,
+          act: 'write',
+          res: '*',
+          exp: reference + 7200,
+        }),
+      )
+      // Hand-signed: the mint path would refuse some of these outright, and what is under test is
+      // the verifier rather than the minter.
+      const leaf = await manager.signToken({
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: '*',
+        cap: [parent],
+        ...claims,
+      })
+      return leaf.payload as CapabilityPayload
+    }
+
+    test('sound claims verify at the reference time', async () => {
+      const leaf = await leafWith({
+        exp: reference + 3600,
+        nbf: reference - 60,
+        iat: reference - 60,
+      })
+      await expect(
+        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+      ).resolves.not.toThrow()
+    })
+
+    test('an expired one is refused', async () => {
+      const leaf = await leafWith({ exp: reference - 1 })
+      await expect(
+        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+      ).rejects.toThrow('Invalid token: expired')
+    })
+
+    test('a not-yet-valid one is refused', async () => {
+      const leaf = await leafWith({ exp: reference + 3600, nbf: reference + 60 })
+      await expect(
+        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+      ).rejects.toThrow('Invalid token: not yet valid')
+    })
+
+    test('one issued in the future is refused', async () => {
+      const leaf = await leafWith({ exp: reference + 3600, iat: reference + 60 })
+      await expect(
+        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+      ).rejects.toThrow('Invalid token: issued in the future')
+    })
   })
 })
 

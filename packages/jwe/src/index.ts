@@ -1,15 +1,39 @@
+/**
+ * JWE encryption for kokuin tokens.
+ *
+ * ## Installation
+ *
+ * ```sh
+ * npm install @kokuin/jwe
+ * ```
+ *
+ * @module jwe
+ */
+
+import {
+  type AgreementAlgorithm,
+  createUnsignedToken,
+  type DIDMethodResolver,
+  decodePeer4,
+  findMethodResolver,
+  getAgreementKey,
+  getPeer4ShortForm,
+  getSignatureInfo,
+  isPeer4,
+  isUnsignedToken,
+  type KeyAgreementIdentity,
+  type MethodRegistry,
+  type ResolvedAgreementKey,
+  type SigningIdentity,
+  stringifyToken,
+  type Verifiers,
+  verifyToken,
+} from '@kokuin/token'
 import { gcm } from '@noble/ciphers/aes.js'
 import { randomBytes } from '@noble/ciphers/utils.js'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { b64uFromJSON, b64uToJSON, fromB64U, toB64U } from '@sozai/codec'
-
-import { getAgreementKey, getSignatureInfo } from './did.js'
-import type { DecryptingIdentity, SigningIdentity } from './identity.js'
-import { decodePeer4, getPeer4ShortForm, isPeer4 } from './peer4.js'
-import { createUnsignedToken, isUnsignedToken, verifyToken } from './token.js'
-import { stringifyToken } from './utils.js'
-import type { Verifiers } from './verifier.js'
 
 export type ConcatKDFParams = {
   sharedSecret: Uint8Array
@@ -149,6 +173,8 @@ function encryptWithX25519(recipientPublicKey: Uint8Array, plaintext: Uint8Array
   return [encodedHeader, '', toB64U(iv), toB64U(ciphertext), toB64U(tag)].join('.')
 }
 
+function resolveX25519Key(recipient: string): { key: Uint8Array; id: string }
+function resolveX25519Key(recipient: Uint8Array): { key: Uint8Array; id?: undefined }
 function resolveX25519Key(recipient: Uint8Array | string): { key: Uint8Array; id?: string } {
   if (typeof recipient !== 'string') {
     return { key: recipient }
@@ -179,30 +205,26 @@ function resolveX25519Key(recipient: Uint8Array | string): { key: Uint8Array; id
 }
 
 /**
- * Perform X25519 key agreement with a recipient DID, without building a JWE.
+ * Perform X25519 key agreement with a recipient DID, without building a JWE. Resolves the agreement
+ * key by the same rule `createTokenEncrypter` uses (a did:peer:4's published `keyAgreement` key, or a
+ * `did:key`'s birationally derived one), generates a single-use ephemeral pair, and returns the ECDH
+ * output; the ephemeral private key never leaves this function.
  *
- * Resolves the recipient's agreement key by the same rule `createTokenEncrypter` uses — a
- * did:peer:4 identity's published `keyAgreement` key, or an EdDSA `did:key`'s birationally
- * derived one — generates a single-use ephemeral key pair, and returns the ECDH output.
- * The ephemeral private key never leaves this function.
+ * The recipient recovers the identical bytes with `identity.agreeKey(ephemeralPublicKey)` and no
+ * `kid` — the sender always resolves the *first* published `keyAgreement` key, so a different `kid`
+ * on a multi-KEM identity silently recovers different bytes.
  *
- * The recipient recovers the identical bytes with `identity.agreeKey(ephemeralPublicKey)` —
- * called with no `kid`; the sender always resolves the first published `keyAgreement` key, and
- * on a multi-KEM identity a different `kid` silently recovers different bytes.
- *
- * The agreement is anonymous — it authenticates nothing about the sender, only that the secret
- * is recoverable by the recipient. Bind `ephemeralPublicKey` and the recipient DID into your
- * KDF's info/context.
+ * Anonymous — it authenticates nothing about the sender, only that the recipient can recover the
+ * secret. Bind `ephemeralPublicKey` and the recipient DID into your KDF's info/context. The result is
+ * a raw ECDH output, not a key: run it through a KDF.
  *
  * ```ts
  * const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipientDID)
  * // ship ephemeralPublicKey alongside whatever the secret protects
  * ```
  *
- * The result is a raw ECDH output, not a key: run it through a KDF before use.
- *
- * @param recipient a `did:key` EdDSA DID, or a `did:peer:4` **long form**. A peer:4 short form
- *   throws — the document that carries the agreement key lives only in the long form.
+ * @param recipient a `did:key` EdDSA DID, or a `did:peer:4` **long form** — a short form throws, its
+ *   agreement key living only in the long form.
  */
 export function deriveSharedSecret(recipient: string): SharedSecretResult {
   if (typeof recipient !== 'string') {
@@ -224,7 +246,117 @@ export function createTokenEncrypter(
     throw new Error(`Unsupported algorithm: ${options?.algorithm}`)
   }
 
-  const { key, id } = resolveX25519Key(recipient)
+  const { key, id } =
+    typeof recipient === 'string' ? resolveX25519Key(recipient) : resolveX25519Key(recipient)
+
+  return {
+    recipientID: id,
+    async encrypt(plaintext: Uint8Array): Promise<string> {
+      return encryptWithX25519(key, plaintext)
+    },
+  }
+}
+
+export type ResolveRecipientOptions = {
+  methods: MethodRegistry
+}
+
+/** Algorithms this package can encrypt with, strongest first. */
+const AGREEMENT_PREFERENCE: Array<AgreementAlgorithm> = ['X25519']
+
+/**
+ * Pick the strongest supported algorithm out of a resolver's key agreement set.
+ *
+ * Three distinguishable failures, so a caller can tell what to do about each: nothing registered
+ * for the method, a resolver that never grew key agreement, and a resolver whose keys are all
+ * algorithms this package does not (yet) implement.
+ */
+async function resolveViaMethodResolver(
+  recipient: string,
+  resolver: DIDMethodResolver,
+): Promise<{ key: Uint8Array; id: string }> {
+  if (resolver.resolveAgreementKey == null) {
+    throw new Error(`Cannot encrypt: ${resolver.method} does not support key agreement`)
+  }
+  const keys: Array<ResolvedAgreementKey> = await resolver.resolveAgreementKey(recipient)
+  for (const alg of AGREEMENT_PREFERENCE) {
+    const match = keys.find((key) => key.alg === alg)
+    if (match != null) {
+      return { key: match.publicKey, id: recipient }
+    }
+  }
+  throw new Error(
+    `Cannot encrypt to ${recipient}: no supported key agreement algorithm in [${keys
+      .map((key) => key.alg)
+      .join(', ')}]`,
+  )
+}
+
+/**
+ * `did:key` and `did:peer:4` carry their own key material and never go through a registered
+ * `DIDMethodResolver` — a cheap shape check, not an attempt-and-catch, so it never has to
+ * interpret (or swallow) an error the sync path raised.
+ */
+function isSelfContainedRecipient(recipient: string): boolean {
+  // Mirrors isPeer4's own prefix check without relying on its `value is string` predicate, which
+  // narrows a value already known to be a string to `never` on the negated branch.
+  return recipient.startsWith('did:peer:4z') || recipient.startsWith('did:key:')
+}
+
+/**
+ * Resolve a recipient's X25519 agreement key, reaching for a registered `DIDMethodResolver`
+ * only when the DID needs one.
+ *
+ * A resolver match is decided first and always wins. Failing that, `did:key` / `did:peer:4`
+ * fall to the sync path, whose own diagnostics (a did:peer:4 short form, an unsupported
+ * signature algorithm) propagate untouched — never caught here and rewritten as "no resolver".
+ * Anything else with no resolver registered gets that "no resolver" error, since the sync path
+ * has no way to resolve it either and would otherwise fail with an unrelated parse error.
+ */
+async function resolveRecipientKey(
+  recipient: string,
+  options: ResolveRecipientOptions,
+): Promise<{ key: Uint8Array; id: string }> {
+  const resolver = findMethodResolver(options.methods, recipient)
+  if (resolver != null) {
+    return resolveViaMethodResolver(recipient, resolver)
+  }
+  if (isSelfContainedRecipient(recipient)) {
+    return resolveX25519Key(recipient)
+  }
+  const method = recipient.split(':').slice(0, 2).join(':')
+  throw new Error(`Cannot encrypt: no resolver registered for ${method}`)
+}
+
+/**
+ * Async sibling of {@link deriveSharedSecret} for recipients whose agreement key must be reached
+ * through a registered `DIDMethodResolver` (e.g. `did:kokuin:`), in addition to the
+ * self-contained DIDs `deriveSharedSecret` already handles.
+ *
+ * @param recipient a DID string. Self-contained DIDs (`did:key`, `did:peer:4` long form) resolve
+ *   the same way `deriveSharedSecret` does; any other DID is looked up in `options.methods`.
+ */
+export async function deriveSharedSecretAsync(
+  recipient: string,
+  options: ResolveRecipientOptions,
+): Promise<SharedSecretResult> {
+  if (typeof recipient !== 'string') {
+    throw new Error('deriveSharedSecretAsync requires a DID string')
+  }
+  const { key } = await resolveRecipientKey(recipient, options)
+  return agreeWithKey(key)
+}
+
+/**
+ * Async sibling of {@link createTokenEncrypter} for recipients whose agreement key must be
+ * reached through a registered `DIDMethodResolver` (e.g. `did:kokuin:`), in addition to the
+ * self-contained DIDs `createTokenEncrypter` already handles.
+ */
+export async function createTokenEncrypterAsync(
+  recipient: string,
+  options: ResolveRecipientOptions,
+): Promise<TokenEncrypter> {
+  const { key, id } = await resolveRecipientKey(recipient, options)
 
   return {
     recipientID: id,
@@ -248,7 +380,7 @@ export async function encryptToken(
  * Decrypt a JWE compact serialization string.
  */
 export async function decryptToken(
-  decrypter: DecryptingIdentity,
+  decrypter: KeyAgreementIdentity,
   jwe: string,
 ): Promise<Uint8Array> {
   const parts = jwe.split('.')
@@ -315,7 +447,7 @@ export type WrapOptions = {
 }
 
 export type UnwrapOptions = {
-  decrypter?: DecryptingIdentity
+  decrypter?: KeyAgreementIdentity
   verifiers?: Verifiers
 }
 

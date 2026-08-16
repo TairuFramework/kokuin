@@ -82,7 +82,7 @@ describe('BrowserKeyStore identities', () => {
     const store = createStore()
     const identity = await store.provideIdentity('user')
     expect(identity.id).toMatch(/^did:key:z/)
-    expect(typeof identity.decrypt).toBe('function')
+    expect(typeof identity.agreeKey).toBe('function')
     expect((await store.provideIdentity('user')).id).toBe(identity.id)
   })
 

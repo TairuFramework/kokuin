@@ -44,6 +44,7 @@
     "@sozai/otel": "catalog:"
   },
   "devDependencies": {
+    "@kokuin/jwe": "workspace:^",
     "@kokuin/keystore-conformance": "workspace:^"
   },
   "publishConfig": {

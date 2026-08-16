@@ -148,7 +148,7 @@ import {
 import type { DelegationChainOptions } from '@kokuin/capability'
 ```
 
-**`DEFAULT_MAX_DELEGATION_DEPTH`** — `20`. The maximum number of links accepted by `checkDelegationChain`/`checkCapability` before rejecting the chain.
+**`DEFAULT_MAX_DELEGATION_DEPTH`** — `4`. The maximum number of links accepted by `checkDelegationChain`/`checkCapability` before rejecting the chain.
 
 **`DelegationChainOptions`**:
 
@@ -156,7 +156,7 @@ import type { DelegationChainOptions } from '@kokuin/capability'
 type DelegationChainOptions = {
   /** Reference time for expiry checks (seconds since epoch). Defaults to now(). */
   atTime?: number
-  /** Maximum chain depth. Defaults to DEFAULT_MAX_DELEGATION_DEPTH (20). */
+  /** Maximum chain depth. Defaults to DEFAULT_MAX_DELEGATION_DEPTH (4). */
   maxDepth?: number
   /** Hook called for each token after signature verification. Throw to reject. */
   verifyToken?: VerifyTokenHook
@@ -210,29 +210,34 @@ import type {
 type VerifyTokenHook = (token: CapabilityToken, raw: string) => void | Promise<void>
 ```
 
-**`RevocationRecord`** — the signed record produced when a token is revoked:
+**`RevocationRecord`** — a **signed token**, not a plain object. The claims below are its *payload*:
 
 ```typescript
-type RevocationRecord = {
+type RevocationRecord = SignedToken<RevocationClaims>
+
+type RevocationClaims = {
   jti: string   // Token ID being revoked
-  iss: string   // Revoking identity DID
   rev: true
   iat: number   // Revocation timestamp (seconds since epoch)
 }
 ```
+
+`iss` is stamped by `signToken` from the signer's own DID, so a caller cannot mint a record for another issuer. The signature is what the "only a token's own issuer may revoke it" guarantee rests on: the checker compares the record's `iss` to the token's, and an unsigned record would let anyone revoke anyone.
 
 **`RevocationBackend`** — interface for the revocation store:
 
 ```typescript
 type RevocationBackend = {
   add(record: RevocationRecord): Promise<void>
-  isRevoked(jti: string): Promise<boolean>
+  get(jti: string): Promise<RevocationRecord | undefined>
 }
 ```
 
-**`createMemoryRevocationBackend()`** — returns an in-memory `RevocationBackend` backed by a `Set`. Suitable for single-process use; does not survive restarts.
+It answers with the *record*, not with a boolean: the checker re-verifies the signature at the point of use, because a backend is an extension point and may return something it never verified.
 
-**`createRevocationRecord(signer, jti)`** — builds a plain `RevocationRecord` using `signer.id` as `iss`; no cryptographic signing is performed. The caller is responsible for persisting the record via `backend.add(record)`.
+**`createMemoryRevocationBackend(options?)`** — returns an in-memory `RevocationBackend` backed by a `Map`. `add` verifies the record's signature and throws `Invalid revocation record` on one that does not check out. Suitable for single-process use; does not survive restarts.
+
+**`createRevocationRecord(signer, jti)`** — **signs** `{ jti, rev: true, iat }` with `signer`, producing the record. The caller is responsible for persisting it via `backend.add(record)`.
 
 **`createRevocationChecker(backend)`** — wraps a `RevocationBackend` as a `VerifyTokenHook`. Wire it via `DelegationChainOptions.verifyToken`:
 

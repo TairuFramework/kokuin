@@ -8,10 +8,9 @@ npm install @kokuin/ledger-device
 
 ## Transport timeouts
 
-`signToken()` and `agreeKey()` (and `decrypt()`, which agrees a key) require explicit
-approval on the device. The APDU response only arrives once the user presses Approve, so
-`LedgerTransport.send()` stays pending for as long as the person takes to read the review
-screens — potentially minutes.
+`signToken()` and `agreeKey()` require explicit approval on the device. The APDU response
+only arrives once the user presses Approve, so `LedgerTransport.send()` stays pending for as
+long as the person takes to read the review screens — potentially minutes.
 
 Transports built on `@ledgerhq/hw-transport-*` have no APDU timeout by default and work as
 is. If you supply your own `LedgerTransport`, do not impose a short timeout on

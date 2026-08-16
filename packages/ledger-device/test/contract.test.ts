@@ -78,7 +78,6 @@ describe('ledger implements IdentityProvider and neither storage type', () => {
     const identity = await provider.provideIdentity('0')
     expect(identity.id).toMatch(/^did:key:z/)
     expect(typeof identity.signToken).toBe('function')
-    expect(typeof identity.decrypt).toBe('function')
     expect(typeof identity.agreeKey).toBe('function')
   })
 })

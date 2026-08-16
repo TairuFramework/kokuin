@@ -22,27 +22,33 @@ export {
   getAlgorithmAndPublicKey,
   getDID,
   getSignatureInfo,
+  IssuerKeyNotFoundError,
+  isIssuerKeyNotFoundError,
+  isUnresolvableIssuerError,
   normalizeDID,
   type ResolveIssuerHeader,
+  type ResolveIssuerMode,
   type ResolveIssuerWithDocResult,
   resolveIssuer,
   resolveIssuerWithDoc,
+  UnresolvableIssuerError,
 } from './did.js'
 export {
   type CreateIdentityInput,
-  createDecryptingIdentity,
   createFullIdentity,
   createIdentity,
+  createKeyAgreementIdentity,
   createSigningIdentity,
-  type DecryptingIdentity,
+  createSigningIdentityForDID,
   type FullIdentity,
   type Identity,
   type IdentityKeySpec,
   type IdentityProvider,
-  isDecryptingIdentity,
   isFullIdentity,
+  isKeyAgreementIdentity,
   isOwnIdentity,
   isSigningIdentity,
+  type KeyAgreementIdentity,
   type KeyAlg,
   type KeyPurpose,
   type MultiKeyIdentity,
@@ -52,27 +58,15 @@ export {
   type SigningIdentity,
   type SignTokenOptions,
 } from './identity.js'
-export type {
-  ConcatKDFParams,
-  EncryptOptions,
-  EnvelopeMode,
-  JWEHeader,
-  SharedSecretResult,
-  TokenEncrypter,
-  UnwrapOptions,
-  UnwrappedEnvelope,
-  WrapOptions,
-} from './jwe.js'
-export {
-  concatKDF,
-  createTokenEncrypter,
-  decryptToken,
-  deriveSharedSecret,
-  encryptToken,
-  unwrapEnvelope,
-  wrapEnvelope,
-} from './jwe.js'
 export type { KeyEntry, KeyStore, MutableKeyEntry } from './keystore.js'
+export {
+  type AgreementAlgorithm,
+  type DIDMethodResolver,
+  findMethodResolver,
+  type MethodRegistry,
+  type ResolvedAgreementKey,
+  type ResolvedSigningKey,
+} from './method.js'
 export {
   decodeMultibase,
   encodeMultibase,
@@ -89,10 +83,6 @@ export {
   type VerificationMethod,
   validateDIDDoc,
 } from './peer4.js'
-export {
-  createRotationAssertion,
-  type RotationPayload,
-} from './rotation.js'
 export {
   capabilitySchema,
   type SignatureAlgorithm,

@@ -8,10 +8,11 @@
 刻印 ("engraved seal") -- the identity / auth / keys layer. Depends downward on `@sozai`;
 consumed by `@enkaku` (RPC) and `@kumiai` (MLS).
 
-Identity primitives: JWT-style tokens, capabilities, and keystores per runtime (browser,
-node, electron, expo, deterministic HD, ledger-device). Two supporting packages: `@kokuin/otel`
-(tracer factory and span/attribute names) and `@kokuin/keystore-conformance` (private -- the
-framework-agnostic suite that enforces the `KeyStore` / `KeyEntry` contract on every backend).
+Identity primitives: JWT-style tokens, JWE encryption, capabilities, `did:kokuin:` controller key
+event logs, and keystores per runtime (browser, node, electron, expo, deterministic HD,
+ledger-device). Three supporting packages: `@kokuin/otel` (tracer factory and span/attribute
+names), `@kokuin/keystore-conformance` and `@kokuin/controller-conformance` (both private -- the
+framework-agnostic suites that enforce the `KeyStore` / `KeyEntry` and controller contracts).
 
 End-to-end suites live under `tests/` (`e2e-electron`, `e2e-expo`, `e2e-node`, `e2e-web`,
 `ledger`). `pnpm-workspace.yaml` includes `tests/*` as workspace packages.

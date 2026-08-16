@@ -36,6 +36,9 @@
   "dependencies": {
     "@kokuin/token": "workspace:^"
   },
+  "devDependencies": {
+    "@kokuin/controller": "workspace:^"
+  },
   "publishConfig": {
     "access": "public"
   }

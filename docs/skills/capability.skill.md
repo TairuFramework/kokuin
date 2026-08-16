@@ -39,7 +39,7 @@ const rootCapStr = stringifyToken(rootCap)
 ```
 
 **Key points**:
-- `act` and `res` follow `/`-separated path patterns; a trailing `*` is the only wildcard form (`docs/*` is valid; `docs/*/edit` is not)
+- `act` and `res` follow `/`-separated path patterns; a trailing `*` is the only wildcard form (`docs/*` is valid; `docs/*/edit` is not). A component may hold letters, digits, `_ - . : #` — `#` because a `did:kokuin:` revoke target may be a key fragment, and the revoke permission is `{ act: 'revoke', res: <target> }`
 - `sub` is the resource owner (root DID); `aud` is who may present or re-delegate this capability
 - `exp` is recommended — capabilities without expiry must be revoked explicitly
 
@@ -103,12 +103,12 @@ await checkDelegationChain(consumerPayload, [delegatedCapStr, rootCapStr], {
 **Key points**:
 - `checkCapability` handles both self-issued tokens (no chain) and delegated tokens (reads `payload.cap`)
 - `checkDelegationChain` takes the `capabilities` array explicitly — head is the immediate parent, tail leads toward the root
-- `DEFAULT_MAX_DELEGATION_DEPTH` is 20; override via `options.maxDepth`
+- `DEFAULT_MAX_DELEGATION_DEPTH` is 4; override via `options.maxDepth`
 - `assertNonExpired` and `assertValidIssuedAt` are called automatically on every link
 
 ### Pattern 4: Revocation
 
-Wire a `RevocationBackend` into `DelegationChainOptions.verifyToken` using `createRevocationChecker`. The hook is called for every token in the chain after signature verification; throwing rejects the chain.
+Wire a `RevocationBackend` into `DelegationChainOptions.verifyToken` using `createRevocationChecker`. The hook is called for every capability in the `cap` chain after its signature is verified; throwing rejects the chain.
 
 ```typescript
 import {
@@ -119,24 +119,42 @@ import {
 } from '@kokuin/capability'
 import type {
   RevocationBackend,
+  RevocationOptions,
   RevocationRecord,
   VerifyTokenHook,
 } from '@kokuin/capability'
 
-// In-memory backend — suitable for single-process use; does not survive restarts
-const backend: RevocationBackend = createMemoryRevocationBackend()
+// How records get resolved. Supply whatever the issuers in your deployment need:
+//   methods  — for a DID whose keys are not recoverable from the identifier (`did:kokuin:`)
+//   resolver — for a short-form `did:peer:4` (a long-form one carries its own document)
+//   cache    — reuses a document seen on long-form first contact
+// A record this cannot resolve now *denies* the capability, so a missing input is a hard
+// failure rather than a silent pass. Omit all three only when every issuer is a `did:key`
+// or a long-form `did:peer:4`.
+const resolution = {
+  methods: [controllerResolver],
+  resolver: peer4Resolver,
+  cache: didCache,
+} satisfies RevocationOptions
 
-// Wrap it as a VerifyTokenHook
-const revocationHook: VerifyTokenHook = createRevocationChecker(backend)
+// In-memory backend — suitable for single-process use; does not survive restarts
+const backend: RevocationBackend = createMemoryRevocationBackend(resolution)
+
+// Wrap it as a VerifyTokenHook — same options, the checker re-verifies independently on use
+const revocationHook: VerifyTokenHook = createRevocationChecker(backend, resolution)
 
 // To revoke a token by its jti:
 // `jtiToRevoke` is the `jti` claim of the token being revoked (from its payload)
 const record: RevocationRecord = await createRevocationRecord(revokerIdentity, jtiToRevoke)
 await backend.add(record)
 
-// Check with revocation enabled — any revoked token in the chain causes rejection
+// Check with revocation enabled — any revoked capability in the chain causes rejection.
+// The same resolution inputs are needed here: chain verification resolves each link's issuer
+// itself, and does so *before* the hook runs. Passing only `verifyToken` would throw on the
+// first `did:kokuin:` link and never reach the revocation check at all.
 const requested: Permission = { act: 'read', res: 'docs/report' }
 await checkCapability(requested, consumerPayload, {
+  ...resolution,
   verifyToken: revocationHook,
 })
 ```
@@ -144,8 +162,17 @@ await checkCapability(requested, consumerPayload, {
 **Key points**:
 - `createRevocationRecord(signer, jti)` is `async` and returns `Promise<RevocationRecord>` — always `await` it before calling `backend.add`
 - `VerifyTokenHook` signature: `(token: CapabilityToken, raw: string) => void | Promise<void>` — throw to reject
-- `createMemoryRevocationBackend` is backed by an in-memory `Set`; for persistence, implement `RevocationBackend` (`add` + `isRevoked`)
-- Revocation plugs in via `DelegationChainOptions.verifyToken` and applies to every link in the chain
+- `createMemoryRevocationBackend` is backed by an in-memory `Map` keyed by `jti`; for persistence, implement `RevocationBackend` (`add` + `get`)
+- Revocation plugs in via `DelegationChainOptions.verifyToken` and applies to every capability in the `cap` chain — but **not** to the invocation payload you pass as `checkCapability`'s second argument. A self-issued token with an empty chain is never passed to the hook, so its own `jti` is never revocation-checked; revoke the capability it rests on, or check the leaf yourself
+- `DelegationChainOptions` carries `methods` / `resolver` / `cache` too, and uses them to verify each link before the hook runs. Pass them there as well as to the checker — omitting them fails the chain before revocation is ever consulted
+- Both `createMemoryRevocationBackend` and `createRevocationChecker` take an optional `RevocationOptions` (`{ methods?, resolver?, cache? }`) — the same three resolution inputs `DelegationChainOptions` carries. Each verifies independently, so pass the same options to both
+- **The checker fails closed on an unresolvable issuer.** When the record's `iss` matches the token's but cannot be resolved to a key, it throws `UnresolvableIssuerError` (re-exported from `@kokuin/capability`, with an `isUnresolvableIssuerError()` guard) rather than treating the token as un-revoked — "I could not check" is not evidence of non-revocation. A record with an invalid signature, or one naming a *different* issuer, is still ignored: neither could revoke this token anyway
+- "Unresolvable" includes a resolver that throws, one that returns nothing, and one whose answer is unusable — an oversized document, or a document that does not hash to the DID requested. A broken or lying resolver must not be able to suppress a revocation by reading as "not revoked"
+- Because of that, omitting a resolution input turns every affected capability with a stored revocation record into a hard verification failure — it does not silently pass
+- **A second, independent revocation path exists for `did:kokuin:` subjects, and it needs no hook.** `checkCapability` / `checkDelegationChain` reject any capability whose `aud` is in the deny set its `sub` publishes in its controller log — every link in the chain, not only the leaf. The rejection is `Invalid capability: audience is revoked by the subject: <aud>` (`AUDIENCE_REVOKED`). It reads `DIDMethodResolver.resolveDenySet` off the `methods` registry you already pass for resolution, so there is nothing extra to wire *at the call site*; it is evaluated against the log's current head, never against a position the capability names. **Omitting `methods` entirely is now refused rather than silently skipped** — `Invalid capability: no resolver for the subject, so its deny set cannot be checked: <sub>` (`DENY_SET_UNAVAILABLE`) — unless the subject's identifier carries its own keys (`did:key`, `did:peer`), which have no deny set to miss. The old silence was justified by "a subject that needs a registry could not have been resolved either", which holds for a chain and not for the `iss === sub` arm, where the caller verified the payload themselves. There is one more thing to get right, and it is not at the call site: **`resolveDenySet` is optional on `DIDMethodResolver`, and a registry entry that omits it disables the rule silently** rather than having nothing to enforce. `createControllerResolver` implements it, so the shipped path is covered — but a hand-written entry, and in particular a *wrapper* around a real resolver that forwards `resolve` and stops there (caching, metrics, tracing), type-checks with the member missing and turns every denial into a pass. If you write or wrap a `DIDMethodResolver` for a method that can revoke, forward `resolveDenySet` with it — and forward `resolveHistoric` too, for the same reason in the other direction: every capability and revocation record this package verifies is checked with `historic: true`, and an entry that omits the member is *refused* rather than answered from `resolve`, so a wrapper missing it makes every capability unverifiable. `jti` revocation records and the deny set answer different questions — "this grant" versus "this device" — and both apply
+- **A third question the same deny set answers: "this signing key".** `historic: true` is what lets an already-issued capability survive the subject's routine rotation, and the price is that a leaked, since-rotated authority key would otherwise go on minting *fresh* capabilities that verify. The remedy is an explicit `rev` naming the key (`keyTarget(key)` in `@kokuin/controller` — `#<the multibase key exactly as it appears in `k`>`), after which `verifyToken` refuses it under both `resolve` and `resolveHistoric`, and every capability it ever signed stops verifying. It needs nothing here: the rejection comes out of `verifyToken` on whichever chain link the key signed, as `Controller <did> kid names a key the controller has revoked: #<key>`. Those `#`-prefixed entries share the set `resolveDenySet` answers with, and cannot be mistaken for a DID — so **match against the set, never enumerate it**
+- **Revoking a key does not un-revoke what that key's revocation records had revoked.** A `jti` revocation record is an artefact signed by a key, so denying the key stops the record verifying — and the checker's general rule is to *ignore* a record it cannot verify, which would have made the remedy for a compromise silently resurrect every capability that key had revoked. The checker therefore separates two cases that look identical at the point of failure. A record naming a key the log **never published** is a forgery and is still ignored: anyone can mint one for any `jti`, and honouring it is the plant-a-record denial of service the rule exists to stop. A record naming a key the log **published and has since denied** is honoured, and revokes as it always did — producing it required the private half of a key the DID itself published, so only the issuer or whoever compromised it could have written it, and honouring a revocation can only subtract authority, never grant any. The residual, stated plainly: a thief holding the leaked key can plant revocations for `jti`s they know, and those survive the owner's remedy — bounded harm next to the owner's own revocations lapsing the moment they act. Both directions are pinned by `packages/capability/test/zzown-key-denial-check.test.ts`
+- **A capability that authorises a `did:kokuin:` revoke has two extra requirements, both refused at verification and both checkable at mint.** It must carry `exp` — an omitted one is not a long grant but a permanent one, and `createControllerCapabilityVerifier` rejects it with `REVOKE_UNBOUNDED_LIFETIME`; the length is yours to choose, with `maxLifetimeSeconds` available if you have a policy. And it must pin its audience's key in `cnf` (`audienceConfirmation(key)`) where the audience is a `did:key` or a `did:peer:4` **long form** — an audience whose identifier carries no key cannot be tied to its pin without resolving it, which is the bug `cnf` exists to remove, so it is refused with `REVOKE_AUDIENCE_KEY_MISMATCH`. Call `assertRevokeCapabilityAudience(payload)` at mint: the same rule, where the cost of getting it wrong is an error rather than an unfoldable log and a DID that stops resolving
 
 ## When to Use What
 

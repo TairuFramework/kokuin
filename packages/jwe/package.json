@@ -1,0 +1,47 @@
+{
+  "name": "@kokuin/jwe",
+  "version": "0.1.0",
+  "description": "JWE encryption for kokuin tokens",
+  "keywords": [
+    "json",
+    "web",
+    "encryption",
+    "jwe"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TairuFramework/kokuin",
+    "directory": "packages/jwe"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "type": "module",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib/*"
+  ],
+  "scripts": {
+    "build": "pnpm run build:clean && pnpm run build:js && pnpm run build:types",
+    "build:clean": "del lib",
+    "build:js": "swc src -d ./lib --config-file ../../node_modules/@kigu/dev/swc.json --strip-leading-paths",
+    "build:types": "tsc --emitDeclarationOnly --skipLibCheck",
+    "prepublishOnly": "pnpm run build",
+    "test": "pnpm run test:types && pnpm run test:unit",
+    "test:types": "tsc --noEmit --skipLibCheck -p tsconfig.test.json",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@kokuin/token": "workspace:^",
+    "@noble/ciphers": "catalog:",
+    "@noble/curves": "catalog:",
+    "@noble/hashes": "catalog:",
+    "@sozai/codec": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

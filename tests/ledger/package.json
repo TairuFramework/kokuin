@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@kokuin/deterministic": "workspace:^",
+    "@kokuin/jwe": "workspace:^",
     "@kokuin/ledger-device": "workspace:^",
     "@kokuin/token": "workspace:^",
     "@noble/curves": "catalog:",

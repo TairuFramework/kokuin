@@ -6,6 +6,7 @@ import { assertType, isType } from '@sozai/schema'
 import type { DIDCache, DIDResolver } from './cache.js'
 import { resolveIssuerWithDoc } from './did.js'
 import type { SigningIdentity } from './identity.js'
+import type { MethodRegistry } from './method.js'
 import {
   type SignedPayload,
   validateAlgorithm,
@@ -31,10 +32,23 @@ const verifiedTokens = new WeakSet<object>()
 // token, so the value captured at verification time is the one the re-bind compares against.
 const verifiedTokenData = new WeakMap<object, string>()
 
+// Tokens verified with `historic: true` — against a key the issuer has since rotated away.
+// Membership blocks the fast path: a later `verifyToken` without `historic` asks the stricter
+// question, and answering it from a weaker check is fail-open, so it re-verifies (which may pass).
+// The reverse needs nothing — a strict answer already implies the loose one.
+const historicallyVerifiedTokens = new WeakSet<object>()
+
 export type VerifyTokenOptions = TimeValidationOptions & {
   verifiers?: Verifiers
   resolver?: DIDResolver
   cache?: DIDCache
+  /**
+   * DID methods that need external resolution to verify an issuer. `did:key` and `did:peer:4` need no
+   * entry (they carry their key in the identifier or document); a method whose key set is a projection
+   * of state held elsewhere — `did:kokuin:` — cannot be verified without one, and fails with `Unknown
+   * DID` when no registry is passed.
+   */
+  methods?: MethodRegistry
   /**
    * Expected audience(s) for the token. When set, verification rejects a token whose `aud`
    * claim is not among the given value(s), and rejects unsigned / `alg:none` tokens outright
@@ -44,6 +58,18 @@ export type VerifyTokenOptions = TimeValidationOptions & {
    * array accepts no audience (every token is rejected).
    */
   audience?: DIDString | Array<DIDString>
+  /**
+   * Verify against a key the issuer has already rotated away, as well as its current ones. Defaults
+   * to `false` — the safe question: the signature must be from a key the issuer holds **now**, so a
+   * rotated-away (leaked) key mints nothing. Opting in asks whether the issuer held the key **at some
+   * point**, which a past-issued capability or revocation record needs to survive routine key hygiene.
+   *
+   * Set it only for a past-issued token that is not itself proof a live party holds a key. Not a
+   * compatibility switch: it is the difference between "a compromised key mints nothing" and "mints
+   * anything until the profile resets". A resolver with no `resolveHistoric` rejects with
+   * `UnresolvableIssuerError` rather than answering the current-key question.
+   */
+  historic?: boolean
   /**
    * Accept unsigned (`alg:none`) tokens. Defaults to `false`.
    *
@@ -95,6 +121,9 @@ export type VerifySignedPayloadInput<
   verifiers?: Verifiers
   resolver?: DIDResolver
   cache?: DIDCache
+  methods?: MethodRegistry
+  /** See `VerifyTokenOptions.historic`. Defaults to `false` — the issuer's current keys only. */
+  historic?: boolean
 }
 
 /**
@@ -103,7 +132,7 @@ export type VerifySignedPayloadInput<
 export async function verifySignedPayload<
   Payload extends Record<string, unknown> = Record<string, unknown>,
 >(input: VerifySignedPayloadInput<Payload>): Promise<Uint8Array> {
-  const { signature, payload, header, data, verifiers, resolver, cache } = input
+  const { signature, payload, header, data, verifiers, resolver, cache, methods, historic } = input
   assertType(validateSignedPayload, payload)
   const effectiveResolver: DIDResolver | undefined =
     cache == null
@@ -113,11 +142,13 @@ export async function verifySignedPayload<
           if (cached != null) return cached
           return resolver != null ? resolver(did) : undefined
         }
-  const { alg, publicKey, peer4Doc } = await resolveIssuerWithDoc(
-    payload.iss,
-    { kid: header.kid },
-    effectiveResolver,
-  )
+  const { alg, publicKey, peer4Doc } = await resolveIssuerWithDoc({
+    iss: payload.iss,
+    header: { kid: header.kid },
+    resolver: effectiveResolver,
+    methods,
+    historic,
+  })
   const verify = getVerifier(alg, verifiers)
   const message = typeof data === 'string' ? fromUTF(data) : data
   const verified = await verify(signature, message, publicKey)
@@ -245,7 +276,16 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
   token: Token<Payload> | string,
   options: VerifyTokenOptions = {},
 ): Promise<Token<Payload>> {
-  const { verifiers, resolver, cache, audience, allowUnsigned = false, ...timeOptions } = options
+  const {
+    verifiers,
+    resolver,
+    cache,
+    methods,
+    audience,
+    allowUnsigned = false,
+    historic,
+    ...timeOptions
+  } = options
   if (typeof token !== 'string') {
     if (isUnsignedToken(token)) {
       assertSignedForAudience(audience)
@@ -253,7 +293,10 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
       assertTimeClaimsValid(token.payload as Record<string, unknown>, timeOptions)
       return token
     }
-    if (isVerifiedToken(token)) {
+    // The `historic` arm is what keeps the fast path from weakening the check: a token verified
+    // against a rotated-away key must not satisfy a later caller who asked for the issuer's current
+    // keys. It falls through to the full verification below rather than being rejected.
+    if (isVerifiedToken(token) && !(historic !== true && historicallyVerifiedTokens.has(token))) {
       // The signature was checked when this object entered `verifiedTokens`, but its payload may
       // have been mutated in place since. Re-bind it to the signed bytes — cheap next to a
       // signature verification, and enough to reject tampering.
@@ -272,12 +315,17 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
         verifiers,
         resolver,
         cache,
+        methods,
+        historic,
       })
       assertTimeClaimsValid(token.payload as Record<string, unknown>, timeOptions)
       assertAudienceValid(token.payload as Record<string, unknown>, audience)
       const result = { ...token, data, verifiedPublicKey } as Token<Payload>
       verifiedTokens.add(result)
       verifiedTokenData.set(result, data)
+      if (historic === true) {
+        historicallyVerifiedTokens.add(result)
+      }
       return result
     }
     throw new Error('Unsupported token')
@@ -316,6 +364,8 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
       verifiers,
       resolver,
       cache,
+      methods,
+      historic,
     })
     assertTimeClaimsValid(payload as Record<string, unknown>, timeOptions)
     assertAudienceValid(payload as Record<string, unknown>, audience)
@@ -328,6 +378,9 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
     } as Token<Payload>
     verifiedTokens.add(result)
     verifiedTokenData.set(result, data)
+    if (historic === true) {
+      historicallyVerifiedTokens.add(result)
+    }
     return result
   }
 

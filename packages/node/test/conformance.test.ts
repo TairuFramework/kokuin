@@ -74,7 +74,6 @@ describe('NodeKeyStore.provideIdentity', () => {
     expect(first.id).toMatch(/^did:key:z/)
     expect(second.id).toBe(first.id)
     expect(typeof first.signToken).toBe('function')
-    expect(typeof first.decrypt).toBe('function')
     expect(typeof first.agreeKey).toBe('function')
   })
 

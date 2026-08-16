@@ -2,7 +2,17 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, it } from 'vitest'
 
 import { createInMemoryDIDCache } from '../src/cache.js'
-import { CODECS, getDID, resolveIssuer, resolveIssuerWithDoc } from '../src/did.js'
+import {
+  CODECS,
+  getDID,
+  IssuerKeyNotFoundError,
+  isIssuerKeyNotFoundError,
+  isUnresolvableIssuerError,
+  resolveIssuer,
+  resolveIssuerWithDoc,
+  UnresolvableIssuerError,
+} from '../src/did.js'
+import type { DIDMethodResolver } from '../src/method.js'
 import { encodeMultibase } from '../src/multibase.js'
 import { encodePeer4 } from '../src/peer4.js'
 
@@ -11,7 +21,7 @@ describe('resolveIssuer', () => {
     const priv = ed25519.utils.randomSecretKey()
     const pub = ed25519.getPublicKey(priv)
     const did = getDID(CODECS.EdDSA, pub)
-    const [alg, key] = await resolveIssuer(did)
+    const [alg, key] = await resolveIssuer({ iss: did })
     expect(alg).toBe('EdDSA')
     expect(key).toEqual(pub)
   })
@@ -32,14 +42,18 @@ describe('resolveIssuer', () => {
     const cache = createInMemoryDIDCache()
     await cache.set(shortForm, doc)
     const resolver = (did: string) => cache.get(did)
-    const [alg, key] = await resolveIssuer(shortForm, { kid: '#key-0' }, resolver)
+    const [alg, key] = await resolveIssuer({ iss: shortForm, header: { kid: '#key-0' }, resolver })
     expect(alg).toBe('EdDSA')
     expect(key).toEqual(pub)
   })
 
   it('throws UnknownDID when peer:4 short form is unresolvable', async () => {
     await expect(
-      resolveIssuer('did:peer:4zAAAAA', { kid: '#key-0' }, () => undefined),
+      resolveIssuer({
+        iss: 'did:peer:4zAAAAA',
+        header: { kid: '#key-0' },
+        resolver: () => undefined,
+      }),
     ).rejects.toThrow(/Unknown DID/)
   })
 
@@ -57,7 +71,7 @@ describe('resolveIssuer', () => {
       authentication: ['#key-0'],
     })
     const resolver = (did: string) => (did === shortForm ? doc : undefined)
-    const [alg, key] = await resolveIssuer(shortForm, {}, resolver)
+    const [alg, key] = await resolveIssuer({ iss: shortForm, header: {}, resolver })
     expect(alg).toBe('EdDSA')
     expect(key).toEqual(pub)
   })
@@ -76,9 +90,9 @@ describe('resolveIssuer', () => {
       authentication: ['#key-0'],
     })
     const resolver = (did: string) => (did === shortForm ? doc : undefined)
-    await expect(resolveIssuer(shortForm, { kid: '#missing' }, resolver)).rejects.toThrow(
-      /KidNotFound/,
-    )
+    await expect(
+      resolveIssuer({ iss: shortForm, header: { kid: '#missing' }, resolver }),
+    ).rejects.toThrow(/KidNotFound/)
   })
 
   it('rejects a kid that is only an assertionMethod, not authentication', async () => {
@@ -103,11 +117,11 @@ describe('resolveIssuer', () => {
     })
     const resolver = (did: string) => (did === shortForm ? doc : undefined)
     // The assertion-only key must not be usable to sign/verify a token.
-    await expect(resolveIssuer(shortForm, { kid: '#key-1' }, resolver)).rejects.toThrow(
-      /not an authentication method/,
-    )
+    await expect(
+      resolveIssuer({ iss: shortForm, header: { kid: '#key-1' }, resolver }),
+    ).rejects.toThrow(/not an authentication method/)
     // The authentication key still resolves.
-    const [alg] = await resolveIssuer(shortForm, { kid: '#key-0' }, resolver)
+    const [alg] = await resolveIssuer({ iss: shortForm, header: { kid: '#key-0' }, resolver })
     expect(alg).toBe('EdDSA')
   })
 
@@ -129,7 +143,7 @@ describe('resolveIssuer', () => {
       resolverCalled = true
       return undefined
     }
-    const [alg, key] = await resolveIssuer(longForm, { kid: '#key-0' }, resolver)
+    const [alg, key] = await resolveIssuer({ iss: longForm, header: { kid: '#key-0' }, resolver })
     expect(resolverCalled).toBe(false)
     expect(alg).toBe('EdDSA')
     expect(key).toEqual(pub)
@@ -148,7 +162,7 @@ describe('resolveIssuer', () => {
       verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase }],
       authentication: ['#key-0'],
     })
-    const [alg, key] = await resolveIssuer(longForm, { kid: '#key-0' })
+    const [alg, key] = await resolveIssuer({ iss: longForm, header: { kid: '#key-0' } })
     expect(alg).toBe('EdDSA')
     expect(key).toEqual(pub)
   })
@@ -168,7 +182,7 @@ describe('resolveIssuerWithDoc', () => {
       verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase }],
       authentication: ['#key-0'],
     })
-    const result = await resolveIssuerWithDoc(longForm, { kid: '#key-0' })
+    const result = await resolveIssuerWithDoc({ iss: longForm, header: { kid: '#key-0' } })
     expect(result.alg).toBe('EdDSA')
     expect(result.publicKey).toEqual(pub)
     expect(result.peer4Doc).toEqual({ shortForm, doc })
@@ -188,7 +202,11 @@ describe('resolveIssuerWithDoc', () => {
       authentication: ['#key-0'],
     })
     const resolver = (did: string) => (did === shortForm ? doc : undefined)
-    const result = await resolveIssuerWithDoc(shortForm, { kid: '#key-0' }, resolver)
+    const result = await resolveIssuerWithDoc({
+      iss: shortForm,
+      header: { kid: '#key-0' },
+      resolver,
+    })
     expect(result.peer4Doc).toEqual({ shortForm, doc })
   })
 
@@ -206,8 +224,153 @@ describe('resolveIssuerWithDoc', () => {
       verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase }],
       authentication: ['#key-0'],
     })
-    await expect(resolveIssuerWithDoc(fakeShortForm, { kid: '#key-0' }, resolver)).rejects.toThrow(
-      /hash mismatch/i,
+    await expect(
+      resolveIssuerWithDoc({ iss: fakeShortForm, header: { kid: '#key-0' }, resolver }),
+    ).rejects.toThrow(/hash mismatch/i)
+  })
+
+  it('classifies a resolver that throws exactly like one that returns nothing', async () => {
+    // Throwing is the normal style for a network-backed resolver, so a caller that fails closed
+    // on `UnresolvableIssuerError` must see both the same way — otherwise the guarantee holds
+    // only for resolvers that signal failure by returning `undefined`.
+    const thrown = await resolveIssuer({
+      iss: 'did:peer:4zAAAAA',
+      header: { kid: '#key-0' },
+      resolver: () => {
+        throw new Error('ECONNREFUSED')
+      },
+    }).catch((error: unknown) => error)
+    expect(isUnresolvableIssuerError(thrown)).toBe(true)
+    expect((thrown as UnresolvableIssuerError).cause).toBeInstanceOf(Error)
+
+    const empty = await resolveIssuer({
+      iss: 'did:peer:4zAAAAA',
+      header: { kid: '#key-0' },
+      resolver: () => undefined,
+    }).catch((error: unknown) => error)
+    expect(isUnresolvableIssuerError(empty)).toBe(true)
+  })
+
+  it('types a resolver that answers with a mismatched doc as unresolvable', async () => {
+    // The resolver answered, but its answer does not hash to the DID that was asked for, so no
+    // key was obtained. Left an ordinary error this would read as "not revoked" to a caller that
+    // fails closed only on this type — a broken or lying resolver silently suppressing
+    // revocation, which is the fail-open this type exists to remove.
+    const priv = ed25519.utils.randomSecretKey()
+    const pub = ed25519.getPublicKey(priv)
+    const ed25519Codec = new Uint8Array([0xed, 0x01])
+    const taggedPub = new Uint8Array(ed25519Codec.length + pub.length)
+    taggedPub.set(ed25519Codec, 0)
+    taggedPub.set(pub, ed25519Codec.length)
+    const resolver = () => ({
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [
+        { id: '#key-0', type: 'Multikey', publicKeyMultibase: encodeMultibase(taggedPub) },
+      ],
+      authentication: ['#key-0'],
+    })
+    const thrown = await resolveIssuerWithDoc({
+      iss: 'did:peer:4zAAAAAAAAAAAAAAAAAAAAAA',
+      header: { kid: '#key-0' },
+      resolver,
+    }).catch((error: unknown) => error)
+    expect(isUnresolvableIssuerError(thrown)).toBe(true)
+    // The message is unchanged, so a caller reading it still learns what went wrong.
+    expect((thrown as Error).message).toMatch(/hash mismatch/i)
+  })
+
+  it('types a resolver that answers with an oversized doc as unresolvable', async () => {
+    // Same reasoning as the mismatch above: the size bound rejects the answer, so no key was
+    // obtained, so the issuer is unresolved. The entry-count arm is used here because it trips
+    // in O(1) without building a 4KB document.
+    const priv = ed25519.utils.randomSecretKey()
+    const pub = ed25519.getPublicKey(priv)
+    const ed25519Codec = new Uint8Array([0xed, 0x01])
+    const taggedPub = new Uint8Array(ed25519Codec.length + pub.length)
+    taggedPub.set(ed25519Codec, 0)
+    taggedPub.set(pub, ed25519Codec.length)
+    const publicKeyMultibase = encodeMultibase(taggedPub)
+    const { shortForm } = encodePeer4({
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase }],
+      authentication: ['#key-0'],
+    })
+    // Resolves the *correct* short form, so the hash check is not what rejects this.
+    const resolver = () => ({
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: Array.from({ length: 500 }, (_, i) => ({
+        id: `#key-${i}`,
+        type: 'Multikey',
+        publicKeyMultibase,
+      })),
+      authentication: ['#key-0'],
+    })
+    const thrown = await resolveIssuerWithDoc({
+      iss: shortForm,
+      header: { kid: '#key-0' },
+      resolver,
+    }).catch((error: unknown) => error)
+    expect(isUnresolvableIssuerError(thrown)).toBe(true)
+    expect((thrown as Error).message).toMatch(/too many verification methods/i)
+  })
+
+  it("does not type a method resolver's key-not-found as unresolvable", async () => {
+    // A method that has the issuer and does not have the named key is reporting the same thing
+    // `resolveKidOrAuth` reports for a did:peer:4 document — the issuer resolved, the token is
+    // bad. Wrapping it as unresolvable would let `kid`, an unauthenticated header field, decide
+    // whether a caller that fails closed on that type denies.
+    const did = 'did:kokuin:zTestProfile'
+    const methods: Array<DIDMethodResolver> = [
+      {
+        method: 'kokuin',
+        resolve: async (_did: string, header: { kid?: string }) => {
+          if (header.kid != null) {
+            throw new IssuerKeyNotFoundError(`no such key: ${header.kid}`)
+          }
+          throw new Error(`Unknown DID: ${did}`)
+        },
+      },
+    ]
+
+    const keyNotFound = await resolveIssuer({
+      iss: did,
+      header: { kid: '#nope' },
+      resolver: undefined,
+      methods,
+    }).catch((error: unknown) => error)
+    expect(isIssuerKeyNotFoundError(keyNotFound)).toBe(true)
+    expect(isUnresolvableIssuerError(keyNotFound)).toBe(false)
+    // Rethrown as thrown, so the message a caller reads is the method's own.
+    expect((keyNotFound as Error).message).toBe('no such key: #nope')
+
+    // Control: everything else the same resolver throws is still unresolvable, so the assertion
+    // above is the classification and not this path having stopped wrapping altogether.
+    const unresolvable = await resolveIssuer({
+      iss: did,
+      header: {},
+      resolver: undefined,
+      methods,
+    }).catch((error: unknown) => error)
+    expect(isUnresolvableIssuerError(unresolvable)).toBe(true)
+    expect(isIssuerKeyNotFoundError(unresolvable)).toBe(false)
+  })
+
+  it('brands the key-not-found error too, and keeps the two guards disjoint', async () => {
+    expect(new IssuerKeyNotFoundError('x').brand).toBe(IssuerKeyNotFoundError.brand)
+    expect(isIssuerKeyNotFoundError(new Error('Invalid signature'))).toBe(false)
+    // Neither guard may fire on the other's error, or the two classifications collapse.
+    expect(isUnresolvableIssuerError(new IssuerKeyNotFoundError('x'))).toBe(false)
+    expect(isIssuerKeyNotFoundError(new UnresolvableIssuerError('x'))).toBe(false)
+  })
+
+  it('brands the error so a duplicated copy of this package still matches', async () => {
+    const thrown = await resolveIssuer({ iss: 'did:example:nobody' }).catch(
+      (error: unknown) => error,
     )
+    expect(isUnresolvableIssuerError(thrown)).toBe(true)
+    // What a second copy of the class would compare against — a string, not an identity.
+    expect((thrown as UnresolvableIssuerError).brand).toBe(UnresolvableIssuerError.brand)
+    // The guard must not fire on an unrelated error that merely happens to be an Error.
+    expect(isUnresolvableIssuerError(new Error('Invalid signature'))).toBe(false)
   })
 })

@@ -2,17 +2,17 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, it, test } from 'vitest'
 
 import type {
-  DecryptingIdentity,
   FullIdentity,
   Identity,
+  KeyAgreementIdentity,
   SigningIdentity,
 } from '../src/identity.js'
 import {
   createFullIdentity,
   createIdentity,
   createSigningIdentity,
-  isDecryptingIdentity,
   isFullIdentity,
+  isKeyAgreementIdentity,
   isSigningIdentity,
   randomIdentity,
 } from '../src/identity.js'
@@ -33,22 +33,21 @@ describe('identity type guards', () => {
     expect(isSigningIdentity(identity)).toBe(false)
   })
 
-  test('isDecryptingIdentity returns true for decrypting identity', () => {
-    const identity: DecryptingIdentity = {
+  test('isKeyAgreementIdentity returns true for key-agreement identity', () => {
+    const identity: KeyAgreementIdentity = {
       id: 'did:key:z123',
-      decrypt: async () => new Uint8Array(),
       agreeKey: async () => new Uint8Array(),
     }
-    expect(isDecryptingIdentity(identity)).toBe(true)
+    expect(isKeyAgreementIdentity(identity)).toBe(true)
   })
 
-  test('isDecryptingIdentity returns false for signing-only identity', () => {
+  test('isKeyAgreementIdentity returns false for signing-only identity', () => {
     const identity: SigningIdentity = {
       id: 'did:key:z123',
       publicKey: new Uint8Array(),
       signToken: async () => ({}) as never,
     }
-    expect(isDecryptingIdentity(identity)).toBe(false)
+    expect(isKeyAgreementIdentity(identity)).toBe(false)
   })
 
   test('isFullIdentity returns true for full identity', () => {
@@ -56,7 +55,6 @@ describe('identity type guards', () => {
       id: 'did:key:z123',
       publicKey: new Uint8Array(),
       signToken: async () => ({}) as never,
-      decrypt: async () => new Uint8Array(),
       agreeKey: async () => new Uint8Array(),
     }
     expect(isFullIdentity(identity)).toBe(true)

@@ -18,6 +18,7 @@
  */
 
 import { HDKeyStore } from '@kokuin/deterministic'
+import { createTokenEncrypter, decryptToken } from '@kokuin/jwe'
 import {
   CLA,
   createLedgerIdentityProvider,
@@ -25,7 +26,7 @@ import {
   INS,
   type LedgerTransport,
 } from '@kokuin/ledger-device'
-import { createTokenEncrypter, isFullIdentity, verifyToken } from '@kokuin/token'
+import { isFullIdentity, verifyToken } from '@kokuin/token'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { beforeEach, describe, expect, test } from 'vitest'
 
@@ -324,7 +325,7 @@ describe.skipIf(!SPECULOS_AVAILABLE)('Ledger app + ledger-identity integration',
     const encrypter = createTokenEncrypter(identity.id)
     const plaintext = new TextEncoder().encode('secret message')
     const jwe = await encrypter.encrypt(plaintext)
-    const decrypted = await identity.decrypt(jwe)
+    const decrypted = await decryptToken(identity, jwe)
     expect(decrypted).toEqual(plaintext)
   })
 })
@@ -387,7 +388,7 @@ describe.skipIf(!SPECULOS_AVAILABLE)('Ledger app + hd-keystore cross-compatibili
     const jwe = await encrypter.encrypt(plaintext)
 
     // Decrypt with Ledger identity (same underlying key)
-    const decrypted = await ledgerIdentity.decrypt(jwe)
+    const decrypted = await decryptToken(ledgerIdentity, jwe)
     expect(decrypted).toEqual(plaintext)
   })
 })

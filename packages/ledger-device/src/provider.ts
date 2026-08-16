@@ -156,12 +156,7 @@ export function createLedgerIdentityProvider(
           return parseSharedSecretResponse(response)
         }
 
-        async function decrypt(jwe: string): Promise<Uint8Array> {
-          const { decryptToken } = await import('@kokuin/token')
-          return decryptToken({ id, decrypt, agreeKey }, jwe)
-        }
-
-        const identity: FullIdentity = { id, publicKey, signToken, agreeKey, decrypt }
+        const identity: FullIdentity = { id, publicKey, signToken, agreeKey }
         cache.set(path, identity)
         return identity
       },

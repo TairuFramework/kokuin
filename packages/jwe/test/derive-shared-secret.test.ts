@@ -1,10 +1,8 @@
+import { CODECS, createIdentity, getDID, isPeer4, randomIdentity } from '@kokuin/token'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
-import { CODECS, getDID } from '../src/did.js'
-import { createIdentity, randomIdentity } from '../src/identity.js'
-import { deriveSharedSecret } from '../src/jwe.js'
-import { isPeer4 } from '../src/peer4.js'
+import { deriveSharedSecret } from '../src/index.js'
 
 describe('deriveSharedSecret()', () => {
   test('a peer:4 long form agrees with what the recipient derives', async () => {
