@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/electron",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Electron keystore",
   "keywords": [
     "cryptography",

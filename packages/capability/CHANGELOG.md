@@ -1,5 +1,16 @@
 # @kokuin/capability
 
+## 0.3.0
+
+### Minor Changes
+
+- Add createControllerCapabilityVerifier for authorising did:kokuin: revocations, enforcing historic mint and the profile deny set. Cap delegation-chain depth and require exp on device capabilities. Split the package into focused modules (types, patterns, time, token, delegation); the public API is unchanged through the barrel.
+
+### Patch Changes
+
+- Updated dependencies:
+  - @kokuin/token@0.5.0
+
 ## 0.2.2
 
 ### Patch Changes

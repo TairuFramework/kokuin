@@ -1,5 +1,12 @@
 # @kokuin/electron
 
+## 0.4.2
+
+### Patch Changes
+
+- Updated dependencies:
+  - @kokuin/token@0.5.0
+
 ## 0.4.1
 
 ### Patch Changes

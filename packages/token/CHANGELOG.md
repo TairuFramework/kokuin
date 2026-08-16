@@ -1,5 +1,13 @@
 # @kokuin/token
 
+## 0.5.0
+
+### Minor Changes
+
+- Split the JWE implementation into the new @kokuin/jwe package. Add the DIDMethodResolver interface and method registry so tokens can be issued and verified for resolver-backed methods such as did:kokuin:, and resolve did:peer:4 issuers from a cache or resolver. resolveIssuer and resolveIssuerWithDoc now take a single params object.
+
+- Add createKeyAgreementIdentityForDID: a DID-bound X25519 key-agreement identity that runs ECDH directly on a raw X25519 scalar (not a Montgomery-converted Ed25519 key), for did:kokuin: controllers whose agreement keypair is independent of the signing key.
+
 ## 0.4.0
 
 ### Minor Changes

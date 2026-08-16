@@ -54,7 +54,7 @@ catalog:
   '@vitejs/plugin-react': ^6.0.5
   electron: ^43.4.0
   electron-store: ^11.0.2
-  expo: ^57.0.12
+  expo: ^57.0.13
   expo-crypto: ^57.0.1
   expo-secure-store: ^57.0.1
   expo-status-bar: ^57.0.1
