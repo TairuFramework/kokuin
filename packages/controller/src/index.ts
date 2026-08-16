@@ -88,6 +88,10 @@ export {
   type TaggedKey,
   tryDecodeKey,
 } from './keys.js'
+export {
+  type ProvideControllerIdentityParams,
+  provideControllerIdentity,
+} from './keystore-identity.js'
 export { enumerateProfiles, handleForDID, type ProfileEntry } from './profiles.js'
 export { type ControllerResolverOptions, createControllerResolver } from './resolver.js'
 export {
