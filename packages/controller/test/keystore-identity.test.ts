@@ -4,8 +4,9 @@ import type { KeyEntry } from '@kokuin/token'
 import { isFullIdentity } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
-import { agreementPath, deriveKeyPair } from '../src/derivation.js'
+import { agreementPath, authorityPath, deriveKeyPair } from '../src/derivation.js'
 import { createInception, createRevoke, createRotate, didFromInception } from '../src/events.js'
+import type { CapabilityAuthorisation } from '../src/fold.js'
 import { createMemoryLogStore } from '../src/history.js'
 import { provideControllerIdentity } from '../src/keystore-identity.js'
 
@@ -110,6 +111,48 @@ describe('provideControllerIdentity', () => {
     const token = await identity.signToken({ sub: 'x' })
     // The revoke established no key, so the authority key is still the inception's.
     expect(token.header.kid).toBe(`#${inception.event.k[0]}`)
+  })
+
+  test('forwards options.verifyCapability to the fold for a capability-authorised revoke', async () => {
+    const seed = new Uint8Array(32).fill(7)
+    // Not the controller's seed: the revoke is signed by a delegate, so only the capability it
+    // carries can authorise it — a log this shape folds only when `options` reaches the fold.
+    const delegateSeed = new Uint8Array(32).fill(3)
+    const cap = 'eyJ.delegated.revoke'
+    const authorised: CapabilityAuthorisation = {
+      authorised: true,
+      audienceKey: {
+        alg: 'EdDSA',
+        publicKey: deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
+      },
+    }
+
+    const logStore = createMemoryLogStore()
+    const inception = createInception(seed, 0)
+    const did = didFromInception(inception.event)
+    const revoke = createRevoke({
+      seed: delegateSeed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      target: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK',
+      keyPosition: { gen: 0, seq: 0 },
+      cap,
+    })
+    await logStore.set(did, [inception, revoke])
+
+    const identity = await provideControllerIdentity({
+      entry: memoryEntry(seed),
+      profile: 0,
+      logStore,
+      options: { verifyCapability: async () => authorised },
+    })
+    expect(identity.id).toBe(did)
+
+    // Without the forwarded options the same log has no verifier to ask, so the fold fails closed.
+    await expect(
+      provideControllerIdentity({ entry: memoryEntry(seed), profile: 0, logStore }),
+    ).rejects.toThrow(/needs a verifier/)
   })
 })
 

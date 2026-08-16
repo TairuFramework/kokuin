@@ -34,6 +34,7 @@ export {
   createRevokeWithKey,
   createRotate,
   DID_PREFIX,
+  didFor,
   didFromInception,
   type EventCommon,
   type EventType,

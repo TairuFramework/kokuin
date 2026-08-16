@@ -1,6 +1,6 @@
 import type { FullIdentity, KeyEntry } from '@kokuin/token'
 
-import { createInception, didFromInception } from './events.js'
+import { createInception, didFor } from './events.js'
 import type { FoldOptions } from './fold.js'
 import type { LogStore } from './history.js'
 import { createControllerIdentityAsync } from './identity.js'
@@ -31,11 +31,10 @@ export async function provideControllerIdentity({
   options,
 }: ProvideControllerIdentityParams): Promise<FullIdentity> {
   const seed = await entry.provideAsync()
-  const inception = createInception(seed, profile)
-  const did = didFromInception(inception.event)
+  const did = didFor(seed, profile)
   let log = await logStore.get(did)
   if (log == null) {
-    log = [inception]
+    log = [createInception(seed, profile)]
     await logStore.set(did, log)
   }
   return createControllerIdentityAsync({ seed, profile, log, options })
