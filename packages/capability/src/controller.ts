@@ -15,13 +15,9 @@ import {
   verifyToken,
 } from '@kokuin/token'
 
-import {
-  assertCapabilityToken,
-  type CapabilityPayload,
-  type ConfirmationClaim,
-  checkCapability,
-  type DelegationChainOptions,
-} from './index.js'
+import { checkCapability } from './delegation.js'
+import { assertCapabilityToken } from './token.js'
+import type { CapabilityPayload, ConfirmationClaim, DelegationChainOptions } from './types.js'
 
 /**
  * The fold rejected the revoke before reaching the audience key. Every pre-audience rejection

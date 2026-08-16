@@ -14,8 +14,8 @@ import {
   verifyToken,
 } from '@kokuin/token'
 
-import type { CapabilityToken, VerifyTokenHook } from './index.js'
-import { now } from './index.js'
+import { now } from './time.js'
+import type { CapabilityToken, VerifyTokenHook } from './types.js'
 
 export type RevocationClaims = {
   jti: string
