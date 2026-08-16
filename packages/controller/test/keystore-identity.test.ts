@@ -1,7 +1,10 @@
+import { HDKeyStore } from '@kokuin/deterministic'
+import { createTokenEncrypter, decryptToken, encryptToken } from '@kokuin/jwe'
 import type { KeyEntry } from '@kokuin/token'
 import { isFullIdentity } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
+import { agreementPath, deriveKeyPair } from '../src/derivation.js'
 import { createInception, createRevoke, createRotate, didFromInception } from '../src/events.js'
 import { createMemoryLogStore } from '../src/history.js'
 import { provideControllerIdentity } from '../src/keystore-identity.js'
@@ -108,4 +111,49 @@ describe('provideControllerIdentity', () => {
     // The revoke established no key, so the authority key is still the inception's.
     expect(token.header.kid).toBe(`#${inception.event.k[0]}`)
   })
+})
+
+test('the resolved FullIdentity decrypts a JWE encrypted to its agreement key', async () => {
+  const seed = new Uint8Array(32).fill(7)
+  const logStore = createMemoryLogStore()
+  const identity = await provideControllerIdentity({
+    entry: memoryEntry(seed),
+    profile: 0,
+    logStore,
+  })
+
+  // The agreement key at the inception position (gen 0, seq 0) is the current one for a fresh log.
+  const agreementPublicKey = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519').publicKey
+  const encrypter = createTokenEncrypter(agreementPublicKey, { algorithm: 'X25519' })
+  const plaintext = new TextEncoder().encode('sealed to the controller')
+  const jwe = await encryptToken(encrypter, plaintext)
+
+  const decrypted = await decryptToken(identity, jwe)
+  expect(decrypted).toEqual(plaintext)
+})
+
+test('drives end to end from a real @kokuin/deterministic KeyStore', async () => {
+  // mnemonicToSeedSync runs PBKDF2 over the phrase without checking a BIP39 checksum, so this
+  // placeholder phrase derives fine; the entry hands back raw bytes the utility uses as seed.
+  const keyStore = HDKeyStore.fromMnemonic(
+    'test test test test test test test test test test test junk',
+  )
+  const logStore = createMemoryLogStore()
+
+  const identity = await provideControllerIdentity({
+    entry: keyStore.entry('0'),
+    profile: 0,
+    logStore,
+  })
+
+  expect(identity.id.startsWith('did:kokuin:')).toBe(true)
+  expect(isFullIdentity(identity)).toBe(true)
+
+  // Restore returns the same identity.
+  const again = await provideControllerIdentity({
+    entry: keyStore.entry('0'),
+    profile: 0,
+    logStore,
+  })
+  expect(again.id).toBe(identity.id)
 })

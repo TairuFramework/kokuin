@@ -200,6 +200,9 @@ importers:
       '@kokuin/controller-conformance':
         specifier: workspace:^
         version: link:../controller-conformance
+      '@kokuin/deterministic':
+        specifier: workspace:^
+        version: link:../deterministic
       '@kokuin/jwe':
         specifier: workspace:^
         version: link:../jwe
