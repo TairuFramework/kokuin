@@ -6,6 +6,12 @@ import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import { createInception, createRevoke, didFromInception } from '../src/events.js'
 import { type CapabilityAuthorisation, foldLog, foldLogAsync } from '../src/fold.js'
 
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 const seed = new Uint8Array(32).fill(1)
 const delegateSeed = new Uint8Array(32).fill(9)
 const outsiderSeed = new Uint8Array(32).fill(10)
@@ -51,7 +57,7 @@ function unknownEvent(did: string, prior: ReturnType<typeof createInception>, cr
       i: did,
       g: 0,
       s: 1,
-      p: (foldLog(did, [prior]) as { ok: true; states: Array<{ digest: string }> }).states[0]
+      p: at((foldLog(did, [prior]) as { ok: true; states: Array<{ digest: string }> }).states, 0)
         .digest,
       crit,
     },
@@ -75,7 +81,7 @@ describe('criticality', () => {
     if (!result.ok) return
     // Skipped events do not advance state, so the position maps to the last applied state.
     expect(result.states).toHaveLength(2)
-    expect(result.states[1].seq).toBe(0)
+    expect(at(result.states, 1).seq).toBe(0)
   })
 
   test('an unknown event with no `crit` member fails closed rather than skipping', () => {
@@ -96,13 +102,14 @@ describe('criticality', () => {
     // by position, and a fabricated one is a branch nothing the controller authors can outrank.
     const { icp, did } = build()
     const skipped = unknownEvent(did, icp, false)
-    for (const [g, s] of [
+    const positions: Array<[number, number]> = [
       [0, Number.MAX_SAFE_INTEGER],
       [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
       [1, 1],
       [0, 0],
       [0, 2],
-    ]) {
+    ]
+    for (const [g, s] of positions) {
       const result = foldLog(did, [icp, { ...skipped, event: { ...skipped.event, g, s } }])
       expect(result).toEqual({ ok: false, reason: 'sequence gap', index: 1 })
     }
@@ -142,7 +149,7 @@ describe('capability-authorised revoke', () => {
     })
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[1].deny.has(stolen)).toBe(true)
+    expect(at(result.states, 1).deny.has(stolen)).toBe(true)
   })
 
   test('the async fold rejects one the verifier declines', async () => {
@@ -285,7 +292,7 @@ describe('capability-authorised revoke', () => {
     // hold a copy rather than a view of the fold's own array.
     await expect(retained?.resolveDenySet?.(did)).resolves.toEqual(new Set(['did:key:zEarlier']))
     if (!result.ok) return
-    expect(result.states[2].deny).toEqual(new Set(['did:key:zEarlier', stolen]))
+    expect(at(result.states, 2).deny).toEqual(new Set(['did:key:zEarlier', stolen]))
   })
 
   test('an audience key from another realm is accepted, not rejected as malformed', async () => {
@@ -305,7 +312,7 @@ describe('capability-authorised revoke', () => {
     })
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[1].deny.has(stolen)).toBe(true)
+    expect(at(result.states, 1).deny.has(stolen)).toBe(true)
   })
 
   test('the async fold rejects a cap-bearing revoke carrying no signature at all', async () => {

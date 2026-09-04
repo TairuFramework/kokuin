@@ -73,7 +73,9 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
     if (!controlFold.ok) return
     // And the folded recovery is the inception's, which is exactly what `verifyReset` enforces.
     // The state and the verifier no longer tell different stories.
-    expect(controlFold.states[1].recovery).toBe(icp.event.r)
+    const controlState = controlFold.states[1]
+    if (controlState === undefined) throw new Error('expected a rotated state')
+    expect(controlState.recovery).toBe(icp.event.r)
   })
 
   test('ROW 2 (unchanged): a foreign recovery key cannot author a reset — now for one reason', () => {
@@ -130,7 +132,9 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
     const control = foldLog(did, [icp, plainRot, oldReset])
     expect(control.ok).toBe(true)
     if (!control.ok) return
-    expect(control.states[2].gen).toBe(1)
+    const resetState = control.states[2]
+    if (resetState === undefined) throw new Error('expected a reset state')
+    expect(resetState.gen).toBe(1)
     expect(control.states.every((state) => state.recovery === icp.event.r)).toBe(true)
   })
 })

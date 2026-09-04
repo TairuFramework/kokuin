@@ -95,7 +95,9 @@ describe('verifyReset()', () => {
     const { inception } = setup()
     const signed = createReset(seed, 0, 1)
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
-    const event = { ...signed.event, ka: [signed.event.k[0]] }
+    const signingKey = signed.event.k[0]
+    if (signingKey === undefined) throw new Error('expected a signing key')
+    const event = { ...signed.event, ka: [signingKey] }
     const sigs = signEvent(event, [recovery.privateKey])
     expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
       false,

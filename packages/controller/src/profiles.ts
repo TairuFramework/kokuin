@@ -24,12 +24,18 @@ const VOWELS = 'aeou'
  */
 export function handleForDID(did: string): string {
   const digest = sha256(encoder.encode(did))
+  const pick = (alphabet: string, byte: number | undefined): string => {
+    if (byte === undefined) {
+      throw new Error('handleForDID: digest too short')
+    }
+    return alphabet[byte % alphabet.length] ?? ''
+  }
   const syllables: Array<string> = []
   for (let i = 0; i < 3; i++) {
     syllables.push(
-      CONSONANTS[digest[i * 3] % CONSONANTS.length] +
-        VOWELS[digest[i * 3 + 1] % VOWELS.length] +
-        CONSONANTS[digest[i * 3 + 2] % CONSONANTS.length],
+      pick(CONSONANTS, digest[i * 3]) +
+        pick(VOWELS, digest[i * 3 + 1]) +
+        pick(CONSONANTS, digest[i * 3 + 2]),
     )
   }
   return syllables.join('-')

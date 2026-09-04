@@ -236,14 +236,14 @@ function matchesVerifiableData(token: SignedToken<Record<string, unknown>>, data
   if (data === `${b64uFromJSON(token.header)}.${b64uFromJSON(token.payload)}`) {
     return true
   }
-  const parts = data.split('.')
-  if (parts.length !== 2) {
+  const [headerPart, payloadPart, extra] = data.split('.')
+  if (headerPart === undefined || payloadPart === undefined || extra !== undefined) {
     return false
   }
   try {
     return (
-      canonicalStringify(b64uToJSON(parts[0])) === canonicalStringify(token.header) &&
-      canonicalStringify(b64uToJSON(parts[1])) === canonicalStringify(token.payload)
+      canonicalStringify(b64uToJSON(headerPart)) === canonicalStringify(token.header) &&
+      canonicalStringify(b64uToJSON(payloadPart)) === canonicalStringify(token.payload)
     )
   } catch {
     // invalid base64url or JSON in data
@@ -336,6 +336,9 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
     throw new Error('Invalid token format: expected 3 parts separated by dots')
   }
   const [encodedHeader, encodedPayload, signature] = parts
+  if (encodedHeader === undefined || encodedPayload === undefined) {
+    throw new Error('Invalid token format: expected 3 parts separated by dots')
+  }
 
   const header = b64uToJSON(encodedHeader)
   if (header.typ !== 'JWT') {

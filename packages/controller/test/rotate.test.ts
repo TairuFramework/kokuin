@@ -14,6 +14,12 @@ import {
 import { foldLog, keyStateAt } from '../src/fold.js'
 import { encodeKey } from '../src/keys.js'
 
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 const seed = new Uint8Array(32).fill(1)
 
 function setup() {
@@ -110,8 +116,8 @@ describe('createRotate()', () => {
     expect(folded).toMatchObject({ ok: true })
     if (!folded.ok) return
     // The snapshot really replaced the accumulated set.
-    expect(folded.states[1].deny.has('did:key:zStolen')).toBe(true)
-    expect(folded.states[2].deny.size).toBe(0)
+    expect(at(folded.states, 1).deny.has('did:key:zStolen')).toBe(true)
+    expect(at(folded.states, 2).deny.size).toBe(0)
     // And the log keeps rotating from there, now that the key positions have diverged for good.
     const again = createRotate({
       seed,
@@ -119,7 +125,7 @@ describe('createRotate()', () => {
       did,
       prior: rotate.event,
       options: {
-        keyPosition: { gen: folded.states[2].keyGen, seq: folded.states[2].keySeq },
+        keyPosition: { gen: at(folded.states, 2).keyGen, seq: at(folded.states, 2).keySeq },
       },
     })
     expect(foldLog(did, [inception, revoke, rotate, again])).toMatchObject({ ok: true })
@@ -202,7 +208,7 @@ describe('verifyRotate()', () => {
     const { inception, did, priorDigest } = setup()
     const signed = createRotate({ seed, profile: 0, did, prior: inception.event })
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
-    const event = { ...signed.event, ka: [signed.event.k[0]] }
+    const event = { ...signed.event, ka: [at(signed.event.k, 0)] }
     const sigs = signEvent(event, [current.privateKey])
     expect(verifyRotate({ event, sigs }, { digest: priorDigest, n: inception.event.n })).toBe(false)
   })

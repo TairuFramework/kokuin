@@ -36,6 +36,12 @@ import {
   REVOKE_NO_POSITION,
 } from '../src/index.js'
 
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 // The spec's definition of `revoke`: "Adds a DID to the profile's deny set: no capability whose
 // `aud` is that DID is valid from this position onward." Everything here is real — a real inception,
 // a real revoke signed by the profile's authority key, a real `createCapability`, and a real
@@ -464,7 +470,7 @@ describe('the deny set inside the fold: who may author a capability-authorised r
     })
     expect(folded.ok).toBe(true)
     if (!folded.ok) return
-    expect(folded.states[1].deny.has(deviceX)).toBe(true)
+    expect(at(folded.states, 1).deny.has(deviceX)).toBe(true)
   })
 
   test('two capability-authorised revokes in one log fold through one ordinary resolver', async () => {
@@ -771,7 +777,7 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
     // principle. A consumer authenticating a device by bare token gets no denial from a revoke.
     const device = randomIdentity()
     log = [inception, revokeOf(device.id)]
-    expect((await methods[0].resolveDenySet?.(did))?.has(device.id)).toBe(true)
+    expect((await at(methods, 0).resolveDenySet?.(did))?.has(device.id)).toBe(true)
 
     const token = await signToken(device, createUnsignedToken({ hello: 'world' }))
     await expect(verifyToken(stringifyToken(token), { methods })).resolves.toMatchObject({
@@ -854,18 +860,18 @@ describe('the deny set the resolver exposes', () => {
     })
     log = [inception, first, second]
 
-    const denied = await methods[0].resolveDenySet?.(did)
+    const denied = await at(methods, 0).resolveDenySet?.(did)
     expect(denied).toBeDefined()
     expect([...(denied ?? [])].sort()).toEqual([delegate.id, bystander.id].sort())
   })
 
   test('is empty for a log that revokes nothing', async () => {
-    expect([...((await methods[0].resolveDenySet?.(did)) ?? [])]).toEqual([])
+    expect([...((await at(methods, 0).resolveDenySet?.(did)) ?? [])]).toEqual([])
   })
 
   test('rejects an unknown DID rather than answering with an empty set', async () => {
     // Fail closed: an empty answer for a DID nothing could load would read as "nobody is revoked".
-    await expect(methods[0].resolveDenySet?.('did:kokuin:zNope')).rejects.toThrow(/Unknown DID/)
+    await expect(at(methods, 0).resolveDenySet?.('did:kokuin:zNope')).rejects.toThrow(/Unknown DID/)
   })
 })
 

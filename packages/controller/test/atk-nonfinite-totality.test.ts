@@ -85,10 +85,12 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     const { icp, did, honest } = build()
     const good = foldLog(did, [icp])
     if (!good.ok) throw new Error('fixture')
+    const head = good.states[0]
+    if (head === undefined) throw new Error('fixture')
     // Length of `sigs` must match `prior.keys` (one key) to get past the arity check; the bytes
     // themselves are junk, because the throw happens before any signature is examined.
     const raw = `{"event":{"v":1,"t":"rev","i":${JSON.stringify(did)},"g":0,"s":1,"p":${JSON.stringify(
-      good.states[0].digest,
+      head.digest,
     )},"crit":true,"x":${JSON.stringify(deviceX)},"junk":JUNK},"sigs":["AAAA"]}`
     const wire = fromWire(raw.replace('JUNK', '1e400')) as SignedEvent
 

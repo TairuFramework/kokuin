@@ -34,8 +34,8 @@ export function encodeDerivationPath(path: string): Uint8Array {
   const view = new DataView(buf.buffer)
   buf[0] = components.length
 
-  for (let i = 0; i < components.length; i++) {
-    const index = Number.parseInt(components[i].slice(0, -1), 10)
+  for (const [i, component] of components.entries()) {
+    const index = Number.parseInt(component.slice(0, -1), 10)
     view.setUint32(1 + i * 4, (index | HARDENED_BIT) >>> 0, false)
   }
 

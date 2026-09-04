@@ -240,6 +240,9 @@ describe('verifyToken with cache', () => {
     const { ed25519: ed } = await import('@noble/curves/ed25519.js')
     const { b64uFromJSON: b64uJSON, fromUTF: fUTF, toB64U: tb64u } = await import('@sozai/codec')
     const key = identity.keys[0]
+    if (key === undefined) {
+      throw new Error('expected a signing key')
+    }
     const header = { typ: 'JWT' as const, alg: 'EdDSA' as const, kid: key.fragment }
     const payload = { iss: identity.longForm, sub: identity.id, aud: 'someone' }
     const data = `${b64uJSON(header)}.${b64uJSON(payload)}`
@@ -261,6 +264,9 @@ describe('verifyToken with cache', () => {
     const { ed25519: ed } = await import('@noble/curves/ed25519.js')
     const { b64uFromJSON: b64uJSON, fromUTF: fUTF, toB64U: tb64u } = await import('@sozai/codec')
     const key = identity.keys[0]
+    if (key === undefined) {
+      throw new Error('expected a signing key')
+    }
     const header = { typ: 'JWT' as const, alg: 'EdDSA' as const, kid: key.fragment }
     const payload = { iss: identity.longForm, sub: identity.id, aud: 'someone' }
     const data = `${b64uJSON(header)}.${b64uJSON(payload)}`

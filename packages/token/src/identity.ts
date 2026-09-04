@@ -282,19 +282,26 @@ function isClassical(spec: IdentityKeySpec): boolean {
 function chooseMethod(input: CreateIdentityInput): 'key' | 'peer:4' {
   if (input.didMethod != null) {
     if (input.didMethod === 'key') {
-      if (input.keys.length !== 1) {
+      const [firstKey, ...rest] = input.keys
+      if (firstKey === undefined || rest.length > 0) {
         throw new Error('IdentityError.InvalidMethod: did:key requires exactly one key')
       }
-      if (!isClassical(input.keys[0])) {
+      if (!isClassical(firstKey)) {
         throw new Error('IdentityError.InvalidMethod: did:key requires a classical algorithm')
       }
-      if (input.keys[0].purpose !== 'sig') {
+      if (firstKey.purpose !== 'sig') {
         throw new Error('IdentityError.InvalidMethod: did:key requires a signing key')
       }
     }
     return input.didMethod
   }
-  if (input.keys.length === 1 && isClassical(input.keys[0]) && input.keys[0].purpose === 'sig') {
+  const [firstKey, ...rest] = input.keys
+  if (
+    firstKey !== undefined &&
+    rest.length === 0 &&
+    isClassical(firstKey) &&
+    firstKey.purpose === 'sig'
+  ) {
     return 'key'
   }
   return 'peer:4'
@@ -487,6 +494,9 @@ export async function createIdentity(input: CreateIdentityInput): Promise<MultiK
 
   if (method === 'key') {
     const [k] = keys
+    if (k === undefined) {
+      throw new Error('createIdentity requires at least one key')
+    }
     const id = getDID(CODECS.EdDSA, k.publicKey)
     const doc: DIDDoc = {
       '@context': ['https://www.w3.org/ns/did/v1'],

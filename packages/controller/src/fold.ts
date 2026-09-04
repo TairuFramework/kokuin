@@ -393,6 +393,9 @@ export const MAX_SKIPPED_SLACK = 8
 /** What a log padded past {@link MAX_SKIPPED_SLACK} fails with. */
 export const TOO_MANY_UNKNOWN_EVENTS = 'too many unknown events'
 
+/** A fold-loop index landed off the event or state array — a broken invariant, not a bad log. */
+export const INTERNAL_FOLD_INVARIANT = 'internal fold invariant: missing event or prior state'
+
 /**
  * The running budget for skipped events, shared by both fold entry points so the two cannot drift.
  * `understood` counts validated events (the inception is the first), `skipped` the ones carried past.
@@ -485,7 +488,12 @@ export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
   const budget = skipBudget()
 
   for (let i = 1; i < events.length; i++) {
-    const outcome = stepEvent(did, inception, events[i], states[i - 1])
+    const prior = states[i - 1]
+    if (prior === undefined) {
+      return fail(INTERNAL_FOLD_INVARIANT, i)
+    }
+    // `events[i]` may be a hole or `undefined`; `stepEvent` reports that as `malformed event`.
+    const outcome = stepEvent(did, inception, events[i] as SignedEvent, prior)
     if (outcome.status === 'fail') {
       return fail(outcome.reason, i)
     }
@@ -523,7 +531,12 @@ export async function foldLogAsync(
   const budget = skipBudget()
 
   for (let i = 1; i < events.length; i++) {
-    const outcome = stepEvent(did, inception, events[i], states[i - 1])
+    const prior = states[i - 1]
+    if (prior === undefined) {
+      return fail(INTERNAL_FOLD_INVARIANT, i)
+    }
+    // `events[i]` may be a hole or `undefined`; `stepEvent` reports that as `malformed event`.
+    const outcome = stepEvent(did, inception, events[i] as SignedEvent, prior)
     if (outcome.status === 'fail') {
       return fail(outcome.reason, i)
     }

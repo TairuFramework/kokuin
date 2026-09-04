@@ -60,6 +60,7 @@ describe('pre-rotation bypass attempts', () => {
     // `n` commits `digestOf(<the multibase string>)`, so the encoding is part of the commitment.
     const honest = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
     const spelled = honest.event.k[0]
+    if (spelled === undefined) throw new Error('expected a rotated key')
     expect(digestOf(spelled)).toBe(icp.event.n[0])
     expect(digestOf(spelled.toUpperCase())).not.toBe(icp.event.n[0])
   })
@@ -174,7 +175,7 @@ describe('superseding recovery abuse', () => {
       [icp, thiefRevoke],
       [icp, ownerRotate],
     ])
-    expect(r.ok && r.winner[1].event.t).toBe('rot')
+    expect(r.ok && r.winner[1]?.event.t).toBe('rot')
   })
 
   test('a revoke can never supersede a rotate, in either presentation order', () => {
@@ -199,7 +200,7 @@ describe('superseding recovery abuse', () => {
       ],
     ]) {
       const r = resolveBranches(did, order)
-      expect(r.ok && r.winner[1].event.t).toBe('rot')
+      expect(r.ok && r.winner[1]?.event.t).toBe('rot')
     }
   })
 
@@ -211,7 +212,7 @@ describe('superseding recovery abuse', () => {
       [icp, reset2],
       [icp, reset1],
     ])
-    expect(r.ok && r.winner[1].event.g).toBe(2)
+    expect(r.ok && r.winner[1]?.event.g).toBe(2)
     // And replaying the lower reset after the higher one does not fold.
     expect(foldLog(did, [icp, reset2, reset1]).ok).toBe(false)
   })

@@ -54,8 +54,7 @@ export function assertValidPattern(value: string | Array<string>): void {
   }
 
   const parts = value.split('/')
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i]
+  for (const [i, part] of parts.entries()) {
     if (part === '*') {
       if (i !== parts.length - 1) {
         throw new Error('Invalid pattern: wildcard must be the last component')

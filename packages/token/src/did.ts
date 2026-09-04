@@ -355,13 +355,13 @@ export async function resolveIssuer({
 
 function resolveKidOrAuth(doc: DIDDoc, kid: string | undefined): [SignatureAlgorithm, Uint8Array] {
   if (kid == null) {
-    const auth = doc.authentication
-    if (auth == null || auth.length === 0) {
+    const firstAuth = doc.authentication?.[0]
+    if (firstAuth == null) {
       throw new Error(
         'resolveIssuer: did:peer:4 token missing kid and doc has no authentication entries',
       )
     }
-    return resolveKidFromDoc(doc, auth[0])
+    return resolveKidFromDoc(doc, firstAuth)
   }
   // A kid must reference a method the subject authorized for `authentication`. Without this
   // check a key listed only under `assertionMethod` (or any other relationship) could sign

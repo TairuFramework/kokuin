@@ -478,10 +478,12 @@ describe('revocation', () => {
 
     // Same document, inflated past the size bound. The bound rejects the answer, so no key is
     // obtained — identical outcome to the mismatch above.
+    const template = doc.verificationMethod[0]
+    if (template === undefined) throw new Error('fixture')
     const oversized = {
       ...doc,
       verificationMethod: Array.from({ length: 500 }, (_, index) => ({
-        ...doc.verificationMethod[0],
+        ...template,
         id: `#key-${index}`,
       })),
     }

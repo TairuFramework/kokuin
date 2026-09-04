@@ -36,6 +36,12 @@ import { createControllerResolver } from '../src/resolver.js'
 // stolen authority key goes on minting fresh tokens until the profile resets. Both halves are
 // asserted below, side by side.
 
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 const seed = new Uint8Array(32).fill(7)
 const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 const D1 = device
@@ -353,9 +359,9 @@ describe('every event in a revoke/rotate/reset interleaving folds', () => {
   test('the head deny set is exactly the current generation`s', () => {
     const result = foldLog(did, interleaved)
     if (!result.ok) throw new Error('no fold')
-    expect([...result.states[9].deny]).toEqual([D3])
+    expect([...at(result.states, 9).deny]).toEqual([D3])
     // and the pre-reset positions still deny what they denied
-    expect([...result.states[4].deny].sort()).toEqual([D1, D2].sort())
+    expect([...at(result.states, 4).deny].sort()).toEqual([D1, D2].sort())
   })
 
   test('a revoke twice, a rotate, a revoke, a rotate all inside one generation folds', () => {
@@ -402,8 +408,8 @@ describe('every event in a revoke/rotate/reset interleaving folds', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.states.map((state) => state.keySeq)).toEqual([0, 0, 0, 1, 1, 2])
-    expect(result.states[5].keys[0]).toBe(keyAt(0, 2))
-    expect([...result.states[5].deny].sort()).toEqual([D1, D2, D3].sort())
+    expect(at(result.states, 5).keys[0]).toBe(keyAt(0, 2))
+    expect([...at(result.states, 5).deny].sort()).toEqual([D1, D2, D3].sort())
   })
 })
 

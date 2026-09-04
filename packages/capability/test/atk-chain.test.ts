@@ -12,6 +12,18 @@ import {
 // ATTACK on the plain capability chain — no controller, no method registry: `did:key` only, so
 // nothing here depends on the fold. This is the surface every downstream consumer calls.
 
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
+const decodePayload = (raw: string): Record<string, unknown> => {
+  const part = raw.split('.')[1]
+  if (part === undefined) throw new Error('expected JWT payload')
+  return JSON.parse(Buffer.from(part, 'base64url').toString()) as Record<string, unknown>
+}
+
 const root = randomIdentity()
 
 async function delegate(
@@ -48,10 +60,7 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
       exp: now() + 3600,
       parent,
     })
-    const leaf = JSON.parse(Buffer.from(leafRaw.split('.')[1], 'base64url').toString()) as Record<
-      string,
-      unknown
-    >
+    const leaf = decodePayload(leafRaw)
 
     // ATTACK: ask for a resource the presented capability does not name.
     let outcome = 'ACCEPTED'
@@ -98,9 +107,7 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
       exp: now() + 60, // expired by the time `later` comes round
       parent,
     })
-    const expired = JSON.parse(
-      Buffer.from(expiredRaw.split('.')[1], 'base64url').toString(),
-    ) as Record<string, unknown>
+    const expired = decodePayload(expiredRaw)
 
     let outcome = 'ACCEPTED'
     try {
@@ -118,10 +125,7 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
       exp: now() + 3600,
       parent: shortParent,
     })
-    const child = JSON.parse(Buffer.from(childRaw.split('.')[1], 'base64url').toString()) as Record<
-      string,
-      unknown
-    >
+    const child = decodePayload(childRaw)
     let control = 'ACCEPTED'
     try {
       await checkCapability({ act: 'write', res: 'doc/1' }, child as never, { atTime: later })
@@ -141,7 +145,7 @@ describe('ATTACK: the depth cap', () => {
     for (let i = 0; i < 8; i++) {
       const next = randomIdentity()
       chain.unshift(
-        await delegate(holders[i], next, {
+        await delegate(at(holders, i), next, {
           act: 'write',
           res: '*',
           exp: now() + 3600,
@@ -155,7 +159,7 @@ describe('ATTACK: the depth cap', () => {
     for (let links = 1; links <= 8; links++) {
       const used = chain.slice(chain.length - links) // the first `links` capabilities, leaf first
       const invocation = {
-        iss: holders[links].id,
+        iss: at(holders, links).id,
         sub: root.id,
         cap: used,
       }

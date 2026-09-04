@@ -105,7 +105,9 @@ describe('a key target', () => {
 
   test('rides in `x` like a DID does, and is covered by the signature', () => {
     const { inception, did, priorDigest } = setup()
-    const target = keyTarget(inception.event.k[0])
+    const signingKey = inception.event.k[0]
+    if (signingKey === undefined) throw new Error('expected a signing key')
+    const target = keyTarget(signingKey)
     const signed = createRevoke({
       seed,
       profile: 0,

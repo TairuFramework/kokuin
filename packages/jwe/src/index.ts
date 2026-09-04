@@ -389,6 +389,14 @@ export async function decryptToken(
   }
 
   const [encodedHeader, _encryptedKey, encodedIV, encodedCiphertext, encodedTag] = parts
+  if (
+    encodedHeader === undefined ||
+    encodedIV === undefined ||
+    encodedCiphertext === undefined ||
+    encodedTag === undefined
+  ) {
+    throw new Error('Invalid JWE format: expected 5 parts separated by dots')
+  }
 
   // Parse protected header
   const header = b64uToJSON<JWEHeader>(encodedHeader)

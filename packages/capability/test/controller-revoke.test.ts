@@ -35,6 +35,12 @@ import {
   REVOKE_UNBOUNDED_LIFETIME,
 } from '../src/index.js'
 
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 // Every object on this path is real: a real inception, a real `createCapability`, a real revoke
 // event signed by the delegate's own key, folded by the real `foldLogAsync`. A stub
 // `verifyCapability` agrees with a broken adapter, which is exactly what this file exists to stop.
@@ -171,9 +177,9 @@ describe('createControllerCapabilityVerifier()', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     // The state after the revoke — position 1 — is where the deny takes effect.
-    expect(result.states[1].deny.has(target)).toBe(true)
+    expect(at(result.states, 1).deny.has(target)).toBe(true)
     // Position-dependence: the inception's state never learns about it.
-    expect(result.states[0].deny.has(target)).toBe(false)
+    expect(at(result.states, 0).deny.has(target)).toBe(false)
   })
 
   test('a wildcard `res` authorises revoking any device — the management capability shape', async () => {
@@ -184,11 +190,11 @@ describe('createControllerCapabilityVerifier()', () => {
 
     const first = await foldWithCapability(cap, { deny: target })
     expect(first.ok).toBe(true)
-    if (first.ok) expect(first.states[1].deny.has(target)).toBe(true)
+    if (first.ok) expect(at(first.states, 1).deny.has(target)).toBe(true)
 
     const second = await foldWithCapability(cap, { deny: bystander })
     expect(second.ok).toBe(true)
-    if (second.ok) expect(second.states[1].deny.has(bystander)).toBe(true)
+    if (second.ok) expect(at(second.states, 1).deny.has(bystander)).toBe(true)
   })
 
   test('a key target goes through the same `res` check as a DID target', async () => {
@@ -204,7 +210,7 @@ describe('createControllerCapabilityVerifier()', () => {
 
     const wildcard = await foldWithCapability(await mintCapability({ res: '*' }), { deny: retired })
     expect(wildcard.ok).toBe(true)
-    if (wildcard.ok) expect(wildcard.states[1].deny.has(retired)).toBe(true)
+    if (wildcard.ok) expect(at(wildcard.states, 1).deny.has(retired)).toBe(true)
 
     const exact = await foldWithCapability(await mintCapability({ res: retired }), {
       deny: retired,
@@ -532,7 +538,7 @@ describe('createControllerCapabilityVerifier()', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[1].deny.has(target)).toBe(true)
+    expect(at(result.states, 1).deny.has(target)).toBe(true)
     // The adapter supplies the leaf, `checkCapability` supplies the root — no link unchecked, and
     // no double invocation on the leaf.
     expect(seen).toEqual([leaf, root])
@@ -566,7 +572,7 @@ describe('createControllerCapabilityVerifier()', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[1].deny.has(target)).toBe(true)
+    expect(at(result.states, 1).deny.has(target)).toBe(true)
   })
 
   test('a capability that never expires cannot authorise a revoke', async () => {
@@ -632,7 +638,7 @@ describe('createControllerCapabilityVerifier()', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[1].deny.has(target)).toBe(true)
+    expect(at(result.states, 1).deny.has(target)).toBe(true)
 
     // Control: another seedless device, holding no capability naming it, cannot author the same
     // revoke — so what folded above is the grant, not merely the new builder.
@@ -721,7 +727,7 @@ describe('createControllerCapabilityVerifier()', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[1].deny.has(target)).toBe(true)
+    expect(at(result.states, 1).deny.has(target)).toBe(true)
   })
 
   test('a chain link the registry cannot resolve still fails closed', async () => {

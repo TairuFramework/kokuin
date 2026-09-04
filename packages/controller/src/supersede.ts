@@ -10,6 +10,15 @@ import {
   type KeyState,
 } from './fold.js'
 
+/** Index into an array whose element is a branch-resolution invariant, throwing rather than reading undefined. */
+function required<T>(items: ReadonlyArray<T>, index: number, what: string): T {
+  const item = items[index]
+  if (item === undefined) {
+    throw new Error(`supersede: ${what}`)
+  }
+  return item
+}
+
 export type Duplicity = {
   /** Position of the divergence, from the folded state of the first conflicting event. */
   gen: number
@@ -83,12 +92,13 @@ type FoldedBranch = {
 }
 
 function headState({ states }: FoldedBranch): KeyState {
-  return states[states.length - 1]
+  return required(states, states.length - 1, 'folded branch has no state')
 }
 
 /** The digest of the `j`th event on the spine — the whole history up to it, chained. */
 function spineDigest(folded: FoldedBranch, j: number): string {
-  return folded.states[folded.spine[j]].digest
+  const index = required(folded.spine, j, 'spine index out of range')
+  return required(folded.states, index, 'spine points past folded state').digest
 }
 
 /**
@@ -118,7 +128,7 @@ function branchFrom(branch: Array<SignedEvent>, result: FoldResult): FoldedBranc
   for (let i = 1; i < states.length; i++) {
     // A skipped event is the only one that leaves the digest where it was; every other chains its
     // predecessor's digest into its body, so no two can agree.
-    if (states[i].digest !== states[i - 1].digest) {
+    if (required(states, i, 'state gap').digest !== required(states, i - 1, 'state gap').digest) {
       spine.push(i)
     }
   }
@@ -134,8 +144,8 @@ function preferred(candidate: FoldedBranch, incumbent: FoldedBranch): boolean {
     return candidate.branch.length < incumbent.branch.length
   }
   return (
-    digestOf(candidate.branch[candidate.branch.length - 1].event) <
-    digestOf(incumbent.branch[incumbent.branch.length - 1].event)
+    digestOf(required(candidate.branch, candidate.branch.length - 1, 'empty branch').event) <
+    digestOf(required(incumbent.branch, incumbent.branch.length - 1, 'empty branch').event)
   )
 }
 
@@ -197,10 +207,11 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
   let group = contenders
 
   while (group.length > 1) {
+    const pivot = required(group, 0, 'empty contender group')
     // Where they first disagree, against the group as a whole — the point every contender agrees to.
-    let divergence = group[0].spine.length
+    let divergence = pivot.spine.length
     for (const folded of group.slice(1)) {
-      divergence = Math.min(divergence, commonSpine(group[0], folded))
+      divergence = Math.min(divergence, commonSpine(pivot, folded))
     }
 
     // A branch ending at the divergence point is a prefix of the others: extended, not contradicted,
@@ -232,19 +243,37 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
     const groups = [...rivals.values()]
 
     // The state the diverging events all chain to. Identical across contenders, so any can answer.
-    const first = groups[0][0]
-    const prior = first.states[first.spine[divergence] - 1]
+    const first = required(required(groups, 0, 'empty rival groups'), 0, 'empty rival group')
+    const prior = required(
+      first.states,
+      required(first.spine, divergence, 'spine index out of range') - 1,
+      'divergence points past folded state',
+    )
 
     let dominant = -1
     for (let i = 0; i < groups.length; i++) {
-      const candidate = groups[i][0].branch[groups[i][0].spine[divergence]]
+      const candidateHead = required(
+        required(groups, i, 'empty rival group'),
+        0,
+        'empty rival group',
+      )
+      const candidate = required(
+        candidateHead.branch,
+        required(candidateHead.spine, divergence, 'spine index out of range'),
+        'divergence points past branch',
+      )
       const dominatesAll = groups.every((other, j) => {
         if (j === i) {
           return true
         }
+        const otherHead = required(other, 0, 'empty rival group')
         return supersedes({
           candidate,
-          incumbent: other[0].branch[other[0].spine[divergence]],
+          incumbent: required(
+            otherHead.branch,
+            required(otherHead.spine, divergence, 'spine index out of range'),
+            'divergence points past branch',
+          ),
           priorDigest: prior.digest,
           priorNext: prior.next,
         })
@@ -265,22 +294,32 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
       // Two events the controller cannot both have authored, no rotate to settle it. Deterministic
       // regardless of arrival order: sort the conflicting digests, report from the branch sorted
       // first.
-      const digests = groups.map((members) => spineDigest(members[0], divergence)).sort()
+      const digests = groups
+        .map((members) => spineDigest(required(members, 0, 'empty rival group'), divergence))
+        .sort()
+      const firstDigest = required(digests, 0, 'no diverging digests')
+      const secondDigest = required(digests, 1, 'duplicity needs two digests')
       const reporter = groups.find(
-        (members) => spineDigest(members[0], divergence) === digests[0],
+        (members) =>
+          spineDigest(required(members, 0, 'empty rival group'), divergence) === firstDigest,
       ) as Array<FoldedBranch>
-      const at = reporter[0].states[reporter[0].spine[divergence]]
+      const reporterHead = required(reporter, 0, 'empty rival group')
+      const at = required(
+        reporterHead.states,
+        required(reporterHead.spine, divergence, 'spine index out of range'),
+        'divergence points past folded state',
+      )
       return {
         ok: false,
         failure: 'duplicity',
-        duplicity: { gen: at.gen, seq: at.seq, digests: [digests[0], digests[1]] },
+        duplicity: { gen: at.gen, seq: at.seq, digests: [firstDigest, secondDigest] },
       }
     }
 
-    group = groups[dominant]
+    group = required(groups, dominant, 'dominant group missing')
   }
 
-  return { ok: true, winner: group[0] }
+  return { ok: true, winner: required(group, 0, 'empty contender group') }
 }
 
 /**

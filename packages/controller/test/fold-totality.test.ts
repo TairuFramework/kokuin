@@ -32,6 +32,12 @@ import { resolveBranches } from '../src/supersede.js'
 // a returned reason, never a throw — and `resolveBranches` filters branches by folding them, so a
 // throw here is a denial of service on duplicity detection for every well-formed branch too.
 
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 const seed = new Uint8Array(32).fill(23)
 const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 const other = 'did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
@@ -452,7 +458,7 @@ describe('a malformed event its own author signed', () => {
     const result = foldLog(did, [icp, signedRotate('d', [target])])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[1].deny.has(target)).toBe(true)
+    expect(at(result.states, 1).deny.has(target)).toBe(true)
   })
 
   test('an inception whose `n` is null is rejected before the next event reads it', () => {
@@ -582,7 +588,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
     const result = foldLog(did, [icp, rotateWithDeepMember(nest(deepestAccepted))])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[1].keys).toEqual(rot.event.k)
+    expect(at(result.states, 1).keys).toEqual(rot.event.k)
   })
 
   test('one level further is rejected with a reason, by both folds', async () => {

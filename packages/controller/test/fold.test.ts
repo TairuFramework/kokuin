@@ -13,6 +13,12 @@ import {
 import { foldLog, keyStateAt } from '../src/fold.js'
 import { encodeKey } from '../src/keys.js'
 
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 const seed = new Uint8Array(32).fill(1)
 const stolen = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 /** The key an inception establishes: gen 0, derivation index 0. */
@@ -41,9 +47,9 @@ describe('foldLog()', () => {
     const result = foldLog(did, [icp])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[0].keys).toEqual(icp.event.k)
-    expect(result.states[0].gen).toBe(0)
-    expect(result.states[0].seq).toBe(0)
+    expect(at(result.states, 0).keys).toEqual(icp.event.k)
+    expect(at(result.states, 0).gen).toBe(0)
+    expect(at(result.states, 0).seq).toBe(0)
   })
 
   test('an inception names the derivation index 0, whatever `s` it published', () => {
@@ -58,10 +64,10 @@ describe('foldLog()', () => {
     const result = foldLog(forgedDid, [forged])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[0].seq).toBe(3)
-    expect(result.states[0].keySeq).toBe(0)
+    expect(at(result.states, 0).seq).toBe(3)
+    expect(at(result.states, 0).keySeq).toBe(0)
     // The index really does name the published key, which is what the identity derives from.
-    expect(result.states[0].keys).toEqual([encodeKey(authorityKey.publicKey, 'EdDSA')])
+    expect(at(result.states, 0).keys).toEqual([encodeKey(authorityKey.publicKey, 'EdDSA')])
   })
 
   test('applies a rotate, replacing the key set', () => {
@@ -69,8 +75,8 @@ describe('foldLog()', () => {
     const result = foldLog(did, [icp, rot])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[1].keys).toEqual(rot.event.k)
-    expect(result.states[1].keys).not.toEqual(icp.event.k)
+    expect(at(result.states, 1).keys).toEqual(rot.event.k)
+    expect(at(result.states, 1).keys).not.toEqual(icp.event.k)
   })
 
   test('applies a revoke, adding to the deny set without touching the keys', () => {
@@ -78,8 +84,8 @@ describe('foldLog()', () => {
     const result = foldLog(did, [icp, rot, rev])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[2].deny.has(stolen)).toBe(true)
-    expect(result.states[2].keys).toEqual(rot.event.k)
+    expect(at(result.states, 2).deny.has(stolen)).toBe(true)
+    expect(at(result.states, 2).keys).toEqual(rot.event.k)
   })
 
   test('rejects a log whose first event is not an inception', () => {
@@ -119,9 +125,9 @@ describe('foldLog()', () => {
     const result = foldLog(did, [icp, rot, rev, reset])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[3].gen).toBe(1)
-    expect(result.states[3].seq).toBe(0)
-    expect(result.states[3].deny.size).toBe(0)
+    expect(at(result.states, 3).gen).toBe(1)
+    expect(at(result.states, 3).seq).toBe(0)
+    expect(at(result.states, 3).deny.size).toBe(0)
   })
 
   test('the inception seeds the agreement set', () => {
@@ -129,7 +135,7 @@ describe('foldLog()', () => {
     const result = foldLog(did, [icp])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[0].agreement).toEqual(icp.event.ka)
+    expect(at(result.states, 0).agreement).toEqual(icp.event.ka)
   })
 
   test('a rotate replaces the agreement set', () => {
@@ -137,10 +143,10 @@ describe('foldLog()', () => {
     const result = foldLog(did, [icp, rot])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[1].agreement).toEqual(rot.event.ka)
+    expect(at(result.states, 1).agreement).toEqual(rot.event.ka)
     // Load-bearing: without it, a fold that ignored `ka` on rotate and carried the inception's
     // set forward would still pass every other assertion here.
-    expect(result.states[1].agreement).not.toEqual(icp.event.ka)
+    expect(at(result.states, 1).agreement).not.toEqual(icp.event.ka)
   })
 
   test('a revoke carries the agreement set forward unchanged', () => {
@@ -149,7 +155,7 @@ describe('foldLog()', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     // The revoke establishes no agreement key, so the set is still the rotate's — Amendment A.
-    expect(result.states[2].agreement).toEqual(rot.event.ka)
+    expect(at(result.states, 2).agreement).toEqual(rot.event.ka)
   })
 })
 
@@ -157,7 +163,7 @@ describe('foldLog() and a revoke naming a key', () => {
   test('a key target lands in the deny set at that position and not before', () => {
     const { did, icp, rot } = build()
     // The key the inception established, which the rotate has since retired.
-    const retired = keyTarget(icp.event.k[0])
+    const retired = keyTarget(at(icp.event.k, 0))
     const rev = createRevoke({
       seed,
       profile: 0,
@@ -169,16 +175,16 @@ describe('foldLog() and a revoke naming a key', () => {
     const result = foldLog(did, [icp, rot, rev])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.states[1].deny.has(retired)).toBe(false)
-    expect(result.states[2].deny.has(retired)).toBe(true)
+    expect(at(result.states, 1).deny.has(retired)).toBe(false)
+    expect(at(result.states, 2).deny.has(retired)).toBe(true)
     // It denies a key, not a holder: the key set the log publishes is untouched.
-    expect(result.states[2].keys).toEqual(rot.event.k)
+    expect(at(result.states, 2).keys).toEqual(rot.event.k)
   })
 
   test('a key the profile currently publishes cannot be denied', () => {
     const { did, icp, rot } = build()
     // The rotate's own key — the head's `k` at the position the revoke sits at.
-    const current = keyTarget(rot.event.k[0])
+    const current = keyTarget(at(rot.event.k, 0))
     const rev = createRevoke({
       seed,
       profile: 0,
@@ -196,7 +202,7 @@ describe('foldLog() and a revoke naming a key', () => {
 
   test('nor one it currently publishes for key agreement', () => {
     const { did, icp, rot } = build()
-    const current = keyTarget(rot.event.ka[0])
+    const current = keyTarget(at(rot.event.ka, 0))
     const rev = createRevoke({
       seed,
       profile: 0,
@@ -216,7 +222,7 @@ describe('foldLog() and a revoke naming a key', () => {
     // difference is whether the named key is still published. Without it, "rejected" could just as
     // well mean the fold refuses every key target outright.
     const { did, icp, rot } = build()
-    const retired = keyTarget(icp.event.ka[0])
+    const retired = keyTarget(at(icp.event.ka, 0))
     const ok = createRevoke({
       seed,
       profile: 0,
@@ -249,7 +255,7 @@ describe('foldLog() and a revoke naming a key', () => {
       prior: icp.event,
       options: {
         denySnapshot: [
-          keyTarget(createRotate({ seed, profile: 0, did, prior: icp.event }).event.k[0]),
+          keyTarget(at(createRotate({ seed, profile: 0, did, prior: icp.event }).event.k, 0)),
         ],
       },
     })
@@ -266,7 +272,7 @@ describe('foldLog() and a revoke naming a key', () => {
       did,
       prior: icp.event,
       options: {
-        denySnapshot: [keyTarget(icp.event.k[0])],
+        denySnapshot: [keyTarget(at(icp.event.k, 0))],
       },
     })
     expect(foldLog(did, [icp, other]).ok).toBe(true)
@@ -279,7 +285,7 @@ describe('foldLog() and a revoke naming a key', () => {
     // accumulated deny set that already names it. Nothing here is forged; every event is one this
     // package builds and signs.
     const { did, icp, rot } = build()
-    const committed = keyTarget(rot.event.k[0])
+    const committed = keyTarget(at(rot.event.k, 0))
     const rev = createRevoke({
       seed,
       profile: 0,
@@ -291,7 +297,7 @@ describe('foldLog() and a revoke naming a key', () => {
     const denied = foldLog(did, [icp, rev])
     expect(denied.ok).toBe(true)
     if (!denied.ok) return
-    expect(denied.states[1].deny.has(committed)).toBe(true)
+    expect(at(denied.states, 1).deny.has(committed)).toBe(true)
 
     // The rotate reveals exactly the pre-committed key, so it is valid in every other respect.
     const reveal = createRotate({
@@ -369,8 +375,8 @@ describe('keyStateAt()', () => {
     const chained = foldLog(did, [icp, rot, rev, second])
     expect(chained.ok).toBe(true)
     if (!chained.ok) return
-    expect(chained.states[3].deny.has(stolen)).toBe(true)
-    expect(chained.states[3].deny.has('did:key:zOther')).toBe(true)
+    expect(at(chained.states, 3).deny.has(stolen)).toBe(true)
+    expect(at(chained.states, 3).deny.has('did:key:zOther')).toBe(true)
   })
 
   test('returns undefined past the end of the log', () => {

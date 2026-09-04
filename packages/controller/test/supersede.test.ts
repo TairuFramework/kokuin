@@ -14,6 +14,12 @@ import {
 import { type CapabilityAuthorisation, foldLog } from '../src/fold.js'
 import { resolveBranches, resolveBranchesAsync } from '../src/supersede.js'
 
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 const seed = new Uint8Array(32).fill(1)
 const delegateSeed = new Uint8Array(32).fill(9)
 const victim = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
@@ -62,7 +68,7 @@ describe('resolveBranches()', () => {
     ])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.winner[1].event.g).toBe(1)
+    expect(at(result.winner, 1).event.g).toBe(1)
   })
 
   test('a rotate signed by pre-committed next keys supersedes a current-key event at the same position', () => {
@@ -85,7 +91,7 @@ describe('resolveBranches()', () => {
     ])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.winner[1].event.t).toBe('rot')
+    expect(at(result.winner, 1).event.t).toBe('rot')
     expect(result.superseded).toBe(1)
   })
 
@@ -110,7 +116,7 @@ describe('resolveBranches()', () => {
     ])
     expect(a.ok && b.ok).toBe(true)
     if (!a.ok || !b.ok) return
-    expect(a.winner[1].event.t).toBe(b.winner[1].event.t)
+    expect(at(a.winner, 1).event.t).toBe(at(b.winner, 1).event.t)
   })
 
   test('two current-key events at the same position are duplicity, not a merge', () => {
@@ -192,7 +198,7 @@ describe('resolveBranches()', () => {
       expect(result.superseded).toBe(length)
       // Nothing the thief denied survives into the authoritative history.
       const folded = foldLog(did, result.winner)
-      expect(folded.ok && folded.states[folded.states.length - 1].deny.size).toBe(0)
+      expect(folded.ok && at(folded.states, folded.states.length - 1).deny.size).toBe(0)
     }
   })
 
@@ -360,15 +366,15 @@ describe('resolveBranches()', () => {
       [icp, owner],
     ]
     const orderings = [
-      [branches[0], branches[1], branches[2]],
-      [branches[0], branches[2], branches[1]],
-      [branches[2], branches[0], branches[1]],
+      [at(branches, 0), at(branches, 1), at(branches, 2)],
+      [at(branches, 0), at(branches, 2), at(branches, 1)],
+      [at(branches, 2), at(branches, 0), at(branches, 1)],
     ]
     for (const order of orderings) {
       const result = resolveBranches(did, order)
       expect(result.ok).toBe(true)
       if (!result.ok) continue
-      expect(result.winner[1].event.t).toBe('rot')
+      expect(at(result.winner, 1).event.t).toBe('rot')
       expect(result.superseded).toBe(2)
     }
   })

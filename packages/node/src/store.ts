@@ -63,13 +63,18 @@ export class NodeKeyStore
   }
 
   #toEntry(credential: Credential): NodeKeyEntry {
-    this.#entries[credential.account] ??= new NodeKeyEntry({
+    const existing = this.#entries[credential.account]
+    if (existing !== undefined) {
+      return existing
+    }
+    const entry = new NodeKeyEntry({
       service: this.#service,
       keyID: credential.account,
       encoded: credential.password,
       lockPath: this.#lockPath,
     })
-    return this.#entries[credential.account]
+    this.#entries[credential.account] = entry
+    return entry
   }
 
   list(): Array<NodeKeyEntry> {

@@ -73,7 +73,9 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
     const ok = foldLog(truthful.did, [truthful.signed])
     expect(ok.ok).toBe(true)
     if (!ok.ok) return
-    expect(ok.states[0].keys.length).toBe(2)
+    const state = ok.states[0]
+    if (state === undefined) throw new Error('expected an inception state')
+    expect(state.keys.length).toBe(2)
   })
 
   test('ROW 3 (closed): every impossible threshold is now a malformed event', () => {
@@ -99,9 +101,11 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
 
   test('ROW 4 (control: the fold DOES read `k`): a tampered key set is rejected', () => {
     const { signed, did } = twoKeyInception(1, 1, 'both')
+    const firstKey = signed.event.k[0]
+    if (firstKey === undefined) throw new Error('expected a signing key')
     const tampered: SignedEvent<InceptionEvent> = {
       ...signed,
-      event: { ...signed.event, k: [signed.event.k[0]] },
+      event: { ...signed.event, k: [firstKey] },
     }
     const r = foldLog(did, [tampered])
     expect(r.ok).toBe(false)

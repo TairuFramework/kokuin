@@ -74,8 +74,11 @@ describe('createInMemoryDIDCache', () => {
       ],
       authentication: ['#key-0'],
     }
-    // A matching short form, so the rejection can only come from the size guard.
-    const { shortForm } = encodePeer4(bigDoc)
+    // Any valid did:peer:4 short form: the size guard runs before the hash-match check, so an
+    // oversized doc is rejected as too large regardless of whether the short form matches. Encoding
+    // `bigDoc` itself to derive a matching form is impossible — it exceeds base58btc's input limit,
+    // which is the very reason the size guard has to precede the encode.
+    const { shortForm } = encodePeer4(docA)
     await expect(cache.set(shortForm, bigDoc)).rejects.toThrow(/did:peer:4 resolver doc too large/)
   })
 })
@@ -116,7 +119,12 @@ describe('createInMemoryDIDCache LRU', () => {
       docs.push(d)
       await cache.set(d.shortForm, d.doc)
     }
-    expect(await cache.get(docs[0].shortForm)).toEqual(docs[0].doc)
-    expect(await cache.get(docs[99].shortForm)).toEqual(docs[99].doc)
+    const first = docs[0]
+    const last = docs[99]
+    if (first === undefined || last === undefined) {
+      throw new Error('expected populated docs')
+    }
+    expect(await cache.get(first.shortForm)).toEqual(first.doc)
+    expect(await cache.get(last.shortForm)).toEqual(last.doc)
   })
 })

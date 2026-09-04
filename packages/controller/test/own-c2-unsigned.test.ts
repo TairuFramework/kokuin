@@ -53,7 +53,9 @@ describe('keyless branch hijack, independent reproduction', () => {
     // The honest branch must win, and its winner folds.
     expect(resolved.ok).toBe(true)
     if (resolved.ok) {
-      expect(resolved.winner[resolved.winner.length - 1].event.t).toBe('rev')
+      const head = resolved.winner[resolved.winner.length - 1]
+      if (head === undefined) throw new Error('expected a winning event')
+      expect(head.event.t).toBe('rev')
       expect(foldLog(did, resolved.winner).ok).toBe(true)
     }
   })

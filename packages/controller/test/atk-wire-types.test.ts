@@ -12,7 +12,9 @@ function build() {
   const did = didFromInception(icp.event)
   const r = foldLog(did, [icp])
   if (!r.ok) throw new Error('fixture')
-  return { icp, did, digest: r.states[0].digest }
+  const head = r.states[0]
+  if (head === undefined) throw new Error('fixture')
+  return { icp, did, digest: head.digest }
 }
 
 describe('wire types the fold never checks', () => {

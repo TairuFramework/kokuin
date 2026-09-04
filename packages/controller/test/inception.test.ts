@@ -135,7 +135,9 @@ describe('verifyInception()', () => {
   test('rejects an inception whose ka holds a key that is not X25519-tagged', () => {
     const { event } = createInception(seedA, 0)
     // A genuine, correctly-sized key, tagged as the wrong algorithm.
-    const { did, ...tampered } = resign({ ...event, ka: [event.k[0]] })
+    const signingKey = event.k[0]
+    if (signingKey === undefined) throw new Error('expected a signing key')
+    const { did, ...tampered } = resign({ ...event, ka: [signingKey] })
     expect(verifyInception(tampered, did)).toBe(false)
   })
 

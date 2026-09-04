@@ -47,6 +47,7 @@ const did = didFromInception(inception.event)
 const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
 /** The key the inception established, which the rotate retired and the revoke below denies. */
 const leaked = inception.event.k[0]
+if (leaked === undefined) throw new Error('expected inception key')
 /** icp → rot: the leaked key is retired for new issuance, and nothing more. */
 const rotated: Array<SignedEvent> = [inception, rotate]
 /** icp → rot → rev(#leaked): the leaked key denied outright. */
@@ -170,11 +171,13 @@ describe('a key the profile has revoked', () => {
     const foldWith = async (cap: string) => {
       // The position here selects which key is derived from `delegateSeed` — the delegate's own,
       // the one the `cnf` above pins — not a position in the profile's key schedule.
+      const priorEvent = revoked[2]
+      if (priorEvent === undefined) throw new Error('fixture')
       const rev = createRevoke({
         seed: delegateSeed,
         profile: 0,
         did,
-        prior: revoked[2].event,
+        prior: priorEvent.event,
         target,
         keyPosition: { gen: 0, seq: 0 },
         cap,

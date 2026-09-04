@@ -48,7 +48,9 @@ describe('branch precedence: current-key revokes never outrank the owning rotate
     expect(resolved.ok).toBe(true)
     if (resolved.ok) {
       // The owner's recovering rotate wins, and its winner folds.
-      expect(resolved.winner[resolved.winner.length - 1].event.t).toBe('rot')
+      const head = resolved.winner[resolved.winner.length - 1]
+      if (head === undefined) throw new Error('expected a winning event')
+      expect(head.event.t).toBe('rot')
       expect(foldLog(did, resolved.winner).ok).toBe(true)
     }
   })

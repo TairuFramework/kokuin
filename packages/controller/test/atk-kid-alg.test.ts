@@ -116,10 +116,15 @@ describe('ATTACK: kid selection through the real state resolver', () => {
     for (const [name, header] of rows) {
       results.push([name, await attempt([inception], header)])
     }
-    expect(results[0][1], 'control').toBe('ACCEPTED')
+    const control = results[0]
+    const absent = results[1]
+    if (control === undefined || absent === undefined) {
+      throw new Error('expected control and absent-kid rows')
+    }
+    expect(control[1], 'control').toBe('ACCEPTED')
     // Row 1 ("no kid at all") is documented: an absent kid resolves the head's first key, which
     // here is the key that signed. Every other row must be refused.
-    expect(results[1][1], 'absent kid, documented default').toBe('ACCEPTED')
+    expect(absent[1], 'absent kid, documented default').toBe('ACCEPTED')
     for (const [name, outcome] of results.slice(2)) {
       expect(outcome, name).not.toBe('ACCEPTED')
     }
@@ -212,7 +217,11 @@ describe('ATTACK: algorithm, typ and signature layer', () => {
     const L = 2n ** 252n + 27742317777372353535851937790883648493n
     let s = 0n
     for (let i = 31; i >= 0; i--) {
-      s = (s << 8n) | BigInt(sig[32 + i])
+      const byte = sig[32 + i]
+      if (byte === undefined) {
+        throw new Error(`expected signature byte at ${32 + i}`)
+      }
+      s = (s << 8n) | BigInt(byte)
     }
     const malleable = new Uint8Array(sig)
     let sPrime = s + L

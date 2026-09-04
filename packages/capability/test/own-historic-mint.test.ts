@@ -85,6 +85,7 @@ describe('a rotated-away authority key, at the capability path', () => {
     // the leaked KEY rather than a device DID. Retirement is explicit precisely because rotation
     // is not allowed to be what retires.
     const leakedKey = inception.event.k[0]
+    if (leakedKey === undefined) throw new Error('expected inception key')
     const revoke = createRevoke({
       seed,
       profile: 0,

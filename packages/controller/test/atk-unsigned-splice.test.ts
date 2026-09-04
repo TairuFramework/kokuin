@@ -55,7 +55,9 @@ function forged(did: string, priorDigest: string, over: Record<string, unknown> 
 function digestOfPrefix(did: string, events: Array<SignedEvent>): string {
   const r = foldLog(did, events)
   if (!r.ok) throw new Error(`prefix does not fold: ${r.reason}`)
-  return r.states[r.states.length - 1].digest
+  const head = r.states[r.states.length - 1]
+  if (head === undefined) throw new Error('prefix has no states')
+  return head.digest
 }
 
 // The attack this file records is closed. The constructions below are untouched — the same

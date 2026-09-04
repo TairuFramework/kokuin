@@ -34,6 +34,7 @@ const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
 const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
 const leakedKey = inception.event.k[0]
+if (leakedKey === undefined) throw new Error('expected inception key')
 
 describe('key revocation, independently', () => {
   test('the denial stops the leaked key and leaves the live key working', async () => {

@@ -15,7 +15,11 @@ function foldedStates(did: string, context: string, result: FoldResult): Array<K
 
 function lastState(did: string, context: string, result: FoldResult): KeyState {
   const states = foldedStates(did, context, result)
-  return states[states.length - 1]
+  const last = states[states.length - 1]
+  if (last === undefined) {
+    throw new Error(`${context}: no state produced for ${did}`)
+  }
+  return last
 }
 
 /**

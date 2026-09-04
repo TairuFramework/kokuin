@@ -157,7 +157,11 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
       // collide. `loadStates` throws `Unknown DID` rather than answering an empty (= "nobody
       // revoked") set.
       const states = await loadStates(did)
-      return states[states.length - 1].deny
+      const head = states[states.length - 1]
+      if (head === undefined) {
+        throw new Error(`Unknown DID: ${did}`)
+      }
+      return head.deny
     },
     async resolveAgreementKey(did: string): Promise<Array<ResolvedAgreementKey>> {
       // The head's set only, unlike `resolve`. A retired agreement key is a downgrade, not a grant

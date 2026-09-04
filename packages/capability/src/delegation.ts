@@ -240,6 +240,9 @@ export async function checkDelegationChain(
   }
 
   const [head, ...tail] = capabilities
+  if (head === undefined) {
+    throw new Error('Invalid capability: empty delegation chain')
+  }
   // Verify the leaf capability's own time claims (exp/nbf) at the same reference
   // time used for the delegation checks, so a capability that was valid when the
   // request was issued is not rejected by a later wall-clock during verification.

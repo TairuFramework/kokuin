@@ -92,8 +92,12 @@ describe('ATTACK: the injected resolver seam', () => {
     })
     const log = [inception, revokeManager, attack]
 
-    const wrapped: MethodRegistry = [dropDenySet(registryFor([inception])[0])]
-    expect(wrapped[0].resolveDenySet).toBeUndefined()
+    const baseMethod = registryFor([inception])[0]
+    if (baseMethod === undefined) throw new Error('fixture')
+    const wrapped: MethodRegistry = [dropDenySet(baseMethod)]
+    const wrappedMethod = wrapped[0]
+    if (wrappedMethod === undefined) throw new Error('fixture')
+    expect(wrappedMethod.resolveDenySet).toBeUndefined()
 
     const attacked = await foldLogAsync(did, log, {
       verifyCapability: createControllerCapabilityVerifier({ methods: wrapped }),

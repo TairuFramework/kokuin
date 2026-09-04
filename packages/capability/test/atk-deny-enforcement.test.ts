@@ -107,6 +107,8 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     const revoke = revokeOf(delegate.id)
     const base = foldLog(did, [inception, revoke])
     if (!base.ok) throw new Error('fixture')
+    const priorState = base.states[1]
+    if (priorState === undefined) throw new Error('fixture')
     const forged = {
       event: {
         v: 1,
@@ -114,7 +116,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
         i: did,
         g: 0,
         s: 99,
-        p: base.states[1].digest,
+        p: priorState.digest,
         crit: false,
         d: [],
       },

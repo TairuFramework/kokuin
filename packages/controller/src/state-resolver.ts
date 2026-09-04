@@ -13,6 +13,15 @@ import { decodeKey } from './keys.js'
 /** The method segment of {@link DID_PREFIX}, so the two cannot drift. */
 export const DID_METHOD = DID_PREFIX.slice('did:'.length, -1)
 
+/** The head of a folded prefix, throwing rather than reading past an empty state array. */
+function headState(did: string, states: Array<KeyState>): KeyState {
+  const head = states[states.length - 1]
+  if (head === undefined) {
+    throw new IssuerKeyNotFoundError(`Controller ${did} has no folded state`)
+  }
+  return head
+}
+
 /**
  * The `kid` fragment's body, or `null` when the header names no key. Format is `#<the multibase key
  * exactly as it appears in `k`>`, matched against the folded key sets by membership — an index-based
@@ -47,10 +56,14 @@ function keyFromKid(did: string, kid: string | undefined): string | null {
  * the token names. Past-issued material is {@link historicSigningKey}, via explicit `resolveHistoric`.
  */
 function headSigningKey(did: string, states: Array<KeyState>, kid?: string): string {
-  const head = states[states.length - 1]
+  const head = headState(did, states)
   const key = keyFromKid(did, kid)
   if (key == null) {
-    return head.keys[0]
+    const first = head.keys[0]
+    if (first === undefined) {
+      throw new IssuerKeyNotFoundError(`Controller ${did} has no signing key`)
+    }
+    return first
   }
   if (!head.keys.includes(key)) {
     throw new IssuerKeyNotFoundError(
@@ -74,13 +87,21 @@ function headSigningKey(did: string, states: Array<KeyState>, kid?: string): str
  * from a superseded generation, is an error — never a fall back to `keys[0]`.
  */
 function historicSigningKey(did: string, states: Array<KeyState>, kid?: string): string {
-  const head = states[states.length - 1]
+  const head = headState(did, states)
   const key = keyFromKid(did, kid)
   if (key == null) {
-    return head.keys[0]
+    const first = head.keys[0]
+    if (first === undefined) {
+      throw new IssuerKeyNotFoundError(`Controller ${did} has no signing key`)
+    }
+    return first
   }
-  for (let i = states.length - 1; i >= 0 && states[i].gen === head.gen; i--) {
-    if (states[i].keys.includes(key)) {
+  for (let i = states.length - 1; i >= 0; i--) {
+    const state = states[i]
+    if (state === undefined || state.gen !== head.gen) {
+      break
+    }
+    if (state.keys.includes(key)) {
       return key
     }
   }
@@ -130,7 +151,7 @@ export function signingKeyFrom({
   header: ResolveIssuerHeader
   historic?: boolean
 }): ResolvedSigningKey {
-  const head = states[states.length - 1]
+  const head = headState(did, states)
   if (head.keys.length === 0) {
     throw new Error(`Controller ${did} has no signing key`)
   }
@@ -163,7 +184,7 @@ export function agreementKeysFrom(
   did: string,
   states: Array<KeyState>,
 ): Array<ResolvedAgreementKey> {
-  const head = states[states.length - 1]
+  const head = headState(did, states)
   return head.agreement.flatMap((value) => {
     if (head.deny.has(keyTarget(value))) {
       return []
@@ -208,7 +229,7 @@ export function createStateResolver(did: string, states: Array<KeyState>): DIDMe
     },
     async resolveDenySet(asked: string): Promise<ReadonlySet<string>> {
       const known = statesFor(asked)
-      return known[known.length - 1].deny
+      return headState(asked, known).deny
     },
     async resolveAgreementKey(asked: string): Promise<Array<ResolvedAgreementKey>> {
       return agreementKeysFrom(asked, statesFor(asked))

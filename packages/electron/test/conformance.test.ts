@@ -19,13 +19,14 @@ vi.mock('electron-store', () => {
       this.name = options.name
     }
     get(key: string, defaultValue: Record<string, string> = {}) {
-      return storeData[this.name]?.[key] != null
-        ? JSON.parse(storeData[this.name][key])
-        : defaultValue
+      const value = storeData[this.name]?.[key]
+      return value != null ? JSON.parse(value) : defaultValue
     }
     set(key: string, value: unknown) {
       storeData[this.name] ??= {}
-      storeData[this.name][key] = JSON.stringify(value)
+      const store = storeData[this.name]
+      if (store === undefined) throw new Error('expected store data')
+      store[key] = JSON.stringify(value)
     }
   }
   return { default: MockStore }
@@ -89,7 +90,9 @@ describe('ElectronKeyStore adversarial input', () => {
     const store = new ElectronKeyStore({ name: 'corrupt' })
     await store.entry('user').provideAsync()
     // Replace the ciphertext with something that is not valid base64.
-    storeData.corrupt.keys = JSON.stringify({ user: 'not!valid!base64!' })
+    const corrupt = storeData.corrupt
+    if (corrupt === undefined) throw new Error('expected corrupt store data')
+    corrupt.keys = JSON.stringify({ user: 'not!valid!base64!' })
     const fresh = new ElectronKeyStore({ name: 'corrupt' })
     await expect(fresh.entry('user').getAsync()).rejects.toThrow()
   })

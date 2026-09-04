@@ -95,7 +95,7 @@ export async function generateKeyRecord(): Promise<BrowserKeyRecord> {
 
 function ecPointCompress(x: Uint8Array, y: Uint8Array): Uint8Array {
   const out = new Uint8Array(x.length + 1)
-  out[0] = 2 + (y[y.length - 1] & 1)
+  out[0] = 2 + ((y[y.length - 1] ?? 0) & 1)
   out.set(x, 1)
   return out
 }

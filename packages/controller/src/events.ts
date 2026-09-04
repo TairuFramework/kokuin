@@ -138,13 +138,17 @@ export function verifySignatures(
     return false
   }
   const bytes = canonicalBytes(event)
-  for (let i = 0; i < sigs.length; i++) {
+  for (const [i, sig] of sigs.entries()) {
     try {
-      const key = tryDecodeKey(keys[i])
+      const encodedKey = keys[i]
+      if (encodedKey == null) {
+        return false
+      }
+      const key = tryDecodeKey(encodedKey)
       if (key == null || key.alg !== 'EdDSA') {
         return false
       }
-      if (!ed25519.verify(base64urlnopad.decode(sigs[i]), bytes, key.publicKey)) {
+      if (!ed25519.verify(base64urlnopad.decode(sig), bytes, key.publicKey)) {
         return false
       }
     } catch {

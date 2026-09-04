@@ -99,9 +99,14 @@ export async function authoritativeStates({
     return { log: loaded, states }
   }
 
-  const head = states[states.length - 1].digest
+  const headState = states[states.length - 1]
+  const previousHeadState = previous.states[previous.states.length - 1]
+  if (headState === undefined || previousHeadState === undefined) {
+    throw new Error(`${LOG_NOT_AUTHORITATIVE}: ${did}`)
+  }
+  const head = headState.digest
   // The loaded log extends, or is, the history seen: its fold passed through that head. Ordinary path.
-  if (states.some((state) => state.digest === previous.states[previous.states.length - 1].digest)) {
+  if (states.some((state) => state.digest === previousHeadState.digest)) {
     return { log: loaded, states }
   }
 
@@ -119,7 +124,8 @@ export async function authoritativeStates({
     throw new Error(`${LOG_NOT_AUTHORITATIVE}: ${did}`)
   }
   const winner = await foldLogAsync(did, resolved.winner, options)
-  if (!winner.ok || winner.states[winner.states.length - 1].digest !== head) {
+  const winnerHead = winner.ok ? winner.states[winner.states.length - 1] : undefined
+  if (winnerHead === undefined || winnerHead.digest !== head) {
     throw new Error(`${LOG_NOT_AUTHORITATIVE}: ${did}`)
   }
   return { log: loaded, states }

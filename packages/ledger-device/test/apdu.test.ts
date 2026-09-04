@@ -11,6 +11,12 @@ import {
   parseSignatureResponse,
 } from '../src/apdu.js'
 
+const at = <T>(items: ArrayLike<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 describe('constants', () => {
   test('CLA is 0xE0', () => {
     expect(CLA).toBe(0xe0)
@@ -42,8 +48,8 @@ describe('encodeSignMessageChunks()', () => {
     const message = new Uint8Array(32)
     const chunks = encodeSignMessageChunks(path, message)
     expect(chunks.length).toBe(1)
-    expect(chunks[0].p1).toBe(0x00)
-    expect(chunks[0].p2).toBe(0x00)
+    expect(at(chunks, 0).p1).toBe(0x00)
+    expect(at(chunks, 0).p2).toBe(0x00)
   })
 
   test('returns multiple chunks for large message', () => {
@@ -51,15 +57,15 @@ describe('encodeSignMessageChunks()', () => {
     const message = new Uint8Array(512)
     const chunks = encodeSignMessageChunks(path, message)
     expect(chunks.length).toBeGreaterThan(1)
-    expect(chunks[0].p1).toBe(0x00)
+    expect(at(chunks, 0).p1).toBe(0x00)
     for (let i = 1; i < chunks.length; i++) {
-      expect(chunks[i].p1).toBe(0x80)
+      expect(at(chunks, i).p1).toBe(0x80)
     }
     // Last chunk: P2 = 0x00 (sign now)
-    expect(chunks[chunks.length - 1].p2).toBe(0x00)
+    expect(at(chunks, chunks.length - 1).p2).toBe(0x00)
     // All non-last chunks: P2 = 0x80 (more chunks follow)
     for (let i = 0; i < chunks.length - 1; i++) {
-      expect(chunks[i].p2).toBe(0x80)
+      expect(at(chunks, i).p2).toBe(0x80)
     }
   })
 })

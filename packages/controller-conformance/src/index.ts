@@ -197,6 +197,15 @@ export type ConformanceSuite = {
   expect: (value: unknown) => ConformanceExpectation
 }
 
+/** Index into an array where the element is known to exist, narrowing away `undefined`. */
+function at<T>(items: ReadonlyArray<T>, index: number): T {
+  const item = items[index]
+  if (item === undefined) {
+    throw new Error(`expected an element at index ${index}`)
+  }
+  return item
+}
+
 /**
  * The contract every did:kokuin controller implementation owes, framework-agnostic so it can run
  * under any runner. Mirrors the `@kokuin/keystore-conformance` habit, but — because the protocol
@@ -337,8 +346,8 @@ export function runControllerConformance(
         if (!result.ok) {
           return
         }
-        expect(result.states[1].deny.has(deviceA)).toBe(false)
-        expect(result.states[2].deny.has(deviceA)).toBe(true)
+        expect(at(result.states, 1).deny.has(deviceA)).toBe(false)
+        expect(at(result.states, 2).deny.has(deviceA)).toBe(true)
       })
     })
 
@@ -363,7 +372,7 @@ export function runControllerConformance(
           return
         }
         // The inception's key, which the rotate has since retired.
-        const retired = `#${before.states[0].keys[0]}`
+        const retired = `#${at(at(before.states, 0).keys, 0)}`
         const rev = impl.createRevoke(seedA, 0, did, rot.event, retired, { gen: 0, seq: 1 })
         const result = impl.foldLog(did, [icp, rot, rev])
         expect(result.ok).toBe(true)
@@ -371,10 +380,10 @@ export function runControllerConformance(
           return
         }
         // Position-dependent like every other entry, and read at the same two positions.
-        expect(result.states[1].deny.has(retired)).toBe(false)
-        expect(result.states[2].deny.has(retired)).toBe(true)
+        expect(at(result.states, 1).deny.has(retired)).toBe(false)
+        expect(at(result.states, 2).deny.has(retired)).toBe(true)
         // It denies a key, not a holder: the published key set is untouched.
-        expect(result.states[2].keys).toEqual(result.states[1].keys)
+        expect(at(result.states, 2).keys).toEqual(at(result.states, 1).keys)
       })
 
       test('a key the profile currently publishes cannot be denied', () => {
@@ -389,7 +398,7 @@ export function runControllerConformance(
         // The rotate's own key — the head's `k` at the position this revoke sits at. Everything
         // else about the event is identical to the accepted one above, so an implementation that
         // fails this one is failing on the target and nothing else.
-        const current = `#${before.states[1].keys[0]}`
+        const current = `#${at(at(before.states, 1).keys, 0)}`
         const rev = impl.createRevoke(seedA, 0, did, rot.event, current, { gen: 0, seq: 1 })
         expect(impl.foldLog(did, [icp, rot, rev]).ok).toBe(false)
       })
@@ -409,10 +418,10 @@ export function runControllerConformance(
         if (!denied.ok) {
           return
         }
-        expect(denied.states[1].deny.has(deviceA)).toBe(true)
+        expect(at(denied.states, 1).deny.has(deviceA)).toBe(true)
 
         const rot = impl.createRotate(seedA, 0, did, rev.event, {
-          keyPosition: { gen: denied.states[1].keyGen, seq: denied.states[1].keySeq },
+          keyPosition: { gen: at(denied.states, 1).keyGen, seq: at(denied.states, 1).keySeq },
           denySnapshot: [],
         })
         const result = impl.foldLog(did, [icp, rev, rot])
@@ -420,10 +429,10 @@ export function runControllerConformance(
         if (!result.ok) {
           return
         }
-        expect(result.states[2].deny.has(deviceA)).toBe(false)
+        expect(at(result.states, 2).deny.has(deviceA)).toBe(false)
         // The rotate established a key, so the derivation index advanced while `seq` ran ahead.
-        expect(result.states[2].seq).toBe(2)
-        expect(result.states[2].keySeq).toBe(1)
+        expect(at(result.states, 2).seq).toBe(2)
+        expect(at(result.states, 2).keySeq).toBe(1)
       })
     })
 
@@ -440,7 +449,7 @@ export function runControllerConformance(
         if (!result.ok) {
           return
         }
-        const state = result.states[3]
+        const state = at(result.states, 3)
         expect(state.gen).toBe(1)
         expect(state.seq).toBe(0)
         expect(state.deny.has(deviceA)).toBe(false)
@@ -479,7 +488,7 @@ export function runControllerConformance(
         if (!result.ok) {
           return
         }
-        expect(result.winner[1].event.t).toBe('rot')
+        expect(at(result.winner, 1).event.t).toBe('rot')
         expect(result.superseded).toBe(1)
       })
 
@@ -510,11 +519,11 @@ export function runControllerConformance(
             continue
           }
           expect(result.winner).toHaveLength(2)
-          expect(result.winner[1].event.t).toBe('rot')
+          expect(at(result.winner, 1).event.t).toBe('rot')
           expect(result.superseded).toBe(3)
           // Nothing the stolen key denied survives into the authoritative history.
           const folded = impl.foldLog(did, result.winner)
-          expect(folded.ok && folded.states[folded.states.length - 1].deny.size).toBe(0)
+          expect(folded.ok && at(folded.states, folded.states.length - 1).deny.size).toBe(0)
         }
       })
 
@@ -538,7 +547,7 @@ export function runControllerConformance(
           if (!result.ok) {
             continue
           }
-          expect(result.winner[1].event.t).toBe('rot')
+          expect(at(result.winner, 1).event.t).toBe('rot')
           expect(result.superseded).toBe(2)
         }
       })
@@ -676,7 +685,7 @@ export function runControllerConformance(
           return
         }
         expect(result.winner).toHaveLength(2)
-        expect(result.winner[1].event.x).toBe(deviceB)
+        expect(at(result.winner, 1).event.x).toBe(deviceB)
       })
     })
 
@@ -752,7 +761,7 @@ export function runControllerConformance(
         expect(result.states).toHaveLength(2)
         // Skipped events carry the prior state forward unchanged, so the sequence does not
         // advance to the skipped event's own `s`.
-        expect(result.states[1].seq).toBe(0)
+        expect(at(result.states, 1).seq).toBe(0)
       })
 
       test('an unknown event with no criticality flag fails closed', () => {
@@ -800,19 +809,19 @@ export function runControllerConformance(
       })
 
       test('DIDs match the inception-derived identifiers', () => {
-        const [first] = impl.enumerateProfiles(seedA, 1)
+        const first = at(impl.enumerateProfiles(seedA, 1), 0)
         expect(first.did).toBe(impl.didFromInception(impl.createInception(seedA, 0).event))
       })
 
       test('different seeds produce different profiles', () => {
-        const [fromA] = impl.enumerateProfiles(seedA, 1)
-        const [fromB] = impl.enumerateProfiles(seedB, 1)
+        const fromA = at(impl.enumerateProfiles(seedA, 1), 0)
+        const fromB = at(impl.enumerateProfiles(seedB, 1), 0)
         expect(fromA.did).not.toBe(fromB.did)
       })
 
       test('handles are stable for the same DID', () => {
-        const [first] = impl.enumerateProfiles(seedA, 1)
-        const [again] = impl.enumerateProfiles(seedA, 1)
+        const first = at(impl.enumerateProfiles(seedA, 1), 0)
+        const again = at(impl.enumerateProfiles(seedA, 1), 0)
         expect(first.handle).toBe(again.handle)
       })
     })
@@ -831,7 +840,7 @@ export function runControllerConformance(
         if (!afterFirst.ok) {
           return
         }
-        const keyState = afterFirst.states[2]
+        const keyState = at(afterFirst.states, 2)
         const rev2 = impl.createRevoke(seedA, 0, did, rev1.event, deviceC, {
           gen: keyState.keyGen,
           seq: keyState.keySeq,
@@ -841,8 +850,8 @@ export function runControllerConformance(
         if (!result.ok) {
           return
         }
-        expect(result.states[3].deny.has(deviceA)).toBe(true)
-        expect(result.states[3].deny.has(deviceC)).toBe(true)
+        expect(at(result.states, 3).deny.has(deviceA)).toBe(true)
+        expect(at(result.states, 3).deny.has(deviceC)).toBe(true)
       })
     })
 
@@ -872,8 +881,8 @@ export function runControllerConformance(
         if (!result.ok) {
           return
         }
-        expect(result.states[0].agreement.length > 0).toBe(true)
-        expect(result.states[0].agreement).toEqual(icp.event.ka)
+        expect(at(result.states, 0).agreement.length > 0).toBe(true)
+        expect(at(result.states, 0).agreement).toEqual(icp.event.ka)
       })
 
       test('a rotate replaces the agreement set', () => {
@@ -885,8 +894,8 @@ export function runControllerConformance(
         if (!result.ok) {
           return
         }
-        expect(result.states[1].agreement).not.toEqual(result.states[0].agreement)
-        expect(result.states[1].agreement).toEqual(rot.event.ka)
+        expect(at(result.states, 1).agreement).not.toEqual(at(result.states, 0).agreement)
+        expect(at(result.states, 1).agreement).toEqual(rot.event.ka)
       })
 
       test('a revoke leaves the agreement set unchanged', () => {
@@ -899,8 +908,8 @@ export function runControllerConformance(
         if (!result.ok) {
           return
         }
-        expect(result.states[2].agreement).toEqual(result.states[1].agreement)
-        expect(result.states[2].agreement).toEqual(rot.event.ka)
+        expect(at(result.states, 2).agreement).toEqual(at(result.states, 1).agreement)
+        expect(at(result.states, 2).agreement).toEqual(rot.event.ka)
       })
 
       test('an inception with a genuinely valid signature but an empty agreement set is rejected', () => {

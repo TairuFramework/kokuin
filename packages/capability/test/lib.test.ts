@@ -28,6 +28,12 @@ import {
   now,
 } from '../src/index.js'
 
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 describe('hasPermission()', () => {
   test('with single action and resource', () => {
     // Same action, different resources
@@ -624,10 +630,10 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
     for (let i = 0; i < signers.length - 1; i++) {
       const parentOption = i > 0 ? { parentCapability: capabilities[i - 1] } : undefined
       const cap = await createCapability(
-        signers[i],
+        at(signers, i),
         {
-          sub: signers[0].id,
-          aud: signers[i + 1].id,
+          sub: at(signers, 0).id,
+          aud: at(signers, i + 1).id,
           act: '*',
           res: '*',
         },
@@ -646,8 +652,8 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
     const capabilities = await buildDelegationChain(signers)
 
     const finalPayload = {
-      iss: signers[signers.length - 1].id,
-      sub: signers[0].id,
+      iss: at(signers, signers.length - 1).id,
+      sub: at(signers, 0).id,
       act: 'test',
       res: 'foo',
     } as CapabilityPayload
@@ -664,8 +670,8 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
     const capabilities = await buildDelegationChain(signers)
 
     const finalPayload = {
-      iss: signers[signers.length - 1].id,
-      sub: signers[0].id,
+      iss: at(signers, signers.length - 1).id,
+      sub: at(signers, 0).id,
       act: 'test',
       res: 'foo',
     } as CapabilityPayload
@@ -683,8 +689,8 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
     const signers = Array.from({ length: 6 }, () => randomIdentity())
     const capabilities = await buildDelegationChain(signers)
     const invocation = {
-      iss: signers[signers.length - 1].id,
-      sub: signers[0].id,
+      iss: at(signers, signers.length - 1).id,
+      sub: at(signers, 0).id,
     } as CapabilityPayload
 
     await expect(
@@ -697,7 +703,7 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
     await expect(
       checkCapability({ act: 'test', res: 'foo' }, {
         ...invocation,
-        iss: signers[4].id,
+        iss: at(signers, 4).id,
         cap: [...capabilities.slice(0, 4)].reverse(),
       } as CapabilityPayload),
     ).resolves.not.toThrow()
@@ -709,8 +715,8 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
     const capabilities = await buildDelegationChain(signers)
 
     const finalPayload = {
-      iss: signers[signers.length - 1].id,
-      sub: signers[0].id,
+      iss: at(signers, signers.length - 1).id,
+      sub: at(signers, 0).id,
       act: 'test',
       res: 'foo',
     } as CapabilityPayload

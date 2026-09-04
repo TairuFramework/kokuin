@@ -21,6 +21,12 @@ import { resolveBranches } from '../src/supersede.js'
 // assertion flipped to the fixed behaviour, and each carries the control that shows the guard under
 // test is the one deciding.
 
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 const seed = new Uint8Array(32).fill(11)
 
 /** The member is optional on the interface; every controller resolver publishes one. */
@@ -191,7 +197,7 @@ describe('pruning a deny set cannot silently drop the rest of it', () => {
       target: device,
       keyPosition: { gen: 0, seq: 0 },
     })
-    const leaked = keyTarget(inception.event.k[0])
+    const leaked = keyTarget(at(inception.event.k, 0))
     const rot = createRotate({
       seed,
       profile: 0,
@@ -210,7 +216,7 @@ describe('pruning a deny set cannot silently drop the rest of it', () => {
     const folded = foldLog(did, [inception, revoked, rot, denied])
     expect(folded.ok).toBe(true)
     if (!folded.ok) return
-    const state = folded.states[3]
+    const state = at(folded.states, 3)
     expect([...state.deny].sort()).toEqual([device, leaked].sort())
 
     // THE HAZARD — a caller who reads `denySnapshot` as "also deny this" writes one entry and
@@ -228,7 +234,7 @@ describe('pruning a deny set cannot silently drop the rest of it', () => {
     const lost = foldLog(did, [inception, revoked, rot, denied, byHand])
     expect(lost.ok).toBe(true)
     if (!lost.ok) return
-    expect(lost.states[4].deny.has(leaked), 'the leaked key is no longer denied').toBe(false)
+    expect(at(lost.states, 4).deny.has(leaked), 'the leaked key is no longer denied').toBe(false)
 
     // THE FIX — built from the fold's own answer, so only what was named is dropped.
     const pruned = createRotate({
@@ -244,8 +250,8 @@ describe('pruning a deny set cannot silently drop the rest of it', () => {
     const kept = foldLog(did, [inception, revoked, rot, denied, pruned])
     expect(kept.ok).toBe(true)
     if (!kept.ok) return
-    expect(kept.states[4].deny.has(leaked)).toBe(true)
-    expect(kept.states[4].deny.has(device)).toBe(false)
+    expect(at(kept.states, 4).deny.has(leaked)).toBe(true)
+    expect(at(kept.states, 4).deny.has(device)).toBe(false)
   })
 })
 

@@ -12,12 +12,18 @@ const MNEMONIC =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
 const SEED = mnemonicToSeedSync(MNEMONIC, '')
 
+const at = <T>(items: ArrayLike<T>, i: number): T => {
+  const v = items[i]
+  if (v === undefined) throw new Error(`expected element at ${i}`)
+  return v
+}
+
 function createHDMockTransport(seed: Uint8Array): LedgerTransport {
   let messageBuffer = new Uint8Array(0)
   let signKey: Uint8Array = new Uint8Array(0)
 
   function getPrivateKeyFromAPDU(data: Uint8Array): Uint8Array {
-    const componentCount = data[0]
+    const componentCount = at(data, 0)
     const components: Array<string> = []
     for (let i = 0; i < componentCount; i++) {
       const view = new DataView(data.buffer, data.byteOffset + 1 + i * 4, 4)
@@ -39,7 +45,7 @@ function createHDMockTransport(seed: Uint8Array): LedgerTransport {
         }
         case INS.SIGN_MESSAGE: {
           if (p1 === 0x00) {
-            const pathLen = 1 + data[0] * 4
+            const pathLen = 1 + at(data, 0) * 4
             signKey = getPrivateKeyFromAPDU(data)
             messageBuffer = data.slice(pathLen)
           } else {
@@ -52,7 +58,7 @@ function createHDMockTransport(seed: Uint8Array): LedgerTransport {
         }
         case INS.ECDH_X25519: {
           const privateKey = getPrivateKeyFromAPDU(data)
-          const pathLen = 1 + data[0] * 4
+          const pathLen = 1 + at(data, 0) * 4
           const ephPub = data.slice(pathLen)
           const x25519Priv = ed25519.utils.toMontgomerySecret(privateKey)
           return x25519.getSharedSecret(x25519Priv, ephPub)
