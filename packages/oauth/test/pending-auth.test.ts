@@ -92,7 +92,7 @@ describe('startAuthorization()', () => {
     await store.create(
       pastRecord({
         state: 'long-lived',
-        createdAt: Date.now(),
+        createdAt: Date.now() - 5000,
         expiresAt: Date.now() + 600_000,
       }),
     )
