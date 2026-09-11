@@ -39,6 +39,7 @@ catalog:
   '@sozai/lock': ^0.1.0
   '@sozai/log': ^0.3.1
   '@sozai/otel': ^0.3.2
+  '@sozai/runtime': ^0.1.0
   '@sozai/runtime-expo': ^0.2.2
   '@sozai/schema': ^0.1.2
   '@napi-rs/keyring': ^2.0.0
