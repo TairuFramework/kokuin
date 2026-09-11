@@ -1,3 +1,4 @@
+export { type FetchOAuthJSONParams, fetchOAuthJSON } from './http.js'
 export { deriveCodeChallenge, generateCodeVerifier, generateState } from './pkce.js'
 export {
   type OAuthClientMode,
