@@ -1,17 +1,16 @@
 {
-  "name": "@kokuin/ledger-device",
-  "version": "0.2.3",
-  "description": "Ledger hardware wallet identity provider",
+  "name": "@kokuin/oauth",
+  "version": "0.1.0",
+  "description": "Generic OAuth 2.0 client primitives for kokuin",
   "keywords": [
-    "cryptography",
-    "ledger",
-    "hardware-wallet",
-    "identity"
+    "oauth",
+    "oauth2",
+    "pkce"
   ],
   "repository": {
     "type": "git",
     "url": "https://github.com/TairuFramework/kokuin",
-    "directory": "packages/ledger-device"
+    "directory": "packages/oauth"
   },
   "license": "MIT",
   "sideEffects": false,
@@ -35,16 +34,9 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
-    "@kokuin/otel": "workspace:^",
-    "@kokuin/token": "workspace:^",
+    "@noble/hashes": "catalog:",
     "@sozai/codec": "catalog:",
-    "@sozai/log": "catalog:",
-    "@sozai/otel": "catalog:"
-  },
-  "devDependencies": {
-    "@kokuin/deterministic": "workspace:^",
-    "@noble/curves": "catalog:",
-    "@scure/bip39": "catalog:"
+    "@sozai/runtime": "catalog:"
   },
   "publishConfig": {
     "access": "public"
