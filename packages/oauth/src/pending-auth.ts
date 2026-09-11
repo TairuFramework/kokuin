@@ -64,7 +64,11 @@ export async function startAuthorization<TExtra>(params: {
   const ttlMs = params.ttlMs ?? DEFAULT_TTL_MS
   const now = Date.now()
 
-  await store.deleteExpired(now - ttlMs)
+  try {
+    await store.deleteExpired(now - ttlMs)
+  } catch {
+    // best-effort cleanup: a sweep failure must not block starting a new flow
+  }
 
   const state = generateState(runtime)
   const codeVerifier = generateCodeVerifier(runtime)

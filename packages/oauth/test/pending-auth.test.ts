@@ -5,6 +5,7 @@ import {
   createMemoryPendingAuthStore,
   type OAuthProviderDefinition,
   type PendingAuthRecord,
+  type PendingAuthStore,
   startAuthorization,
 } from '../src/index.js'
 import { fakeRuntime } from './fake-runtime.js'
@@ -83,6 +84,30 @@ describe('startAuthorization()', () => {
       ttlMs: 1000,
     })
     expect(await store.consume('old')).toBeNull()
+  })
+
+  test('a throwing sweep does not block starting a new flow', async () => {
+    const inner = createMemoryPendingAuthStore<Extra>()
+    const store: PendingAuthStore<Extra> = {
+      ...inner,
+      deleteExpired: async () => {
+        throw new Error('sweep failed')
+      },
+    }
+    const { url, state } = await startAuthorization({
+      runtime: fakeRuntime(),
+      definition: googleNative,
+      store,
+      redirectURL: 'https://app/cb',
+      scopes: ['openid'],
+      extra: { ownerDID: 'z' },
+    })
+
+    expect(url).toBeTruthy()
+    expect(state).toBeTruthy()
+    const record = await store.consume(state)
+    expect(record?.state).toBe(state)
+    expect(record?.extra.ownerDID).toBe('z')
   })
 })
 

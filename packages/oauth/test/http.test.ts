@@ -107,4 +107,21 @@ describe('fetchOAuthJSON()', () => {
       'aborted',
     )
   })
+
+  test('aborts when the caller signal fires, not the timeout', async () => {
+    const runtime = fakeRuntime({
+      fetch: (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+        }),
+    })
+    const controller = new AbortController()
+    const promise = fetchOAuthJSON({
+      ...baseParams(runtime),
+      signal: controller.signal,
+      timeoutMs: 30000,
+    })
+    controller.abort()
+    await expect(promise).rejects.toThrow('aborted')
+  })
 })
