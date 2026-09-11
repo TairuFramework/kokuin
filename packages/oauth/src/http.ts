@@ -1,5 +1,6 @@
 import type { Runtime } from '@sozai/runtime'
 
+import { assertSecureURL } from './secure-url.js'
 import { OAuthTokenError, type RequestOptions } from './types.js'
 
 export type FetchOAuthJSONParams = {
@@ -48,26 +49,6 @@ export async function fetchOAuthJSON(params: FetchOAuthJSONParams): Promise<unkn
     // biome-ignore lint/style/useErrorCause: no parsed error object to attach as cause
     throw new Error('OAuth response was not valid JSON')
   }
-}
-
-function assertSecureURL(rawURL: string): void {
-  const url = new URL(rawURL)
-  if (url.protocol === 'https:') {
-    return
-  }
-  if (url.protocol === 'http:' && isLoopbackHost(url.hostname)) {
-    return
-  }
-  throw new Error(`OAuth endpoint must use https: ${rawURL}`)
-}
-
-function isLoopbackHost(hostname: string): boolean {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname === '[::1]'
-  )
 }
 
 function parseOAuthError(status: number, text: string): OAuthTokenError {

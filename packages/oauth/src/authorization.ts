@@ -1,3 +1,4 @@
+import { assertSecureURL } from './secure-url.js'
 import type { OAuthProviderDefinition } from './types.js'
 
 const PROTECTED_PARAMS = new Set([
@@ -19,6 +20,8 @@ export function buildAuthorizationURL(params: {
   authorizationParams?: Record<string, string>
 }): string {
   const { definition, redirectURL, scopes, state, codeChallenge, authorizationParams } = params
+
+  assertSecureURL(definition.authorizationEndpoint)
 
   const url = new URL(definition.authorizationEndpoint)
   const search = url.searchParams

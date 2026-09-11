@@ -12,13 +12,15 @@ export type PendingAuthRecord<TExtra> = {
   redirectURL: string
   scopes: Array<string>
   createdAt: number
+  expiresAt: number
   extra: TExtra
 }
 
 export type PendingAuthStore<TExtra> = {
   create(record: PendingAuthRecord<TExtra>): Promise<void>
   consume(state: string): Promise<PendingAuthRecord<TExtra> | null>
-  deleteExpired(cutoffMs: number): Promise<void>
+  /** Deletes records whose stored `expiresAt` is at or before `nowMs`. */
+  deleteExpired(nowMs: number): Promise<void>
 }
 
 export const DEFAULT_TTL_MS = 10 * 60 * 1000
@@ -40,9 +42,9 @@ export function createMemoryPendingAuthStore<TExtra>(): PendingAuthStore<TExtra>
       records.delete(state)
       return structuredClone(record)
     },
-    async deleteExpired(cutoffMs) {
+    async deleteExpired(nowMs) {
       for (const [state, record] of records) {
-        if (record.createdAt < cutoffMs) {
+        if (record.expiresAt <= nowMs) {
           records.delete(state)
         }
       }
@@ -63,9 +65,10 @@ export async function startAuthorization<TExtra>(params: {
   const { runtime, definition, store, redirectURL, scopes, extra, authorizationParams } = params
   const ttlMs = params.ttlMs ?? DEFAULT_TTL_MS
   const now = Date.now()
+  const expiresAt = now + ttlMs
 
   try {
-    await store.deleteExpired(now - ttlMs)
+    await store.deleteExpired(now)
   } catch {
     // best-effort cleanup: a sweep failure must not block starting a new flow
   }
@@ -74,16 +77,8 @@ export async function startAuthorization<TExtra>(params: {
   const codeVerifier = generateCodeVerifier(runtime)
   const codeChallenge = deriveCodeChallenge(codeVerifier)
 
-  await store.create({
-    state,
-    codeVerifier,
-    provider: definition.name,
-    redirectURL,
-    scopes,
-    createdAt: now,
-    extra,
-  })
-
+  // build (and thereby validate the authorization endpoint, fix #4) BEFORE create,
+  // so a bad endpoint does not leave a stale pending record
   const url = buildAuthorizationURL({
     definition,
     redirectURL,
@@ -92,6 +87,18 @@ export async function startAuthorization<TExtra>(params: {
     codeChallenge,
     authorizationParams,
   })
+
+  await store.create({
+    state,
+    codeVerifier,
+    provider: definition.name,
+    redirectURL,
+    scopes,
+    createdAt: now,
+    expiresAt,
+    extra,
+  })
+
   return { url, state }
 }
 
@@ -103,18 +110,16 @@ export async function completeAuthorization<TExtra>(
     state: string
     code: string
     redirectURL: string
-    ttlMs?: number
   } & RequestOptions,
 ): Promise<{ tokens: TokenResponse; record: PendingAuthRecord<TExtra> }> {
   const { runtime, definition, store, state, code, redirectURL, signal, timeoutMs, maxBytes } =
     params
-  const ttlMs = params.ttlMs ?? DEFAULT_TTL_MS
 
   const record = await store.consume(state)
   if (record == null) {
     throw new Error('unknown or already-used authorization state')
   }
-  if (record.createdAt + ttlMs < Date.now()) {
+  if (record.expiresAt < Date.now()) {
     throw new Error('authorization state expired')
   }
   if (record.provider !== definition.name) {

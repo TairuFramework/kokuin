@@ -40,7 +40,8 @@ function pastRecord(overrides: Partial<PendingAuthRecord<Extra>> = {}): PendingA
     provider: 'google',
     redirectURL: 'https://app/cb',
     scopes: ['openid'],
-    createdAt: Date.now() - 1_000_000,
+    createdAt: Date.now() - 1000,
+    expiresAt: Date.now() - 1000,
     extra: { ownerDID: 'x' },
     ...overrides,
   }
@@ -84,6 +85,28 @@ describe('startAuthorization()', () => {
       ttlMs: 1000,
     })
     expect(await store.consume('old')).toBeNull()
+  })
+
+  test('a short-TTL flow does not delete another still-valid long-lived record', async () => {
+    const store = createMemoryPendingAuthStore<Extra>()
+    await store.create(
+      pastRecord({
+        state: 'long-lived',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 600_000,
+      }),
+    )
+    await startAuthorization({
+      runtime: fakeRuntime(),
+      definition: googleNative,
+      store,
+      redirectURL: 'https://app/cb',
+      scopes: ['openid'],
+      extra: { ownerDID: 'short' },
+      ttlMs: 1000,
+    })
+    const record = await store.consume('long-lived')
+    expect(record?.state).toBe('long-lived')
   })
 
   test('a throwing sweep does not block starting a new flow', async () => {
@@ -198,14 +221,20 @@ describe('completeAuthorization()', () => {
         state: 'stale',
         code: 'CODE',
         redirectURL: 'https://app/cb',
-        ttlMs: 1000,
       }),
     ).rejects.toThrow(/expired/i)
   })
 
   test('provider mismatch is rejected', async () => {
     const store = createMemoryPendingAuthStore<Extra>()
-    await store.create(pastRecord({ state: 'p', provider: 'other', createdAt: Date.now() }))
+    await store.create(
+      pastRecord({
+        state: 'p',
+        provider: 'other',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      }),
+    )
     await expect(
       completeAuthorization({
         runtime: fakeRuntime(),
@@ -220,7 +249,9 @@ describe('completeAuthorization()', () => {
 
   test('a supplied redirect URI that differs from the stored one is rejected', async () => {
     const store = createMemoryPendingAuthStore<Extra>()
-    await store.create(pastRecord({ state: 'r', createdAt: Date.now() }))
+    await store.create(
+      pastRecord({ state: 'r', createdAt: Date.now(), expiresAt: Date.now() + 60_000 }),
+    )
     await expect(
       completeAuthorization({
         runtime: fakeRuntime(),

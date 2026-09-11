@@ -70,4 +70,27 @@ describe('buildAuthorizationURL()', () => {
     expect(params.get('response_type')).toBe('code')
     expect(params.get('code_challenge_method')).toBe('S256')
   })
+
+  test('rejects a non-https authorization endpoint', () => {
+    expect(() =>
+      buildAuthorizationURL({
+        definition: { ...definition, authorizationEndpoint: 'http://provider.example/auth' },
+        redirectURL: 'https://app/callback',
+        scopes: ['openid'],
+        state: 'STATE',
+        codeChallenge: 'CHALLENGE',
+      }),
+    ).toThrow(/https/i)
+  })
+
+  test('allows a loopback http authorization endpoint', () => {
+    const url = buildAuthorizationURL({
+      definition: { ...definition, authorizationEndpoint: 'http://127.0.0.1:9000/auth' },
+      redirectURL: 'https://app/callback',
+      scopes: ['openid'],
+      state: 'STATE',
+      codeChallenge: 'CHALLENGE',
+    })
+    expect(url).toEqual(expect.any(String))
+  })
 })
