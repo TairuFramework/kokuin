@@ -147,7 +147,7 @@ describe('exchangeCode()', () => {
     ).rejects.toThrow(/expires_in/i)
   })
 
-  test('a valid response preserves unknown extension fields', async () => {
+  test('a valid response surfaces the id_token', async () => {
     const captured: Captured = {}
     const tokens = await exchangeCode({
       definition: native,
@@ -162,7 +162,24 @@ describe('exchangeCode()', () => {
       codeVerifier: 'CV',
     })
     expect(tokens.access_token).toBe('AT')
-    expect((tokens as Record<string, unknown>).id_token).toBe('JWT')
+    expect(tokens.id_token).toBe('JWT')
+  })
+
+  test('a wrongly-typed id_token is rejected', async () => {
+    const captured: Captured = {}
+    await expect(
+      exchangeCode({
+        definition: native,
+        runtime: tokenRuntime(captured, {
+          access_token: 'AT',
+          token_type: 'Bearer',
+          id_token: 123,
+        }),
+        code: 'CODE',
+        redirectURL: 'https://app/cb',
+        codeVerifier: 'CV',
+      }),
+    ).rejects.toThrow(/id_token/i)
   })
 })
 

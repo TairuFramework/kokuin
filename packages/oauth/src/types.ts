@@ -16,6 +16,13 @@ export type TokenResponse = {
   expires_in?: number
   token_type: string
   scope?: string
+  /**
+   * OpenID Connect ID token, returned by the token endpoint when `openid` is
+   * among the requested scopes. A signed JWT carrying the verified issuer and a
+   * stable subject id. Surfaced here so a caller can capture a provider-account
+   * fingerprint; this package does not decode or verify it.
+   */
+  id_token?: string
 }
 
 export type OAuthErrorCode =

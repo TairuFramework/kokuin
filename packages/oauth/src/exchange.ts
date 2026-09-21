@@ -118,5 +118,8 @@ function validateTokenResponse(value: unknown): TokenResponse {
   if (record.scope !== undefined && typeof record.scope !== 'string') {
     throw new Error('OAuth token response has an invalid scope')
   }
+  if (record.id_token !== undefined && typeof record.id_token !== 'string') {
+    throw new Error('OAuth token response has an invalid id_token')
+  }
   return value as TokenResponse
 }

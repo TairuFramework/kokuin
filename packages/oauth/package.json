@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/oauth",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Generic OAuth 2.0 client primitives for kokuin",
   "keywords": [
     "oauth",
