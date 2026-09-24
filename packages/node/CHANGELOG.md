@@ -1,5 +1,11 @@
 # @kokuin/node
 
+## 0.4.0
+
+### Minor Changes
+
+- Require `@napi-rs/keyring` 2. Version 1 read every keyring error as a missing entry, so a locked keyring or a denied macOS Keychain prompt made `get()` return `null`, and `provide()` then tried to create a key that already existed. `get()`/`getAsync()` still return `null` only when no key is stored; a failed read now throws.
+
 ## 0.3.2
 
 ### Patch Changes

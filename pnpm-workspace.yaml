@@ -42,7 +42,7 @@ catalog:
   '@sozai/runtime': ^0.1.0
   '@sozai/runtime-expo': ^0.2.2
   '@sozai/schema': ^0.1.2
-  '@napi-rs/keyring': ^2.0.0
+  '@napi-rs/keyring': ^2.1.0
   '@noble/ciphers': ^2.4.0
   '@noble/curves': ^2.4.0
   '@noble/hashes': ^2.4.0
@@ -53,7 +53,7 @@ catalog:
   '@types/react': ^19.3.0
   '@types/react-dom': ^19.3.0
   '@vitejs/plugin-react': ^6.1.1
-  electron: ^44.3.0
+  electron: ^44.4.5
   electron-store: ^11.0.2
   expo: ^57.0.21
   expo-crypto: ^57.0.2

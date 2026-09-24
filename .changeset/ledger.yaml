@@ -10,6 +10,10 @@
   dir: packages/controller
   intents:
     - beige-things-juggle
+"@kokuin/node@0.4.0":
+  dir: packages/node
+  intents:
+    - quiet-keys-throw
 "@kokuin/token@0.4.0":
   dir: packages/token
   intents:

@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 // In-memory store simulating system keyring
 let mockKeyring: Record<string, string>
+// An entry whose read fails (locked store, denied access), as @napi-rs/keyring 2 reports it.
+const UNREADABLE = 'unreadable'
 
 vi.mock('@napi-rs/keyring', () => {
   class MockEntry {
@@ -11,6 +13,7 @@ vi.mock('@napi-rs/keyring', () => {
       this.account = account
     }
     getPassword() {
+      if (this.account === UNREADABLE) throw new Error('store unreadable')
       return mockKeyring[this.account] ?? null
     }
     setPassword(password: string) {
@@ -27,6 +30,7 @@ vi.mock('@napi-rs/keyring', () => {
       this.account = account
     }
     async getPassword() {
+      if (this.account === UNREADABLE) throw new Error('store unreadable')
       return mockKeyring[this.account] ?? null
     }
     async setPassword(password: string) {
@@ -115,6 +119,15 @@ describe('NodeKeyEntry', () => {
   })
 
   // Async variants
+  test('an unreadable store throws instead of reading as absent, and provide() writes nothing', async () => {
+    const entry = new NodeKeyEntry({ service: 'svc', keyID: UNREADABLE })
+    expect(() => entry.get()).toThrow('store unreadable')
+    await expect(entry.getAsync()).rejects.toThrow('store unreadable')
+    expect(() => entry.provide()).toThrow('store unreadable')
+    await expect(entry.provideAsync()).rejects.toThrow('store unreadable')
+    expect(mockKeyring[UNREADABLE]).toBeUndefined()
+  })
+
   test('getAsync() returns null when key does not exist', async () => {
     const entry = new NodeKeyEntry({ service: 'svc', keyID: 'ak1' })
     expect(await entry.getAsync()).toBeNull()

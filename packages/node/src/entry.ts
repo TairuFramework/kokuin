@@ -50,6 +50,10 @@ export class NodeKeyEntry implements MutableKeyEntry<Uint8Array> {
     return this.#sync
   }
 
+  /**
+   * The stored key, or `null` when none is stored. Throws when the keyring cannot be read
+   * (locked, or access denied), so a read failure is never mistaken for an absent key.
+   */
   get(): Uint8Array | null {
     if (this.#key != null) {
       return this.#key
