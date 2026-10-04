@@ -3,7 +3,7 @@
   "version": "1.0.1",
   "private": true,
   "description": "Kokuin electron keystore e2e",
-  "main": ".vite/build/main.js",
+  "main": ".vite/build/main.cjs",
   "scripts": {
     "package": "electron-forge package",
     "start": "electron-forge start",
