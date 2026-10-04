@@ -161,11 +161,12 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
     const device = randomIdentity()
 
     // root → manager: everything. manager → device: `write doc/1` only.
-    const parent = await delegate(root, manager, { act: 'write', res: '*', exp: now() + 3600 })
+    const exp = now() + 3600
+    const parent = await delegate(root, manager, { act: 'write', res: '*', exp })
     const leafRaw = await delegate(manager, device, {
       act: 'write',
       res: 'doc/1',
-      exp: now() + 3600,
+      exp,
       parent,
     })
     const leaf = decodePayload(leafRaw)
@@ -252,13 +253,14 @@ describe('ATTACK: the depth cap', () => {
   test('the default admits no more than DEFAULT_MAX_DELEGATION_DEPTH links', async () => {
     const holders = [root]
     const chain: Array<string> = []
+    const exp = now() + 3600 // fixed once: a per-link now() can tick past the parent's exp
     for (let i = 0; i < 8; i++) {
       const next = randomIdentity()
       chain.unshift(
         await delegate(at(holders, i), next, {
           act: 'write',
           res: '*',
-          exp: now() + 3600,
+          exp,
           parent: chain[0],
         }),
       )
