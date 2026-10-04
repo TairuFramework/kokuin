@@ -2,7 +2,9 @@ import { randomIdentity, type SigningIdentity, stringifyToken } from '@kokuin/to
 import { describe, expect, test } from 'vitest'
 
 import {
+  type CapabilityPayload,
   checkCapability,
+  checkDelegationChain,
   createCapability,
   DEFAULT_MAX_DELEGATION_DEPTH,
   hasPermission,
@@ -25,6 +27,112 @@ const decodePayload = (raw: string): Record<string, unknown> => {
 }
 
 const root = randomIdentity()
+
+describe('child expiry attenuation during verification', () => {
+  describe.each(['presented capability', 'delegation chain', 'invocation chain'])('%s', (path) => {
+    test.each([
+      { name: 'earlier expiry', bounded: true, offset: -1, accepted: true },
+      { name: 'equal expiry', bounded: true, offset: 0, accepted: true },
+      { name: 'later expiry', bounded: true, offset: 1, accepted: false },
+      { name: 'missing expiry', bounded: true, offset: undefined, accepted: false },
+      { name: 'unbounded parent and child', bounded: false, offset: undefined, accepted: true },
+      { name: 'unbounded parent and bounded child', bounded: false, offset: 1, accepted: true },
+    ])('$name', async ({ bounded, offset, accepted }) => {
+      const manager = randomIdentity()
+      const device = randomIdentity()
+      const expiry = now() + 3600
+      const parent = stringifyToken(
+        await root.signToken({
+          sub: root.id,
+          aud: manager.id,
+          act: 'write',
+          res: '*',
+          exp: bounded ? expiry : undefined,
+        }),
+      )
+      const child = await manager.signToken({
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: 'doc/1',
+        exp: offset == null ? undefined : expiry + offset,
+        cap: [parent],
+      })
+      const result =
+        path === 'presented capability'
+          ? checkCapability({ act: 'write', res: 'doc/1' }, child.payload)
+          : path === 'delegation chain'
+            ? checkDelegationChain(child.payload as CapabilityPayload, [parent])
+            : checkCapability(
+                { act: 'write', res: 'doc/1' },
+                {
+                  iss: device.id,
+                  sub: root.id,
+                  cap: [stringifyToken(child), parent],
+                },
+              )
+      if (accepted) {
+        await expect(result).resolves.toBeUndefined()
+      } else {
+        await expect(result).rejects.toThrow(
+          'Invalid capability: child expiry exceeds parent capability',
+        )
+      }
+    })
+  })
+
+  test('an invocation without expiry over a bounded capability passes', async () => {
+    const device = randomIdentity()
+    const parent = await delegate(root, device, { exp: now() + 3600 })
+    await expect(
+      checkCapability(
+        { act: 'write', res: 'doc/1' },
+        {
+          iss: device.id,
+          sub: root.id,
+          cap: [parent],
+        },
+      ),
+    ).resolves.toBeUndefined()
+  })
+
+  test.each(['later expiry', 'missing expiry'])('rejects an intermediate with %s', async (name) => {
+    const manager = randomIdentity()
+    const device = randomIdentity()
+    const connector = randomIdentity()
+    const expiry = now() + 3600
+    const parent = await delegate(root, manager, { exp: expiry })
+    const intermediate = stringifyToken(
+      await manager.signToken({
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: '*',
+        exp: name === 'later expiry' ? expiry + 1 : undefined,
+      }),
+    )
+    const leaf = await device.signToken({
+      sub: root.id,
+      aud: connector.id,
+      act: 'write',
+      res: 'doc/1',
+      exp: expiry - 1,
+    })
+    await expect(
+      checkCapability(
+        { act: 'write', res: 'doc/1' },
+        {
+          iss: connector.id,
+          sub: root.id,
+          cap: [stringifyToken(leaf), intermediate, parent],
+        },
+      ),
+    ).rejects.toThrow('Invalid capability: child expiry exceeds parent capability')
+    await expect(
+      checkDelegationChain(leaf.payload as CapabilityPayload, [intermediate, parent]),
+    ).rejects.toThrow('Invalid capability: child expiry exceeds parent capability')
+  })
+})
 
 async function delegate(
   from: SigningIdentity,
@@ -119,13 +227,15 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
     // CONTROL — the PARENT is the one that has expired at `later`, the leaf has not. Refused, so
     // expiry is enforced on this exact path and the only difference is which link expired.
     const shortParent = await delegate(root, manager, { act: 'write', res: '*', exp: now() + 60 })
-    const childRaw = await delegate(manager, device, {
+    const childToken = await manager.signToken({
+      sub: root.id,
+      aud: device.id,
       act: 'write',
       res: '*',
       exp: now() + 3600,
-      parent: shortParent,
+      cap: [shortParent],
     })
-    const child = decodePayload(childRaw)
+    const child = childToken.payload
     let control = 'ACCEPTED'
     try {
       await checkCapability({ act: 'write', res: 'doc/1' }, child as never, { atTime: later })

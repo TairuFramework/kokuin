@@ -34,6 +34,48 @@ const at = <T>(items: ReadonlyArray<T>, i: number): T => {
   return v
 }
 
+describe('createCapability() - child expiry attenuation', () => {
+  test.each([
+    { name: 'earlier expiry', bounded: true, offset: -1, accepted: true },
+    { name: 'equal expiry', bounded: true, offset: 0, accepted: true },
+    { name: 'later expiry', bounded: true, offset: 1, accepted: false },
+    { name: 'missing expiry', bounded: true, offset: undefined, accepted: false },
+    { name: 'unbounded parent and child', bounded: false, offset: undefined, accepted: true },
+    { name: 'unbounded parent and bounded child', bounded: false, offset: 1, accepted: true },
+  ])('$name', async ({ bounded, offset, accepted }) => {
+    const root = randomIdentity()
+    const manager = randomIdentity()
+    const device = randomIdentity()
+    const expiry = now() + 3600
+    const parent = await createCapability(root, {
+      sub: root.id,
+      aud: manager.id,
+      act: 'write',
+      res: '*',
+      exp: bounded ? expiry : undefined,
+    })
+    const result = createCapability(
+      manager,
+      {
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: 'doc/1',
+        exp: offset == null ? undefined : expiry + offset,
+      },
+      undefined,
+      { parentCapability: stringifyToken(parent) },
+    )
+    if (accepted) {
+      await expect(result).resolves.toMatchObject({ payload: { aud: device.id } })
+    } else {
+      await expect(result).rejects.toThrow(
+        'Invalid capability: child expiry exceeds parent capability',
+      )
+    }
+  })
+})
+
 describe('hasPermission()', () => {
   test('with single action and resource', () => {
     // Same action, different resources
@@ -541,6 +583,7 @@ describe('checkCapability()', () => {
       sub: alice.id,
       act: 'test/read',
       res: 'foo/bar',
+      exp: referenceTime + 100,
       cap: stringifyToken(capability),
     })
 

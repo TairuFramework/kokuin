@@ -40,6 +40,12 @@ export const DEFAULT_MAX_DELEGATION_DEPTH = 4
  */
 const HISTORIC_ISSUANCE = true
 
+function assertExpiryWithinParent(parent: { exp?: number }, child: { exp?: number }): void {
+  if (parent.exp != null && (child.exp == null || child.exp > parent.exp)) {
+    throw new Error('Invalid capability: child expiry exceeds parent capability')
+  }
+}
+
 export async function createCapability<
   Payload extends SignCapabilityPayload = SignCapabilityPayload,
 >(
@@ -86,6 +92,7 @@ export async function createCapability<
 
   // Check parent is not expired
   assertNonExpired(parent.payload)
+  assertExpiryWithinParent(parent.payload, payload)
 
   // Check that the new capability doesn't exceed parent permissions
   const newPermission: Permission = {
@@ -259,6 +266,7 @@ export async function checkDelegationChain(
     await options.verifyToken(next, head)
   }
   assertValidDelegation(next.payload, payload, atTime)
+  assertExpiryWithinParent(next.payload, payload)
   await checkDelegationChain(next.payload, tail, { ...options, atTime })
 }
 
@@ -373,5 +381,8 @@ export async function checkCapability(
     grant == null ? { ...payload, ...permission } : payload
   ) as CapabilityPayload
   assertValidDelegation(capability.payload, toCapability, time)
+  if (grant != null) {
+    assertExpiryWithinParent(capability.payload, toCapability)
+  }
   await checkDelegationChain(capability.payload, tail, { ...options, atTime: time })
 }
