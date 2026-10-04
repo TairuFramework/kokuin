@@ -1,5 +1,11 @@
 # @kokuin/capability
 
+## 0.3.1
+
+### Patch Changes
+
+- Reject delegated capabilities whose expiry exceeds their parent's expiry or is absent when the parent has an expiry. Apply the same attenuation when minting and verifying every capability link, while preserving unbounded parents and invocation behaviour.
+
 ## 0.3.0
 
 ### Minor Changes

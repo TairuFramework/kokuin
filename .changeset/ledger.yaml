@@ -6,6 +6,10 @@
   dir: packages/capability
   intents:
     - dry-bags-admire
+"@kokuin/capability@0.3.1":
+  dir: packages/capability
+  intents:
+    - capability-child-expiry-attenuation
 "@kokuin/controller@0.1.0":
   dir: packages/controller
   intents:
