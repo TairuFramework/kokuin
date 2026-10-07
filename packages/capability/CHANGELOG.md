@@ -1,5 +1,11 @@
 # @kokuin/capability
 
+## 0.4.0
+
+### Minor Changes
+
+- BREAKING: `RevocationBackend.get(jti)` is now `get(jti, issuer)`, and `createRevocationChecker` passes the token's normalized issuer. `createMemoryRevocationBackend` now keys records by `(issuer, jti)`: keyed by `jti` alone, any identity could sign a record for a revoked capability's `jti` and overwrite the issuer's own, silently undoing the revocation. Third-party backends must scope their lookup by issuer too.
+
 ## 0.3.1
 
 ### Patch Changes

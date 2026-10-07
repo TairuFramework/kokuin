@@ -38,7 +38,15 @@ export type RevocationBackend = {
    * verification, but the checker re-verifies on use and does not rely on this.
    */
   add(record: RevocationRecord): Promise<void>
-  get(jti: string): Promise<RevocationRecord | undefined>
+  /**
+   * Look up the record `issuer` signed for `jti`. `issuer` is already normalized (`normalizeDID`).
+   *
+   * Implementations MUST scope records by issuer as well as `jti`. Anyone can sign a valid record
+   * for any `jti`, so a store keyed by `jti` alone lets a foreign record displace the real one —
+   * overwrite it (last write wins) or pre-empt it (first write wins) — and the checker, which only
+   * honours the token's own issuer, then lets the revoked token through.
+   */
+  get(jti: string, issuer: string): Promise<RevocationRecord | undefined>
 }
 
 /**
@@ -79,7 +87,9 @@ function verifyOptions(
 }
 
 export function createMemoryRevocationBackend(options?: RevocationOptions): RevocationBackend {
-  const revoked = new Map<string, RevocationRecord>()
+  // issuer (normalized) -> jti -> record. Scoped by issuer so one issuer's record can never
+  // displace another's for the same `jti` — see `RevocationBackend.get`.
+  const revoked = new Map<string, Map<string, RevocationRecord>>()
   return {
     async add(record: RevocationRecord): Promise<void> {
       // Verify the record's signature before trusting it. Without this, a forged record could
@@ -88,10 +98,16 @@ export function createMemoryRevocationBackend(options?: RevocationOptions): Revo
       if (verified.payload.rev !== true || typeof verified.payload.jti !== 'string') {
         throw new Error('Invalid revocation record')
       }
-      revoked.set(verified.payload.jti, record)
+      const issuer = normalizeDID(verified.payload.iss)
+      let records = revoked.get(issuer)
+      if (records == null) {
+        records = new Map()
+        revoked.set(issuer, records)
+      }
+      records.set(verified.payload.jti, record)
     },
-    async get(jti: string): Promise<RevocationRecord | undefined> {
-      return revoked.get(jti)
+    async get(jti: string, issuer: string): Promise<RevocationRecord | undefined> {
+      return revoked.get(issuer)?.get(jti)
     },
   }
 }
@@ -138,7 +154,9 @@ export function createRevocationChecker(
     if (jti == null) {
       return
     }
-    const record = await backend.get(jti)
+    // Ask for this token's issuer only: a record any other identity signed could not revoke it, and
+    // a store keyed by `jti` alone would let such a record hide the real one.
+    const record = await backend.get(jti, normalizeDID(token.payload.iss))
     if (record == null) {
       return
     }

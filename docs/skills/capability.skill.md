@@ -162,7 +162,7 @@ await checkCapability(requested, consumerPayload, {
 **Key points**:
 - `createRevocationRecord(signer, jti)` is `async` and returns `Promise<RevocationRecord>` — always `await` it before calling `backend.add`
 - `VerifyTokenHook` signature: `(token: CapabilityToken, raw: string) => void | Promise<void>` — throw to reject
-- `createMemoryRevocationBackend` is backed by an in-memory `Map` keyed by `jti`; for persistence, implement `RevocationBackend` (`add` + `get`)
+- `createMemoryRevocationBackend` is backed by an in-memory `Map` keyed by `(issuer, jti)`; for persistence, implement `RevocationBackend` (`add` + `get(jti, issuer)`). The checker passes the token's normalized issuer, and a backend **must** scope records by it — keyed by `jti` alone, anyone can sign a record for a revoked `jti` that displaces the issuer's and undoes the revocation
 - Revocation plugs in via `DelegationChainOptions.verifyToken` and applies to every capability in the `cap` chain — but **not** to the invocation payload you pass as `checkCapability`'s second argument. A self-issued token with an empty chain is never passed to the hook, so its own `jti` is never revocation-checked; revoke the capability it rests on, or check the leaf yourself
 - `DelegationChainOptions` carries `methods` / `resolver` / `cache` too, and uses them to verify each link before the hook runs. Pass them there as well as to the checker — omitting them fails the chain before revocation is ever consulted
 - Both `createMemoryRevocationBackend` and `createRevocationChecker` take an optional `RevocationOptions` (`{ methods?, resolver?, cache? }`) — the same three resolution inputs `DelegationChainOptions` carries. Each verifies independently, so pass the same options to both

@@ -10,6 +10,10 @@
   dir: packages/capability
   intents:
     - capability-child-expiry-attenuation
+"@kokuin/capability@0.4.0":
+  dir: packages/capability
+  intents:
+    - polite-pears-pull
 "@kokuin/controller@0.1.0":
   dir: packages/controller
   intents:
