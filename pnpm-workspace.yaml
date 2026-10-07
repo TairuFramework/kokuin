@@ -33,15 +33,15 @@ catalog:
   '@opentelemetry/api': ^1.9.1
   '@opentelemetry/sdk-trace-base': ^2.11.0
   '@opentelemetry/sdk-trace-node': ^2.11.0
-  '@sozai/async': ^0.3.0
-  '@sozai/codec': ^0.4.1
-  '@sozai/json': ^0.2.0
-  '@sozai/lock': ^0.1.1
-  '@sozai/log': ^0.3.1
-  '@sozai/otel': ^0.3.2
+  '@sozai/async': ^0.4.0
+  '@sozai/codec': ^0.4.2
+  '@sozai/json': ^0.3.0
+  '@sozai/lock': ^0.1.2
+  '@sozai/log': ^0.4.0
+  '@sozai/otel': ^0.3.3
   '@sozai/runtime': ^0.1.0
   '@sozai/runtime-expo': ^0.2.2
-  '@sozai/schema': ^0.1.5
+  '@sozai/schema': ^0.1.6
   '@napi-rs/keyring': ^2.1.0
   '@noble/ciphers': ^2.4.0
   '@noble/curves': ^2.4.0
@@ -52,10 +52,10 @@ catalog:
   '@types/node': ^26.6.4
   '@types/react': ^19.3.0
   '@types/react-dom': ^19.3.0
-  '@vitejs/plugin-react': ^6.1.1
+  '@vitejs/plugin-react': ^6.1.2
   electron: ^44.5.1
   electron-store: ^11.0.2
-  expo: ^57.0.26
+  expo: ^57.0.27
   expo-crypto: ^57.0.2
   expo-secure-store: ^57.0.3
   expo-status-bar: ^57.0.1
@@ -66,8 +66,8 @@ catalog:
   react-native-web: 0.21.3
   typescript: ^6.0.3
   uint8arrays: ^6.1.1
-  vite: ^8.3.2
-  '@kigu/dev': ^0.3.1
+  vite: ^8.3.3
+  '@kigu/dev': ^0.3.2
 
 catalogMode: prefer
 
