@@ -170,6 +170,15 @@ catalogs:
     '@electron-forge/plugin-vite':
       specifier: ^8.0.1
       version: 8.0.1
+    '@hozon/adapter':
+      specifier: ^0.1.0
+      version: 0.1.0
+    '@hozon/db':
+      specifier: ^0.2.0
+      version: 0.2.0
+    '@hozon/node-sqlite':
+      specifier: ^0.1.0
+      version: 0.1.0
     '@kigu/dev':
       specifier: ^0.3.2
       version: 0.3.2
@@ -260,6 +269,9 @@ catalogs:
     expo-status-bar:
       specifier: ^57.0.1
       version: 57.0.1
+    kysely:
+      specifier: ^0.29.6
+      version: 0.29.6
     micro-key-producer:
       specifier: ^0.10.2
       version: 0.10.2
@@ -554,6 +566,28 @@ importers:
       '@sozai/otel':
         specifier: 'catalog:'
         version: 0.3.3(@logtape/logtape@2.3.11)
+
+  packages/store-controller:
+    dependencies:
+      '@hozon/adapter':
+        specifier: 'catalog:'
+        version: 0.1.0
+      '@hozon/db':
+        specifier: 'catalog:'
+        version: 0.2.0(@logtape/logtape@2.3.11)
+      '@kokuin/controller':
+        specifier: workspace:^
+        version: link:../controller
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.6
+    devDependencies:
+      '@hozon/node-sqlite':
+        specifier: 'catalog:'
+        version: 0.1.0
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.4
 
   packages/token:
     dependencies:
@@ -1568,6 +1602,18 @@ packages:
   '@expo/xcpretty@4.4.5':
     resolution: {integrity: sha512-J3eL4n4h5QTwfD0SIz8OIk6/+sOL/hFZAMacgCM07UNlxBQfJipEpIC2AQxvGkbYeStByJ0TVhQAJo+DeNgaSQ==}
     hasBin: true
+
+  '@hozon/adapter@0.1.0':
+    resolution: {integrity: sha512-OfwOdQneFmsCpxtbeQxI11VLWR1+hSHH8klq4QxYLqMTtK/SJpVyGqyTDqRPhRzpTeVtYaY8xw31K9m1drjciA==}
+    engines: {node: '>=24'}
+
+  '@hozon/db@0.2.0':
+    resolution: {integrity: sha512-zP8VChQqH73fx4RDF5mkvM1e+ZEiF2EG8JqMgHaFeHu866G+bSCWrbOYsvkzXRN+d4cgh9iX5i4hMqIrK0JqFg==}
+    engines: {node: '>=24'}
+
+  '@hozon/node-sqlite@0.1.0':
+    resolution: {integrity: sha512-yUOEHgxSXI6QlpjJNOYa3R+Ytp3dS7VB50oISVnUHvX0rWqVEBa1XNfN90cYjrAyeGLTKO3zFLQhqdhv7Qz5Xw==}
+    engines: {node: '>=24'}
 
   '@isaacs/fs-minipass@4.0.1':
     resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
@@ -3507,6 +3553,10 @@ packages:
   kleur@3.0.3:
     resolution: {integrity: sha512-eTIzlVOSUR+JxdDFepEYcBMtZ9Qqdef+rnzWdRZuMbOywu5tO2w2N7rqjoANZ5k9vywhL6Br1VRjUIgTQx4E8w==}
     engines: {node: '>=6'}
+
+  kysely@0.29.6:
+    resolution: {integrity: sha512-hHaB8C/rfzDDtr/t8YZwxAuPJTT0zHyaPoVzcXwDYhYNAgH/4sIfVhi/XLLIY+bL/FqaIJnjATDbi8ObSELmxg==}
+    engines: {node: '>=22.0.0'}
 
   lan-network@0.2.1:
     resolution: {integrity: sha512-ONPnazC96VKDntab9j9JKwIWhZ4ZUceB4A9Epu4Ssg0hYFmtHZSeQ+n15nIwTFmcBUKtExOer8WTJ4GF9MO64A==}
@@ -6080,6 +6130,23 @@ snapshots:
       chalk: 4.1.2
       js-yaml: 4.3.2
 
+  '@hozon/adapter@0.1.0':
+    dependencies:
+      kysely: 0.29.6
+
+  '@hozon/db@0.2.0(@logtape/logtape@2.3.11)':
+    dependencies:
+      '@hozon/adapter': 0.1.0
+      '@sozai/log': 0.4.0(@logtape/logtape@2.3.11)
+      kysely: 0.29.6
+    transitivePeerDependencies:
+      - '@logtape/logtape'
+
+  '@hozon/node-sqlite@0.1.0':
+    dependencies:
+      '@hozon/adapter': 0.1.0
+      kysely: 0.29.6
+
   '@isaacs/fs-minipass@4.0.1':
     dependencies:
       minipass: 7.1.3
@@ -8015,6 +8082,8 @@ snapshots:
   kind-of@6.0.3: {}
 
   kleur@3.0.3: {}
+
+  kysely@0.29.6: {}
 
   lan-network@0.2.1: {}
 
