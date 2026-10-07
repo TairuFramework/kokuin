@@ -205,7 +205,14 @@ export function createRevocationChecker(
       // which way it decides: a record claiming another issuer could not revoke this token anyway.
       // Without the gate, the untrusted backend could deny any capability by returning a record naming
       // an unresolvable DID it invented.
-      const sameIssuer = normalizeDID(record.payload.iss) === normalizeDID(token.payload.iss)
+      // The backend is untrusted and may hand back any decoded shape: a record with no string `iss`
+      // names no issuer, so it is not evidence -- and must not throw, or one malformed row denies
+      // every check of its `jti`.
+      const recordIssuer = (record.payload as { iss?: unknown } | null | undefined)?.iss
+      if (typeof recordIssuer !== 'string') {
+        return
+      }
+      const sameIssuer = normalizeDID(recordIssuer) === normalizeDID(token.payload.iss)
       if (isUnresolvableIssuerError(error) && sameIssuer) {
         throw error
       }

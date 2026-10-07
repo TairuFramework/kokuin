@@ -809,4 +809,29 @@ describe('revocation', () => {
     )
     await expect(liveChecker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
   })
+
+  // The backend is untrusted: a decodable record of the wrong shape names no issuer, so it is not
+  // evidence, and must not throw out of the checker (one planted row would deny every check).
+  test.each([
+    ['a null payload', null],
+    ['a non-string iss', { jti: 'grant-shape', iss: 5, rev: true, iat: 0 }],
+  ])('a record with %s is not evidence and does not throw', async (_label, payload) => {
+    const issuer = randomIdentity()
+    const capability = await createCapability(issuer, {
+      sub: issuer.id,
+      aud: randomIdentity().id,
+      act: 'write',
+      res: 'doc/1',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      jti: 'grant-shape',
+    })
+    const record = {
+      data: 'e30.bnVsbA',
+      header: {},
+      payload,
+      signature: 'x',
+    } as unknown as RevocationRecord
+    const checker = createRevocationChecker({ add: async () => {}, get: async () => record })
+    await expect(checker(capability, stringifyToken(capability))).resolves.toBeUndefined()
+  })
 })
