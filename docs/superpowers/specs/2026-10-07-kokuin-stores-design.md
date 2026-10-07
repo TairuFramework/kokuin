@@ -173,9 +173,14 @@ checker is restructured so that `@kokuin/capability` is the only verifier:
   (`historic: true`) and denied-key handling (`namesADeniedKey`). It does no verification
   of its own.
 - **Fault tracking stays.** The wrapper still wraps each method resolver and the store
-  read to record the first dependency fault. If capability's checker returns or throws
-  while a fault was recorded, the wrapper rethrows the fault. A resolver that cannot
-  answer must never read as "not revoked".
+  read to record the first dependency fault. It records faults only from the store read
+  and from resolver calls for the capability's own issuer (DID normalized, `#fragment`
+  stripped). A record naming another issuer cannot revoke the capability, so a fault
+  resolving that issuer hides nothing. Recording it would let a planted record deny the
+  check. Key-not-found is not a fault. It is an answer, and capability decides it: a
+  forgery to ignore, or a denied key that still revokes. If capability's checker returns
+  or throws while a fault was recorded, the wrapper rethrows the fault. A resolver that
+  cannot answer for the capability's own issuer must never read as "not revoked".
 - **Proved revocation.** Capability's checker raises `Error('Token revoked: <jti>')` on
   both the verified path and the denied-key path. The wrapper should not match on that
   message. `@kokuin/capability` gains a branded `TokenRevokedError` (same message, `cause`

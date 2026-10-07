@@ -298,14 +298,22 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
 
   // Capability's checker returns normally here (the record claims another
   // issuer), so only the recorded fault keeps it from reading "not revoked".
-  test('a resolver fault rejects even when the checker returns normally', async () => {
+  // Capability's checker returns normally here: the record's `iss` carries a
+  // fragment, so it does not match the token's issuer. The resolver call is
+  // still about the token's own issuer, so only the recorded fault keeps it
+  // from reading "not revoked".
+  test('an own-issuer resolver fault rejects even when the checker returns normally', async () => {
     const seed = new Uint8Array(32).fill(63)
     const icp = createInception(seed, 0)
-    const other = createControllerIdentity({ seed, profile: 0, log: [icp] })
-    const grantor = createIdentity()
-    const jti = 'jti-fault-other-issuer'
-    const record = await createRevocationRecord(other, jti)
-    await fileRecord({ jti, revokerDID: grantor.id, token: stringifyToken(record) })
+    const did = didFromInception(icp.event)
+    const issuer = createControllerIdentity({ seed, profile: 0, log: [icp] })
+    const jti = 'jti-fault-own-issuer'
+    const fragmented = createSigningIdentityForDID(
+      `${did}#key-1` as typeof did,
+      createIdentity().privateKey,
+    )
+    const record = await fragmented.signToken({ jti, rev: true, iat: nowSeconds() })
+    await fileRecord({ jti, revokerDID: did, token: stringifyToken(record) })
     const failure = new Error('SQLITE_BUSY: controller log lookup')
     const faultResolver = {
       ...createControllerResolver({ loadLog: async () => [icp] }),
@@ -313,7 +321,7 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
         throw failure
       },
     }
-    const cap = await capability(grantor, jti)
+    const cap = await capability(issuer, jti)
 
     await expect(
       createDelegationRevocationChecker(store, { methods: [faultResolver] }).verdict(
@@ -321,6 +329,29 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
         stringifyToken(cap),
       ),
     ).rejects.toBe(failure)
+  })
+
+  // A record naming another issuer cannot revoke this capability, so failing
+  // to resolve that issuer hides nothing. Rejecting would let a planted record
+  // deny the check.
+  test('an unresolvable foreign issuer in the row revokes nothing', async () => {
+    const seed = new Uint8Array(32).fill(64)
+    const icp = createInception(seed, 0)
+    const foreign = createControllerIdentity({ seed, profile: 0, log: [icp] })
+    const grantor = createIdentity()
+    const jti = 'jti-foreign-unresolvable'
+    const record = await createRevocationRecord(foreign, jti)
+    await fileRecord({ jti, revokerDID: grantor.id, token: stringifyToken(record) })
+    // Knows no log at all, so resolving the foreign DID throws `Unknown DID`.
+    const resolver = createControllerResolver({ loadLog: async () => undefined })
+    const cap = await capability(grantor, jti)
+
+    await expect(
+      createDelegationRevocationChecker(store, { methods: [resolver] }).verdict(
+        cap,
+        stringifyToken(cap),
+      ),
+    ).resolves.toBe(false)
   })
 
   test('a store fault rejects with the fault', async () => {
@@ -426,11 +457,15 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     await expect(check.verdict(cap, stringifyToken(cap))).resolves.toBe(false)
   })
 
-  test('a corrupt stored record is not evidence', async () => {
+  // Decodes, but the payload is `null`: no issuer, so no evidence.
+  test('a stored record with a null payload is not evidence', async () => {
     const issuer = createIdentity()
-    const jti = 'jti-garbage'
-    await fileRecord({ jti, revokerDID: issuer.id, token: 'garbage' })
+    const jti = 'jti-null-payload'
+    const b64u = (json: string) => Buffer.from(json).toString('base64url')
+    await fileRecord({ jti, revokerDID: issuer.id, token: `${b64u('{}')}.${b64u('null')}.x` })
     const cap = await capability(issuer, jti)
+    // The backend drops it itself, independent of capability's own guard.
+    expect(await createDelegationRevocationBackend(store).get(jti, issuer.id)).toBeUndefined()
 
     const verdict = createDelegationRevocationChecker(store).verdict(cap, stringifyToken(cap))
     await expect(verdict).resolves.toBe(false)

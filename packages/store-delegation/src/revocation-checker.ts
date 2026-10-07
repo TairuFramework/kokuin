@@ -6,7 +6,12 @@ import {
   type RevocationOptions,
   type VerifyTokenHook,
 } from '@kokuin/capability'
-import { decodeSignedToken, isIssuerKeyNotFoundError, type MethodRegistry } from '@kokuin/token'
+import {
+  decodeSignedToken,
+  isIssuerKeyNotFoundError,
+  type MethodRegistry,
+  normalizeDID,
+} from '@kokuin/token'
 
 import type { DelegationStoreAPI } from './api.js'
 
@@ -33,7 +38,8 @@ export class VerifiedRevocationError extends Error {
  *
  * Records come back decoded but unverified: the checker re-verifies the signature and re-compares
  * the issuer, so a row this device could not cross-check against a locally held grant is safe to
- * hand over. A record that does not decode is not evidence, so it reads as absent.
+ * hand over. A record that does not decode to an object header and payload is not evidence, so it
+ * reads as absent.
  */
 export function createDelegationRevocationBackend(api: DelegationStoreAPI): RevocationBackend {
   return {
@@ -50,12 +56,18 @@ export function createDelegationRevocationBackend(api: DelegationStoreAPI): Revo
         return undefined
       }
       try {
-        return decodeSignedToken<RevocationClaims>(row.revocation_token)
+        const record = decodeSignedToken<RevocationClaims>(row.revocation_token)
+        // A shape check, not verification: the checker reads `header` and `payload` fields.
+        return isPlainObject(record.header) && isPlainObject(record.payload) ? record : undefined
       } catch {
         return undefined
       }
     },
   }
+}
+
+function isPlainObject(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 type Verdict = (token: Parameters<VerifyTokenHook>[0], raw: string) => Promise<boolean>
@@ -69,6 +81,15 @@ function createDelegationRevocationVerdict(
     // Capability's checker reads an unresolvable or failing dependency in several ways, some of
     // which end in a normal return. Recording the first fault at its source keeps a resolver or
     // store that could not answer from ever reading as "not revoked".
+    //
+    // Resolver faults count only for this token's own issuer. A record naming another issuer
+    // cannot revoke this capability, so a fault resolving it hides nothing, and recording it would
+    // let a planted record deny the check. Every resolver method takes the subject DID first.
+    const ownIssuer = normalizeDID(token.payload.iss)
+    const isOwnIssuer = (args: Array<unknown>): boolean => {
+      const did = args[0]
+      return typeof did === 'string' && normalizeDID(did.split('#')[0] ?? did) === ownIssuer
+    }
     let dependencyFault: unknown
     let hadDependencyFault = false
     const recordFault = (error: unknown): void => {
@@ -84,31 +105,37 @@ function createDelegationRevocationVerdict(
       }
     }
     const wrap =
-      <Args extends Array<unknown>, Result>(fn: (...args: Args) => Promise<Result>) =>
+      <Args extends Array<unknown>, Result>(
+        fn: (...args: Args) => Promise<Result>,
+        counts: (args: Args) => boolean,
+      ) =>
       async (...args: Args): Promise<Result> => {
         try {
           return await fn(...args)
         } catch (error) {
-          recordFault(error)
+          if (counts(args)) {
+            recordFault(error)
+          }
           throw error
         }
       }
     const trackedMethods: MethodRegistry | undefined = options?.methods?.map((base) => ({
       method: base.method,
-      resolve: wrap(base.resolve.bind(base)),
+      resolve: wrap(base.resolve.bind(base), isOwnIssuer),
       ...(base.resolveHistoric == null
         ? {}
-        : { resolveHistoric: wrap(base.resolveHistoric.bind(base)) }),
+        : { resolveHistoric: wrap(base.resolveHistoric.bind(base), isOwnIssuer) }),
       ...(base.resolveDenySet == null
         ? {}
-        : { resolveDenySet: wrap(base.resolveDenySet.bind(base)) }),
+        : { resolveDenySet: wrap(base.resolveDenySet.bind(base), isOwnIssuer) }),
       ...(base.resolveAgreementKey == null
         ? {}
-        : { resolveAgreementKey: wrap(base.resolveAgreementKey.bind(base)) }),
+        : { resolveAgreementKey: wrap(base.resolveAgreementKey.bind(base), isOwnIssuer) }),
     }))
     const trackedBackend: RevocationBackend = {
       add: backend.add,
-      get: wrap(backend.get),
+      // Store faults always count: a failed read may be hiding this issuer's own record.
+      get: wrap(backend.get, () => true),
     }
     try {
       await createRevocationChecker(trackedBackend, { ...options, methods: trackedMethods })(
