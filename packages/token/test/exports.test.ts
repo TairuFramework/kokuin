@@ -26,6 +26,7 @@ describe('package exports', () => {
     'isKeyAgreementIdentity',
     // A value export, not type-only: `toBeDefined` below would be vacuous for a type.
     'createSigningIdentityForDID',
+    'decodeSignedToken',
     // 'createRotationAssertion' removed — see @kokuin/controller for did:kokuin controller logs.
   ])('exports %s', (name) => {
     expect((token as Record<string, unknown>)[name]).toBeDefined()
