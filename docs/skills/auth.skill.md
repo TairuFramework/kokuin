@@ -583,7 +583,9 @@ db.register(controllerStoreDefinition)
 const logs = await getControllerStore(db)
 
 const resolver = createControllerResolver({
-  loadLog: (did) => logs.get(did), // however you obtain the whole log
+  // The log as it arrives from sync or fetch -- not from `logs`, or the guard below compares the
+  // store with itself and checks nothing.
+  loadLog: (did) => fetchLog(did),
   history: logs, // the resolver records each folded log and refuses one behind it
 })
 const observedAt = await logs.getObservedAt(did) // last explicit store write

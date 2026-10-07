@@ -110,7 +110,9 @@ Revocations:
 
 - `addRevocation(input)`: last-writer-wins upsert keyed by `(jti, revoker_did)`. A `revoked_iat`
   beyond `now + MAX_REVOCATION_FUTURE_DRIFT_SECONDS` (one hour) is floored to that bound, not
-  rejected: the record still binds, only its retention is bounded.
+  rejected: the record still binds, only its retention is bounded. A row written verified
+  (`verified_at` set) with `cap_exp: null` is never purged by either method below; pass `cap_exp`
+  with `verified_at`, or verify through `markRevocationVerified`, which requires it.
 - `getRevocationByIssuer(jti, issuer)`: the enforcement read, whatever the verification state.
 - `listRevocations(jti)`: every author's claim. Diagnostics.
 - `isRevokedBy(jti, issuer)`: diagnostic only, **not** an authorization read. It requires
@@ -127,8 +129,9 @@ Revocations:
 
 Both tables store `hlc` as an opaque string. It is `NOT NULL` and required on both insert types.
 The store never generates it; every caller supplies it. Last-writer-wins compares it with SQL `>`
-and JS `<=`, so it must be a string whose **byte-wise lexicographic order matches causal order**. A
-fixed-width serialized hybrid logical clock satisfies this:
+and JS `<=`, so it must be an **ASCII** string whose **byte-wise lexicographic order matches causal
+order**. ASCII because SQL compares bytes and JS compares UTF-16 code units; the two orders are only
+guaranteed to agree on ASCII. A fixed-width serialized hybrid logical clock satisfies this:
 `<ISO wall time>:<zero-padded counter>:<nodeID>`.
 
 - **Local-only consumers** (no sync) may pass any strictly increasing string of that shape, for
@@ -141,8 +144,16 @@ fixed-width serialized hybrid logical clock satisfies this:
   stamps would win or lose on wall clock alone.
 
 SQL and JS must agree on the order. SQLite's default `BINARY` collation is byte-wise. On Postgres the
-migration adds `COLLATE "C"` to both `hlc` columns, because the default collation can be
-locale-sensitive.
+`0-init` migration creates both `hlc` columns with `COLLATE "C"`, because the default collation can be
+locale-sensitive. That holds only for tables `0-init` creates. A legacy Postgres database adopted
+under `tablePrefix` (see below) already records `0-init` as applied, so the migration is skipped and
+its `hlc` columns keep whatever collation they were created with. Before relying on SQL/JS agreement
+there, run:
+
+```sql
+ALTER TABLE <prefix>_delegation_tokens ALTER COLUMN hlc TYPE text COLLATE "C";
+ALTER TABLE <prefix>_revoked_capabilities ALTER COLUMN hlc TYPE text COLLATE "C";
+```
 
 ### The `boolean` from `add*`
 
@@ -160,7 +171,10 @@ atomic, idempotent and safe alongside writes. Both take `{ graceSeconds? }`, def
 `RangeError`.
 
 - `purgeExpiredRevocations()` deletes verified rows whose `cap_exp` is more than the grace in the
-  past.
+  past. Verified rows with a null `cap_exp` are never deleted. The grace must cover the consumer's
+  `clockTolerance`: a capability is still accepted up to `cap_exp + clockTolerance`, so
+  `graceSeconds: 0` deletes its revocation once `cap_exp` passes and a tolerated, revoked capability
+  is honoured again.
 - `purgeDeadPendingRevocations()` deletes pending rows once
   `now > revoked_iat + MAX_CAP_TTL_SECONDS + grace`. The store never sees the revoked capability, so
   this is safe only while the consumer holds up its side.
@@ -205,21 +219,42 @@ Behaviour worth knowing:
 - **`IssuerKeyNotFoundError` is an answer, not a fault.** Capability's checker adjudicates it (a
   forgery is ignored; a key the log published and since denied revokes).
 - **The backend never trusts a row.** `createDelegationRevocationBackend(store).get` reads by
-  `(jti, issuer)`. It returns `undefined` for a record that does not decode, or whose header or
-  payload is not a plain object. Capability's checker likewise treats a record whose payload is not
-  an object, or whose `iss` is not a string, as no evidence. The checker re-verifies the signature,
-  so a pending row is safe to hand over.
+  `(jti, issuer)`. It returns `undefined` for a record that does not decode, whose header or payload
+  is not a plain object, or whose payload names a different `jti` than the one asked for.
+  Capability's checker likewise treats a record whose payload is not an object, or whose `iss` is
+  not a string, as no evidence.
+- **A row revokes only what its signed content names.** The checker re-verifies the signature and
+  revokes only when the record is signed by the capability's own issuer and its payload has
+  `rev: true` and the capability's `jti`. The row's `jti` and `revoker_did` columns grant nothing: a
+  genuine revocation of another `jti`, or any other token the issuer signed (a capability, say),
+  filed under this `jti` is not evidence. So any row, pending or verified, can revoke at most the
+  one capability its issuer signed a revocation for.
+- **`loadLog` must be fresh.** For a `did:kokuin:` issuer, the method resolver's `loadLog` must
+  return the issuer's current log. A genuine revocation signed with a key the local log has not seen
+  yet fails with `IssuerKeyNotFoundError`, which is an answer rather than a fault, so it reads as
+  "not revoked" until the log catches up.
 - `add` on that backend is a no-op. Revocations enter the store through `addRevocation`, which needs
   an `hlc` and the capability cross-check this adapter does not have.
 
 ## `tablePrefix` and the legacy names
 
-`HozonDB` takes an optional `tablePrefix`. The prefix names primary keys and indexes
-(`<prefix>_delegation_tokens_pkey`, ...); table names are fixed. A consumer migrating data created
-by the earlier in-application implementation passes `tablePrefix: 'kubun'`. With it, the **data
-tables match** (`controller_logs`, `delegation_tokens`, `revoked_capabilities`, same columns), but the
-**index and constraint names differ** from that implementation's. Do not assume a byte-identical
-schema; `tests/integration` pins the physical names.
+`HozonDB` takes an optional `tablePrefix`, default `hozon`. Every physical name carries it: the
+logical tables become `<prefix>_controller_logs`, `<prefix>_delegation_tokens` and
+`<prefix>_revoked_capabilities` (so `hozon_controller_logs` and so on by default), the migration
+bookkeeping tables `<prefix>_controller_migration` and `<prefix>_delegation_migration`, and the
+indexes and primary keys `<prefix>_delegation_tokens_pkey`, `<prefix>_delegation_tokens_jti_idx`,
+and so on.
+
+A consumer migrating data created by the earlier in-application implementation passes
+`tablePrefix: 'kubun'`. With it, the **table and migration-bookkeeping names match** that
+implementation's (`kubun_controller_logs`, `kubun_delegation_tokens`,
+`kubun_revoked_capabilities`, same columns), but the **index and primary-key names do not**. Do not
+assume a byte-identical schema; `tests/integration` pins the physical names.
+
+Because `0-init` is already recorded in `kubun_delegation_migration`, it does not run against such a
+database, so on Postgres the `hlc` columns do not get `COLLATE "C"`. Run the two `ALTER TABLE`
+statements from [the `hlc` contract](#the-hlc-contract) with `<prefix>` = `kubun` before relying on
+SQL/JS agreement.
 
 ## Tests
 

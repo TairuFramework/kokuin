@@ -21,9 +21,9 @@ would be a cycle.
 - `@kokuin/store-delegation` -- Hozon-backed store for delegation tokens and revocations, plus the
   revocation checker over `@kokuin/capability`. See [../reference/stores.md](../reference/stores.md).
 
-These two are the only packages depending on hozon (`@hozon/db`, `@hozon/adapter`); the rest of the
-repo stays free of it, so identity primitives never pull in a database. The `hlc` stamps they store
-are supplied by the caller, never generated here.
+These two are the only published packages depending on hozon (`@hozon/db`, `@hozon/adapter`); the
+rest of the repo stays free of it, so identity primitives never pull in a database. The `hlc` stamps
+they store are supplied by the caller, never generated here.
 
 Three supporting packages sit beside them:
 
@@ -38,9 +38,10 @@ Three supporting packages sit beside them:
 ## Tests
 
 End-to-end suites are workspace packages under `tests/`, included via `tests/*` in
-`pnpm-workspace.yaml`: `e2e-electron`, `e2e-expo`, `e2e-node`, `e2e-web`, `integration`, and `ledger`
-(Speculos APDU round-trip against the firmware). `integration-tests` (private) runs the store
-packages against real `node:sqlite` and Postgres; build them first, since it loads `lib/`.
+`pnpm-workspace.yaml`: `e2e-electron`, `e2e-expo`, `e2e-node`, `e2e-web`, `integration-tests`
+(`tests/integration`), and `ledger` (Speculos APDU round-trip against the firmware).
+`integration-tests` (private) runs the store packages against real `node:sqlite` and Postgres; build
+them first, since it loads `lib/`.
 
 ## Firmware
 
