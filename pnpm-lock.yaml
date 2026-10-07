@@ -174,8 +174,8 @@ catalogs:
       specifier: ^0.1.0
       version: 0.1.0
     '@hozon/db':
-      specifier: ^0.2.0
-      version: 0.2.0
+      specifier: ^0.2.1
+      version: 0.2.1
     '@hozon/node-sqlite':
       specifier: ^0.1.0
       version: 0.1.0
@@ -583,13 +583,10 @@ importers:
         version: 0.1.0
       '@hozon/db':
         specifier: 'catalog:'
-        version: 0.2.0(@logtape/logtape@2.3.11)
+        version: 0.2.1(@logtape/logtape@2.3.11)
       '@kokuin/controller':
         specifier: workspace:^
         version: link:../controller
-      kysely:
-        specifier: 'catalog:'
-        version: 0.29.6
     devDependencies:
       '@hozon/node-sqlite':
         specifier: 'catalog:'
@@ -605,16 +602,13 @@ importers:
         version: 0.1.0
       '@hozon/db':
         specifier: 'catalog:'
-        version: 0.2.0(@logtape/logtape@2.3.11)
+        version: 0.2.1(@logtape/logtape@2.3.11)
       '@kokuin/capability':
         specifier: workspace:^
         version: link:../capability
       '@kokuin/token':
         specifier: workspace:^
         version: link:../token
-      kysely:
-        specifier: 'catalog:'
-        version: 0.29.6
     devDependencies:
       '@hozon/node-sqlite':
         specifier: 'catalog:'
@@ -625,6 +619,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.4
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.6
 
   packages/token:
     dependencies:
@@ -803,7 +800,7 @@ importers:
         version: 0.1.0
       '@hozon/db':
         specifier: 'catalog:'
-        version: 0.2.0(@logtape/logtape@2.3.11)
+        version: 0.2.1(@logtape/logtape@2.3.11)
       '@hozon/node-sqlite':
         specifier: 'catalog:'
         version: 0.1.0
@@ -825,9 +822,6 @@ importers:
       '@kokuin/token':
         specifier: workspace:^
         version: link:../../packages/token
-      kysely:
-        specifier: 'catalog:'
-        version: 0.29.6
       postgres:
         specifier: 'catalog:'
         version: 3.4.9
@@ -1704,8 +1698,8 @@ packages:
     resolution: {integrity: sha512-OfwOdQneFmsCpxtbeQxI11VLWR1+hSHH8klq4QxYLqMTtK/SJpVyGqyTDqRPhRzpTeVtYaY8xw31K9m1drjciA==}
     engines: {node: '>=24'}
 
-  '@hozon/db@0.2.0':
-    resolution: {integrity: sha512-zP8VChQqH73fx4RDF5mkvM1e+ZEiF2EG8JqMgHaFeHu866G+bSCWrbOYsvkzXRN+d4cgh9iX5i4hMqIrK0JqFg==}
+  '@hozon/db@0.2.1':
+    resolution: {integrity: sha512-QRGYWZJwpdSAuxaISq5h+JpH6j4z1P98iIRxclPEy20SKddWsjgc2X5hFGu0RgnvOei6PSEcWzHqlFmEgIqtYw==}
     engines: {node: '>=24'}
 
   '@hozon/node-sqlite@0.1.0':
@@ -6618,7 +6612,7 @@ snapshots:
     dependencies:
       kysely: 0.29.6
 
-  '@hozon/db@0.2.0(@logtape/logtape@2.3.11)':
+  '@hozon/db@0.2.1(@logtape/logtape@2.3.11)':
     dependencies:
       '@hozon/adapter': 0.1.0
       '@sozai/log': 0.4.0(@logtape/logtape@2.3.11)

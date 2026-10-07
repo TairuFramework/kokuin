@@ -1,7 +1,6 @@
-import { HozonDB } from '@hozon/db'
+import { HozonDB, sql } from '@hozon/db'
 import { controllerStoreDefinition, getControllerStore } from '@kokuin/store-controller'
 import { delegationStoreDefinition, getDelegationStore } from '@kokuin/store-delegation'
-import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
 import { controllerStoreCases } from '../../../packages/store-controller/test/cases.js'

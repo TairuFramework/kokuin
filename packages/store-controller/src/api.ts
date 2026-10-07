@@ -1,6 +1,6 @@
 import type { Adapter } from '@hozon/adapter'
+import type { Kysely } from '@hozon/db'
 import type { LogStore, SignedEvent } from '@kokuin/controller'
-import type { Kysely } from 'kysely'
 
 import type { ControllerStoreTables } from './tables.js'
 

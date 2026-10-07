@@ -1,6 +1,4 @@
-import type { MigrationContext } from '@hozon/db'
-import { type ColumnDefinitionBuilder, type Kysely, sql } from 'kysely'
-import type { Migration } from 'kysely/migration'
+import { type Expression, type Kysely, type Migration, type MigrationContext, sql } from '@hozon/db'
 
 import type { DelegationStoreTables } from './tables.js'
 
@@ -11,7 +9,10 @@ export function getDelegationMigrations(ctx: MigrationContext): Record<string, M
 
   // SQL `>` and JS `<=` must agree on `hlc` order. SQLite's default collation is
   // byte-wise, but a Postgres default collation can be locale-sensitive.
-  const hlcColumn = (col: ColumnDefinitionBuilder): ColumnDefinitionBuilder => {
+  // Typed structurally: `@hozon/db` does not re-export kysely's `ColumnDefinitionBuilder`.
+  const hlcColumn = <C extends { notNull(): C; modifyFront(modifier: Expression<unknown>): C }>(
+    col: C,
+  ): C => {
     const notNull = col.notNull()
     return ctx.kind === 'postgres' ? notNull.modifyFront(sql`collate "C"`) : notNull
   }

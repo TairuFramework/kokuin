@@ -36,8 +36,7 @@
   "dependencies": {
     "@hozon/adapter": "catalog:",
     "@hozon/db": "catalog:",
-    "@kokuin/controller": "workspace:^",
-    "kysely": "catalog:"
+    "@kokuin/controller": "workspace:^"
   },
   "devDependencies": {
     "@hozon/node-sqlite": "catalog:",

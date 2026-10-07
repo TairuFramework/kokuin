@@ -20,7 +20,6 @@
     "@kokuin/store-controller": "workspace:^",
     "@kokuin/store-delegation": "workspace:^",
     "@kokuin/token": "workspace:^",
-    "kysely": "catalog:",
     "postgres": "catalog:"
   },
   "devDependencies": {

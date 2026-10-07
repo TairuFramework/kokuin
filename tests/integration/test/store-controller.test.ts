@@ -1,4 +1,4 @@
-import { HozonDB } from '@hozon/db'
+import { HozonDB, sql } from '@hozon/db'
 import {
   createInception,
   createRotate,
@@ -6,7 +6,6 @@ import {
   type SignedEvent,
 } from '@kokuin/controller'
 import { controllerStoreDefinition, getControllerStore } from '@kokuin/store-controller'
-import { sql } from 'kysely'
 import { afterAll, describe, expect, test } from 'vitest'
 
 import { controllerStoreCases } from '../../../packages/store-controller/test/cases.js'

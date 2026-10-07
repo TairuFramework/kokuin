@@ -1,9 +1,8 @@
 // Parameter audit: every statement binds a fixed, small count (at most 9) -- no `IN` lists
 // built from input and no multi-row values -- so none nears the 500-parameter limit.
 import type { Adapter } from '@hozon/adapter'
-import { withStoreTransaction } from '@hozon/db'
+import { type Kysely, withStoreTransaction } from '@hozon/db'
 import { normalizeDID } from '@kokuin/token'
-import type { Kysely } from 'kysely'
 
 import type {
   DelegationStoreTables,

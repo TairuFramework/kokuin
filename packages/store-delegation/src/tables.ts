@@ -1,5 +1,5 @@
 import type { CreatedAtColumn, UpdatedAtColumn } from '@hozon/adapter'
-import type { Insertable, Selectable } from 'kysely'
+import type { Insertable, Selectable } from '@hozon/db'
 
 // --- Delegation tokens ---
 

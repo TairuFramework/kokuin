@@ -38,13 +38,13 @@
     "@hozon/adapter": "catalog:",
     "@hozon/db": "catalog:",
     "@kokuin/capability": "workspace:^",
-    "@kokuin/token": "workspace:^",
-    "kysely": "catalog:"
+    "@kokuin/token": "workspace:^"
   },
   "devDependencies": {
     "@hozon/node-sqlite": "catalog:",
     "@kokuin/controller": "workspace:^",
-    "@types/node": "catalog:"
+    "@types/node": "catalog:",
+    "kysely": "catalog:"
   },
   "publishConfig": {
     "access": "public"

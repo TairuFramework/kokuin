@@ -1,9 +1,9 @@
 import type { Adapter } from '@hozon/adapter'
-import { HozonDB, TablePrefixPlugin } from '@hozon/db'
+import { HozonDB, Kysely, type Migration, sql, TablePrefixPlugin } from '@hozon/db'
 import { createCapability, createRevocationRecord } from '@kokuin/capability'
 import { createIdentity, stringifyToken } from '@kokuin/token'
-import { Kysely, type QueryExecutorProvider, sql } from 'kysely'
-import { type Migration, Migrator } from 'kysely/migration'
+// `@hozon/db` does not re-export the migrator; HozonDB is bypassed on purpose below.
+import { Migrator } from 'kysely/migration'
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
 
 import {
@@ -27,8 +27,8 @@ export type StoreHarness = {
 }
 
 /** Index names of a physical table. Kysely has no dialect-agnostic catalog query. */
-export async function indexNames(
-  db: QueryExecutorProvider,
+export async function indexNames<DB>(
+  db: Kysely<DB>,
   kind: 'sqlite' | 'postgres',
   table: string,
 ): Promise<Array<string>> {

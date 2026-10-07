@@ -1,6 +1,6 @@
 import type { CreatedAtColumn, UpdatedAtColumn } from '@hozon/adapter'
+import type { ColumnType, Insertable, Selectable } from '@hozon/db'
 import type { SignedEvent } from '@kokuin/controller'
-import type { ColumnType, Insertable, Selectable } from 'kysely'
 
 // The stored log round-trips through the adapter's JSON column: `encodeJSON`
 // stringifies on SQLite and passes through on Postgres, so the same value

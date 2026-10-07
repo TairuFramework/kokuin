@@ -23,7 +23,8 @@ kokuin owns the interfaces the stores implement: `LogStore` (`@kokuin/controller
 The delegation store holds auth-domain logic (DID normalization, issuer-scoped revocation rows,
 the revocation checker), and hozon stays domain-neutral. There is no cycle: hozon depends only on
 `@sozai/*`, and only the two store packages (plus the private integration workspace) depend on
-hozon and kysely.
+hozon. They import kysely types and `sql` through `@hozon/db`; `kysely` itself is only a
+`store-delegation` dev dependency, for the test-only `Migrator`.
 
 ## What was built
 

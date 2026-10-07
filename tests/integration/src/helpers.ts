@@ -1,5 +1,4 @@
-import type { StoreDefinition } from '@hozon/db'
-import type { Kysely } from 'kysely'
+import type { Kysely, StoreDefinition } from '@hozon/db'
 
 // biome-ignore lint/suspicious/noExplicitAny: raw access to tables created by the stores.
 export type RawDB = Kysely<any>
