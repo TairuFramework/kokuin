@@ -1,3 +1,5 @@
+export type { RevocationClaims } from '@kokuin/capability'
+
 export type { DelegationStoreAPI, PurgeParams } from './api.js'
 export {
   createDelegationStore,
@@ -10,6 +12,11 @@ export {
   delegationStoreDefinition,
   getDelegationStore,
 } from './definition.js'
+export {
+  createDelegationRevocationBackend,
+  createDelegationRevocationChecker,
+  VerifiedRevocationError,
+} from './revocation-checker.js'
 export type {
   DelegationStoreTables,
   DelegationToken,

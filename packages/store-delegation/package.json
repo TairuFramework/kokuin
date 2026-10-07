@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@hozon/node-sqlite": "catalog:",
+    "@kokuin/controller": "workspace:^",
     "@types/node": "catalog:"
   },
   "publishConfig": {

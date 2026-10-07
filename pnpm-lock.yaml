@@ -610,6 +610,9 @@ importers:
       '@hozon/node-sqlite':
         specifier: 'catalog:'
         version: 0.1.0
+      '@kokuin/controller':
+        specifier: workspace:^
+        version: link:../controller
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.4
