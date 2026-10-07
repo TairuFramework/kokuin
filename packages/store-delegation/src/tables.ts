@@ -14,7 +14,9 @@ export type DelegationTokenTable = {
   /**
    * Last-writer-wins stamp, supplied by every caller and never generated here.
    * Byte-wise lexicographic order must match causal order: SQL compares it with
-   * `>` and JS with `<=`, so a fixed-width serialization is required.
+   * `>` and JS with `<=`, so a fixed-width serialization is required. It must be
+   * ASCII: SQL compares bytes and JS compares UTF-16 code units, and the two
+   * orders are only guaranteed to agree on ASCII.
    *
    * - Local-only consumers may pass any strictly increasing string of the shape
    *   `<ISO wall time>:<zero-padded counter>:<nodeID>`.
@@ -44,7 +46,9 @@ export type RevokedCapabilityTable = {
   /**
    * Last-writer-wins stamp, supplied by every caller and never generated here.
    * Byte-wise lexicographic order must match causal order: SQL compares it with
-   * `>` and JS with `<=`, so a fixed-width serialization is required.
+   * `>` and JS with `<=`, so a fixed-width serialization is required. It must be
+   * ASCII: SQL compares bytes and JS compares UTF-16 code units, and the two
+   * orders are only guaranteed to agree on ASCII.
    *
    * - Local-only consumers may pass any strictly increasing string of the shape
    *   `<ISO wall time>:<zero-padded counter>:<nodeID>`.

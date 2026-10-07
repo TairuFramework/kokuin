@@ -45,6 +45,10 @@ export type DelegationStoreAPI = {
    * `now + MAX_REVOCATION_FUTURE_DRIFT_SECONDS` is floored to that bound. Returns whether the
    * stored row changed. The result is an approximate change signal for emission gating: the
    * pre-read takes no lock, so two concurrent writers can both see `true`.
+   *
+   * A row written verified (`verified_at` set) with `cap_exp: null` is never purged: the expired
+   * purge needs a `cap_exp` and the pending purge only takes unverified rows. Pass `cap_exp` with
+   * `verified_at`, or verify through `markRevocationVerified`, which requires it.
    */
   addRevocation(input: InsertRevokedCapability): Promise<boolean>
   getRevocationByIssuer(jti: string, issuer: string): Promise<RevokedCapability | null>
@@ -69,7 +73,12 @@ export type DelegationStoreAPI = {
    * time-predicate `DELETE`: atomic, idempotent, and safe alongside writes. Nothing calls it
    * implicitly -- schedule it.
    *
+   * Verified rows with a null `cap_exp` are never deleted (see `addRevocation`).
+   *
    * Consumer contracts:
+   * - The grace must cover the consumer's `clockTolerance`. A capability is still accepted up to
+   *   `cap_exp + clockTolerance`, and its revocation must outlive that: `graceSeconds: 0` deletes
+   *   the revocation once `cap_exp` passes, so a tolerated, revoked capability is honoured again.
    * - Run it outside a caller transaction. On Postgres a failure inside one aborts it.
    * - A local clock running ahead deletes rows early. The default grace absorbs ordinary skew.
    */

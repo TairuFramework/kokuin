@@ -36,10 +36,13 @@ export class VerifiedRevocationError extends Error {
  * only the one signed by the capability's own issuer binds. `get` is scoped to that issuer so a
  * co-member's claim about the same `jti` can neither answer in its place nor hide it.
  *
- * Records come back decoded but unverified: the checker re-verifies the signature and re-compares
- * the issuer, so a row this device could not cross-check against a locally held grant is safe to
- * hand over. A record that does not decode to an object header and payload is not evidence, so it
- * reads as absent.
+ * Records come back decoded but unverified. The checker re-verifies the signature and revokes only
+ * when the record is signed by the capability's own issuer and its payload states `rev: true` for
+ * the capability's `jti`. So a row this device could not cross-check against a locally held grant
+ * can revoke at most the one capability its signed content names, and only if that capability's
+ * issuer signed it; the row's own `jti` and `revoker_did` columns grant nothing. A record that does
+ * not decode to an object header and payload, or whose payload names a different `jti` than the one
+ * asked for, is not evidence, so it reads as absent.
  */
 export function createDelegationRevocationBackend(api: DelegationStoreAPI): RevocationBackend {
   return {
@@ -57,8 +60,13 @@ export function createDelegationRevocationBackend(api: DelegationStoreAPI): Revo
       }
       try {
         const record = decodeSignedToken<RevocationClaims>(row.revocation_token)
-        // A shape check, not verification: the checker reads `header` and `payload` fields.
-        return isPlainObject(record.header) && isPlainObject(record.payload) ? record : undefined
+        // A shape check, not verification: the checker reads `header` and `payload` fields, and
+        // re-checks the `jti` binding itself. A record about another `jti` is misfiled.
+        return isPlainObject(record.header) &&
+          isPlainObject(record.payload) &&
+          record.payload.jti === jti
+          ? record
+          : undefined
       } catch {
         return undefined
       }

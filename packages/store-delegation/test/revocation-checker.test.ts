@@ -240,7 +240,12 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) }),
   ]
 
-  async function fileRecord(params: { jti: string; revokerDID: string; token: string }) {
+  async function fileRecord(params: {
+    jti: string
+    revokerDID: string
+    token: string
+    hlc?: string
+  }) {
     const now = nowSeconds()
     await store.addRevocation({
       jti: params.jti,
@@ -249,7 +254,7 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
       revocation_token: params.token,
       verified_at: now,
       cap_exp: now + 3600,
-      hlc: HLC,
+      hlc: params.hlc ?? HLC,
     })
   }
 
@@ -503,5 +508,47 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     const found = await backend.get(jti, normalizeDID(a.longForm))
     expect(found && stringifyToken(found)).toBe(stringifyToken(recordA))
     expect(await backend.get(jti, 'did:key:unknown')).toBeUndefined()
+  })
+
+  // The reviewer's probe: the row's `jti` and the record's own claims are independent, so a
+  // genuine record filed under the wrong `jti` must not revoke the capability that `jti` names.
+  test('a genuine revocation of another jti filed under this one does not revoke', async () => {
+    const x = createIdentity()
+    const revokesA = await createRevocationRecord(x, 'jti-A')
+    await fileRecord({ jti: 'jti-B', revokerDID: x.id, token: stringifyToken(revokesA) })
+    const capB = await capability(x, 'jti-B')
+
+    const check = createDelegationRevocationChecker(store)
+    await expect(check.verdict(capB, stringifyToken(capB))).resolves.toBe(false)
+  })
+
+  test('a capability token filed as a revocation does not revoke', async () => {
+    const x = createIdentity()
+    const capB2 = await capability(x, 'jti-B2')
+    // Signed by the issuer, names the same `jti`, but is not a revocation (no `rev`).
+    await fileRecord({ jti: 'jti-B2', revokerDID: x.id, token: stringifyToken(capB2) })
+
+    const check = createDelegationRevocationChecker(store)
+    await expect(check.verdict(capB2, stringifyToken(capB2))).resolves.toBe(false)
+    // Control: a genuine revocation replacing that row (a later hlc wins) revokes.
+    await fileRecord({
+      jti: 'jti-B2',
+      revokerDID: x.id,
+      token: stringifyToken(await createRevocationRecord(x, 'jti-B2')),
+      hlc: '2026-01-03T00:00:00.000Z:00000000:node-a',
+    })
+    await expect(check.verdict(capB2, stringifyToken(capB2))).resolves.toBe(true)
+  })
+
+  test('the backend drops a record whose jti differs from the one asked for', async () => {
+    const x = createIdentity()
+    const revokesA = await createRevocationRecord(x, 'jti-A')
+    await fileRecord({ jti: 'jti-B', revokerDID: x.id, token: stringifyToken(revokesA) })
+    await fileRecord({ jti: 'jti-A', revokerDID: x.id, token: stringifyToken(revokesA) })
+
+    const backend = createDelegationRevocationBackend(store)
+    expect(await backend.get('jti-B', normalizeDID(x.id))).toBeUndefined()
+    // Control: the same record under its own jti comes back.
+    expect(await backend.get('jti-A', normalizeDID(x.id))).toBeDefined()
   })
 })
