@@ -21,7 +21,7 @@ workspaces, turbo, biome.
 
 **Spec:** `docs/superpowers/specs/2026-10-07-kokuin-stores-design.md`
 
-**Stage:** executing
+**Stage:** qa
 **Mode:** tasks
 
 **Sources being ported** (read-only reference):
