@@ -17,6 +17,36 @@ import {
 import { now } from './time.js'
 import type { CapabilityToken, VerifyTokenHook } from './types.js'
 
+const TOKEN_REVOKED_BRAND = '@kokuin/capability/TokenRevokedError'
+
+/**
+ * Thrown by the revocation checker when a capability's issuer has revoked it.
+ *
+ * A type rather than a message so a caller can tell "revoked" from every other failure without
+ * matching text. Match with `isTokenRevokedError`, which compares a brand and so holds across
+ * duplicated copies of this package.
+ */
+export class TokenRevokedError extends Error {
+  static get brand(): string {
+    return TOKEN_REVOKED_BRAND
+  }
+
+  /** The brand, readable from an instance — what `isTokenRevokedError` matches on. */
+  get brand(): string {
+    return TOKEN_REVOKED_BRAND
+  }
+
+  constructor(jti: string, options?: ErrorOptions) {
+    super(`Token revoked: ${jti}`, options)
+    this.name = 'TokenRevokedError'
+  }
+}
+
+/** Whether a thrown value is a {@link TokenRevokedError}, by brand rather than `instanceof`. */
+export function isTokenRevokedError(value: unknown): value is TokenRevokedError {
+  return value instanceof Error && (value as { brand?: unknown }).brand === TOKEN_REVOKED_BRAND
+}
+
 export type RevocationClaims = {
   jti: string
   iss: string
@@ -186,16 +216,15 @@ export function createRevocationChecker(
         sameIssuer &&
         (await namesADeniedKey(record, options))
       ) {
-        // Same message as the verified path below, so a caller matching on it does not have to
-        // learn a second spelling; the resolution failure rides along as `cause` for a reader.
-        throw new Error(`Token revoked: ${jti}`, { cause: error })
+        // Same error as the verified path below; the resolution failure rides along as `cause`.
+        throw new TokenRevokedError(jti, { cause: error })
       }
       return
     }
     // Only the issuer of a token may revoke it: the record's issuer must match the token's.
     // A revocation signed by anyone else does not apply.
     if (normalizeDID(verified.payload.iss) === normalizeDID(token.payload.iss)) {
-      throw new Error(`Token revoked: ${jti}`)
+      throw new TokenRevokedError(jti)
     }
   }
 }
