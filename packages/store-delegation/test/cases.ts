@@ -37,7 +37,7 @@ export async function indexNames(
       ? sql<{ name: string }>`select name from sqlite_master
         where type = 'index' and tbl_name = ${sql.lit(table)}`
       : sql<{ name: string }>`select indexname as name from pg_indexes
-        where tablename = ${sql.lit(table)}`
+        where tablename = ${sql.lit(table)} and schemaname = current_schema()`
   const { rows } = await query.execute(db)
   return rows.map((row) => row.name)
 }
