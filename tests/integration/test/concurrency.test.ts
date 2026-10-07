@@ -15,6 +15,18 @@ function hlc(counter: number): string {
   return counter.toString().padStart(12, '0')
 }
 
+// Rounds cycle through which instance writes the higher hlc and which call is issued first.
+// With one fixed order the higher write tends to land last, so last-writer-wins would pass too.
+function race(round: number, write: (store: 0 | 1, counter: number) => Promise<unknown>) {
+  const highStore = round % 2 === 0 ? 1 : 0
+  const lowStore = highStore === 0 ? 1 : 0
+  const writes =
+    Math.floor(round / 2) % 2 === 0
+      ? [() => write(lowStore, 1), () => write(highStore, 2)]
+      : [() => write(highStore, 2), () => write(lowStore, 1)]
+  return Promise.all(writes.map((start) => start()))
+}
+
 const postgresBackends = backendsNamed('postgres')
 
 // Vitest fails a file that registers no test, so a run without Postgres reports a skip.
@@ -55,10 +67,7 @@ describe.each(postgresBackends)('$name', (b) => {
         exp: 5_000_000_000,
         hlc: hlc(counter),
       })
-      await Promise.all([
-        stores[0].addDelegationToken(token(1)),
-        stores[1].addDelegationToken(token(2)),
-      ])
+      await race(round, (store, counter) => stores[store].addDelegationToken(token(counter)))
       const rows = await stores[0].getDelegationTokens(key)
       expect(rows.map((row) => [row.jti, row.hlc])).toEqual([[`jti-${round}-2`, hlc(2)]])
     }
@@ -77,10 +86,7 @@ describe.each(postgresBackends)('$name', (b) => {
         cap_exp: null,
         hlc: hlc(counter),
       })
-      await Promise.all([
-        stores[0].addRevocation(revocation(1)),
-        stores[1].addRevocation(revocation(2)),
-      ])
+      await race(round, (store, counter) => stores[store].addRevocation(revocation(counter)))
       const row = await stores[0].getRevocationByIssuer(jti, revokerDID)
       expect([row?.revocation_token, row?.hlc]).toEqual([`revocation-${round}-2`, hlc(2)])
     }
