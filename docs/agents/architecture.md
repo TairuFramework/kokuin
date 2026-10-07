@@ -17,6 +17,14 @@ would be a cycle.
   See [../reference/controller.md](../reference/controller.md) and
   [../reference/security.md](../reference/security.md).
 
+- `@kokuin/store-controller` -- Hozon-backed `LogStore` for `did:kokuin:` event logs.
+- `@kokuin/store-delegation` -- Hozon-backed store for delegation tokens and revocations, plus the
+  revocation checker over `@kokuin/capability`. See [../reference/stores.md](../reference/stores.md).
+
+These two are the only packages depending on hozon (`@hozon/db`, `@hozon/adapter`); the rest of the
+repo stays free of it, so identity primitives never pull in a database. The `hlc` stamps they store
+are supplied by the caller, never generated here.
+
 Three supporting packages sit beside them:
 
 - `@kokuin/otel` -- the `kokuin` tracer factory with the shared span and attribute names.
@@ -30,8 +38,9 @@ Three supporting packages sit beside them:
 ## Tests
 
 End-to-end suites are workspace packages under `tests/`, included via `tests/*` in
-`pnpm-workspace.yaml`: `e2e-electron`, `e2e-expo`, `e2e-node`, `e2e-web`, and `ledger`
-(Speculos APDU round-trip against the firmware).
+`pnpm-workspace.yaml`: `e2e-electron`, `e2e-expo`, `e2e-node`, `e2e-web`, `integration`, and `ledger`
+(Speculos APDU round-trip against the firmware). `integration-tests` (private) runs the store
+packages against real `node:sqlite` and Postgres; build them first, since it loads `lib/`.
 
 ## Firmware
 

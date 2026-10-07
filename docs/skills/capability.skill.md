@@ -174,6 +174,35 @@ await checkCapability(requested, consumerPayload, {
 - **Revoking a key does not un-revoke what that key's revocation records had revoked.** A `jti` revocation record is an artefact signed by a key, so denying the key stops the record verifying — and the checker's general rule is to *ignore* a record it cannot verify, which would have made the remedy for a compromise silently resurrect every capability that key had revoked. The checker therefore separates two cases that look identical at the point of failure. A record naming a key the log **never published** is a forgery and is still ignored: anyone can mint one for any `jti`, and honouring it is the plant-a-record denial of service the rule exists to stop. A record naming a key the log **published and has since denied** is honoured, and revokes as it always did — producing it required the private half of a key the DID itself published, so only the issuer or whoever compromised it could have written it, and honouring a revocation can only subtract authority, never grant any. The residual, stated plainly: a thief holding the leaked key can plant revocations for `jti`s they know, and those survive the owner's remedy — bounded harm next to the owner's own revocations lapsing the moment they act. Both directions are pinned by `packages/capability/test/zzown-key-denial-check.test.ts`
 - **A capability that authorises a `did:kokuin:` revoke has two extra requirements, both refused at verification and both checkable at mint.** It must carry `exp` — an omitted one is not a long grant but a permanent one, and `createControllerCapabilityVerifier` rejects it with `REVOKE_UNBOUNDED_LIFETIME`; the length is yours to choose, with `maxLifetimeSeconds` available if you have a policy. And it must pin its audience's key in `cnf` (`audienceConfirmation(key)`) where the audience is a `did:key` or a `did:peer:4` **long form** — an audience whose identifier carries no key cannot be tied to its pin without resolving it, which is the bug `cnf` exists to remove, so it is refused with `REVOKE_AUDIENCE_KEY_MISMATCH`. Call `assertRevokeCapabilityAudience(payload)` at mint: the same rule, where the cost of getting it wrong is an error rather than an unfoldable log and a DID that stops resolving
 
+## Persisting delegations and revocations (`@kokuin/store-delegation`)
+
+A Hozon-backed store for delegation tokens and revocations, with a `VerifyTokenHook` over it.
+
+```typescript
+import { HozonDB } from '@hozon/db'
+import {
+  createDelegationRevocationChecker,
+  delegationStoreDefinition,
+  getDelegationStore,
+} from '@kokuin/store-delegation'
+
+const db = new HozonDB({ adapter })
+db.register(delegationStoreDefinition)
+const store = await getDelegationStore(db)
+
+const verifyToken = createDelegationRevocationChecker(store, { methods })
+await checkCapability(permission, payload, { methods, verifyToken }) // throws VerifiedRevocationError if revoked
+```
+
+**Key points**:
+- Every write needs a caller-supplied `hlc` (byte-wise lexicographic order = causal order; fixed-width `<ISO time>:<counter>:<nodeID>`). Local-only consumers may invent increasing stamps; syncing consumers need a real HLC (`@kubun/hlc` today); mixing is unsupported
+- `addDelegationToken` / `addRevocation` return an **approximate** changed flag, good for gating emission, never for correctness
+- Revocations are keyed `(jti, revoker_did)`: only the capability issuer's row binds. Enforce with `getRevocationByIssuer`; `isRevokedBy` is diagnostic only
+- The checker fails closed: a store read fault, or a resolver fault for the capability's own issuer, throws instead of reading as "not revoked". A fault resolving some other issuer is ignored, and `IssuerKeyNotFoundError` is an answer, not a fault
+- Nothing purges implicitly. Schedule `purgeExpiredRevocations()` and `purgeDeadPendingRevocations()` outside a transaction, and enforce on mint and receive `exp - iat <= MAX_CAP_TTL_SECONDS` and `iat <= now + MAX_REVOCATION_FUTURE_DRIFT_SECONDS`, or a revoked capability can be honoured again
+
+→ Reference: docs/reference/stores.md
+
 ## When to Use What
 
 **Use `checkCapability`** when:
@@ -187,6 +216,10 @@ await checkCapability(requested, consumerPayload, {
 **Use `createCapability` with `parentCapability`** when:
 - A service or agent needs to re-delegate a narrowed subset of its own permissions
 - Building multi-hop delegation flows (agent → sub-agent → resource)
+
+**Use `@kokuin/store-delegation`** when:
+- Delegation tokens and revocations must persist (SQLite or Postgres via Hozon)
+- You want `createDelegationRevocationChecker(store, { methods })` as the `verifyToken` hook
 
 **Use `createRevocationChecker`** when:
 - Long-lived capabilities need early invalidation without key rotation
