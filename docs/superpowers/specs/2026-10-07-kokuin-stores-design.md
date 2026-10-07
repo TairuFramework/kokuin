@@ -160,7 +160,18 @@ and a corrupt record is not evidence.
 
 ### HLC ordering contract
 
-No code depends on an HLC package. Both tables store `hlc` as an opaque string.
+No code depends on an HLC package. Both tables store `hlc` as an opaque string. It is
+`NOT NULL` and required on both insert types. The store never generates it; every caller
+supplies it. The reference documents how to produce it:
+
+- **Local-only consumers** (no sync) may pass any strictly increasing string of this
+  shape, for example `${new Date().toISOString()}:${counter padded}:${nodeID}`.
+- **Syncing consumers** need a real hybrid logical clock serialized in that format
+  (`<ISO wall time>:<zero-padded counter>:<nodeID>`), so that stamps from different
+  peers arbitrate correctly. Today that is `@kubun/hlc`. A follow-on adds a helper and a
+  stricter type once the HLC package moves to sozai.
+- Mixing locally invented stamps with real HLC stamps in a synced store is unsupported:
+  the local stamps would win or lose on wall clock alone.
 Last-writer-wins compares it with SQL `>` and JS `<=`. The column contract, documented on
 the insert types and in the reference: `hlc` must be a string whose byte-wise
 lexicographic order matches causal order. A fixed-width serialized HLC satisfies this.
