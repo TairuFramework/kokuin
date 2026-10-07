@@ -109,10 +109,10 @@ describe.each(backends())('$name', (b) => {
   })
 })
 
-describe.each(backends())('$name cases under the kubun prefix', (b) => {
+describe.each(backends())('$name controller cases under the kubun prefix', (b) => {
   describe('controller', () => controllerStoreCases(harness(b), { tablePrefix: PREFIX }))
 })
 
-describe.each(backends())('$name cases under the kubun prefix', (b) => {
+describe.each(backends())('$name delegation cases under the kubun prefix', (b) => {
   describe('delegation', () => delegationStoreCases(harness(b), { tablePrefix: PREFIX }))
 })
