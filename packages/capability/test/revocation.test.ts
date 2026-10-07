@@ -7,6 +7,7 @@ import {
   type DIDString,
   decodePeer4,
   IssuerKeyNotFoundError,
+  normalizeDID,
   randomIdentity,
   randomPrivateKey,
   type SigningIdentity,
@@ -54,13 +55,15 @@ function buildProfile(): { identity: SigningIdentity; resolver: DIDMethodResolve
 }
 
 describe('revocation', () => {
-  test('createMemoryRevocationBackend stores signed records by jti', async () => {
+  test('createMemoryRevocationBackend stores signed records by issuer and jti', async () => {
     const signer = randomIdentity()
+    const other = randomIdentity()
     const backend = createMemoryRevocationBackend()
-    expect(await backend.get('some-jti')).toBeUndefined()
+    expect(await backend.get('some-jti', signer.id)).toBeUndefined()
     const record = await createRevocationRecord(signer, 'some-jti')
     await backend.add(record)
-    expect(await backend.get('some-jti')).toBeDefined()
+    expect(await backend.get('some-jti', signer.id)).toBeDefined()
+    expect(await backend.get('some-jti', other.id)).toBeUndefined()
   })
 
   test('add rejects a record with a forged signature', async () => {
@@ -69,7 +72,7 @@ describe('revocation', () => {
     const record = await createRevocationRecord(signer, 'cap-1')
     const forged = { ...record, signature: 'AAAA' }
     await expect(backend.add(forged)).rejects.toThrow()
-    expect(await backend.get('cap-1')).toBeUndefined()
+    expect(await backend.get('cap-1', signer.id)).toBeUndefined()
   })
 
   test('createRevocationChecker returns a VerifyTokenHook', () => {
@@ -195,6 +198,58 @@ describe('revocation', () => {
 
     // Must NOT revoke: only the token's own issuer may revoke it.
     await checker(capability, stringifyToken(capability))
+  })
+
+  test('a foreign-issuer record for the same jti does not displace the real revocation', async () => {
+    // Anyone who knows a `jti` (the holder does) can sign a valid record for it. A store keyed by
+    // `jti` alone lets that record overwrite the issuer's (last write wins) or pre-empt it (first
+    // write wins); the checker then sees a foreign issuer and lets the revoked token through.
+    const issuer = randomIdentity()
+    const holder = randomIdentity()
+    const capability = await createCapability(issuer, {
+      sub: issuer.id,
+      aud: holder.id,
+      act: '*',
+      res: '*',
+      jti: 'cap-squatted',
+    })
+    const genuine = await createRevocationRecord(issuer, 'cap-squatted')
+    const foreign = await createRevocationRecord(holder, 'cap-squatted')
+
+    const after = createMemoryRevocationBackend()
+    await after.add(genuine)
+    await after.add(foreign)
+    await expect(
+      createRevocationChecker(after)(capability, stringifyToken(capability)),
+    ).rejects.toThrow('revoked')
+
+    const before = createMemoryRevocationBackend()
+    await before.add(foreign)
+    await before.add(genuine)
+    await expect(
+      createRevocationChecker(before)(capability, stringifyToken(capability)),
+    ).rejects.toThrow('revoked')
+  })
+
+  test('checker asks the backend for the token issuer, normalized', async () => {
+    const issuer = randomIdentity()
+    const capability = await createCapability(issuer, {
+      sub: issuer.id,
+      aud: 'did:key:bob',
+      act: '*',
+      res: '*',
+      jti: 'cap-asked',
+    })
+    const calls: Array<[string, string]> = []
+    const checker = createRevocationChecker({
+      add: async () => {},
+      get: async (jti, iss) => {
+        calls.push([jti, iss])
+        return undefined
+      },
+    })
+    await checker(capability, stringifyToken(capability))
+    expect(calls).toEqual([['cap-asked', normalizeDID(issuer.id)]])
   })
 
   test('checker re-verifies and ignores a forged record from an untrusting backend', async () => {

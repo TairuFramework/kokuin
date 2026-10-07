@@ -229,13 +229,15 @@ type RevocationClaims = {
 ```typescript
 type RevocationBackend = {
   add(record: RevocationRecord): Promise<void>
-  get(jti: string): Promise<RevocationRecord | undefined>
+  get(jti: string, issuer: string): Promise<RevocationRecord | undefined>
 }
 ```
 
 It answers with the *record*, not with a boolean: the checker re-verifies the signature at the point of use, because a backend is an extension point and may return something it never verified.
 
-**`createMemoryRevocationBackend(options?)`** — returns an in-memory `RevocationBackend` backed by a `Map`. `add` verifies the record's signature and throws `Invalid revocation record` on one that does not check out. Suitable for single-process use; does not survive restarts.
+`get` is asked for the token's own issuer, already normalized (`normalizeDID`), and a backend **must** scope its records by issuer as well as `jti`. Anyone can sign a valid record for any `jti` — a capability's holder knows it — so a store keyed by `jti` alone lets a foreign record displace the issuer's: overwrite it (last write wins) or pre-empt it (first write wins). The checker ignores a record from any other issuer, so either way the revoked token passes.
+
+**`createMemoryRevocationBackend(options?)`** — returns an in-memory `RevocationBackend` backed by a `Map` keyed by `(normalized issuer, jti)`. `add` verifies the record's signature and throws `Invalid revocation record` on one that does not check out. Suitable for single-process use; does not survive restarts.
 
 **`createRevocationRecord(signer, jti)`** — **signs** `{ jti, rev: true, iat }` with `signer`, producing the record. The caller is responsible for persisting it via `backend.add(record)`.
 
