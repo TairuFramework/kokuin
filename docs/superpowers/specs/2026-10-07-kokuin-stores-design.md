@@ -186,12 +186,21 @@ checker is restructured so that `@kokuin/capability` is the only verifier:
   message. `@kokuin/capability` gains a branded `TokenRevokedError` (same message, `cause`
   kept) and an `isTokenRevokedError` guard, and the wrapper maps it to
   `VerifiedRevocationError`.
+- **Record binding.** The store files a row under `(jti, revoker_did)`, but nothing in the
+  row ties its `revocation_token` to that `jti`. Capability's checker therefore revokes only
+  when the record's payload has `rev: true` and `jti` equal to the checked token's `jti`,
+  on the verified path and (read from the unverified payload) before the unresolvable-issuer
+  and denied-key paths. A genuine revocation of another `jti`, or any other token the
+  issuer signed, is no evidence. The backend also returns `undefined` when the decoded
+  payload's `jti` differs from the one asked for.
 - **`RevocationClaims`.** `@kokuin/capability` defines it but its index does not export it.
   It becomes exported there, and the store re-exports capability's type instead of its
   own copy.
 
 The wrapper's observable contract is unchanged: a store or resolver fault rethrows, a
 proved revocation raises `VerifiedRevocationError`, and a corrupt record is not evidence.
+What a row can do is bounded by its signed content: it revokes only the capability whose
+issuer signed it and whose `jti` it names as a revocation, whichever row it was filed under.
 
 ### HLC ordering contract
 

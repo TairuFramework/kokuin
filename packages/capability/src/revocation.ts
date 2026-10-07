@@ -175,6 +175,19 @@ async function namesADeniedKey(
   return (await resolveDenySet(iss)).has(kid)
 }
 
+/**
+ * Does this payload state a revocation of `jti`? A record is evidence about the one token it names,
+ * and only if it says it is a revocation. The backend files rows under a `jti` the record does not
+ * have to repeat, so without this a genuine revocation of one token, or any other token its issuer
+ * signed (a capability, say), filed under another `jti` would revoke that token instead.
+ *
+ * Read from an untrusted, possibly unverified payload, so it tolerates any shape.
+ */
+function revokesJTI(payload: unknown, jti: string): boolean {
+  const claims = payload as { jti?: unknown; rev?: unknown } | null | undefined
+  return claims?.rev === true && claims.jti === jti
+}
+
 export function createRevocationChecker(
   backend: RevocationBackend,
   options?: RevocationOptions,
@@ -212,6 +225,11 @@ export function createRevocationChecker(
       if (typeof recordIssuer !== 'string') {
         return
       }
+      // Same reasoning for a record that does not state a revocation of this `jti`: even verified it
+      // could not revoke this token, so neither "could not check" nor a denied key can apply to it.
+      if (!revokesJTI(record.payload, jti)) {
+        return
+      }
       const sameIssuer = normalizeDID(recordIssuer) === normalizeDID(token.payload.iss)
       if (isUnresolvableIssuerError(error) && sameIssuer) {
         throw error
@@ -229,8 +247,12 @@ export function createRevocationChecker(
       return
     }
     // Only the issuer of a token may revoke it: the record's issuer must match the token's.
-    // A revocation signed by anyone else does not apply.
-    if (normalizeDID(verified.payload.iss) === normalizeDID(token.payload.iss)) {
+    // A revocation signed by anyone else does not apply, nor does a record that is not a
+    // revocation of this `jti` (see {@link revokesJTI}).
+    if (
+      revokesJTI(verified.payload, jti) &&
+      normalizeDID(verified.payload.iss) === normalizeDID(token.payload.iss)
+    ) {
       throw new TokenRevokedError(jti)
     }
   }
