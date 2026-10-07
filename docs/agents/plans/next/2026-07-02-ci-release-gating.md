@@ -55,7 +55,7 @@ test-depends-on-build fix above.
 Handed off from `completed/2026-10-07-kokuin-stores.complete.md`. The private `integration-tests`
 workspace (`tests/integration`, root script `test:integration`) runs the store-controller and
 store-delegation cases on Postgres via testcontainers, and on file-backed SQLite under
-`tablePrefix: 'kubun'`. It is the only coverage for Postgres collation, timestamptz/jsonb
+a custom `tablePrefix`. It is the only coverage for Postgres collation, timestamptz/jsonb
 round-trips, and concurrent HLC arbitration. No workflow runs it, and the package has no
 `test:unit`, so `turbo run test` skips it.
 

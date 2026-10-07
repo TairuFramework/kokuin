@@ -195,7 +195,7 @@ await checkCapability(permission, payload, { methods, verifyToken }) // throws V
 ```
 
 **Key points**:
-- Every write needs a caller-supplied `hlc` (byte-wise lexicographic order = causal order; fixed-width `<ISO time>:<counter>:<nodeID>`). Local-only consumers may invent increasing stamps; syncing consumers need a real HLC (`@kubun/hlc` today); mixing is unsupported
+- Every write needs a caller-supplied `hlc` (byte-wise lexicographic order = causal order; fixed-width `<ISO time>:<counter>:<nodeID>`). Local-only consumers may invent increasing stamps; syncing consumers need a real HLC; mixing is unsupported
 - `addDelegationToken` / `addRevocation` return an **approximate** changed flag, good for gating emission, never for correctness
 - Revocations are keyed `(jti, revoker_did)`: only the capability issuer's row binds. Enforce with `getRevocationByIssuer`; `isRevokedBy` is diagnostic only
 - The checker fails closed: a store read fault, or a resolver fault for the capability's own issuer, throws instead of reading as "not revoked". A fault resolving some other issuer is ignored, and `IssuerKeyNotFoundError` is an answer, not a fault

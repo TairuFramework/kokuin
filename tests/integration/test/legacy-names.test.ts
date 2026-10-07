@@ -8,8 +8,8 @@ import { delegationStoreCases, indexNames } from '../../../packages/store-delega
 import { type Backend, backends } from '../src/backends.js'
 import { type RawDB, rawStore } from '../src/helpers.js'
 
-// Databases written before the stores moved here use the `kubun_` physical names.
-const PREFIX = 'kubun'
+// Databases written by an earlier in-application implementation use a custom prefix.
+const PREFIX = 'legacy'
 
 function harness(b: Backend) {
   return { name: b.name, createAdapter: () => b.createAdapter(), cleanup: () => b.cleanup() }
@@ -47,25 +47,25 @@ describe.each(backends())('$name', (b) => {
   test('store and migration tables carry the prefix', async () => {
     expect(await tableNames(raw, db.adapter.kind)).toEqual(
       expect.arrayContaining([
-        'kubun_controller_logs',
-        'kubun_delegation_tokens',
-        'kubun_revoked_capabilities',
-        'kubun_controller_migration',
-        'kubun_delegation_migration',
+        'legacy_controller_logs',
+        'legacy_delegation_tokens',
+        'legacy_revoked_capabilities',
+        'legacy_controller_migration',
+        'legacy_delegation_migration',
       ]),
     )
   })
 
   test('secondary indexes carry the prefix', async () => {
-    expect(await indexNames(raw, db.adapter.kind, 'kubun_delegation_tokens')).toEqual(
+    expect(await indexNames(raw, db.adapter.kind, 'legacy_delegation_tokens')).toEqual(
       expect.arrayContaining([
-        'kubun_delegation_tokens_grantor_audience_idx',
-        'kubun_delegation_tokens_audience_exp_idx',
-        'kubun_delegation_tokens_jti_idx',
+        'legacy_delegation_tokens_grantor_audience_idx',
+        'legacy_delegation_tokens_audience_exp_idx',
+        'legacy_delegation_tokens_jti_idx',
       ]),
     )
-    expect(await indexNames(raw, db.adapter.kind, 'kubun_revoked_capabilities')).toContain(
-      'kubun_revoked_capabilities_verified_cap_exp_idx',
+    expect(await indexNames(raw, db.adapter.kind, 'legacy_revoked_capabilities')).toContain(
+      'legacy_revoked_capabilities_verified_cap_exp_idx',
     )
   })
 
@@ -73,16 +73,16 @@ describe.each(backends())('$name', (b) => {
   // primary-key index is an unnamed `sqlite_autoindex_*`, so only the stored DDL holds the name.
   test('primary keys carry the prefix', async () => {
     const expected = [
-      ['kubun_controller_logs', 'kubun_controller_logs_pkey'],
-      ['kubun_delegation_tokens', 'kubun_delegation_tokens_pkey'],
-      ['kubun_revoked_capabilities', 'kubun_revoked_capabilities_pkey'],
+      ['legacy_controller_logs', 'legacy_controller_logs_pkey'],
+      ['legacy_delegation_tokens', 'legacy_delegation_tokens_pkey'],
+      ['legacy_revoked_capabilities', 'legacy_revoked_capabilities_pkey'],
     ]
     if (db.adapter.kind === 'postgres') {
       const { rows } = await sql<{ table: string; name: string }>`
         select table_name as table, constraint_name as name
         from information_schema.table_constraints
         where table_schema = current_schema() and constraint_type = 'PRIMARY KEY'
-          and table_name like 'kubun\\_%'
+          and table_name like 'legacy\\_%'
         order by table_name`.execute(raw)
       expect(rows.map((row) => [row.table, row.name])).toEqual(expect.arrayContaining(expected))
     } else {
@@ -102,16 +102,16 @@ describe.each(backends())('$name', (b) => {
       where table_schema = current_schema() and column_name = 'hlc'
       order by table_name`.execute(raw)
     expect(rows).toEqual([
-      { table: 'kubun_delegation_tokens', collation: 'C' },
-      { table: 'kubun_revoked_capabilities', collation: 'C' },
+      { table: 'legacy_delegation_tokens', collation: 'C' },
+      { table: 'legacy_revoked_capabilities', collation: 'C' },
     ])
   })
 })
 
-describe.each(backends())('$name controller cases under the kubun prefix', (b) => {
+describe.each(backends())('$name controller cases under the legacy prefix', (b) => {
   describe('controller', () => controllerStoreCases(harness(b), { tablePrefix: PREFIX }))
 })
 
-describe.each(backends())('$name delegation cases under the kubun prefix', (b) => {
+describe.each(backends())('$name delegation cases under the legacy prefix', (b) => {
   describe('delegation', () => delegationStoreCases(harness(b), { tablePrefix: PREFIX }))
 })

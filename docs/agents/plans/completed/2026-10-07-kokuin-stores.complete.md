@@ -11,10 +11,10 @@ have no release intent: an intent would bump them to `0.2.0`. `store-controller`
 
 ## Goal
 
-Port kubun's controller-log store and delegation/revocation store into kokuin, built on hozon
-(`@hozon/db`, `@hozon/adapter`). Then any stack app that persists `did:kokuin:` controller logs or
-delegated capabilities and their revocations can register them, not only kubun. Removing kubun's
-own copies and adopting these stores is out of scope.
+Port an existing application's controller-log store and delegation/revocation store into kokuin,
+built on hozon (`@hozon/db`, `@hozon/adapter`). Then any stack app that persists `did:kokuin:`
+controller logs or delegated capabilities and their revocations can register them, not only that
+application. Removing its own copies and adopting these stores is out of scope.
 
 ## Why kokuin, not hozon
 
@@ -38,7 +38,7 @@ hozon. They import kysely types and `sql` through `@hozon/db`; `kysely` itself i
     - a record counts as evidence only if its payload is an object with a string `iss`,
       `rev === true` and `jti` equal to the capability's `jti`;
     - before this, it compared only `iss`, so any token an issuer signed, filed under any `jti`,
-      revoked that issuer's capability (a gap inherited from kubun).
+      revoked that issuer's capability (a gap inherited from the source implementation).
 - **`@kokuin/store-controller`:**
   - a hozon `StoreDefinition` named `controller`, table `controller_logs`;
   - `ControllerStoreAPI = LogStore & { getObservedAt }`;
@@ -47,13 +47,13 @@ hozon. They import kysely types and `sql` through `@hozon/db`; `kysely` itself i
 - **`@kokuin/store-delegation`:**
   - a hozon `StoreDefinition` named `delegation`, tables `delegation_tokens` and
     `revoked_capabilities`;
-  - every kubun method, with kubun's constants;
+  - every method and constant of the source implementation;
   - `createDelegationRevocationBackend`, `createDelegationRevocationChecker` and
     `VerifiedRevocationError`.
 - **`tests/integration` (`integration-tests`, private):**
   - runs both stores' shared cases on Postgres (a fresh database per adapter) and on file-backed
     SQLite;
-  - pins the legacy `tablePrefix: 'kubun'` names through catalog queries, `COLLATE "C"`, and jsonb
+  - pins the physical names under a custom legacy `tablePrefix` through catalog queries, `COLLATE "C"`, and jsonb
     round-trips;
   - a Postgres concurrency test cycles write order and fails when the `hlc` guard is removed.
 - **Docs:** `docs/reference/stores.md`, store sections in the capability/auth/discover skills,
@@ -63,8 +63,8 @@ hozon. They import kysely types and `sql` through `@hozon/db`; `kysely` itself i
 
 - **Naming.** Tables use logical names, prefixed by hozon's `TablePrefixPlugin` (default `hozon_`).
   Index and constraint names are `${tablePrefix}_…`. Migration ID `0-init` and store names
-  `controller`/`delegation` are kept. Under `tablePrefix: 'kubun'`, the data-table and
-  migration-bookkeeping names match kubun's; the index and primary-key names do not.
+  `controller`/`delegation` are kept. Under the source implementation's prefix, the data-table
+  and migration-bookkeeping names match its own; the index and primary-key names do not.
 - **Transactions.**
   - `addDelegationToken` and `addRevocation` pre-read and upsert inside `withStoreTransaction`,
     which joins an enclosing transaction. No store method calls `.transaction()`.
@@ -72,7 +72,7 @@ hozon. They import kysely types and `sql` through `@hozon/db`; `kysely` itself i
     signal. The SQL `hlc` arbiter keeps the stored row correct.
   - No statement binds more than 9 parameters (limit 500).
 - **Revocation GC.**
-  - Removed: kubun's sampled 1% purge inside `addDelegationToken` (a caught failure still aborted
+  - Removed: the source's sampled 1% purge inside `addDelegationToken` (a caught failure still aborted
     the enclosing Postgres transaction), along with `REVOCATION_GC_SAMPLE_RATE` and the logger.
     Consumers schedule `purgeExpiredRevocations` and `purgeDeadPendingRevocations` themselves.
   - Grace handling: `graceSeconds` is optional and defaults to 30 days. A value that is not a
@@ -85,18 +85,18 @@ hozon. They import kysely types and `sql` through `@hozon/db`; `kysely` itself i
     - grace covers the consumer's `clockTolerance`.
 
     These are documented, not enforced.
-  - A verified row whose `cap_exp` is null is never purged (kubun parity, documented).
+  - A verified row whose `cap_exp` is null is never purged (source parity, documented).
 - **HLC ordering.**
   - `hlc` is an opaque, caller-supplied string. Byte-wise (ASCII) order must match causal order.
   - SQL `>` and JS `<=` must agree, so the migration adds `COLLATE "C"` on Postgres.
-  - A legacy kubun Postgres database already has `0-init` recorded and keeps its locale collation.
+  - A legacy Postgres database already has `0-init` recorded and keeps its locale collation.
     Adopters must `ALTER … COLLATE "C"` both `hlc` columns. This is documented, with no migration
     added, because adoption is out of scope.
   - No HLC package dependency: local-only consumers may pass any increasing string of the format,
-    and syncing consumers need a real HLC (`@kubun/hlc` today).
+    and syncing consumers need a real HLC.
 - **Revocation checker.** `@kokuin/capability` is the only verifier. The store wrapper does no
-  verification of its own, which fixes kubun's wrapper:
-  - kubun's wrapper omitted `historic: true`, so revocations by a rotated issuer read as "not
+  verification of its own, which fixes the source's wrapper:
+  - that wrapper omitted `historic: true`, so revocations by a rotated issuer read as "not
     revoked";
   - it also bypassed the denied-key verdict.
 

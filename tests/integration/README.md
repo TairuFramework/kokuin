@@ -2,7 +2,7 @@
 
 Kokuin store integration tests against real node:sqlite files and a real Postgres server.
 They run the shared `@kokuin/store-controller` and `@kokuin/store-delegation` cases, pin the
-legacy `tablePrefix: 'kubun'` physical names, and race concurrent writers on Postgres.
+physical names under a custom `tablePrefix`, and race concurrent writers on Postgres.
 
 The store packages are loaded from their built `lib/`. Build them before a run.
 

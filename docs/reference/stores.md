@@ -137,9 +137,8 @@ guaranteed to agree on ASCII. A fixed-width serialized hybrid logical clock sati
 - **Local-only consumers** (no sync) may pass any strictly increasing string of that shape, for
   example `` `${new Date().toISOString()}:${String(counter).padStart(6, '0')}:${nodeID}` ``.
 - **Syncing consumers** need a real hybrid logical clock serialized in that format, so stamps from
-  different peers arbitrate correctly. Today that is
-  [`@kubun/hlc`](https://github.com/TairuFramework/kubun). A follow-on adds a helper and a stricter
-  type once the HLC package moves to sozai.
+  different peers arbitrate correctly. A follow-on adds a helper and a stricter type once an HLC
+  package lands in sozai.
 - **Mixing** locally invented stamps with real HLC stamps in a synced store is unsupported: the local
   stamps would win or lose on wall clock alone.
 
@@ -245,15 +244,15 @@ bookkeeping tables `<prefix>_controller_migration` and `<prefix>_delegation_migr
 indexes and primary keys `<prefix>_delegation_tokens_pkey`, `<prefix>_delegation_tokens_jti_idx`,
 and so on.
 
-A consumer migrating data created by the earlier in-application implementation passes
-`tablePrefix: 'kubun'`. With it, the **table and migration-bookkeeping names match** that
-implementation's (`kubun_controller_logs`, `kubun_delegation_tokens`,
-`kubun_revoked_capabilities`, same columns), but the **index and primary-key names do not**. Do not
+A consumer migrating data created by an earlier in-application implementation passes that
+implementation's prefix as `tablePrefix`. With it, the **table and migration-bookkeeping names
+match** (`<prefix>_controller_logs`, `<prefix>_delegation_tokens`,
+`<prefix>_revoked_capabilities`, same columns), but the **index and primary-key names do not**. Do not
 assume a byte-identical schema; `tests/integration` pins the physical names.
 
-Because `0-init` is already recorded in `kubun_delegation_migration`, it does not run against such a
+Because `0-init` is already recorded in `<prefix>_delegation_migration`, it does not run against such a
 database, so on Postgres the `hlc` columns do not get `COLLATE "C"`. Run the two `ALTER TABLE`
-statements from [the `hlc` contract](#the-hlc-contract) with `<prefix>` = `kubun` before relying on
+statements from [the `hlc` contract](#the-hlc-contract) with that `<prefix>` before relying on
 SQL/JS agreement.
 
 ## Tests

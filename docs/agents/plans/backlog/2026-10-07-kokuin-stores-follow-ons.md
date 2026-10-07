@@ -6,17 +6,17 @@ reviews; none block merge).
 
 ## Context
 
-`@kokuin/store-controller` and `@kokuin/store-delegation` port kubun's stores onto hozon. The
-items below were judged safe to merge without fixing. Each one is either hardening or work that
-belongs to kubun adoption.
+`@kokuin/store-controller` and `@kokuin/store-delegation` port an existing application's
+stores onto hozon. The items below were judged safe to merge without fixing. Each one is either
+hardening or work that belongs to that application's adoption.
 
 ## Work
 
-### Adoption (when kubun moves onto these stores)
+### Adoption (when the source application moves onto these stores)
 
-- **Legacy Postgres `hlc` collation.** Under `tablePrefix: 'kubun'`, `0-init` is already recorded,
-  so kubun's locale-collated `hlc` columns are never altered. SQL `>` and JS `<=` can then disagree
-  on the winner. Either ship an idempotent Postgres-only `1-hlc-collation` migration
+- **Legacy Postgres `hlc` collation.** Under the source application's `tablePrefix`, `0-init` is
+  already recorded, so its locale-collated `hlc` columns are never altered. SQL `>` and JS `<=`
+  can then disagree on the winner. Either ship an idempotent Postgres-only `1-hlc-collation` migration
   (`ALTER COLUMN hlc TYPE text COLLATE "C"` on `<prefix>_delegation_tokens` and
   `<prefix>_revoked_capabilities`), or make adopters run it. It is documented in
   `docs/reference/stores.md`.
