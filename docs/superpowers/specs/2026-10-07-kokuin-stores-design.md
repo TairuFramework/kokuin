@@ -62,9 +62,13 @@ delegated capabilities and their revocations can then register them, not only ku
   `purgeDeadPendingRevocations`.
 - Exported constants keep their values: `MAX_CAP_TTL_SECONDS`,
   `MAX_REVOCATION_FUTURE_DRIFT_SECONDS`, and `REVOCATION_GC_VERIFIED_GRACE_SECONDS`.
-- `createDelegationRevocationChecker`, `RevocationClaims` and `VerifiedRevocationError`
-  move, with the verify path reconciled (see "Revocation checker"). The error brand
-  becomes `@kokuin/store-delegation/VerifiedRevocationError`.
+- `createDelegationRevocationChecker` and `VerifiedRevocationError` move, restructured
+  (see "Revocation checker"), alongside a new `createDelegationRevocationBackend`.
+  `RevocationClaims` is re-exported from `@kokuin/capability`. The error brand becomes
+  `@kokuin/store-delegation/VerifiedRevocationError`.
+- Small changes in sibling packages, on the same branch: `@kokuin/capability` exports
+  `RevocationClaims`, `TokenRevokedError` and `isTokenRevokedError`. `@kokuin/token`
+  exports an unverified token decode if it has none.
 - Every DID crossing the store boundary is still folded through `normalizeDID`.
 
 ## Changes from the kubun originals
@@ -149,14 +153,40 @@ That call omits `historic: true` and returns `undefined` on `isIssuerKeyNotFound
 after a `did:kokuin:` issuer rotates, its earlier revocations read as "not revoked". It
 also bypasses `@kokuin/capability`'s denied-key verdict (`namesADeniedKey`).
 
-The ported checker must use the same verify options as `@kokuin/capability`'s revocation
-checker (`methods`, `resolver`, `cache`, `historic: true`). It must not short-circuit
-before capability's denied-key handling runs. The implementation either exports a
-shared helper from `@kokuin/capability` or restructures the wrapper so that only
-capability verifies the record, while the wrapper keeps its dependency-fault tracking.
-The plan picks one after reading both. The wrapper's observable contract is unchanged:
-a store or resolver fault rethrows, a proved revocation raises `VerifiedRevocationError`,
-and a corrupt record is not evidence.
+kokuin's `RevocationBackend.get` now takes `(jti, issuer)` (commit `5ba2b6c`), with
+`issuer` already normalized. That removes the reason for kubun's per-token backend,
+whose `get` closed over the issuer of the capability being checked. The ported
+checker is restructured so that `@kokuin/capability` is the only verifier:
+
+- **Backend.** `createDelegationRevocationBackend(api)` implements `RevocationBackend` once,
+  not per token. `get(jti, issuer)` calls `api.getRevocationByIssuer(jti, issuer)` and
+  returns the stored `revocation_token` decoded without verifying it. The interface
+  allows unverified records, and the checker re-verifies them. `@kokuin/token` has no public
+  unverified decode today, so it gains one (for example `decodeToken`) unless the plan
+  finds an existing one. `add` stays a no-op: revocations enter through
+  `addRevocation`, which needs `hlc` and cross-check context the interface does not
+  carry. The backend is exported, so it can be passed to `createRevocationChecker`
+  directly.
+- **Checker.** `createDelegationRevocationChecker(api, options?)` takes
+  `RevocationOptions` (`methods`, `resolver`, `cache`), not a bare `methods`. It wraps
+  `createRevocationChecker(backend, options)`, so verification uses capability's options
+  (`historic: true`) and denied-key handling (`namesADeniedKey`). It does no verification
+  of its own.
+- **Fault tracking stays.** The wrapper still wraps each method resolver and the store
+  read to record the first dependency fault. If capability's checker returns or throws
+  while a fault was recorded, the wrapper rethrows the fault. A resolver that cannot
+  answer must never read as "not revoked".
+- **Proved revocation.** Capability's checker raises `Error('Token revoked: <jti>')` on
+  both the verified path and the denied-key path. The wrapper should not match on that
+  message. `@kokuin/capability` gains a branded `TokenRevokedError` (same message, `cause`
+  kept) and an `isTokenRevokedError` guard, and the wrapper maps it to
+  `VerifiedRevocationError`.
+- **`RevocationClaims`.** `@kokuin/capability` defines it but its index does not export it.
+  It becomes exported there, and the store re-exports capability's type instead of its
+  own copy.
+
+The wrapper's observable contract is unchanged: a store or resolver fault rethrows, a
+proved revocation raises `VerifiedRevocationError`, and a corrupt record is not evidence.
 
 ### HLC ordering contract
 
@@ -209,7 +239,10 @@ dependency for tests only.
     `revoked_iat`;
   - checker: a revocation by a rotated `did:kokuin:` issuer is still proved, a record
     signed by a denied key revokes, a record signed by a never-published key is not
-    evidence, and a resolver fault rethrows;
+    evidence, a resolver fault rethrows, and a backend `get` scopes by the issuer it is
+    given (a co-member's record for the same `jti` is never returned);
+  - capability: both revocation paths throw `TokenRevokedError`, with the message
+    unchanged;
   - `hlc` tie-breaks on node ID agree between SQL and JS, on both backends;
   - `addDelegationToken` and `addRevocation` inside an enclosing `HozonDB.withTransaction`;
   - Postgres only: concurrent `addDelegationToken` and `addRevocation` on the same key
