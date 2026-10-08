@@ -17,6 +17,36 @@ import {
 import { now } from './time.js'
 import type { CapabilityToken, VerifyTokenHook } from './types.js'
 
+const TOKEN_REVOKED_BRAND = '@kokuin/capability/TokenRevokedError'
+
+/**
+ * Thrown by the revocation checker when a capability's issuer has revoked it.
+ *
+ * A type rather than a message so a caller can tell "revoked" from every other failure without
+ * matching text. Match with `isTokenRevokedError`, which compares a brand and so holds across
+ * duplicated copies of this package.
+ */
+export class TokenRevokedError extends Error {
+  static get brand(): string {
+    return TOKEN_REVOKED_BRAND
+  }
+
+  /** The brand, readable from an instance — what `isTokenRevokedError` matches on. */
+  get brand(): string {
+    return TOKEN_REVOKED_BRAND
+  }
+
+  constructor(jti: string, options?: ErrorOptions) {
+    super(`Token revoked: ${jti}`, options)
+    this.name = 'TokenRevokedError'
+  }
+}
+
+/** Whether a thrown value is a {@link TokenRevokedError}, by brand rather than `instanceof`. */
+export function isTokenRevokedError(value: unknown): value is TokenRevokedError {
+  return value instanceof Error && (value as { brand?: unknown }).brand === TOKEN_REVOKED_BRAND
+}
+
 export type RevocationClaims = {
   jti: string
   iss: string
@@ -145,6 +175,19 @@ async function namesADeniedKey(
   return (await resolveDenySet(iss)).has(kid)
 }
 
+/**
+ * Does this payload state a revocation of `jti`? A record is evidence about the one token it names,
+ * and only if it says it is a revocation. The backend files rows under a `jti` the record does not
+ * have to repeat, so without this a genuine revocation of one token, or any other token its issuer
+ * signed (a capability, say), filed under another `jti` would revoke that token instead.
+ *
+ * Read from an untrusted, possibly unverified payload, so it tolerates any shape.
+ */
+function revokesJTI(payload: unknown, jti: string): boolean {
+  const claims = payload as { jti?: unknown; rev?: unknown } | null | undefined
+  return claims?.rev === true && claims.jti === jti
+}
+
 export function createRevocationChecker(
   backend: RevocationBackend,
   options?: RevocationOptions,
@@ -175,7 +218,19 @@ export function createRevocationChecker(
       // which way it decides: a record claiming another issuer could not revoke this token anyway.
       // Without the gate, the untrusted backend could deny any capability by returning a record naming
       // an unresolvable DID it invented.
-      const sameIssuer = normalizeDID(record.payload.iss) === normalizeDID(token.payload.iss)
+      // The backend is untrusted and may hand back any decoded shape: a record with no string `iss`
+      // names no issuer, so it is not evidence -- and must not throw, or one malformed row denies
+      // every check of its `jti`.
+      const recordIssuer = (record.payload as { iss?: unknown } | null | undefined)?.iss
+      if (typeof recordIssuer !== 'string') {
+        return
+      }
+      // Same reasoning for a record that does not state a revocation of this `jti`: even verified it
+      // could not revoke this token, so neither "could not check" nor a denied key can apply to it.
+      if (!revokesJTI(record.payload, jti)) {
+        return
+      }
+      const sameIssuer = normalizeDID(recordIssuer) === normalizeDID(token.payload.iss)
       if (isUnresolvableIssuerError(error) && sameIssuer) {
         throw error
       }
@@ -186,16 +241,19 @@ export function createRevocationChecker(
         sameIssuer &&
         (await namesADeniedKey(record, options))
       ) {
-        // Same message as the verified path below, so a caller matching on it does not have to
-        // learn a second spelling; the resolution failure rides along as `cause` for a reader.
-        throw new Error(`Token revoked: ${jti}`, { cause: error })
+        // Same error as the verified path below; the resolution failure rides along as `cause`.
+        throw new TokenRevokedError(jti, { cause: error })
       }
       return
     }
     // Only the issuer of a token may revoke it: the record's issuer must match the token's.
-    // A revocation signed by anyone else does not apply.
-    if (normalizeDID(verified.payload.iss) === normalizeDID(token.payload.iss)) {
-      throw new Error(`Token revoked: ${jti}`)
+    // A revocation signed by anyone else does not apply, nor does a record that is not a
+    // revocation of this `jti` (see {@link revokesJTI}).
+    if (
+      revokesJTI(verified.payload, jti) &&
+      normalizeDID(verified.payload.iss) === normalizeDID(token.payload.iss)
+    ) {
+      throw new TokenRevokedError(jti)
     }
   }
 }

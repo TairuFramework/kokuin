@@ -1,0 +1,29 @@
+{
+  "name": "integration-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Kokuin store integration tests on node:sqlite files and Postgres",
+  "license": "MIT",
+  "sideEffects": false,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:types": "tsc --noEmit --skipLibCheck"
+  },
+  "dependencies": {
+    "@hozon/adapter": "catalog:",
+    "@hozon/db": "catalog:",
+    "@hozon/node-sqlite": "catalog:",
+    "@hozon/postgres": "catalog:",
+    "@kokuin/capability": "workspace:^",
+    "@kokuin/controller": "workspace:^",
+    "@kokuin/store-controller": "workspace:^",
+    "@kokuin/store-delegation": "workspace:^",
+    "@kokuin/token": "workspace:^",
+    "postgres": "catalog:"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "catalog:",
+    "@types/node": "catalog:"
+  }
+}

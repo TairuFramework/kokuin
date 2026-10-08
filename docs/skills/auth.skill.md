@@ -570,6 +570,33 @@ any claim whose subject is the profile rather than a device
 - The identity takes no `kid`: it derives exactly one key pair, so the `kid` is a fact about the
   signature. Passing a `kid` naming another key to `signToken` is rejected rather than ignored
 
+## Persisting Controller Logs (`@kokuin/store-controller`)
+
+A Hozon-backed `LogStore` for `did:kokuin:` event logs (one `controller_logs` row per DID).
+
+```typescript
+import { HozonDB } from '@hozon/db'
+import { controllerStoreDefinition, getControllerStore } from '@kokuin/store-controller'
+
+const db = new HozonDB({ adapter }) // @hozon/node-sqlite or @hozon/postgres
+db.register(controllerStoreDefinition)
+const logs = await getControllerStore(db)
+
+const resolver = createControllerResolver({
+  // The log as it arrives from sync or fetch -- not from `logs`, or the guard below compares the
+  // store with itself and checks nothing.
+  loadLog: (did) => fetchLog(did),
+  history: logs, // the resolver records each folded log and refuses one behind it
+})
+const observedAt = await logs.getObservedAt(did) // last explicit store write
+```
+
+- `set` is plain last-writer-wins. It does not arbitrate, so run an **untrusted** log through the
+  resolver's `authoritativeStates` / `history` guard before calling it
+- Passing the store as `history` makes the resolver refuse a log behind one already seen
+
+→ Reference: docs/reference/stores.md
+
 ## When to Use What
 
 **Use `@kokuin/token`** when:
@@ -596,6 +623,9 @@ Before depending on any of it, read `docs/reference/security.md`: the guarantees
 and the short list of things a consumer has to do — forward every optional resolver member through a
 wrapper, pass `methods` wherever a capability is checked, configure `history`, build a deny snapshot
 with `pruneDenySet`, and keep the seed off the daily path.
+
+**Use `@kokuin/store-controller`** when:
+- Controller logs must persist in SQLite or Postgres via Hozon
 
 **Use `@kokuin/node`** when:
 - Building Node.js servers or CLI tools

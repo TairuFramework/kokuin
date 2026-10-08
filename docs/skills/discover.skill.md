@@ -27,6 +27,12 @@ A self-certifying DID whose key set rotates through a key event log instead of l
 
 → [reference/controller.md](../reference/controller.md), and [reference/security.md](../reference/security.md) for the guarantees, the assumptions and the rules a consumer must follow. Read the second before depending on the first.
 
+### Persistence
+
+Hozon-backed stores for `did:kokuin:` controller logs and for delegation tokens and revocations, with a revocation checker over `@kokuin/capability`. Covers registration, tables, the `hlc` ordering contract, purge scheduling and the checker's fail-closed behaviour.
+
+→ [reference/stores.md](../reference/stores.md)
+
 ## Package Overview
 
 - **@kokuin/token** — Core identity and token primitives: `randomIdentity`, `createFullIdentity`, `signToken`, `verifyToken`, `stringifyToken`. The contract types also live here: `KeyStore`, `KeyEntry` (read/provide) and `MutableKeyEntry` (adds write/delete), plus `IdentityProvider`.
@@ -39,3 +45,5 @@ A self-certifying DID whose key set rotates through a key event log instead of l
 - **@kokuin/electron** — Electron keystore using `safeStorage` + `electron-store` (main process only). Exports `ElectronKeyStore`; call `store.provideIdentity(keyID)` for a `FullIdentity`.
 - **@kokuin/deterministic** — SLIP-0010 Ed25519 HD derivation from a seed phrase. Exports `HDKeyStore`, `HDKeyEntry`, `derivePrivateKey`, `resolveDerivationPath`; call `store.provideIdentity(keyID)` for a `FullIdentity` — async-only, there is no sync twin.
 - **@kokuin/ledger-device** — Ledger hardware wallet integration. Exports `createLedgerIdentityProvider` (an `IdentityProvider<FullIdentity>` — not a keystore class); call `provider.provideIdentity(keyID)` for a `FullIdentity`. Private keys never leave the device.
+- **@kokuin/store-controller** — Hozon store for `did:kokuin:` event logs: `controllerStoreDefinition`, `getControllerStore`, `createControllerStore`; implements `LogStore` plus `getObservedAt`.
+- **@kokuin/store-delegation** — Hozon store for delegation tokens and revocations: `delegationStoreDefinition`, `getDelegationStore`, `createDelegationRevocationChecker` (a `VerifyTokenHook`), `createDelegationRevocationBackend`, `purgeExpiredRevocations` / `purgeDeadPendingRevocations`.

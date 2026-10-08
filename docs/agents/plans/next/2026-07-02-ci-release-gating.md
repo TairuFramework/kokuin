@@ -50,6 +50,20 @@ package's built `lib/index.d.ts`; pnpm links workspace packages only into each c
 `node_modules`, so there is no root `node_modules/@kokuin` symlink to rely on. Depends on the
 test-depends-on-build fix above.
 
+### Store integration suite never runs in CI (Medium)
+
+Handed off from `completed/2026-10-07-kokuin-stores.complete.md`. The private `integration-tests`
+workspace (`tests/integration`, root script `test:integration`) runs the store-controller and
+store-delegation cases on Postgres via testcontainers, and on file-backed SQLite under
+a custom `tablePrefix`. It is the only coverage for Postgres collation, timestamptz/jsonb
+round-trips, and concurrent HLC arbitration. No workflow runs it, and the package has no
+`test:unit`, so `turbo run test` skips it.
+
+Add a job with Docker that builds the store packages first (the tests load `lib/`) and runs
+`test:integration`. The harness already throws when `CI=true` and Postgres is unavailable, so a
+missing Docker daemon fails loudly instead of skipping. Depends on the test-depends-on-build fix
+above.
+
 ## Out of scope
 
 - The security bug fixes those tests should cover — see the capability/token/keystore

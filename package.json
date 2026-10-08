@@ -13,6 +13,7 @@
     "prepare": "git config core.hooksPath .githooks",
     "release": "pnpm run build && pnpm publish -r",
     "test": "turbo run test:types test:unit",
+    "test:integration": "pnpm run --filter integration-tests test",
     "test:types": "turbo run test:types"
   },
   "devDependencies": {

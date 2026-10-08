@@ -809,4 +809,172 @@ describe('revocation', () => {
     )
     await expect(liveChecker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
   })
+
+  // The backend is untrusted: a decodable record of the wrong shape names no issuer, so it is not
+  // evidence, and must not throw out of the checker (one planted row would deny every check).
+  test.each([
+    ['a null payload', null],
+    ['a non-string iss', { jti: 'grant-shape', iss: 5, rev: true, iat: 0 }],
+  ])('a record with %s is not evidence and does not throw', async (_label, payload) => {
+    const issuer = randomIdentity()
+    const capability = await createCapability(issuer, {
+      sub: issuer.id,
+      aud: randomIdentity().id,
+      act: 'write',
+      res: 'doc/1',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      jti: 'grant-shape',
+    })
+    const record = {
+      data: 'e30.bnVsbA',
+      header: {},
+      payload,
+      signature: 'x',
+    } as unknown as RevocationRecord
+    const checker = createRevocationChecker({ add: async () => {}, get: async () => record })
+    await expect(checker(capability, stringifyToken(capability))).resolves.toBeUndefined()
+  })
+
+  // A record revokes the one token it names. The backend is untrusted and files rows under a `jti`
+  // the record itself does not have to repeat, so the checker must read the binding from the signed
+  // payload: `rev: true` and the same `jti`. Each case breaks exactly one of the two, so each guard is
+  // exercised on its own.
+  describe('a record is bound to the jti it is filed under', () => {
+    async function grantBy(
+      issuer: SigningIdentity,
+      jti: string,
+      options?: { methods: Array<DIDMethodResolver> },
+    ) {
+      return await createCapability(
+        issuer,
+        { sub: issuer.id, aud: 'did:key:bob', act: '*', res: '*', jti },
+        undefined,
+        options,
+      )
+    }
+    const serving = (record: RevocationRecord) => ({
+      async add() {},
+      async get() {
+        return record
+      },
+    })
+
+    test('a genuine revocation of another jti does not revoke', async () => {
+      const issuer = randomIdentity()
+      const capA = await grantBy(issuer, 'jti-A')
+      const capB = await grantBy(issuer, 'jti-B')
+      const revokesA = await createRevocationRecord(issuer, 'jti-A')
+      const checker = createRevocationChecker(serving(revokesA))
+
+      await expect(checker(capB, stringifyToken(capB))).resolves.toBeUndefined()
+      // Control: the same record does revoke the token it names.
+      await expect(checker(capA, stringifyToken(capA))).rejects.toThrow('revoked')
+    })
+
+    test('a signed token that is not a revocation does not revoke', async () => {
+      const issuer = randomIdentity()
+      const capB2 = await grantBy(issuer, 'jti-B2')
+      // The issuer's own capability: same `iss`, same `jti`, valid signature, no `rev`.
+      const notARevocation = capB2 as unknown as RevocationRecord
+      const checker = createRevocationChecker(serving(notARevocation))
+      await expect(checker(capB2, stringifyToken(capB2))).resolves.toBeUndefined()
+
+      // `rev` present but not `true` is not a revocation either.
+      const revFalse = (await issuer.signToken({
+        jti: 'jti-B2',
+        rev: false,
+        iat: Math.floor(Date.now() / 1000),
+      })) as unknown as RevocationRecord
+      await expect(
+        createRevocationChecker(serving(revFalse))(capB2, stringifyToken(capB2)),
+      ).resolves.toBeUndefined()
+
+      // Control: a genuine revocation of the same jti revokes.
+      const genuine = await createRevocationRecord(issuer, 'jti-B2')
+      await expect(
+        createRevocationChecker(serving(genuine))(capB2, stringifyToken(capB2)),
+      ).rejects.toThrow('revoked')
+    })
+
+    describe('on the denied-key path', () => {
+      const liveKid = '#zLiveAuthorityKey'
+      const deniedKid = '#zLeakedAuthorityKey'
+
+      function deniedKeyProfile() {
+        const identity = createSigningIdentityForDID(profileDID, randomPrivateKey())
+        // Answers for the live key only, so every record signed under the denied `kid` fails
+        // verification with `IssuerKeyNotFoundError` and reaches the denied-key branch.
+        const keyFor = async (did: string, header?: { kid?: string }) => {
+          if (did !== profileDID) {
+            throw new Error(`Unknown DID: ${did}`)
+          }
+          if (header?.kid != null && header.kid !== liveKid) {
+            throw new IssuerKeyNotFoundError('kid names a key the controller does not hold')
+          }
+          return { alg: 'EdDSA' as const, publicKey: identity.publicKey }
+        }
+        const resolver: DIDMethodResolver = {
+          method: 'kokuin',
+          resolve: keyFor,
+          resolveHistoric: keyFor,
+          resolveDenySet: async () => new Set([deniedKid]),
+        }
+        return { identity, options: { methods: [resolver] } }
+      }
+
+      const signedUnderDeniedKey = async (identity: SigningIdentity, payload: object) =>
+        (await identity.signToken(
+          { iat: Math.floor(Date.now() / 1000), ...payload },
+          { header: { kid: deniedKid } },
+        )) as unknown as RevocationRecord
+
+      test('a revocation of another jti does not revoke', async () => {
+        const { identity, options } = deniedKeyProfile()
+        const capB = await grantBy(identity, 'jti-B', options)
+        const revokesA = await signedUnderDeniedKey(identity, { jti: 'jti-A', rev: true })
+        await expect(
+          createRevocationChecker(serving(revokesA), options)(capB, stringifyToken(capB)),
+        ).resolves.toBeUndefined()
+
+        // Control: the same shape naming this jti does reach the branch and revoke.
+        const revokesB = await signedUnderDeniedKey(identity, { jti: 'jti-B', rev: true })
+        await expect(
+          createRevocationChecker(serving(revokesB), options)(capB, stringifyToken(capB)),
+        ).rejects.toThrow('revoked')
+      })
+
+      test('a token without rev: true does not revoke', async () => {
+        const { identity, options } = deniedKeyProfile()
+        const capB2 = await grantBy(identity, 'jti-B2', options)
+        const noRev = await signedUnderDeniedKey(identity, { jti: 'jti-B2' })
+        await expect(
+          createRevocationChecker(serving(noRev), options)(capB2, stringifyToken(capB2)),
+        ).resolves.toBeUndefined()
+      })
+    })
+
+    test('an unresolvable own issuer with a record about another jti is not a fault', async () => {
+      // The record could not revoke this token even if it verified, so there is nothing that
+      // "could not check" is hiding. Control: the same record naming this jti still fails closed.
+      const root = createSigningIdentityForDID(profileDID, randomPrivateKey())
+      const capB = await grantBy(root, 'jti-B')
+      const revokesA = (await root.signToken({
+        jti: 'jti-A',
+        rev: true,
+        iat: Math.floor(Date.now() / 1000),
+      })) as RevocationRecord
+      await expect(
+        createRevocationChecker(serving(revokesA))(capB, stringifyToken(capB)),
+      ).resolves.toBeUndefined()
+
+      const revokesB = (await root.signToken({
+        jti: 'jti-B',
+        rev: true,
+        iat: Math.floor(Date.now() / 1000),
+      })) as RevocationRecord
+      await expect(
+        createRevocationChecker(serving(revokesB))(capB, stringifyToken(capB)),
+      ).rejects.toThrow(UnresolvableIssuerError)
+    })
+  })
 })

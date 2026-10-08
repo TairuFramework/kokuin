@@ -36,5 +36,8 @@ See the `kigu:conventions` skill. Repo-specific only:
   not a `versioning.fixed` group -- pnpm cascades a patch through the internal workspace
   dependency graph on its own. `expo`, `electron`, and `ledger-device` are SDK/hardware-bound and
   float independently.
+- Store methods (`@kokuin/store-*`) use `withStoreTransaction` from `@hozon/db`, never
+  `.transaction()`: it joins an enclosing transaction instead of nesting one. No statement binds
+  more than 500 parameters.
 - All dev tooling and shared config comes from `@kigu/dev`. Extend `@kigu/dev/tsconfig.json`,
   `["@kigu/dev/biome.json"]`, and `@kigu/dev/swc.json`.

@@ -41,11 +41,18 @@ export {
   DENY_SET_UNAVAILABLE,
 } from './delegation.js'
 export { assertValidPattern, hasPartsMatch, hasPermission, isMatch } from './patterns.js'
-export type { RevocationBackend, RevocationOptions, RevocationRecord } from './revocation.js'
+export type {
+  RevocationBackend,
+  RevocationClaims,
+  RevocationOptions,
+  RevocationRecord,
+} from './revocation.js'
 export {
   createMemoryRevocationBackend,
   createRevocationChecker,
   createRevocationRecord,
+  isTokenRevokedError,
+  TokenRevokedError,
 } from './revocation.js'
 export {
   assertDeviceCapabilityPolicy,
