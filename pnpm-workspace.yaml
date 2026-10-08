@@ -35,7 +35,7 @@ catalog:
   '@electron-forge/cli': ^8.0.1
   '@electron-forge/plugin-vite': ^8.0.1
   '@hozon/adapter': ^0.1.0
-  '@hozon/db': ^0.2.1
+  '@hozon/db': ^0.2.2
   '@hozon/node-sqlite': ^0.1.0
   '@hozon/postgres': ^0.1.0
   '@opentelemetry/api': ^1.9.1
@@ -62,7 +62,7 @@ catalog:
   '@types/react': ^19.3.0
   '@types/react-dom': ^19.3.0
   '@vitejs/plugin-react': ^6.1.2
-  electron: ^44.5.1
+  electron: ^44.6.0
   electron-store: ^11.0.2
   expo: ^57.0.27
   expo-crypto: ^57.0.2

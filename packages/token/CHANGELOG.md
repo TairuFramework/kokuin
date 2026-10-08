@@ -1,5 +1,11 @@
 # @kokuin/token
 
+## 0.5.1
+
+### Patch Changes
+
+- Add decodeSignedToken, which decodes a compact signed token into its header, payload and signature without verifying it
+
 ## 0.5.0
 
 ### Minor Changes
