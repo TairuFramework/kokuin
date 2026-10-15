@@ -1,4 +1,4 @@
-import type { DIDCache, DIDResolver, MethodRegistry, SignedToken } from '@kokuin/token'
+import type { DIDCache, DIDResolver, MethodRegistry, SignedToken, Verifiers } from '@kokuin/token'
 
 /** Hook called for each token during verification. Throw to reject. */
 export type VerifyTokenHook = (token: CapabilityToken, raw: string) => void | Promise<void>
@@ -21,6 +21,8 @@ export type DelegationChainOptions = {
    * alone, such as `did:kokuin:`.
    */
   methods?: MethodRegistry
+  /** Optional signature verifiers, forwarded to `verifyToken` for every capability in the chain. */
+  verifiers?: Verifiers
 }
 
 /** Options for capability creation */
@@ -44,6 +46,8 @@ export type CreateCapabilityOptions = {
    * leaving this one call site one option short of its neighbours.
    */
   methods?: MethodRegistry
+  /** Optional signature verifiers, forwarded to `verifyToken` when verifying the parent capability. */
+  verifiers?: Verifiers
 }
 
 export type Permission = {

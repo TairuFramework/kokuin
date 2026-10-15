@@ -77,6 +77,7 @@ export async function createCapability<
     cache: options.cache,
     resolver: options.resolver,
     methods: options.methods,
+    verifiers: options.verifiers,
     // See {@link HISTORIC_ISSUANCE}. The parent was minted before this delegation exists at all.
     historic: HISTORIC_ISSUANCE,
   })
@@ -258,6 +259,7 @@ export async function checkDelegationChain(
     cache: options?.cache,
     resolver: options?.resolver,
     methods: options?.methods,
+    verifiers: options?.verifiers,
     // See {@link HISTORIC_ISSUANCE}.
     historic: HISTORIC_ISSUANCE,
   })
@@ -357,6 +359,7 @@ export async function checkCapability(
     cache: options?.cache,
     resolver: options?.resolver,
     methods: options?.methods,
+    verifiers: options?.verifiers,
     // See {@link HISTORIC_ISSUANCE}.
     historic: HISTORIC_ISSUANCE,
   })

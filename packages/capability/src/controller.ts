@@ -400,6 +400,7 @@ export function createControllerCapabilityVerifier(
         cache: options.cache,
         resolver: options.resolver,
         methods,
+        verifiers: options.verifiers,
         // Issued at some position of this log, and the revoke names it later (maybe post-rotate).
         // Verifying against the prefix head's keys alone would let routine rotation unfold the log.
         // The prefix is still the position, so nothing after this event is in scope.

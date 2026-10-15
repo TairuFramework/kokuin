@@ -35,14 +35,14 @@ catalog:
   '@electron-forge/cli': ^8.0.1
   '@electron-forge/plugin-vite': ^8.0.1
   '@hozon/adapter': ^0.1.0
-  '@hozon/db': ^0.2.2
+  '@hozon/db': ^0.2.3
   '@hozon/node-sqlite': ^0.1.0
   '@hozon/postgres': ^0.1.0
   '@opentelemetry/api': ^1.9.1
   '@opentelemetry/sdk-trace-base': ^2.12.0
   '@opentelemetry/sdk-trace-node': ^2.12.0
   '@sozai/async': ^0.4.0
-  '@sozai/codec': ^0.4.2
+  '@sozai/codec': ^0.4.3
   '@sozai/json': ^0.3.0
   '@sozai/lock': ^0.1.2
   '@sozai/log': ^0.4.0
@@ -50,22 +50,22 @@ catalog:
   '@sozai/runtime': ^0.1.0
   '@sozai/runtime-expo': ^0.2.2
   '@sozai/schema': ^0.1.6
-  '@napi-rs/keyring': ^2.1.0
+  '@napi-rs/keyring': ^2.1.1
   '@noble/ciphers': ^2.4.0
   '@noble/curves': ^2.4.0
   '@noble/hashes': ^2.4.0
-  '@playwright/test': 1.63.0
+  '@playwright/test': 1.64.1
   '@scure/base': ^2.4.0
   '@scure/bip39': ^2.4.0
-  '@testcontainers/postgresql': ^12.1.0
-  '@types/node': ^26.6.4
+  '@testcontainers/postgresql': ^12.2.1
+  '@types/node': ^26.6.5
   '@types/react': ^19.3.0
   '@types/react-dom': ^19.3.0
   '@vitejs/plugin-react': ^6.1.2
-  electron: ^44.6.0
-  electron-store: ^11.0.2
-  expo: ^57.0.27
-  expo-crypto: ^57.0.2
+  electron: ^44.7.2
+  electron-store: ^12.0.0
+  expo: ^57.0.28
+  expo-crypto: ^57.0.4
   expo-secure-store: ^57.0.3
   expo-status-bar: ^57.0.1
   kysely: ^0.29.6
@@ -74,10 +74,10 @@ catalog:
   react: 19.3.0
   react-dom: 19.3.0
   react-native: 0.86.0
-  react-native-web: 0.21.3
+  react-native-web: 0.21.4
   typescript: ^6.0.3
   uint8arrays: ^6.1.1
-  vite: ^8.3.3
+  vite: ^8.3.4
   '@kigu/dev': ^0.3.2
 
 catalogMode: prefer

@@ -593,6 +593,31 @@ describe('checkCapability()', () => {
       }),
     ).resolves.not.toThrow()
   })
+
+  test('forwards verifiers to every capability in the chain', async () => {
+    const alice = randomIdentity()
+    const bob = randomIdentity()
+    const capability = await createCapability(alice, {
+      sub: alice.id,
+      aud: bob.id,
+      act: 'test/read',
+      res: 'foo/bar',
+    })
+    const bobToken = await bob.signToken({
+      sub: alice.id,
+      act: 'test/read',
+      res: 'foo/bar',
+      cap: stringifyToken(capability),
+    })
+    const permission = { act: 'test/read', res: 'foo/bar' }
+
+    await expect(checkCapability(permission, bobToken.payload)).resolves.toBeUndefined()
+    const EdDSA = vi.fn(() => false)
+    await expect(
+      checkCapability(permission, bobToken.payload, { verifiers: { EdDSA } }),
+    ).rejects.toThrow()
+    expect(EdDSA).toHaveBeenCalled()
+  })
 })
 
 describe('checkCapability() - self-issued tokens (C-02)', () => {
