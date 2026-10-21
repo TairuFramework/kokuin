@@ -162,7 +162,7 @@ export function controllerStoreCases(
     await put(did, log)
 
     const resolver = createControllerResolver({
-      loadLog: async (loadDID) => (await store.get(loadDID))?.chain,
+      loadLog: async (loadDID) => await store.get(loadDID),
       history: store,
     })
     const resolved = await resolver.resolve(did, {})
@@ -206,7 +206,7 @@ export function controllerStoreCases(
 
   test('resolve rejects an unknown DID', async () => {
     const resolver = createControllerResolver({
-      loadLog: async (loadDID) => (await store.get(loadDID))?.chain,
+      loadLog: async (loadDID) => await store.get(loadDID),
       history: store,
     })
     await expect(resolver.resolve('did:kokuin:unknown', {})).rejects.toThrow(/Unknown DID/)
@@ -240,7 +240,7 @@ export function controllerStoreCases(
 
       let served: Array<SignedEvent> = full
       const resolver = createControllerResolver({
-        loadLog: async () => served,
+        loadLog: async () => ({ chain: served, events: [] }),
         history: store,
       })
 
@@ -261,7 +261,9 @@ export function controllerStoreCases(
 
       // No `history`, so nothing to compare against: the prefix is taken at face value. This is the
       // silent revocation bypass the guard closes, isolating the history comparison as what bites.
-      const resolver = createControllerResolver({ loadLog: async () => truncated })
+      const resolver = createControllerResolver({
+        loadLog: async () => ({ chain: truncated, events: [] }),
+      })
       const set = await denySet(resolver, did)
       expect(set.has(denyEntry)).toBe(false)
       expect(set.size).toBe(0)
@@ -285,7 +287,7 @@ export function controllerStoreCases(
 
       let served: Array<SignedEvent> = full
       const resolver = createControllerResolver({
-        loadLog: async () => served,
+        loadLog: async () => ({ chain: served, events: [] }),
         history: store,
       })
 

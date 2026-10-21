@@ -28,14 +28,13 @@ export async function provideControllerIdentity({
 }: ProvideControllerIdentityParams): Promise<FullIdentity> {
   const seed = await entry.provideAsync()
   const did = didFor(seed, profile)
-  let log = (await logStore.get(did))?.chain
-  if (log == null || log.length === 0) {
+  let log = await logStore.get(did)
+  if (log == null || log.chain.length === 0) {
     const inception = [createInception(seed, profile)]
     // Through the merge, so a log another writer stored meanwhile is kept rather than overwritten.
-    const stored = await logStore.merge(did, async (current) =>
+    log = await logStore.merge(did, async (current) =>
       current != null && current.chain.length > 0 ? current : { chain: inception, events: [] },
     )
-    log = stored.chain
   }
   return createControllerIdentity({ seed, profile, log })
 }

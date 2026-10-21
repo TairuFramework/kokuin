@@ -40,12 +40,18 @@ describe('a rotated-away authority key, at the capability path', () => {
 
     // The verifier sees the WHOLE log: the profile has rotated, so the inception key is retired.
     const methods: MethodRegistry = [
-      createControllerResolver({ loadLog: async (asked) => (asked === did ? fullLog : undefined) }),
+      createControllerResolver({
+        loadLog: async (asked) => (asked === did ? { chain: fullLog, events: [] } : undefined),
+      }),
     ]
 
     // The thief signs as the profile using only the PREFIX — i.e. with the rotated-away key,
     // naming it in `kid`. This is what holding a leaked, since-rotated authority key gives you.
-    const stolen = createControllerIdentity({ seed, profile: 0, log: [inception] })
+    const stolen = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
     const thiefDevice = await randomIdentity()
 
     const minted = await createCapability(stolen, {
@@ -101,7 +107,7 @@ describe('a rotated-away authority key, at the capability path', () => {
     const remediedLog = [inception, rotate, revoke]
     const remedied: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) => (asked === did ? remediedLog : undefined),
+        loadLog: async (asked) => (asked === did ? { chain: remediedLog, events: [] } : undefined),
       }),
     ]
 
@@ -123,7 +129,11 @@ describe('a rotated-away authority key, at the capability path', () => {
     // profile currently holds still grants. Without this row a rejection above could just as well
     // be the third event making the log unfoldable, or historic resolution collapsing outright —
     // both of which would "pass" the assertion while denying every honest holder too.
-    const owner = createControllerIdentity({ seed, profile: 0, log: remediedLog })
+    const owner = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: remediedLog, events: [] },
+    })
     const honestDevice = await randomIdentity()
     const honest = stringifyToken(
       await createCapability(owner, {

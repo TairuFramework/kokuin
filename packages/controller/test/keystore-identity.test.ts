@@ -5,7 +5,9 @@ import { isFullIdentity } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
 import { agreementPath, deriveKeyPair } from '../src/derivation.js'
+import { createRevoke } from '../src/epoch-events.js'
 import { createInception, createRotate, didFromInception } from '../src/events.js'
+import { foldLog } from '../src/fold.js'
 import { createMemoryLogStore } from '../src/history.js'
 import { provideControllerIdentity } from '../src/keystore-identity.js'
 
@@ -90,6 +92,32 @@ describe('provideControllerIdentity', () => {
     const token = await identity.signToken({ sub: 'x' })
     // After a rotate the authority key is the rotate's revealed key, so the kid names it.
     expect(token.header.kid).toBe(`#${rot.event.k[0]}`)
+  })
+
+  test('restores from a stored log carrying epoch events, and keeps them', async () => {
+    const seed = new Uint8Array(32).fill(7)
+    const logStore = createMemoryLogStore()
+    const inception = createInception(seed, 0)
+    const did = didFromInception(inception.event)
+    const folded = foldLog(did, { chain: [inception], events: [] })
+    if (!folded.ok) throw new Error('did not fold')
+    const revoke = createRevoke({
+      signer: { root: { seed, profile: 0 } },
+      did,
+      head: folded.head,
+      parents: [folded.head.epoch],
+      target: 'did:key:zDevice',
+    })
+    await logStore.merge(did, async () => ({ chain: [inception], events: [revoke] }))
+
+    const identity = await provideControllerIdentity({
+      entry: memoryEntry(seed),
+      profile: 0,
+      logStore,
+    })
+    expect(identity.id).toBe(did)
+    // Restoring reads; it never rewrites the stored epoch away.
+    expect((await logStore.get(did))?.events).toEqual([revoke])
   })
 })
 

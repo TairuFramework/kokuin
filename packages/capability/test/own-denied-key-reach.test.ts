@@ -63,17 +63,25 @@ const revoked: Array<SignedEvent> = [
 ]
 
 function registry(log: Array<SignedEvent>): MethodRegistry {
-  return [createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) })]
+  return [
+    createControllerResolver({
+      loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
+    }),
+  ]
 }
 
 /** Signs as the profile with the leaked key — what holding a since-rotated key gives you. */
-const thief = createControllerIdentity({ seed, profile: 0, log: [inception] })
+const thief = createControllerIdentity({
+  seed,
+  profile: 0,
+  log: { chain: [inception], events: [] },
+})
 /**
  * Signs as the profile with the key the first rotate established: published on both logs, never
  * denied, so it differs from `thief` only in which key signed. (The denying rotate establishes a key
  * of its own, which `rotated` has never published.)
  */
-const owner = createControllerIdentity({ seed, profile: 0, log: rotated })
+const owner = createControllerIdentity({ seed, profile: 0, log: { chain: rotated, events: [] } })
 
 const holder = createSigningIdentity(new Uint8Array(32).fill(61))
 

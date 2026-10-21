@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
+import { createRevoke } from '../src/epoch-events.js'
 import {
   createInception,
   createRotate,
@@ -11,8 +12,10 @@ import {
   type SignedEvent,
   signEvent,
 } from '../src/events.js'
+import { foldLog } from '../src/fold.js'
 import { createControllerIdentity } from '../src/identity.js'
 import { encodeKey } from '../src/keys.js'
+import type { ControllerLog } from '../src/log.js'
 import { buildTwoKeyLog } from './two-key-log.js'
 
 const seed = new Uint8Array(32).fill(7)
@@ -26,7 +29,11 @@ describe('createControllerIdentity()', () => {
   test('binds the identity to the did:kokuin: DID, not a did:key:', async () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const identity = createControllerIdentity({ seed, profile: 0, log: [inception] })
+    const identity = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
 
     expect(identity.id).toBe(did)
 
@@ -35,7 +42,11 @@ describe('createControllerIdentity()', () => {
   })
 
   test('keeps the payload issuer guard', async () => {
-    const identity = createControllerIdentity({ seed, profile: 0, log: [createInception(seed, 0)] })
+    const identity = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [createInception(seed, 0)], events: [] },
+    })
     await expect(
       identity.signToken({ iss: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK' }),
     ).rejects.toThrow(/issuer does not match signer/)
@@ -52,7 +63,11 @@ describe('createControllerIdentity()', () => {
       options: { snapshot: { members: [], deny: [] } },
     })
 
-    const identity = createControllerIdentity({ seed, profile: 0, log: [inception, rotate] })
+    const identity = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception, rotate], events: [] },
+    })
     const publicKey = encodeKey(identity.publicKey, 'EdDSA')
 
     // The key the rotate published, which is the only one the resolver will answer with.
@@ -78,13 +93,51 @@ describe('createControllerIdentity()', () => {
     // match the inception's `n`, so the fold rejects it.
     const forged = { ...rotate, event: { ...rotate.event, k: [inception.event.k[0]] } }
 
-    expect(() => createControllerIdentity({ seed, profile: 0, log: [inception, forged] })).toThrow(
-      /invalid rotate/,
-    )
+    expect(() =>
+      createControllerIdentity({
+        seed,
+        profile: 0,
+        log: { chain: [inception, forged], events: [] },
+      }),
+    ).toThrow(/invalid rotate/)
   })
 
   test('refuses an empty log', () => {
-    expect(() => createControllerIdentity({ seed, profile: 0, log: [] })).toThrow(/empty log/)
+    expect(() =>
+      createControllerIdentity({ seed, profile: 0, log: { chain: [], events: [] } }),
+    ).toThrow(/empty log/)
+  })
+
+  test('refuses a bare event array, the shape a log had before epochs', () => {
+    const legacy = [createInception(seed, 0)] as unknown as ControllerLog
+    expect(() => createControllerIdentity({ seed, profile: 0, log: legacy })).toThrow(
+      /malformed log/,
+    )
+  })
+
+  test('signs from the chain whatever epoch events ride along', () => {
+    const inception = createInception(seed, 0)
+    const did = didFromInception(inception.event)
+    const head = foldLog(did, { chain: [inception], events: [] })
+    if (!head.ok) throw new Error('did not fold')
+    const revoke = createRevoke({
+      signer: { root: { seed, profile: 0 } },
+      did,
+      head: head.head,
+      parents: [head.head.epoch],
+      target: device,
+    })
+    const bare = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
+    const withEpoch = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [revoke, { not: 'an event' }] as ControllerLog['events'] },
+    })
+    expect(withEpoch.publicKey).toEqual(bare.publicKey)
   })
 
   test('refuses a log whose first event is not an inception', () => {
@@ -98,26 +151,30 @@ describe('createControllerIdentity()', () => {
       options: { snapshot: { members: [], deny: [] } },
     })
 
-    expect(() => createControllerIdentity({ seed, profile: 0, log: [rotate] })).toThrow(
-      /must be an inception/,
-    )
+    expect(() =>
+      createControllerIdentity({ seed, profile: 0, log: { chain: [rotate], events: [] } }),
+    ).toThrow(/must be an inception/)
   })
 
   test('refuses a seed that does not control this log', () => {
     const inception = createInception(seed, 0)
     const other = new Uint8Array(32).fill(9)
 
-    expect(() => createControllerIdentity({ seed: other, profile: 0, log: [inception] })).toThrow(
-      /is not one of the current authority keys/,
-    )
+    expect(() =>
+      createControllerIdentity({
+        seed: other,
+        profile: 0,
+        log: { chain: [inception], events: [] },
+      }),
+    ).toThrow(/is not one of the current authority keys/)
   })
 
   test('refuses the wrong profile index for this log', () => {
     const inception = createInception(seed, 0)
 
-    expect(() => createControllerIdentity({ seed, profile: 1, log: [inception] })).toThrow(
-      /is not one of the current authority keys/,
-    )
+    expect(() =>
+      createControllerIdentity({ seed, profile: 1, log: { chain: [inception], events: [] } }),
+    ).toThrow(/is not one of the current authority keys/)
   })
 
   test('refuses a log carrying a chain revoke, which the root chain no longer has', () => {
@@ -138,16 +195,20 @@ describe('createControllerIdentity()', () => {
     } as unknown as SignedEvent
     const log = [inception, revoke]
 
-    expect(() => createControllerIdentity({ seed, profile: 0, log })).toThrow(
-      /unknown critical event type: rev/,
-    )
+    expect(() =>
+      createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
+    ).toThrow(/unknown critical event type: rev/)
   })
 })
 
 describe('createControllerIdentity() kid', () => {
   test('stamps the kid of the key it signs with', async () => {
     const inception = createInception(seed, 0)
-    const identity = createControllerIdentity({ seed, profile: 0, log: [inception] })
+    const identity = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
 
     const signed = await identity.signToken({ hello: 'world' })
     expect(signed.header.kid).toBe(`#${inception.event.k[0]}`)
@@ -164,7 +225,11 @@ describe('createControllerIdentity() kid', () => {
       options: { snapshot: { members: [], deny: [] } },
     })
 
-    const identity = createControllerIdentity({ seed, profile: 0, log: [inception, rotate] })
+    const identity = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception, rotate], events: [] },
+    })
     const signed = await identity.signToken({ hello: 'world' })
 
     expect(signed.header.kid).toBe(`#${rotate.event.k[0]}`)
@@ -174,7 +239,7 @@ describe('createControllerIdentity() kid', () => {
   test('signs with the seed-derived key when the set publishes another key first', async () => {
     // A hand-built two-key inception — see `two-key-log.ts`. The controller's key is `k[1]`.
     const { log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
-    const identity = createControllerIdentity({ seed, profile: 0, log })
+    const identity = createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } })
 
     expect(encodeKey(identity.publicKey, 'EdDSA')).toBe(controllerKey)
     const signed = await identity.signToken({ hello: 'world' })
@@ -186,7 +251,11 @@ describe('createControllerIdentity() kid', () => {
 
   test('keeps caller header fields alongside the kid', async () => {
     const inception = createInception(seed, 0)
-    const identity = createControllerIdentity({ seed, profile: 0, log: [inception] })
+    const identity = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
 
     const signed = await identity.signToken(
       { hello: 'world' },
@@ -198,7 +267,11 @@ describe('createControllerIdentity() kid', () => {
 
   test('an explicit undefined kid in the caller header does not erase the stamp', async () => {
     const inception = createInception(seed, 0)
-    const identity = createControllerIdentity({ seed, profile: 0, log: [inception] })
+    const identity = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
 
     // Pins the spread order: under `{ kid, ...options.header }` a header carrying an explicit
     // `undefined` kid overwrites the stamp — and the mismatch guard does not fire, since
@@ -209,7 +282,11 @@ describe('createControllerIdentity() kid', () => {
 
   test('accepts a caller kid that names the key it signs with', async () => {
     const inception = createInception(seed, 0)
-    const identity = createControllerIdentity({ seed, profile: 0, log: [inception] })
+    const identity = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
     const kid = `#${inception.event.k[0]}`
 
     const signed = await identity.signToken({ hello: 'world' }, { header: { kid } })
@@ -218,7 +295,7 @@ describe('createControllerIdentity() kid', () => {
 
   test('refuses a caller kid naming any other key', async () => {
     const { log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
-    const identity = createControllerIdentity({ seed, profile: 0, log })
+    const identity = createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } })
 
     // The co-signer's key is in the published set, so the resolver would accept it — but this
     // identity cannot sign with it. Silently dropping the caller's kid would mint a token whose
@@ -232,7 +309,7 @@ describe('createControllerIdentity() kid', () => {
 
   test('refuses a caller kid passed as the key-selection option too', async () => {
     const { log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
-    const identity = createControllerIdentity({ seed, profile: 0, log })
+    const identity = createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } })
 
     // `SignTokenOptions.kid` selects among a multi-key identity's keys, and the DID-bound identity
     // underneath ignores it outright. Ignoring it here would be the same silent mis-selection as
@@ -252,7 +329,11 @@ describe('controller identity is a FullIdentity', () => {
     const inception = createInception(seed, profile)
     const did = didFromInception(inception.event)
 
-    const identity = createControllerIdentity({ seed, profile, log: [inception] })
+    const identity = createControllerIdentity({
+      seed,
+      profile,
+      log: { chain: [inception], events: [] },
+    })
 
     expect(identity.id).toBe(did)
     expect(isFullIdentity(identity)).toBe(true)
@@ -290,8 +371,8 @@ describe('controller identity is a FullIdentity', () => {
     }
     const tampered = { event, sigs: signEvent(event, [current.privateKey]) }
 
-    expect(() => createControllerIdentity({ seed, profile, log: [tampered] })).toThrow(
-      /agreement key is not one of the current agreement keys/,
-    )
+    expect(() =>
+      createControllerIdentity({ seed, profile, log: { chain: [tampered], events: [] } }),
+    ).toThrow(/agreement key is not one of the current agreement keys/)
   })
 })

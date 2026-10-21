@@ -53,8 +53,8 @@ function registryFor(log: Array<SignedEvent>, otherLog: Array<SignedEvent> = [ot
   const methods: MethodRegistry = [
     createControllerResolver({
       loadLog: async (asked) => {
-        if (asked === did) return log
-        if (asked === otherDID) return otherLog
+        if (asked === did) return { chain: log, events: [] }
+        if (asked === otherDID) return { chain: otherLog, events: [] }
         return undefined
       },
     }),

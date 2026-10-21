@@ -14,7 +14,9 @@ describe('encrypting to a did:kokuin: profile', () => {
     const seed = new Uint8Array(32).fill(3)
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const resolver = createControllerResolver({ loadLog: async () => [inception] })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: [inception], events: [] }),
+    })
 
     const encrypter = await createTokenEncrypterAsync(did, { methods: [resolver] })
     const jwe = await encryptToken(encrypter, encoder.encode('hello'))
@@ -41,7 +43,9 @@ describe('encrypting to a did:kokuin: profile', () => {
       prior: inception.event,
       options: { snapshot: { members: [], deny: [] } },
     })
-    const resolver = createControllerResolver({ loadLog: async () => [inception, rotate] })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: [inception, rotate], events: [] }),
+    })
 
     const encrypter = await createTokenEncrypterAsync(did, { methods: [resolver] })
     const jwe = await encryptToken(encrypter, encoder.encode('hello, rotated'))

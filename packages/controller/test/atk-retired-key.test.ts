@@ -16,7 +16,11 @@ const seed = new Uint8Array(32).fill(1)
 const strangerSeed = new Uint8Array(32).fill(88)
 
 function registry(log: Array<SignedEvent>, did: string) {
-  return [createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) })]
+  return [
+    createControllerResolver({
+      loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
+    }),
+  ]
 }
 
 /**

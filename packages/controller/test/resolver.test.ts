@@ -36,7 +36,9 @@ describe('createControllerResolver()', () => {
 
   test('resolves the current signing key from the folded log', async () => {
     const { icp, did } = build()
-    const resolver = createControllerResolver({ loadLog: async () => [icp] })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: [icp], events: [] }),
+    })
     const resolved = await resolver.resolve(did, {})
     expect(resolved.alg).toBe('EdDSA')
     expect(resolved.publicKey).toEqual(decodeKey(at(icp.event.k, 0)).publicKey)
@@ -50,7 +52,9 @@ describe('createControllerResolver()', () => {
 
   test('rejects a log that does not fold to the requested DID', async () => {
     const { icp } = build()
-    const resolver = createControllerResolver({ loadLog: async () => [icp] })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: [icp], events: [] }),
+    })
     await expect(resolver.resolve('did:kokuin:zWRONG', {})).rejects.toThrow()
   })
 
@@ -63,7 +67,9 @@ describe('createControllerResolver()', () => {
       prior: icp.event,
       options: { snapshot: { members: [], deny: [] } },
     })
-    const resolver = createControllerResolver({ loadLog: async () => [icp, rot] })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: [icp, rot], events: [] }),
+    })
     const resolved = await resolver.resolve(did, {})
     expect(resolved.publicKey).toEqual(decodeKey(at(rot.event.k, 0)).publicKey)
     expect(resolved.publicKey).not.toEqual(decodeKey(at(icp.event.k, 0)).publicKey)
@@ -73,7 +79,7 @@ describe('createControllerResolver()', () => {
 describe('createControllerResolver().resolve() with a kid', () => {
   test('resolves the key named by kid, not the first key', async () => {
     const { did, log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
-    const resolver = createControllerResolver({ loadLog: async () => log })
+    const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
 
     const resolved = await resolver.resolve(did, { kid: `#${controllerKey}` })
     expect(resolved.alg).toBe('EdDSA')
@@ -85,7 +91,7 @@ describe('createControllerResolver().resolve() with a kid', () => {
 
   test('resolves keys[0] when the header carries no kid', async () => {
     const { did, log, cosignerKey } = buildTwoKeyLog(seed)
-    const resolver = createControllerResolver({ loadLog: async () => log })
+    const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
 
     const resolved = await resolver.resolve(did, {})
     expect(resolved.publicKey).toEqual(decodeKey(cosignerKey).publicKey)
@@ -93,7 +99,7 @@ describe('createControllerResolver().resolve() with a kid', () => {
 
   test('a kid naming a key this profile never published is rejected', async () => {
     const { did, log } = buildTwoKeyLog(seed)
-    const resolver = createControllerResolver({ loadLog: async () => log })
+    const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
     const stranger = strangerKey()
 
     // Rejected, never answered with `keys[0]`: a verifier told which key signed must not fall
@@ -116,7 +122,9 @@ describe('createControllerResolver().resolve() with a kid', () => {
       prior: icp.event,
       options: { snapshot: { members: [], deny: [] } },
     })
-    const resolver = createControllerResolver({ loadLog: async () => [icp, rot] })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: [icp, rot], events: [] }),
+    })
     const retired = at(icp.event.k, 0)
 
     // A rotate is routine hygiene, so it must not invalidate what the profile signed before it —
@@ -137,7 +145,9 @@ describe('createControllerResolver().resolve() with a kid', () => {
   test('a kid naming a key from a superseded generation is rejected', async () => {
     const { icp, did } = build()
     const reset = createReset(seed, 0, 1)
-    const resolver = createControllerResolver({ loadLog: async () => [icp, reset] })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: [icp, reset], events: [] }),
+    })
     const retired = at(icp.event.k, 0)
 
     await expect(resolver.resolveHistoric?.(did, { kid: `#${retired}` })).rejects.toThrow(
@@ -145,14 +155,16 @@ describe('createControllerResolver().resolve() with a kid', () => {
     )
     // Control: the same kid resolves against a resolver whose log stops before the reset, so the
     // rejection is the generation bump and not the kid form being unusable.
-    const preReset = createControllerResolver({ loadLog: async () => [icp] })
+    const preReset = createControllerResolver({
+      loadLog: async () => ({ chain: [icp], events: [] }),
+    })
     const resolved = await preReset.resolveHistoric?.(did, { kid: `#${retired}` })
     expect(resolved?.publicKey).toEqual(decodeKey(retired).publicKey)
   })
 
   test('a kid that is not a fragment is rejected rather than matched bare', async () => {
     const { did, log, controllerKey } = buildTwoKeyLog(seed)
-    const resolver = createControllerResolver({ loadLog: async () => log })
+    const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
 
     // The format is `#<the multibase key exactly as it appears in `k`>`. Accepting the bare key
     // as well would make two spellings valid forever on a wire-visible format.
@@ -191,14 +203,18 @@ describe('createControllerResolver() and a revoked key', () => {
     // new issuance but still answers the historic question, because an already-issued capability
     // has to survive a routine rotate. Rotation is not what retires a key for what it has already
     // signed.
-    const afterRotate = createControllerResolver({ loadLog: async () => rotated })
+    const afterRotate = createControllerResolver({
+      loadLog: async () => ({ chain: rotated, events: [] }),
+    })
     await expect(afterRotate.resolveHistoric?.(did, { kid: `#${leaked}` })).resolves.toEqual({
       alg: 'EdDSA',
       publicKey: decodeKey(leaked).publicKey,
     })
 
     // One more event — a rotate whose snapshot denies the key — and the same question is refused.
-    const afterRevoke = createControllerResolver({ loadLog: async () => revoked })
+    const afterRevoke = createControllerResolver({
+      loadLog: async () => ({ chain: revoked, events: [] }),
+    })
     await expect(afterRevoke.resolveHistoric?.(did, { kid: `#${leaked}` })).rejects.toThrow(
       `Controller ${did} kid names a key the controller has revoked: #${leaked}`,
     )
@@ -209,7 +225,9 @@ describe('createControllerResolver() and a revoked key', () => {
     // the position an artefact's `kid` reaches back to — would let a thief be answered from before
     // the revoke, which is the whole class of attack the `aud` rule already closes.
     const { did, leaked, revoked } = revokedKeyLog()
-    const resolver = createControllerResolver({ loadLog: async () => revoked })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: revoked, events: [] }),
+    })
     const folded = foldLog(did, { chain: revoked, events: [] })
     if (!folded.ok) throw new Error('did not fold')
     expect(at(folded.states, 0).keys).toContain(leaked)
@@ -224,7 +242,9 @@ describe('createControllerResolver() and a revoked key', () => {
     // The control every row above needs: the revoke must deny one key, not break the log. Without
     // this, a fold that rejected the whole three-event log would look identical from the outside.
     const { did, rot, rev, revoked } = revokedKeyLog()
-    const resolver = createControllerResolver({ loadLog: async () => revoked })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: revoked, events: [] }),
+    })
     const current = at(rev.event.k, 0)
 
     await expect(resolver.resolve(did, {})).resolves.toEqual({
@@ -251,7 +271,9 @@ describe('createControllerResolver() and a revoked key', () => {
       prior: rev.event,
       options: { snapshot: { members: [], deny: [] } },
     })
-    const resolver = createControllerResolver({ loadLog: async () => [...revoked, cleared] })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: [...revoked, cleared], events: [] }),
+    })
 
     await expect(resolver.resolveHistoric?.(did, { kid: `#${leaked}` })).rejects.toThrow(
       /snapshot drops a retired key denial/,
@@ -278,7 +300,7 @@ describe('createControllerResolver() shared folds', () => {
         entered++
         setTimeout(release, 0)
         await gate
-        return [icp]
+        return { chain: [icp], events: [] }
       },
     })
 
@@ -303,7 +325,7 @@ describe('createControllerResolver() shared folds', () => {
     const resolver = createControllerResolver({
       loadLog: async () => {
         calls++
-        return log
+        return { chain: log, events: [] }
       },
     })
 
@@ -334,7 +356,7 @@ describe('createControllerResolver() shared folds', () => {
     const resolver = createControllerResolver({
       loadLog: async () => {
         if (++calls === 1) throw new Error('store unavailable')
-        return [icp]
+        return { chain: [icp], events: [] }
       },
     })
 
@@ -355,7 +377,7 @@ describe('createControllerResolver() shared folds', () => {
         calls++
         // Synchronous re-entry: no await before this line.
         void resolver.resolve(did, {}).catch(() => undefined)
-        return [icp]
+        return { chain: [icp], events: [] }
       },
     })
 
@@ -372,7 +394,9 @@ describe('createControllerResolver() shared folds', () => {
 describe('createControllerResolver().resolveAgreementKey()', () => {
   test('resolves the agreement key set from the folded state', async () => {
     const { icp, did } = build()
-    const resolver = createControllerResolver({ loadLog: async () => [icp] })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: [icp], events: [] }),
+    })
     const keys = await resolver.resolveAgreementKey?.(did)
     expect(keys).toHaveLength(1)
     const key = keys?.[0]
@@ -390,7 +414,9 @@ describe('createControllerResolver().resolveAgreementKey()', () => {
       prior: icp.event,
       options: { snapshot: { members: [], deny: [] } },
     })
-    const resolver = createControllerResolver({ loadLog: async () => [icp, rot] })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: [icp, rot], events: [] }),
+    })
     const keys = await resolver.resolveAgreementKey?.(did)
     const key = keys?.[0]
     if (key === undefined) throw new Error('expected an agreement key')
@@ -419,7 +445,7 @@ describe('createStateResolver()', () => {
     })
     const result = foldLog(did, { chain: [icp, rot], events: [] })
     if (!result.ok) throw new Error('did not fold')
-    const resolver = createStateResolver(did, result.states)
+    const resolver = createStateResolver(did, result.states, result.head)
 
     expect(resolver.method).toBe('kokuin')
     await expect(resolver.resolve(did, {})).resolves.toEqual({
@@ -446,7 +472,7 @@ describe('createStateResolver()', () => {
 
   // The head arm of the deny check in `signingKeyFrom`. It is unreachable from a log this package
   // folded — the fold refuses to deny a key the profile publishes — but `createStateResolver` is
-  // handed a `states` array, and the invariant is the fold's property, not the array's. A third
+  // handed a head, and the invariant is the fold's property, not the head's. A third
   // party's fold, or a cached snapshot, can produce one.
   test('refuses a head key the state it was handed also denies', async () => {
     const { icp, did } = build()
@@ -457,12 +483,15 @@ describe('createStateResolver()', () => {
 
     // Control: the identical state, identical key, and an empty deny set — so what refuses below
     // is the denial and not the hand-built state.
-    await expect(createStateResolver(did, [head]).resolve(did, { kid: target })).resolves.toEqual({
+    await expect(
+      createStateResolver(did, [head], head).resolve(did, { kid: target }),
+    ).resolves.toEqual({
       alg: 'EdDSA',
       publicKey: decodeKey(at(head.keys, 0)).publicKey,
     })
 
-    const denying = createStateResolver(did, [{ ...head, deny: new Set([target]) }])
+    const denied = { ...head, deny: new Set([target]) }
+    const denying = createStateResolver(did, [denied], denied)
     await expect(denying.resolve(did, { kid: target })).rejects.toThrow(/has revoked/)
     // And with no `kid` at all, where the answer is volunteered rather than asked for.
     await expect(denying.resolve(did, {})).rejects.toThrow(/has revoked/)
@@ -474,10 +503,9 @@ describe('createStateResolver()', () => {
     if (!result.ok) throw new Error('did not fold')
     const head = at(result.states, 0)
 
-    expect(await createStateResolver(did, [head]).resolveAgreementKey?.(did)).toHaveLength(1)
-    const denying = createStateResolver(did, [
-      { ...head, deny: new Set([`#${at(head.agreement, 0)}`]) },
-    ])
+    expect(await createStateResolver(did, [head], head).resolveAgreementKey?.(did)).toHaveLength(1)
+    const denied = { ...head, deny: new Set([`#${at(head.agreement, 0)}`]) }
+    const denying = createStateResolver(did, [denied], denied)
     // Empty rather than an error: to `@kokuin/jwe` that is "nothing to encrypt to", which is the
     // fail-closed direction.
     expect(await denying.resolveAgreementKey?.(did)).toEqual([])
@@ -497,10 +525,12 @@ describe('createStateResolver()', () => {
 
     // Position 0 — before the denying rotate — and position 1, from the same fold.
     await expect(
-      createStateResolver(did, result.states.slice(0, 1)).resolveDenySet?.(did),
+      createStateResolver(did, result.states.slice(0, 1), at(result.states, 0)).resolveDenySet?.(
+        did,
+      ),
     ).resolves.toEqual(new Set())
-    await expect(createStateResolver(did, result.states).resolveDenySet?.(did)).resolves.toEqual(
-      new Set([device]),
-    )
+    await expect(
+      createStateResolver(did, result.states, result.head).resolveDenySet?.(did),
+    ).resolves.toEqual(new Set([device]))
   })
 })

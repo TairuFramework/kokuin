@@ -1,15 +1,10 @@
-import type {
-  DIDMethodResolver,
-  ResolvedAgreementKey,
-  ResolvedSigningKey,
-  ResolveIssuerHeader,
-} from '@kokuin/token'
+import type { DIDMethodResolver } from '@kokuin/token'
 
-import { DID_PREFIX, type SignedEvent } from './events.js'
-import type { KeyState } from './fold.js'
-import { authoritativeLog, type LogStore } from './history.js'
-import { allStates } from './state.js'
-import { agreementKeysFrom, DID_METHOD, signingKeyFrom } from './state-resolver.js'
+import type { EpochLimits } from './epoch.js'
+import { DID_PREFIX } from './events.js'
+import { authoritativeLogWithin, type LogStore } from './history.js'
+import { type ControllerLog, isControllerLog } from './log.js'
+import { type FoldedView, resolverOver } from './state-resolver.js'
 
 const CONTEXT = 'Controller resolver'
 
@@ -17,8 +12,9 @@ export type ControllerResolverOptions = {
   /**
    * Load a controller's event log. Returns undefined when the DID is unknown.
    *
-   * **Answer with the whole log**: the fold needs every event, and a prefix resolves to a head that
-   * is missing whatever came after it.
+   * **Answer with the whole log**: the fold needs every chain event and every current-epoch event,
+   * and a prefix resolves to a head that is missing whatever came after it — a withheld epoch revoke
+   * is a denial this resolution does not see.
    *
    * Reuse the instance rather than building one per resolution: concurrent resolutions of one DID
    * share a single in-flight fold. Not a cache — the entry drops as soon as the fold settles.
@@ -27,7 +23,7 @@ export type ControllerResolverOptions = {
    * through *this* resolver joins the calling fold and awaits a promise that cannot settle. Give such
    * a hook a resolver of its own.
    */
-  loadLog(did: string): Promise<Array<SignedEvent> | undefined>
+  loadLog(did: string): Promise<ControllerLog | undefined>
   /**
    * Where to remember the last log accepted for each DID, so a later one that is *behind* it is
    * refused rather than answered from. Without one, truncation is a silent revocation bypass: a peer
@@ -42,11 +38,39 @@ export type ControllerResolverOptions = {
 }
 
 /**
+ * A `did:kokuin:` resolver that can also hand out frozen views of itself.
+ *
+ * `frozen()` returns a resolver that loads and folds each DID at most once for its lifetime and
+ * answers every member from that one fold. A verification asking several questions of one controller
+ * — is the issuer a member, which key does it pin, until when, is any audience on the delegation
+ * chain denied — must get them all from one state of the log: answered live, a revoke landing
+ * between two of them gives a verdict no single state of the log supports (a member checked before
+ * its removal, a denial checked after a settlement dropped it). Use one view per verification and
+ * drop it after, since it never sees anything newer than its first fold.
+ */
+export type ControllerResolver = DIDMethodResolver & { frozen(): DIDMethodResolver }
+
+/**
  * A `did:kokuin:` resolver for `@kokuin/token`. Injected rather than imported by token: this package
  * depends on token for signing, so the reverse import would cycle. Token resolves `iss` through the
  * interface without knowing the fold exists.
+ *
+ * Every member answers from the head (the chain's last state merged with the current epoch) except
+ * `resolveHistoric`, which scans the chain's states for a rotated-away key. While the epoch is
+ * saturated, every member refuses (see `resolverOver`).
  */
-export function createControllerResolver(options: ControllerResolverOptions): DIDMethodResolver {
+export function createControllerResolver(options: ControllerResolverOptions): ControllerResolver {
+  return createControllerResolverWithin(options)
+}
+
+/**
+ * {@link createControllerResolver} under lowered epoch limits. Test-only: saturation is then
+ * reachable without thousands of signatures. Not exported from the package.
+ */
+export function createControllerResolverWithin(
+  options: ControllerResolverOptions,
+  limits?: Partial<EpochLimits>,
+): ControllerResolver {
   // The fold currently under way for each DID, so overlapping resolutions of one DID share it (two
   // tokens from one issuer verified in parallel is ordinary — token caches only `did:peer:4`).
   //
@@ -56,38 +80,39 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
   // rather than an await-chained Ed25519 loop that starves the timer queue.
   //
   // Not a cache: removed as soon as the fold settles, so a later resolution re-folds.
-  const inFlight = new Map<string, Promise<Array<KeyState>>>()
+  const inFlight = new Map<string, Promise<FoldedView>>()
 
-  // Shared by every member: load, fold, throw `Unknown DID` when absent. The whole state array
-  // rather than the head, because `resolveHistoric` answers about rotated-away keys; head-only
-  // members take `states[states.length - 1]`.
-  async function computeStates(did: string): Promise<Array<KeyState>> {
-    const events = await options.loadLog(did)
-    if (events == null || events.length === 0) {
+  // Shared by every member: load, fold, throw `Unknown DID` when absent. The chain's states as well
+  // as the head, because `resolveHistoric` answers about rotated-away keys.
+  async function computeView(did: string): Promise<FoldedView> {
+    const log = await options.loadLog(did)
+    if (log == null || (isControllerLog(log) && log.chain.length === 0)) {
       throw new Error(`Unknown DID: ${did}`)
     }
+    // Without a store, the same fold against no memory: the request limit, the chain, then the
+    // epoch — one path, so the two configurations cannot disagree about what a log means.
     if (options.history == null) {
-      return allStates(did, events, CONTEXT)
+      return authoritativeLogWithin({ did, loaded: log, seen: undefined, context: CONTEXT }, limits)
+        .result
     }
     // Compared against what this party last accepted, so a truncated log — folding cleanly, missing
     // the revoke that matters — is refused. See `LogStore`.
     // Inside the store's merge, so two resolutions of one DID never lose each other's events. A log
     // that lost throws out of the update, so nothing is written and the store never moves backwards.
-    let states: Array<KeyState> = []
+    // The answer is the merged fold — what was seen plus what was loaded — not the presentation.
+    let view: FoldedView | undefined
     await options.history.merge(did, async (seen) => {
-      const settled = authoritativeLog({
-        did,
-        loaded: { chain: events, events: [] },
-        seen,
-        context: CONTEXT,
-      })
-      states = settled.result.states
+      const settled = authoritativeLogWithin({ did, loaded: log, seen, context: CONTEXT }, limits)
+      view = settled.result
       return settled.log
     })
-    return states
+    if (view === undefined) {
+      throw new Error(`${CONTEXT}: the log store did not run the merge for ${did}`)
+    }
+    return view
   }
 
-  async function loadStates(did: string): Promise<Array<KeyState>> {
+  async function loadView(did: string): Promise<FoldedView> {
     if (!did.startsWith(DID_PREFIX)) {
       throw new Error(`Unknown DID: ${did}`)
     }
@@ -100,7 +125,7 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
     // Deferred by a microtask so the entry is registered *before* `loadLog` runs — otherwise a
     // `loadLog` that re-enters `resolve` before its own first `await` recurses to a stack overflow
     // while the map is still empty.
-    const fold = Promise.resolve().then(() => computeStates(did))
+    const fold = Promise.resolve().then(() => computeView(did))
     inFlight.set(did, fold)
     try {
       return await fold
@@ -113,41 +138,27 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
   }
 
   return {
-    method: DID_METHOD,
-    // The head's key set only: a profile that rotated away from a key answers "no" for it here, which
-    // is what makes `rotate` retire a leaked authority key rather than add one beside it.
-    async resolve(did: string, header: ResolveIssuerHeader = {}): Promise<ResolvedSigningKey> {
-      return signingKeyFrom({ did, states: await loadStates(did), header })
-    },
-    // Every key set within the current generation, for a caller verifying past-issued material. A
-    // `rotate` must not invalidate those; a `reset` still does, and the scan stops at the generation
-    // boundary. See `signingKeyFrom` in `state-resolver.ts`.
-    async resolveHistoric(
-      did: string,
-      header: ResolveIssuerHeader = {},
-    ): Promise<ResolvedSigningKey> {
-      return signingKeyFrom({ did, states: await loadStates(did), header, historic: true })
-    },
-    async resolveDenySet(did: string): Promise<ReadonlySet<string>> {
-      // The head's set, deliberately, not the state at any position a capability names: `iat` is
-      // author-supplied and backdatable, so anchoring to it would let a revoked holder pick a
-      // position at which it was not yet denied. The set is position-dependent *within the fold*; the
-      // question a verifier asks is "is this grant valid now". Both spellings ride in it (see
-      // `KeyState.deny`); the key half is enforced by `signingKeyFrom`, and the two forms cannot
-      // collide. `loadStates` throws `Unknown DID` rather than answering an empty (= "nobody
-      // revoked") set.
-      const states = await loadStates(did)
-      const head = states[states.length - 1]
-      if (head === undefined) {
-        throw new Error(`Unknown DID: ${did}`)
-      }
-      return head.deny
-    },
-    async resolveAgreementKey(did: string): Promise<Array<ResolvedAgreementKey>> {
-      // The head's set only, unlike `resolve`. A retired agreement key is a downgrade, not a grant
-      // the profile already made: the recipient decrypts old ciphertexts by re-deriving from the
-      // seed, never by resolution.
-      return agreementKeysFrom(did, await loadStates(did))
+    ...resolverOver(loadView),
+    frozen(): DIDMethodResolver {
+      // The promise, not the settled view: concurrent first calls for one DID join one load and
+      // fold, rather than each starting its own and answering from whichever settled.
+      const views = new Map<string, Promise<FoldedView>>()
+      return resolverOver((did) => {
+        const known = views.get(did)
+        if (known !== undefined) {
+          return known
+        }
+        const view = loadView(did)
+        views.set(did, view)
+        // A failed load is no answer to freeze: dropped, so a later call loads afresh. Every answer
+        // this view gave for the DID came from that failure, so the next fold is still its first.
+        view.catch(() => {
+          if (views.get(did) === view) {
+            views.delete(did)
+          }
+        })
+        return view
+      })
     },
   }
 }

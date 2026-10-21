@@ -22,7 +22,9 @@ describe('createControllerResolver().resolve() algorithm passthrough', () => {
   test('surfaces whatever algorithm the decoded key carries, not a hardcoded EdDSA', async () => {
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const resolver = createControllerResolver({ loadLog: async () => [icp] })
+    const resolver = createControllerResolver({
+      loadLog: async () => ({ chain: [icp], events: [] }),
+    })
 
     const mockedDecodeKey = vi.mocked(keys.decodeKey)
     mockedDecodeKey.mockReturnValueOnce({

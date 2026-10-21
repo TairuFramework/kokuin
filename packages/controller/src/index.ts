@@ -124,7 +124,12 @@ export {
   pruneLog,
 } from './log.js'
 export { enumerateProfiles, handleForDID, type ProfileEntry } from './profiles.js'
-export { type ControllerResolverOptions, createControllerResolver } from './resolver.js'
+export {
+  type ControllerResolver,
+  type ControllerResolverOptions,
+  createControllerResolver,
+} from './resolver.js'
+export { EPOCH_SATURATED, MEMBER_NOT_EFFECTIVE } from './state-resolver.js'
 export {
   type Duplicity,
   type ResolveFailure,

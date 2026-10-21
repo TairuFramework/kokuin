@@ -79,10 +79,20 @@ describe('TokenRevokedError', () => {
       }),
     ]
     const registry = (log: Array<SignedEvent>): MethodRegistry => [
-      createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) }),
+      createControllerResolver({
+        loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
+      }),
     ]
-    const thief = createControllerIdentity({ seed, profile: 0, log: [inception] })
-    const owner = createControllerIdentity({ seed, profile: 0, log: revoked })
+    const thief = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
+    const owner = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: revoked, events: [] },
+    })
     const holder = createSigningIdentity(new Uint8Array(32).fill(61))
 
     const capability = await createCapability(owner, {

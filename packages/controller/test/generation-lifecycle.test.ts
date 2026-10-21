@@ -66,13 +66,13 @@ const rotateAgain = createRotate({
 const reset = createReset(seed, 0, 1)
 
 function resolverFor(log: Array<SignedEvent>) {
-  return createControllerResolver({ loadLog: async () => log })
+  return createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
 }
 
 /** A token signed by the identity the given log's head establishes. */
 async function tokenFrom(log: Array<SignedEvent>) {
   return await signToken(
-    createControllerIdentity({ seed, profile: 0, log }),
+    createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
     createUnsignedToken({ n: 1 }),
   )
 }

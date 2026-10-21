@@ -46,7 +46,11 @@ const at = <T>(items: ReadonlyArray<T>, i: number): T => {
 const seed = new Uint8Array(32).fill(31)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity({ seed, profile: 0, log: [inception] })
+const controller = createControllerIdentity({
+  seed,
+  profile: 0,
+  log: { chain: [inception], events: [] },
+})
 
 const delegate = createSigningIdentity(new Uint8Array(32).fill(41))
 const bystander = createSigningIdentity(new Uint8Array(32).fill(43))
@@ -54,7 +58,9 @@ const bystander = createSigningIdentity(new Uint8Array(32).fill(43))
 /** The log the resolver folds, rebuilt per test. */
 let log: Array<SignedEvent> = [inception]
 const methods: MethodRegistry = [
-  createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) }),
+  createControllerResolver({
+    loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
+  }),
 ]
 
 /** A rotate on `prior` whose snapshot is exactly `deny`, signed by the profile. */
@@ -163,7 +169,10 @@ describe('a capability whose audience the profile has revoked', () => {
 
     // The capability has to be re-minted: a reset discards the prior generation, so one signed
     // under it no longer resolves at all. What this asserts is that the denial itself is gone.
-    const regranted = await mintFor(delegate, createControllerIdentity({ seed, profile: 0, log }))
+    const regranted = await mintFor(
+      delegate,
+      createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
+    )
     await expect(invoke(delegate, regranted)).resolves.toBeUndefined()
   })
 
@@ -380,7 +389,10 @@ describe('what the deny lookup costs a caller-supplied chain', () => {
     // it. Exactly zero, not "at most maxDepth" — moving the lookup back above the bound yields one
     // call, which every looser assertion admits.
     let denyCalls = 0
-    const inner = createControllerResolver({ loadLog: async (asked) => (asked === did ? log : []) })
+    const inner = createControllerResolver({
+      loadLog: async (asked) =>
+        asked === did ? { chain: log, events: [] } : { chain: [], events: [] },
+    })
     const counting: DIDMethodResolver = {
       method: 'kokuin',
       resolve: (asked, header) => inner.resolve(asked, header),
@@ -426,7 +438,10 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
     // Making the member required would break every implementation of a published interface, so the
     // obligation is documented (`method.ts`, `capability.skill.md`) rather than enforced.
     log = [inception, revokeOf(delegate.id)]
-    const real = createControllerResolver({ loadLog: async (asked) => (asked === did ? log : []) })
+    const real = createControllerResolver({
+      loadLog: async (asked) =>
+        asked === did ? { chain: log, events: [] } : { chain: [], events: [] },
+    })
     const wrapped: DIDMethodResolver = {
       method: 'kokuin',
       resolve: (asked, header) => real.resolve(asked, header),

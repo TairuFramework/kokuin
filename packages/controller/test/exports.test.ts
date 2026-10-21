@@ -77,6 +77,9 @@ describe('public surface', () => {
       'enumerateProfiles',
       'handleForDID',
       'createControllerResolver',
+      // What resolution refuses with when the epoch is saturated or a member is not live.
+      'EPOCH_SATURATED',
+      'MEMBER_NOT_EFFECTIVE',
       'createControllerIdentity',
     ]) {
       expect(controller).toHaveProperty(name)
@@ -85,6 +88,8 @@ describe('public surface', () => {
 
   test('does not leak internal helpers', () => {
     expect(controller).not.toHaveProperty('signEvent')
+    // Lowers the saturation threshold: a test seam, never a production knob.
+    expect(controller).not.toHaveProperty('createControllerResolverWithin')
   })
 
   test('does not export the capability-authorised revoke surface', () => {

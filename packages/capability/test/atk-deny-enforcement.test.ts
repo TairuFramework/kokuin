@@ -22,11 +22,17 @@ import { checkCapability, createCapability, now } from '../src/index.js'
 const seed = new Uint8Array(32).fill(31)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity({ seed, profile: 0, log: [inception] })
+const controller = createControllerIdentity({
+  seed,
+  profile: 0,
+  log: { chain: [inception], events: [] },
+})
 
 let log: Array<SignedEvent> = [inception]
 const methods: MethodRegistry = [
-  createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) }),
+  createControllerResolver({
+    loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
+  }),
 ]
 
 /** A rotate on the inception whose snapshot denies `target`. */

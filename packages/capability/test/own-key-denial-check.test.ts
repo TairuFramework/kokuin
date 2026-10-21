@@ -52,13 +52,18 @@ describe('key revocation, independently', () => {
     })
     const denied: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) => (asked === did ? [inception, rotate, revoke] : undefined),
+        loadLog: async (asked) =>
+          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
       }),
     ]
 
     // Minted by the leaked key, before the denial existed.
     const thief = await randomIdentity()
-    const stolenIdentity = createControllerIdentity({ seed, profile: 0, log: [inception] })
+    const stolenIdentity = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
     const stolen = stringifyToken(
       await createCapability(stolenIdentity, {
         sub: did,
@@ -81,7 +86,11 @@ describe('key revocation, independently', () => {
     }
 
     // CONTROL — the live key, same log, same shape. If this also fails the denial proves nothing.
-    const owner = createControllerIdentity({ seed, profile: 0, log: [inception, rotate, revoke] })
+    const owner = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception, rotate, revoke], events: [] },
+    })
     const good = await randomIdentity()
     const honest = stringifyToken(
       await createCapability(owner, {
@@ -113,10 +122,15 @@ describe('key revocation, independently', () => {
     // the ordinary way — a revocation record, signed by the key that is about to be denied.
     const before: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) => (asked === did ? [inception, rotate] : undefined),
+        loadLog: async (asked) =>
+          asked === did ? { chain: [inception, rotate], events: [] } : undefined,
       }),
     ]
-    const issuer = createControllerIdentity({ seed, profile: 0, log: [inception] })
+    const issuer = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
     const holder = await randomIdentity()
     const grant = stringifyToken(
       await createCapability(issuer, {
@@ -157,7 +171,8 @@ describe('key revocation, independently', () => {
     })
     const after: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) => (asked === did ? [inception, rotate, revoke] : undefined),
+        loadLog: async (asked) =>
+          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
       }),
     ]
     const afterDenial = await invoke(after)
@@ -174,11 +189,20 @@ describe('key revocation, independently', () => {
     // holder and the grant is a revocation record signed by the key about to be denied.
     const before: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) => (asked === did ? [inception, rotate] : undefined),
+        loadLog: async (asked) =>
+          asked === did ? { chain: [inception, rotate], events: [] } : undefined,
       }),
     ]
-    const live = createControllerIdentity({ seed, profile: 0, log: [inception, rotate] })
-    const leaked = createControllerIdentity({ seed, profile: 0, log: [inception] })
+    const live = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception, rotate], events: [] },
+    })
+    const leaked = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
     const holder = await randomIdentity()
     const grant = stringifyToken(
       await createCapability(live, {
@@ -222,7 +246,8 @@ describe('key revocation, independently', () => {
     })
     const after: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) => (asked === did ? [inception, rotate, revoke] : undefined),
+        loadLog: async (asked) =>
+          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
       }),
     ]
     const afterDenial = await invoke(after)
@@ -244,11 +269,16 @@ describe('key revocation, independently', () => {
     })
     const methods: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) => (asked === did ? [inception, rotate, revoke] : undefined),
+        loadLog: async (asked) =>
+          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
       }),
     ]
 
-    const live = createControllerIdentity({ seed, profile: 0, log: [inception, rotate, revoke] })
+    const live = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception, rotate, revoke], events: [] },
+    })
     const holder = await randomIdentity()
     const grant = stringifyToken(
       await createCapability(live, {

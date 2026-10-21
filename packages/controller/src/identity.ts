@@ -12,6 +12,7 @@ import { agreementPath, authorityPath, deriveKeyPair } from './derivation.js'
 import { didFromInception, type InceptionEvent, type SignedEvent } from './events.js'
 import type { KeyState } from './fold.js'
 import { encodeKey } from './keys.js'
+import { type ControllerLog, isControllerLog, MALFORMED_LOG } from './log.js'
 import { currentState } from './state.js'
 
 const CONTEXT = 'Controller identity'
@@ -20,11 +21,14 @@ const CONTEXT = 'Controller identity'
  * The DID the log claims to be, read from its inception before any fold runs — the fold needs the DID
  * to check the inception against, so it cannot be the thing that produces it.
  */
-function didFromLog(log: Array<SignedEvent>): DIDString {
-  if (log.length === 0) {
+function didFromLog(log: ControllerLog): DIDString {
+  if (!isControllerLog(log)) {
+    throw new Error(`${CONTEXT}: ${MALFORMED_LOG}`)
+  }
+  if (log.chain.length === 0) {
     throw new Error(`${CONTEXT}: empty log`)
   }
-  const first = log[0] as SignedEvent<InceptionEvent>
+  const first = log.chain[0] as SignedEvent<InceptionEvent>
   if (first.event.t !== 'icp') {
     throw new Error(`${CONTEXT}: first event must be an inception`)
   }
@@ -138,14 +142,15 @@ function identityForState({
 export type CreateControllerIdentityParams = {
   seed: Uint8Array
   profile: number
-  log: Array<SignedEvent>
+  log: ControllerLog
 }
 
 /**
  * A signing identity for a `did:kokuin:` profile, whose `iss` is the profile DID.
  *
- * Takes the log and folds it here, so the signing key is always the one that log's current state
- * establishes, never one the caller named. The log is the caller's freshness contract: an identity
+ * Takes the log and folds its chain here, so the signing key is always the one that log's current
+ * state establishes, never one the caller named. Its epoch events are not folded: they never change a
+ * root key (see `currentState`). The log is the caller's freshness contract: an identity
  * built from a stale or truncated log signs with a retired key, minting tokens a current verifier
  * rejects. Rebuild from a re-read log after a rotation rather than holding one across it.
  *
@@ -171,7 +176,7 @@ export function createControllerIdentity({
 
 export type CreateControllerIdentityWithKeyParams = {
   privateKey: Uint8Array
-  log: Array<SignedEvent>
+  log: ControllerLog
 }
 
 /**

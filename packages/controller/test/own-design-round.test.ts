@@ -260,18 +260,24 @@ describe('signing as the profile without the root seed', () => {
     // What a device is given: one private key, no seed, no profile index.
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
 
-    const identity = createControllerIdentityWithKey({ privateKey: current.privateKey, log })
+    const identity = createControllerIdentityWithKey({
+      privateKey: current.privateKey,
+      log: { chain: log, events: [] },
+    })
     expect(identity.id).toBe(did)
     const token = stringifyToken(await identity.signToken({ hello: 'world' }))
-    const resolver = createControllerResolver({ loadLog: async () => log })
+    const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
     const verified = await verifyToken(token, { methods: [resolver] })
     expect(verified.payload.iss).toBe(did)
 
     // CONTROL — a key the head does not publish is refused at construction, not at verification.
     const retired = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
-    expect(() => createControllerIdentityWithKey({ privateKey: retired.privateKey, log })).toThrow(
-      /not one of the current authority keys/,
-    )
+    expect(() =>
+      createControllerIdentityWithKey({
+        privateKey: retired.privateKey,
+        log: { chain: log, events: [] },
+      }),
+    ).toThrow(/not one of the current authority keys/)
   })
 })
 
@@ -280,7 +286,10 @@ describe('a truncated log is refused when one further along has been seen', () =
     let call = 0
     return createControllerResolver({
       history: createMemoryLogStore(),
-      loadLog: async () => logs[Math.min(call++, logs.length - 1)],
+      loadLog: async () => {
+        const chain = logs[Math.min(call++, logs.length - 1)]
+        return chain === undefined ? undefined : { chain, events: [] }
+      },
     })
   }
 
