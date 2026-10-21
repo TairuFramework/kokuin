@@ -187,8 +187,8 @@ function stepEvent(
     // Every rotate is a settlement: the state after it is its snapshot. A non-reset rotate must carry
     // both halves — there is no "carry the prior state forward", since the prior state may hold epoch
     // effects a chain-only verifier cannot reproduce, and half a snapshot would read as "no members"
-    // or "no denials" when its author meant neither. A reset without `m` is blind (`verifyReset`
-    // pinned its `d` to `[]`), and a blind reset's state is empty.
+    // or "no denials" when its author meant neither. A reset without `m` is blind — `verifyReset`
+    // admits one only with `d` exactly `[]` — and a blind reset's state is empty.
     if (!isReset && (rot.event.m == null || rot.event.d == null)) {
       return { status: 'fail', reason: ROTATE_NEEDS_SNAPSHOT }
     }
@@ -221,6 +221,7 @@ function stepEvent(
       snapshot,
       generationKeys: [...generationKeys],
       generationCommitments: [...generationCommitments],
+      recovery: prior.recovery,
       tombstones,
     })
     if (invalid != null) {

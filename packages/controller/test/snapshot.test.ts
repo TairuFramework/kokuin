@@ -183,6 +183,23 @@ describe('snapshot members and root keys are disjoint', () => {
     expect(foldReason([icp, rot])).toEqual({ reason: SNAPSHOT_MEMBER_KEY_IS_ROOT, index: 1 })
   })
 
+  test('a snapshot member pinning the recovery key is refused, on a rotate and on a reset', () => {
+    // The recovery key is committed once, in the inception, and is a root key for every generation:
+    // it is in no `k` or `n`, so only the recovery commitment catches it.
+    const recoveryKey = encodeKey(
+      deriveKeyPair(seed, recoveryPath(profile), 'EdDSA').publicKey,
+      'EdDSA',
+    )
+    expect(digestOf(recoveryKey)).toBe(icp.event.r)
+    const pinned = didKeyMember(recoveryKey)
+    const rot = rotate(icp.event, { members: [pinned], deny: [] })
+    expect(foldReason([icp, rot])).toEqual({ reason: SNAPSHOT_MEMBER_KEY_IS_ROOT, index: 1 })
+    const reset = createReset(seed, profile, 1, { members: [pinned], deny: [] })
+    expect(foldReason([icp, reset])).toEqual({ reason: SNAPSHOT_MEMBER_KEY_IS_ROOT, index: 1 })
+    // Control: the same snapshot with any other member's key folds.
+    expect(foldLog(did, [icp, rotate(icp.event, { members: [member], deny: [] })]).ok).toBe(true)
+  })
+
   test('a reset snapshot is checked against the new generation keys', () => {
     const newKey = rootKeyAt(1, 0)
     const reset = createReset(seed, profile, 1, { members: [didKeyMember(newKey)], deny: [] })
@@ -311,6 +328,16 @@ describe('retired-key denials outlive a rotate', () => {
     expect(foldReason([icp, r1, r2])).toEqual({ reason: SNAPSHOT_DROPS_RETIRED_KEY, index: 2 })
   })
 
+  test('a later rotate may not drop a checkpointed retired agreement key', () => {
+    const retiredAgreement = keyTarget(at(icp.event.ka, 0))
+    const r1 = rotate(icp.event, { members: [], deny: [retiredAgreement] })
+    expect(foldLog(did, [icp, r1]).ok).toBe(true)
+    const r2 = rotate(r1.event, empty)
+    expect(foldReason([icp, r1, r2])).toEqual({ reason: SNAPSHOT_DROPS_RETIRED_KEY, index: 2 })
+    const kept = rotate(r1.event, { members: [], deny: [retiredAgreement] })
+    expect(foldLog(did, [icp, r1, kept]).ok).toBe(true)
+  })
+
   test('a later rotate that keeps the retired key folds', () => {
     const r1 = rotate(icp.event, { members: [], deny: [retired] })
     const r2 = rotate(r1.event, { members: [], deny: [retired] })
@@ -396,19 +423,27 @@ describe('a reset', () => {
     expect(foldLog(did, [icp, createReset(seed, profile, 1)]).ok).toBe(true)
   })
 
-  test('a reset carrying neither half folds as blind, to an empty state', () => {
+  test('a blind reset has one encoding: neither half, or an empty snapshot, is refused', () => {
     const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
     const blind = createReset(seed, profile, 1)
-    const { d: _d, ...bare } = blind.event
-    const event = bare as RotateEvent
-    const result = foldLog(did, [
-      icp,
-      { ...blind, event, sigs: signEvent(event, [recovery.privateKey]) },
-    ])
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(at(result.states, 1).deny.size).toBe(0)
-    expect(at(result.states, 1).members.size).toBe(0)
+    const resigned = (event: RotateEvent): SignedEvent<RotateEvent> => ({
+      ...blind,
+      event,
+      sigs: signEvent(event, [recovery.privateKey]),
+    })
+    // Control: the blind bytes themselves, re-signed through the same path, fold.
+    expect(foldLog(did, [icp, resigned({ ...blind.event })]).ok).toBe(true)
+    const { d: _d, ...withoutDeny } = blind.event
+    const emptySnapshot = { ...blind.event, m: [] }
+    for (const variant of [withoutDeny as RotateEvent, emptySnapshot]) {
+      expect(foldReason([icp, resigned(variant)])).toEqual({ reason: 'invalid reset', index: 1 })
+    }
+  })
+
+  test('a reset given an empty snapshot is byte-identical to a blind reset', () => {
+    expect(createReset(seed, profile, 1, { members: [], deny: [] })).toEqual(
+      createReset(seed, profile, 1),
+    )
   })
 })
 
@@ -446,6 +481,7 @@ describe('validateSnapshot()', () => {
         snapshot: { members: [member], deny: [] },
         generationKeys: [rootKeyAt(0, 0)],
         generationCommitments: [],
+        recovery: icp.event.r,
         tombstones: new Set(),
       }),
     ).toBeNull()
@@ -457,6 +493,7 @@ describe('validateSnapshot()', () => {
         snapshot: { members: [], deny: [] },
         generationKeys: [rootKeyAt(0, 0)],
         generationCommitments: [],
+        recovery: icp.event.r,
         tombstones: new Set([keyTarget(rootKeyAt(0, 0))]),
       }),
     ).toBe(SNAPSHOT_DROPS_RETIRED_KEY)

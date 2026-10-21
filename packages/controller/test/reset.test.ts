@@ -121,9 +121,10 @@ describe('verifyReset()', () => {
 
   test('rejects a reset carrying a member list but no deny set', () => {
     const { inception } = setup()
-    const signed = createReset(seed, 0, 1, { members: [], deny: [] })
+    const signed = createReset(seed, 0, 1, { members: [], deny: ['did:key:zStillDenied'] })
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const { d: _d, ...event } = signed.event
+    expect(event.m).toEqual([])
     const sigs = signEvent(event, [recovery.privateKey])
     expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
       false,

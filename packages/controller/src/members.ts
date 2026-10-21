@@ -88,6 +88,12 @@ export type ValidateSnapshotParams = {
   /** Every `n` on the current generation's chain, including the event carrying the snapshot. */
   generationCommitments: Array<string>
   /**
+   * The inception's recovery commitment (`r`, `KeyState.recovery`). Kept apart from
+   * `generationCommitments` because it is not a generation's: one recovery key per profile for its
+   * life, so it is a root key across every generation, the reset that reveals it included.
+   */
+  recovery: string
+  /**
    * The retired-key denials the snapshot must keep: the prior chain state's key-target denials that
    * name a key in `generationKeys`. Empty on a reset, which opens a new generation.
    */
@@ -105,8 +111,9 @@ export type ValidateSnapshotParams = {
  *   decode as Ed25519, no two sharing an `add` (one incarnation, one entry) or a pinned key (one key
  *   twice would let it renew itself through the alias); `deny` is a key list.
  * - **Disjoint from root** ({@link SNAPSHOT_MEMBER_KEY_IS_ROOT}): no pin is a `k`/`ka` on the
- *   generation's chain or committed in one of its `n`. A management device never holds a root key, so
- *   member authority and root authority cannot be confused for each other.
+ *   generation's chain, committed in one of its `n`, or the recovery key the inception commits. A
+ *   management device never holds a root key, so member authority and root authority cannot be
+ *   confused for each other.
  * - **The DID carries the pin** ({@link SNAPSHOT_MEMBER_DID_MISMATCH}): see {@link memberCarriesKey}.
  * - **Checkpointed retirements stay** ({@link SNAPSHOT_DROPS_RETIRED_KEY}): every tombstone is in
  *   `deny`. Historic resolution would otherwise accept fresh tokens signed with a retired key again,
@@ -114,7 +121,7 @@ export type ValidateSnapshotParams = {
  *   such rule: dropping one is a deliberate re-authorisation.
  */
 export function validateSnapshot(params: ValidateSnapshotParams): string | null {
-  const { snapshot, generationKeys, generationCommitments, tombstones } = params
+  const { snapshot, generationKeys, generationCommitments, recovery, tombstones } = params
   const members: unknown = snapshot.members
   const deny: unknown = snapshot.deny
   if (!Array.isArray(members) || !isKeyList(deny)) {
@@ -135,7 +142,8 @@ export function validateSnapshot(params: ValidateSnapshotParams): string | null 
   const rootKeys = new Set(generationKeys)
   const commitments = new Set(generationCommitments)
   for (const entry of members as Array<MemberEntry>) {
-    if (rootKeys.has(entry.key) || commitments.has(digestOf(entry.key))) {
+    const digest = digestOf(entry.key)
+    if (rootKeys.has(entry.key) || commitments.has(digest) || digest === recovery) {
       return SNAPSHOT_MEMBER_KEY_IS_ROOT
     }
   }

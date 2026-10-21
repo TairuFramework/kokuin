@@ -522,9 +522,11 @@ export function createReset(
     kt: 1,
     nt: 1,
   }
-  if (snapshot == null) {
+  if (snapshot == null || (snapshot.members.length === 0 && snapshot.deny.length === 0)) {
     // A blind reset clears the deny set: every capability under the prior generation is gone anyway.
-    // Written as `d: []` rather than omitted so a blind reset keeps the bytes it always had.
+    // Written as `d: []` rather than omitted so a blind reset keeps the bytes it always had. An empty
+    // snapshot is the same state and is written the same way, so a retry with one is byte-identical
+    // to a blind reset rather than a second encoding of it.
     event.d = []
   } else {
     event.m = snapshot.members
@@ -556,17 +558,22 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
     return false
   }
   // A reset carries no seal, and either a whole snapshot (`m` and `d` together) or none. Without `m`
-  // it is blind, and its state is empty: `d` absent, or the `[]` {@link createReset} writes so a
-  // blind reset keeps the bytes it always had — the same bytes for every holder of the seed, the
-  // idempotency the branch selector relies on. Only the recovery-key holder can sign one, so this is
-  // not an attacker's event; it is the rule that keeps half a snapshot (`d` naming something with no
-  // `m`, or `m` with no `d`) from folding as a reset that silently dismissed every member or cleared
-  // every denial. The snapshot's contents are the fold's to judge, against the new generation's keys.
+  // it is blind, and a blind reset's `d` is exactly the `[]` {@link createReset} writes: one encoding,
+  // so "blind reset" means the same bytes for every holder of the seed — the idempotency the branch
+  // selector relies on. For the same reason an empty snapshot (`m: []` with `d: []`) is refused: it is
+  // the blind state spelled a second way. Only the recovery-key holder can sign one, so this is not an
+  // attacker's event; it is the rule that keeps one state from having two resets at a generation,
+  // and half a snapshot (`d` with no `m`, or `m` with no `d`) from folding as a reset that silently
+  // dismissed every member or cleared every denial. The snapshot's contents are the fold's to judge,
+  // against the new generation's keys.
   if (event.a !== undefined) {
     return false
   }
-  const blindDeny = event.d == null || (isKeyList(event.d) && event.d.length === 0)
-  if (event.m == null ? !blindDeny : event.d == null) {
+  const emptyDeny = isKeyList(event.d) && event.d.length === 0
+  if (event.m == null ? !emptyDeny : event.d == null) {
+    return false
+  }
+  if (Array.isArray(event.m) && event.m.length === 0 && emptyDeny) {
     return false
   }
   if (!Array.isArray(sigs) || sigs.length !== 1) {
