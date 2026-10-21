@@ -1,4 +1,4 @@
-import type { DIDString, ResolvedSigningKey } from '@kokuin/token'
+import type { DIDString } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { base64urlnopad } from '@scure/base'
 
@@ -156,35 +156,6 @@ export function verifySignatures(
     }
   }
   return true
-}
-
-/**
- * Whether one of an event's signatures was made by `key` — the counterpart of
- * {@link verifySignatures} for a signer the *event* does not name (resolved from a DID elsewhere). A
- * capability-authorised revoke needs exactly this: its author is the capability's `aud`, which the
- * fold cannot resolve, so it is handed the key and checks the signature itself.
- *
- * Total, EdDSA only — all {@link signEvent} produces. An ES256 audience therefore cannot author a
- * revoke, which fails closed until events grow a second signature algorithm.
- */
-export function verifyEventSignedBy(signed: SignedEvent, key: ResolvedSigningKey): boolean {
-  // Both arms are unkillable through the fold (`isSignedEventShape` already established `sigs` is a
-  // string array; a non-EdDSA key would fail `ed25519.verify`; `[].some()` is `false`) and both stay
-  // by the file's guard rule: a direct caller reaches this with a parsed body.
-  if (key.alg !== 'EdDSA' || signed.sigs.length === 0) {
-    return false
-  }
-  if (!isCanonicalizable(signed.event)) {
-    return false
-  }
-  const bytes = canonicalBytes(signed.event)
-  return signed.sigs.some((sig) => {
-    try {
-      return ed25519.verify(base64urlnopad.decode(sig), bytes, key.publicKey)
-    } catch {
-      return false
-    }
-  })
 }
 
 /**
@@ -586,8 +557,6 @@ export type RevokeEvent = EventCommon & {
    * key a `kid` selects. Neither spelling can be mistaken for the other.
    */
   x: string
-  /** A serialized capability authorising a non-authority signer. Verified in the fold. */
-  cap?: string
 }
 
 export type CreateRevokeParams = {
@@ -597,8 +566,6 @@ export type CreateRevokeParams = {
   prior: EventCommon
   target: string
   keyPosition: { gen: number; seq: number }
-  /** A serialized capability authorising this signer, when the signer is not an authority key. */
-  cap?: string
 }
 
 /**
@@ -626,53 +593,12 @@ export function createRevoke({
   prior,
   target,
   keyPosition,
-  cap,
 }: CreateRevokeParams): SignedEvent<RevokeEvent> {
   const current = deriveKeyPair(
     seed,
     authorityPath(profile, keyPosition.gen, keyPosition.seq),
     'EdDSA',
   )
-  return createRevokeWithKey({ privateKey: current.privateKey, did, prior, target, cap })
-}
-
-export type CreateRevokeOptions = {
-  /** A serialized capability authorising this signer, when the signer is not an authority key. */
-  cap?: string
-}
-
-export type CreateRevokeWithKeyParams = {
-  privateKey: Uint8Array
-  did: string
-  prior: EventCommon
-  target: string
-  /** A serialized capability authorising this signer, when the signer is not an authority key. */
-  cap?: string
-}
-
-/**
- * Revoke a DID, signing with an Ed25519 key the caller already holds rather than deriving one from
- * the profile seed.
- *
- * The builder for the actor a capability-authorised revoke exists for: a device holding a management
- * capability, which by design never receives the profile sub-seed. `createRevoke` can only sign as
- * the profile itself, so without this the feature had no API but re-implementing the signing
- * convention per consumer — the duplication `createControllerCapabilityVerifier` prevents on the
- * verifying side.
- *
- * The key is the audience key the capability pins in `cnf`, and the fold checks the event's signature
- * against exactly that, so the two must match. Ed25519 only. Takes the private key rather than an
- * identity because no identity type here signs raw bytes — a `KeyStore` entry hands back exactly this
- * shape. Byte-identical to {@link createRevoke} given the same key; no `keyPosition`, which exists
- * only to derive a key from a seed.
- */
-export function createRevokeWithKey({
-  privateKey,
-  did,
-  prior,
-  target,
-  cap,
-}: CreateRevokeWithKeyParams): SignedEvent<RevokeEvent> {
   const event: RevokeEvent = {
     v: 1,
     t: 'rev',
@@ -682,13 +608,12 @@ export function createRevokeWithKey({
     p: digestOf(prior),
     crit: true,
     x: target,
-    cap,
   }
 
-  return { event, sigs: signEvent(event, [privateKey]) }
+  return { event, sigs: signEvent(event, [current.privateKey]) }
 }
 
-/** Authority-signed revoke. Capability-authorised revokes are checked in the fold. */
+/** Authority-signed revoke. */
 export function verifyRevoke(
   signed: SignedEvent<RevokeEvent>,
   prior: { digest: string; keys: Array<string> },

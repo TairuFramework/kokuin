@@ -1,7 +1,6 @@
 import type { DIDMethodResolver } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
-import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
   createReset,
@@ -10,7 +9,7 @@ import {
   didFromInception,
   type SignedEvent,
 } from '../src/events.js'
-import { type CapabilityAuthorisation, foldLog } from '../src/fold.js'
+import { foldLog } from '../src/fold.js'
 import { decodeKey } from '../src/keys.js'
 import { createControllerResolver } from '../src/resolver.js'
 import { createStateResolver } from '../src/state-resolver.js'
@@ -24,38 +23,10 @@ const at = <T>(items: ReadonlyArray<T>, i: number): T => {
 
 const seed = new Uint8Array(32).fill(1)
 const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-// Not the controller's seed: the revoke below is signed by a delegate, so only the capability it
-// carries can authorise it.
-const delegateSeed = new Uint8Array(32).fill(3)
-const cap = 'eyJ.delegated.revoke'
-/** What the capability pins as its audience key: the key the delegate signs the revoke with. */
-const authorised: CapabilityAuthorisation = {
-  authorised: true,
-  audienceKey: {
-    alg: 'EdDSA',
-    publicKey: deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
-  },
-}
-const declined = { authorised: false, reason: 'capability does not authorise this revoke' } as const
 
 function build() {
   const icp = createInception(seed, 0)
   return { icp, did: didFromInception(icp.event) }
-}
-
-/** A log whose last event is a capability-authorised revoke — foldable only asynchronously. */
-function capLog() {
-  const { icp, did } = build()
-  const rev = createRevoke({
-    seed: delegateSeed,
-    profile: 0,
-    did,
-    prior: icp.event,
-    target: device,
-    keyPosition: { gen: 0, seq: 0 },
-    cap,
-  })
-  return { icp, did, log: [icp, rev] }
 }
 
 describe('createControllerResolver()', () => {
@@ -274,77 +245,7 @@ describe('createControllerResolver() and a revoked key', () => {
   })
 })
 
-describe('createControllerResolver() with a capability-authorised revoke', () => {
-  test('rejects the log when no verifier is configured', async () => {
-    const { did, log } = capLog()
-    const resolver = createControllerResolver({ loadLog: async () => log })
-    await expect(resolver.resolve(did, {})).rejects.toThrow(/capability/)
-  })
-
-  test('resolves it when the configured verifier authorises the capability', async () => {
-    const { icp, did, log } = capLog()
-    const seen: Array<Array<string>> = []
-    const resolver = createControllerResolver({
-      loadLog: async () => log,
-      verifyCapability: async ({ cap: capability, subject, target }) => {
-        seen.push([capability, subject, target])
-        return authorised
-      },
-    })
-
-    const resolved = await resolver.resolve(did, {})
-    // The revoke establishes no key, so the inception's is still current.
-    expect(resolved.publicKey).toEqual(decodeKey(at(icp.event.k, 0)).publicKey)
-    // The verifier is handed the capability, the controller it must name as `sub`, and the DID
-    // being denied — passing anything else would authorise a revoke of the wrong device.
-    expect(seen).toEqual([[cap, did, device]])
-  })
-
-  test('rejects it when the configured verifier declines the capability', async () => {
-    const { did, log } = capLog()
-    const resolver = createControllerResolver({
-      loadLog: async () => log,
-      verifyCapability: async () => declined,
-    })
-    await expect(resolver.resolve(did, {})).rejects.toThrow(
-      /capability does not authorise this revoke/,
-    )
-  })
-
-  test('applies the verifier to resolveAgreementKey too, not only to resolve', async () => {
-    const { icp, did, log } = capLog()
-    const declining = createControllerResolver({
-      loadLog: async () => log,
-      verifyCapability: async () => declined,
-    })
-    await expect(declining.resolveAgreementKey?.(did)).rejects.toThrow(/capability/)
-
-    const accepting = createControllerResolver({
-      loadLog: async () => log,
-      verifyCapability: async () => authorised,
-    })
-    const keys = await accepting.resolveAgreementKey?.(did)
-    // A revoke carries the agreement set forward, so it is still the inception's.
-    const key = keys?.[0]
-    if (key === undefined) throw new Error('expected an agreement key')
-    expect(key.publicKey).toEqual(decodeKey(at(icp.event.ka, 0)).publicKey)
-  })
-
-  test('the prefix wiring the docs prescribe terminates and resolves', async () => {
-    // The correct shape: the outer resolver holds the whole log, and the verifier resolves the
-    // capability's issuer through a loader answering with the prefix up to the event carrying it.
-    // Nothing re-enters, so nothing stalls. The misconfigured shape is covered below.
-    const { did, log } = capLog()
-    const prefixed = createControllerResolver({
-      loadLog: async () => log,
-      verifyCapability: async () => {
-        await createControllerResolver({ loadLog: async () => [at(log, 0)] }).resolve(did, {})
-        return authorised
-      },
-    })
-    await expect(prefixed.resolve(did, {})).resolves.toBeDefined()
-  })
-
+describe('createControllerResolver() shared folds', () => {
   test('two concurrent resolutions of one DID share a single fold', async () => {
     // Ordinary parallel verification of two tokens from one issuer. `@kokuin/token` caches only
     // `did:peer:4`, so nothing upstream dedupes `did:kokuin:` and both calls arrive here. They must
@@ -372,34 +273,6 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
       resolver.resolve(did, {}),
     ])
     // One fold, not two: the second resolution joined the first rather than starting its own.
-    expect(entered).toBe(1)
-    expect(first.publicKey).toEqual(decodeKey(at(icp.event.k, 0)).publicKey)
-    expect(second.publicKey).toEqual(first.publicKey)
-  })
-
-  test('two concurrent resolutions succeed with a verifier and a cap-bearing log', async () => {
-    // The configuration this whole task exists to enable, and the one the round-2 guard broke: a
-    // verifier is configured, the log carries a capability-authorised revoke, `loadLog` answers
-    // with the prefix as documented, and two resolutions overlap.
-    const { icp, did, log } = capLog()
-    let entered = 0
-    const resolver = createControllerResolver({
-      loadLog: async (requested) => {
-        entered++
-        return requested === did ? log : undefined
-      },
-      verifyCapability: async () => {
-        // The prefix wiring the docs prescribe: a separate loader answering with the log up to the
-        // event carrying the capability.
-        await createControllerResolver({ loadLog: async () => [icp] }).resolve(did, {})
-        return authorised
-      },
-    })
-
-    const [first, second] = await Promise.all([
-      resolver.resolve(did, {}),
-      resolver.resolve(did, {}),
-    ])
     expect(entered).toBe(1)
     expect(first.publicKey).toEqual(decodeKey(at(icp.event.k, 0)).publicKey)
     expect(second.publicKey).toEqual(first.publicKey)
@@ -474,54 +347,6 @@ describe('createControllerResolver() with a capability-authorised revoke', () =>
     expect(calls).toBe(1)
     expect(outcome).toBe('resolved')
   })
-
-  test('a self-re-entrant loadLog deadlocks quietly rather than spinning', async () => {
-    // The misconfiguration: `loadLog` answers with the whole log, so verifying the capability
-    // resolves the issuer, which folds the same log, which reaches the same revoke. Nothing can
-    // tell that apart from the legitimate concurrency above, so it is not diagnosed — it awaits a
-    // fold that cannot settle.
-    //
-    // What matters is *which kind* of stall it is. One `loadLog` call, no Ed25519 work, and the
-    // timer queue still live, so a caller-side timeout catches it. Without the shared fold this is
-    // an unbounded await chain that starves the timer queue, and the race below would never
-    // settle at all.
-    const { did, log } = capLog()
-    let entered = 0
-    const resolver: DIDMethodResolver = createControllerResolver({
-      loadLog: async () => {
-        entered++
-        return log
-      },
-      verifyCapability: async () => {
-        await resolver.resolve(did, {})
-        return authorised
-      },
-    })
-
-    const outcome = await Promise.race([
-      resolver.resolve(did, {}).then(() => 'resolved'),
-      new Promise((resolve) => setTimeout(() => resolve('timer fired'), 50)),
-    ])
-    expect(outcome).toBe('timer fired')
-    expect(entered).toBe(1)
-  })
-
-  test('the guard is per DID, so two profiles vouching for each other still resolve', async () => {
-    // What the guard must not break: the audience is a *different* profile, so resolving it from
-    // inside this fold is a legitimate nested resolution, not a cycle.
-    const { did, log } = capLog()
-    const other = createInception(new Uint8Array(32).fill(21), 0)
-    const otherDID = didFromInception(other.event)
-    const resolver = createControllerResolver({
-      loadLog: async (requested) => (requested === otherDID ? [other] : log),
-      verifyCapability: async () => {
-        await resolver.resolve(otherDID, {})
-        return authorised
-      },
-    })
-
-    await expect(resolver.resolve(did, {})).resolves.toBeDefined()
-  })
 })
 
 describe('createControllerResolver().resolveAgreementKey()', () => {
@@ -555,8 +380,7 @@ describe('createControllerResolver().resolveAgreementKey()', () => {
 })
 
 describe('createStateResolver()', () => {
-  // What the fold hands a capability-authorised revoke's verifier: a resolver over the states
-  // *before* the event being verified. It answers for one profile only, so a verifier can merge it
+  // A resolver over already-folded states. It answers for one profile only, so it can be merged
   // into a wider registry without one profile's key state ever standing in for another's.
   test('answers for its own DID and refuses every other', async () => {
     const { icp, did } = build()

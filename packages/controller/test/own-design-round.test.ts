@@ -62,7 +62,7 @@ function padding(did: string, prior: SignedEvent, index: number): SignedEvent {
 }
 
 describe('a keyless peer cannot switch duplicity detection off', () => {
-  test('a forged cap-bearing branch is counted, not fatal', () => {
+  test('a forged unsigned branch is filtered, not fatal', () => {
     const { inception, did } = build()
     // Two honest, conflicting revokes at position 1: a genuine fork, and the finding that matters.
     const honest = [
@@ -95,10 +95,9 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
     expect(control.ok).toBe(false)
     if (control.ok) return
     expect(control.failure).toBe('duplicity')
-    expect(control.unverified).toBe(0)
 
-    // ATTACK — no key material at all. The inception is public, and a `cap`-bearing revoke reaches
-    // the verifier path before any signature check, so `sigs` can be empty and `cap` arbitrary.
+    // ATTACK — no key material at all. The inception is public, so a peer can append an event with
+    // no signatures to a copy of it and present the result as a branch.
     const forged: SignedEvent = {
       event: {
         v: 1,
@@ -109,7 +108,6 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
         p: digestOf(inception.event),
         crit: true,
         x: 'did:key:zC',
-        cap: 'not-even-a-token',
       } as never,
       sigs: [],
     }
@@ -118,8 +116,6 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
     if (attacked.ok) return
     expect(attacked.failure, 'the fork is still reported').toBe('duplicity')
     expect(attacked.duplicity).toEqual(control.duplicity)
-    // And the branch nobody signed is declared rather than dropped in silence.
-    expect(attacked.unverified).toBe(1)
   })
 
   test('the forged branch cannot become the winner', () => {
@@ -135,7 +131,6 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
         p: digestOf(inception.event),
         crit: true,
         x: 'did:key:zC',
-        cap: 'not-even-a-token',
       } as never,
       sigs: [],
     }
@@ -143,7 +138,6 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.winner).toBe(honest)
-    expect(result.unverified).toBe(1)
   })
 })
 
@@ -378,85 +372,5 @@ describe('a truncated log is refused when one further along has been seen', () =
     expect(first?.size).toBe(5)
     // The recovering rotate is at seq 1 against a seen head at seq 5, and it wins.
     expect((await resolver.resolveDenySet?.(did))?.size).toBe(0)
-  })
-})
-
-describe('the truncation guard fails closed when the stored log needs a verifier', () => {
-  // A management-tier log folds only with a `verifyCapability`. If a later resolution has no verifier
-  // configured, the stored (full) log fails to fold — for want of the verifier, not because anything
-  // about it changed. Treating that as "no memory" accepted whatever prefix was served next, which
-  // disables the truncation guard for exactly the profiles that use the management tier: a peer
-  // serving a prefix that stops before the cap-authorised `rev` denying their device wins, because
-  // the fuller log this party already holds is the one that could not be folded.
-  const cSeed = new Uint8Array(32).fill(7)
-  const delegateSeed = new Uint8Array(32).fill(3)
-  const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-  const cap = 'eyJ.delegated.revoke'
-  const authorised = {
-    authorised: true as const,
-    audienceKey: {
-      alg: 'EdDSA' as const,
-      publicKey: deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
-    },
-  }
-
-  function capLog() {
-    const icp = createInception(cSeed, 0)
-    const did = didFromInception(icp.event)
-    // Signed by the delegate, so only the capability it carries authorises it — foldable only async
-    // and only with a verifier.
-    const rev = createRevoke({
-      seed: delegateSeed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: device,
-      keyPosition: { gen: 0, seq: 0 },
-      cap,
-    })
-    return { icp, did, full: [icp, rev] as Array<SignedEvent> }
-  }
-
-  test('a prefix served to a verifier-less reader is refused, not accepted as no memory', async () => {
-    const { icp, did, full } = capLog()
-    const store = createMemoryLogStore()
-
-    // Stored while a verifier was configured: the management-tier log folds and is remembered.
-    const configured = createControllerResolver({
-      loadLog: async () => full,
-      history: store,
-      verifyCapability: async () => authorised,
-    })
-    expect([...(await denySet(configured, did))]).toEqual([device])
-
-    // Same store, a reader with no verifier now, served the prefix that stops before the cap-revoke.
-    // The prefix folds cleanly without a verifier; the fuller stored log does not.
-    const unconfigured = createControllerResolver({
-      loadLog: async () => [icp],
-      history: store,
-    })
-    await expect(unconfigured.resolveDenySet?.(did)).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
-  })
-
-  test('CONTROL — the same truncation is refused with a verifier too, so the fix only aligns the two', async () => {
-    const { icp, did, full } = capLog()
-    const store = createMemoryLogStore()
-    const verifyCapability = async () => authorised
-
-    const first = createControllerResolver({
-      loadLog: async () => full,
-      history: store,
-      verifyCapability,
-    })
-    expect([...(await denySet(first, did))]).toEqual([device])
-
-    // A reader that still has the verifier refuses the same prefix — the branch comparison, not the
-    // missing verifier, is what rejects it. The no-verifier path now matches this.
-    const second = createControllerResolver({
-      loadLog: async () => [icp],
-      history: store,
-      verifyCapability,
-    })
-    await expect(second.resolveDenySet?.(did)).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
   })
 })

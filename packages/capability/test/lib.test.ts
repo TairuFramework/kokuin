@@ -1,3 +1,4 @@
+import { encodeKey } from '@kokuin/controller'
 import {
   createIdentity,
   createInMemoryDIDCache,
@@ -19,6 +20,7 @@ import {
   assertValidDelegation,
   assertValidIssuedAt,
   assertValidPattern,
+  audienceConfirmation,
   type CapabilityPayload,
   checkCapability,
   checkDelegationChain,
@@ -1508,8 +1510,7 @@ describe('verifyToken hook', () => {
 })
 
 describe('checkCapability() - a capability presented directly rather than invoked', () => {
-  // The shape `createControllerCapabilityVerifier` hands over: a key event names a capability and
-  // carries no invocation token, so the capability's own payload is what reaches `checkCapability`.
+  // A capability carries no invocation token, so its own payload is what reaches `checkCapability`.
   // Its own claims are the last hop of the chain and have to bind like any other link's.
   async function presented(): Promise<{
     root: ReturnType<typeof randomIdentity>
@@ -1691,5 +1692,22 @@ describe('assertCapabilityToken with non-token input', () => {
   test('throws a domain error, not a TypeError', () => {
     expect(() => assertCapabilityToken(null)).toThrow('Invalid token: not a capability')
     expect(() => assertCapabilityToken(undefined)).toThrow('Invalid token: not a capability')
+  })
+})
+
+describe('audienceConfirmation()', () => {
+  test('encodes the key exactly as a controller log encodes `k`', () => {
+    // The two packages share the format, not the code (importing the controller's encoder from here
+    // would cycle), so this is what keeps a log and a capability comparable by eye.
+    const { publicKey } = randomIdentity()
+    expect(audienceConfirmation({ alg: 'EdDSA', publicKey })).toEqual({
+      kid: encodeKey(publicKey, 'EdDSA'),
+    })
+  })
+
+  test('the controller capability verifier is gone from the package surface', async () => {
+    const capability = await import('../src/index.js')
+    expect('createControllerCapabilityVerifier' in capability).toBe(false)
+    expect('assertRevokeCapabilityAudience' in capability).toBe(false)
   })
 })

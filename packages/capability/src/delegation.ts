@@ -274,9 +274,8 @@ export async function checkDelegationChain(
 
 /**
  * Check that `payload` authorises `permission`. `payload` is either an invocation (authority is
- * entirely the `cap` chain) or a capability presented directly (carries its own grant — a
- * `did:kokuin:` revoke event has no invocation to wrap it, so
- * `createControllerCapabilityVerifier` presents the capability itself). See {@link presentedGrant}.
+ * entirely the `cap` chain) or a capability presented directly (carries its own grant, with no
+ * invocation to wrap it). See {@link presentedGrant}.
  *
  * A presented capability's own claims bind like any link's: the request must be within *its* grant,
  * not merely its parent's, and its audience is subject to the deny set. Checking only its ancestors
@@ -298,9 +297,7 @@ export async function checkCapability(
     assertNonExpired(payload, time)
     assertValidNotBefore(payload as { nbf?: number }, time)
     assertValidIssuedAt(payload as { iat?: number }, time)
-    // This branch never reaches `checkDelegationChain`, so it needs its own audience check. Also the
-    // shape `createControllerCapabilityVerifier` takes: an undelegated management capability minted by
-    // the profile for its own device is exactly `iss === sub`.
+    // This branch never reaches `checkDelegationChain`, so it needs its own audience check.
     await assertAudienceNotRevoked(payload, options)
 
     // Validate that the token grants the requested permission

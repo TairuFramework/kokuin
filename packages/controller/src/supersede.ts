@@ -1,14 +1,6 @@
 import { digestOf } from './canonical.js'
 import { type RotateEvent, type SignedEvent, verifyRotate } from './events.js'
-import {
-  CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD,
-  CAPABILITY_REVOKE_NEEDS_VERIFIER,
-  type FoldOptions,
-  type FoldResult,
-  foldLog,
-  foldLogAsync,
-  type KeyState,
-} from './fold.js'
+import { type FoldResult, foldLog, type KeyState } from './fold.js'
 
 /** Index into an array whose element is a branch-resolution invariant, throwing rather than reading undefined. */
 function required<T>(items: ReadonlyArray<T>, index: number, what: string): T {
@@ -36,34 +28,15 @@ export type Duplicity = {
  * - `duplicity` — two events the controller cannot both have authored at one position. The only one
  *   that says anything is wrong with the log.
  * - `no-valid-branch` — nothing presented folded at all.
- * - `needs-capability-verification` — **every** branch carries a capability-authorised revoke this
- *   call was not equipped to check, so there is nothing left to compare. The log is fine; use
- *   {@link resolveBranchesAsync} with a `verifyCapability`. A call where only *some* branches are
- *   unverifiable answers with the rest and reports the count as {@link ResolveResult.unverified}.
  *
- * Added rather than swapped in: `duplicity` still carries the `gen: -1` sentinel for the two
- * non-duplicity arms, so a caller written against the previous shape still tells them apart.
+ * `duplicity` still carries the `gen: -1` sentinel for the non-duplicity arm, so a caller tells them
+ * apart.
  */
-export type ResolveFailure = 'duplicity' | 'no-valid-branch' | 'needs-capability-verification'
+export type ResolveFailure = 'duplicity' | 'no-valid-branch'
 
-/**
- * How many presented branches this call could not check, and therefore did not compare.
- *
- * Non-zero means the answer is **provisional**: an unfoldable branch may have superseded the one
- * reported, so a caller acting on a winner must re-resolve through {@link resolveBranchesAsync} with
- * a `verifyCapability` or treat the result as unconfirmed. Zero for every correctly configured call.
- *
- * Reported rather than fatal because the alternative is an unauthenticated DoS on duplicity
- * detection. A cap-bearing revoke reaches the verifier path *before* any signature check (the
- * capability names the signer), so a keyless peer can copy the public inception, append a `rev` with
- * `sigs: []` and arbitrary `cap` bytes, and present it — and refusing the whole resolution on that
- * would turn a genuine duplicity report between two honest branches into a refusal, for every
- * profile. Dropping such a branch cannot hand an attacker a win (a branch that does not fold is not a
- * contender); the only exposure left is a *stale* answer, which this count marks.
- */
 export type ResolveResult =
-  | { ok: true; winner: Array<SignedEvent>; superseded: number; unverified: number }
-  | { ok: false; failure: ResolveFailure; duplicity: Duplicity; unverified: number }
+  | { ok: true; winner: Array<SignedEvent>; superseded: number }
+  | { ok: false; failure: ResolveFailure; duplicity: Duplicity }
 
 /**
  * The position reported for a failure that is not a fork. Real comparisons never reach `gen < 0` and
@@ -99,24 +72,6 @@ function headState({ states }: FoldedBranch): KeyState {
 function spineDigest(folded: FoldedBranch, j: number): string {
   const index = required(folded.spine, j, 'spine index out of range')
   return required(folded.states, index, 'spine points past folded state').digest
-}
-
-/**
- * Whether a branch failed to fold only because this call could not check a capability. Filtering such
- * a branch out as invalid is what switched duplicity detection off for the management tier — a
- * `cap`-bearing revoke is the tier working as designed, not a forgery. Matched by prefix against the
- * fold's exported reasons, the contract those constants exist for.
- */
-export function needsCapabilityVerification(result: FoldResult): boolean {
-  return (
-    !result.ok &&
-    (result.reason.startsWith(CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD) ||
-      result.reason.startsWith(CAPABILITY_REVOKE_NEEDS_VERIFIER))
-  )
-}
-
-function allUnverified(unverified: number): ResolveResult {
-  return { ok: false, failure: 'needs-capability-verification', duplicity: NO_POSITION, unverified }
 }
 
 function branchFrom(branch: Array<SignedEvent>, result: FoldResult): FoldedBranch | undefined {
@@ -342,69 +297,21 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
  * Branches that do not fold are filtered out before comparison, so a thief who cannot produce a valid
  * event cannot create a duplicity report.
  *
- * This form folds synchronously and cannot check a capability-authorised revoke: such a branch is
- * counted in {@link ResolveResult.unverified} and left out, and only a call where *every* branch is
- * one answers `failure: 'needs-capability-verification'`. See {@link ResolveResult.unverified} for
- * why the count is reported rather than fatal; the remedy is {@link resolveBranchesAsync} with a
- * verifier.
  */
 export function resolveBranches(did: string, branches: Array<Array<SignedEvent>>): ResolveResult {
   const valid: Array<FoldedBranch> = []
-  let unverified = 0
   for (const branch of branches) {
-    const result = foldLog(did, branch)
-    if (needsCapabilityVerification(result)) {
-      unverified++
-      continue
-    }
-    const folded = branchFrom(branch, result)
+    const folded = branchFrom(branch, foldLog(did, branch))
     if (folded != null) {
       valid.push(folded)
     }
   }
-  return selectWinner(valid, unverified)
+  return selectWinner(valid)
 }
 
-/**
- * Async counterpart of {@link resolveBranches}, and the form the management tier needs — the sync
- * fold fails closed on a capability-authorised revoke, so resolving through it would filter every
- * branch of such a log away as invalid and report "no valid history" for a healthy profile.
- *
- * Branches are folded one at a time: `verifyCapability` is caller-supplied code that may do I/O, and
- * branch counts in a duplicity report are small, so there is nothing to win against calling a
- * caller's verifier concurrently.
- */
-export async function resolveBranchesAsync(
-  did: string,
-  branches: Array<Array<SignedEvent>>,
-  options: FoldOptions = {},
-): Promise<ResolveResult> {
-  const valid: Array<FoldedBranch> = []
-  let unverified = 0
-  for (const branch of branches) {
-    const result = await foldLogAsync(did, branch, options)
-    // Reachable only with no `verifyCapability` configured — with one, the verifier's answer decides
-    // and a rejection is an invalid branch. So a correctly configured call always reports
-    // `unverified: 0`.
-    if (needsCapabilityVerification(result)) {
-      unverified++
-      continue
-    }
-    const folded = branchFrom(branch, result)
-    if (folded != null) {
-      valid.push(folded)
-    }
-  }
-  return selectWinner(valid, unverified)
-}
-
-function selectWinner(valid: Array<FoldedBranch>, unverified: number): ResolveResult {
+function selectWinner(valid: Array<FoldedBranch>): ResolveResult {
   if (valid.length === 0) {
-    // Nothing left to compare, and which answer that is depends on *why*: an unchecked branch is not
-    // evidence the log has no history.
-    return unverified > 0
-      ? allUnverified(unverified)
-      : { ok: false, failure: 'no-valid-branch', duplicity: NO_POSITION, unverified }
+    return { ok: false, failure: 'no-valid-branch', duplicity: NO_POSITION }
   }
 
   // Re-derivation is idempotent: branches folding to the same head are one history presented twice.
@@ -425,9 +332,7 @@ function selectWinner(valid: Array<FoldedBranch>, unverified: number): ResolveRe
   const topGen = Math.max(...distinct.map((folded) => headState(folded).gen))
   const resolved = resolveContenders(distinct.filter((f) => headState(f).gen === topGen))
   if (!resolved.ok) {
-    // A duplicity report is provisional the same way a winner is: an unchecked branch might have
-    // superseded both conflicting events.
-    return { ...resolved, unverified }
+    return resolved
   }
 
   const { winner } = resolved
@@ -437,5 +342,5 @@ function selectWinner(valid: Array<FoldedBranch>, unverified: number): ResolveRe
       superseded += loser.spine.length - commonSpine(winner, loser)
     }
   }
-  return { ok: true, winner: winner.branch, superseded, unverified }
+  return { ok: true, winner: winner.branch, superseded }
 }

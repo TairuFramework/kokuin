@@ -123,10 +123,9 @@ export const KEY_REVOKED = 'kid names a key the controller has revoked'
  * **A revoked key answers neither question.** A `rev` naming `#<key>` retires a key for material it
  * has *already* signed, and this is where that bites — every `did:kokuin:` signature check reaches a
  * resolved key through here, so the denial covers `verifyToken` on both `historic` settings, every
- * capability and revocation record `@kokuin/capability` verifies, and the fold's own cap-authorised
- * revoke. The historic arm is the live one: a revoked key is never in the head's `k` (the
- * `KeyState.deny` invariant), so only the backwards scan can select one, and without this
- * `resolveHistoric` would accept a leaked key forever.
+ * capability and revocation record `@kokuin/capability` verifies. The historic arm is the live one:
+ * a revoked key is never in the head's `k` (the `KeyState.deny` invariant), so only the backwards
+ * scan can select one, and without this `resolveHistoric` would accept a leaked key forever.
  *
  * The head arm cannot be reached from a log this package folded, but is not decoration: `states`
  * arrives from the caller, and the invariant is the fold's property, not the array's — a
@@ -198,10 +197,8 @@ export function agreementKeysFrom(
 }
 
 /**
- * A `DIDMethodResolver` answering for exactly one profile, out of already-folded state. The fold
- * hands one to a capability-authorised revoke's verifier, built from the states *before* the event
- * being verified — the prefix contract made unforgettable: the verifier no longer needs a
- * position-aware registry, because the fold supplies the answer. See `FoldOptions.verifyCapability`.
+ * A `DIDMethodResolver` answering for exactly one profile, out of already-folded state. Built from a
+ * prefix of the states, it answers as the log stood at that position.
  *
  * Answers only for `did`; any other identifier is `Unknown DID`, so a caller merging this into a
  * wider registry falls back to its own resolver for another `did:kokuin:` delegate and never serves
@@ -219,8 +216,8 @@ export function createStateResolver(did: string, states: Array<KeyState>): DIDMe
     async resolve(asked: string, header: ResolveIssuerHeader = {}): Promise<ResolvedSigningKey> {
       return signingKeyFrom({ did: asked, states: statesFor(asked), header })
     },
-    // The head of *this prefix*, not the log: these states end at the position the fold is verifying.
-    // A capability issued before that position is the archived material `resolveHistoric` exists for.
+    // The head of *this prefix*, not the log: these states end at the position they were built at.
+    // Material issued before that position is the archived material `resolveHistoric` exists for.
     async resolveHistoric(
       asked: string,
       header: ResolveIssuerHeader = {},

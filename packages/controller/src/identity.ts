@@ -10,9 +10,9 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 
 import { agreementPath, authorityPath, deriveKeyPair } from './derivation.js'
 import { didFromInception, type InceptionEvent, type SignedEvent } from './events.js'
-import type { FoldOptions, KeyState } from './fold.js'
+import type { KeyState } from './fold.js'
 import { encodeKey } from './keys.js'
-import { currentState, currentStateAsync } from './state.js'
+import { currentState } from './state.js'
 
 const CONTEXT = 'Controller identity'
 
@@ -154,9 +154,7 @@ export type CreateControllerIdentityParams = {
  * `kid` parameter — one naming any other key is a request it could not honour, and is rejected on
  * mismatch rather than dropped.
  *
- * Synchronous, and stays so (kubun's apply path depends on it): a log whose revoke carries a
- * capability cannot fold without awaiting a verifier, so it throws here — use
- * {@link createControllerIdentityAsync}.
+ * Synchronous, and stays so: kubun's apply path depends on it.
  *
  * @throws when the log does not fold, or when the derived key is not one of the profile's current
  * authority keys (a wrong `seed` or `profile` for this log).
@@ -168,33 +166,6 @@ export function createControllerIdentity({
 }: CreateControllerIdentityParams): FullIdentity {
   const did = didFromLog(log)
   return identityForState({ seed, profile, did, state: currentState(did, log, CONTEXT) })
-}
-
-export type CreateControllerIdentityAsyncParams = CreateControllerIdentityParams & {
-  options?: FoldOptions
-}
-
-/**
- * Async sibling of {@link createControllerIdentity} for a log whose revoke carries a capability
- * authorising a non-authority signer, which only `foldLogAsync` can check. Identical otherwise, so a
- * log without such a revoke resolves to the same identity through either entry point.
- *
- * @param options forwarded to the async fold; without `verifyCapability` such a log still fails to
- * fold rather than being trusted.
- */
-export async function createControllerIdentityAsync({
-  seed,
-  profile,
-  log,
-  options,
-}: CreateControllerIdentityAsyncParams): Promise<FullIdentity> {
-  const did = didFromLog(log)
-  return identityForState({
-    seed,
-    profile,
-    did,
-    state: await currentStateAsync({ did, events: log, context: CONTEXT, options: options }),
-  })
 }
 
 export type CreateControllerIdentityWithKeyParams = {
@@ -209,7 +180,7 @@ export type CreateControllerIdentityWithKeyParams = {
  * The seed form above needs the root seed to derive the key, but the custody tiers say the daily path
  * must not touch it: the root seed lives on a Ledger or cold mnemonic, and a device never receives the
  * profile sub-seed (a sub-seed holder can derive the *next* key and therefore rotate, voiding
- * pre-rotation). This is the same split {@link createRevokeWithKey} makes, for the same reason.
+ * pre-rotation).
  *
  * What the key in hand can do is exactly the intended granularity: it signs as the profile and cannot
  * rotate, since a rotate must reveal the key the log committed in `n` and only the seed derives that.
@@ -230,31 +201,6 @@ export function createControllerIdentityWithKey({
     publicKey: ed25519.getPublicKey(privateKey),
     did,
     state: currentState(did, log, CONTEXT),
-    mismatch: 'the supplied key is not one of the current authority keys',
-  })
-}
-
-export type CreateControllerIdentityWithKeyAsyncParams = CreateControllerIdentityWithKeyParams & {
-  options?: FoldOptions
-}
-
-/**
- * Async sibling of {@link createControllerIdentityWithKey}, for a log whose revoke carries a
- * capability authorising a non-authority signer. The pairing is not incidental: a profile that uses
- * the management tier is the same profile whose daily signer should not hold the seed.
- */
-
-export async function createControllerIdentityWithKeyAsync({
-  privateKey,
-  log,
-  options,
-}: CreateControllerIdentityWithKeyAsyncParams): Promise<SigningIdentity> {
-  const did = didFromLog(log)
-  return identityForKey({
-    privateKey,
-    publicKey: ed25519.getPublicKey(privateKey),
-    did,
-    state: await currentStateAsync({ did, events: log, context: CONTEXT, options: options }),
     mismatch: 'the supplied key is not one of the current authority keys',
   })
 }

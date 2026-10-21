@@ -64,10 +64,8 @@ export type CapabilityPayload = Permission & {
   jti?: string
   /**
    * Proof-of-possession key the audience must hold, pinned at mint time — see
-   * {@link ConfirmationClaim}. Optional in general (a holder proving itself by signing a token needs
-   * nothing here), but **required** by `createControllerCapabilityVerifier`, where the holder signs a
-   * raw key event naming nobody and resolving the audience instead would let its key rotation brick
-   * the profile.
+   * {@link ConfirmationClaim}. Optional: a holder proving itself by signing a token needs nothing
+   * here.
    */
   cnf?: ConfirmationClaim
 }

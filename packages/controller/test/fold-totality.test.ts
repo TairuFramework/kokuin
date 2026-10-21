@@ -23,13 +23,13 @@ import {
   verifyRotate,
   verifySignatures,
 } from '../src/events.js'
-import { type FoldResult, foldLog, foldLogAsync } from '../src/fold.js'
+import { type FoldResult, foldLog } from '../src/fold.js'
 import { encodeKey } from '../src/keys.js'
 import { resolveBranches } from '../src/supersede.js'
 
 // A log arrives from a network peer or an untrusted store, so every shape below is reachable from
-// ordinary parsed JSON. `foldLog` and `foldLogAsync` document themselves as total — every rejection
-// a returned reason, never a throw — and `resolveBranches` filters branches by folding them, so a
+// ordinary parsed JSON. `foldLog` documents itself as total — every rejection a returned reason, never a
+// throw — and `resolveBranches` filters branches by folding them, so a
 // throw here is a denial of service on duplicity detection for every well-formed branch too.
 
 const at = <T>(items: ReadonlyArray<T>, i: number): T => {
@@ -47,15 +47,6 @@ const did = didFromInception(icp.event)
 const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
 const reset = createReset(seed, 0, 1)
 const inceptionKeyPosition = { gen: 0, seq: 0 }
-const capRevoke = createRevoke({
-  seed,
-  profile: 0,
-  did,
-  prior: icp.event,
-  target,
-  keyPosition: inceptionKeyPosition,
-  cap: 'a-serialized-capability',
-})
 const revoke = createRevoke({
   seed,
   profile: 0,
@@ -106,8 +97,8 @@ const malformed: Array<[string, Array<unknown>, FoldResult]> = [
     { ok: false, reason: 'malformed event', index: 1 },
   ],
   [
-    'a capability-authorised revoke carrying no `sigs`',
-    [icp, { event: capRevoke.event }],
+    'a revoke carrying no `sigs`',
+    [icp, { event: revoke.event }],
     { ok: false, reason: 'malformed event', index: 1 },
   ],
   [
@@ -137,7 +128,7 @@ const malformed: Array<[string, Array<unknown>, FoldResult]> = [
   ],
   [
     'a revoke naming no target',
-    [icp, withoutEventMember(capRevoke, 'x')],
+    [icp, withoutEventMember(revoke, 'x')],
     { ok: false, reason: 'revoke names no target', index: 1 },
   ],
   // The envelope's third member, on an otherwise perfectly valid reset. Deleting `recoveryKey`
@@ -247,20 +238,6 @@ describe('foldLog() is total', () => {
       index: 0,
     })
   })
-})
-
-describe('foldLogAsync() is total', () => {
-  for (const [name, log, expected] of malformed) {
-    test(`answers ${name} with a reason`, async () => {
-      // With a verifier configured, so a capability-bearing revoke reaches the same guards the sync
-      // fold reaches rather than stopping at "needs an async fold".
-      await expect(
-        foldLogAsync(did, log as Array<SignedEvent>, {
-          verifyCapability: async () => ({ authorised: false, reason: 'not checked here' }),
-        }),
-      ).resolves.toEqual(expected)
-    })
-  }
 })
 
 describe('the exported verifiers are total', () => {
@@ -427,9 +404,7 @@ describe('a malformed event its own author signed', () => {
       [icp, signedReset('n', [7])],
       { ok: false, reason: 'invalid reset', index: 1 },
     ],
-    // The target goes into a `ReadonlySet<string>` and, for a capability-authorised revoke, into
-    // the verifier as the resource being asked for — where a wildcard grant would happily
-    // authorise denying an object.
+    // The target goes into a `ReadonlySet<string>`, where an object would be denied by identity.
     [
       'an authority-signed revoke naming an object as its target',
       [icp, signedRevoke('x', { evil: true })],
@@ -482,51 +457,17 @@ describe('a malformed event its own author signed', () => {
     })
   })
 
-  for (const value of [42, {}, [], ['a'], true]) {
-    test(`a revoke whose \`cap\` is ${JSON.stringify(value)} never reaches the verifier`, async () => {
-      // `cap` crosses a `(cap: string, …)` callback boundary into caller code, and it used to cross
-      // it unchecked — `x`, the member right beside it, was type-checked and this was not. It is now
-      // the fold's rejection, so caller code is never handed a `cap` that is not a string.
+  for (const value of [42, {}, [], ['a'], true, 'header.payload.signature']) {
+    test(`a revoke whose \`cap\` is ${JSON.stringify(value)} is refused`, () => {
+      // A revoke has no `cap` member; one on the wire is refused whatever its type.
       const evil = signedRevoke('cap', value)
-      const malformed = {
-        ok: false,
-        reason: 'revoke capability is not a serialized token',
-        index: 1,
-      }
-      let sync: unknown
+      let result: unknown
       expect(() => {
-        sync = foldLog(did, [icp, evil])
+        result = foldLog(did, [icp, evil])
       }).not.toThrow()
-      expect(sync).toEqual(malformed)
-
-      const seen: Array<unknown> = []
-      await expect(
-        foldLogAsync(did, [icp, evil], {
-          verifyCapability: async ({ cap }) => {
-            seen.push(cap)
-            throw new Error(`cap is ${typeof cap}`)
-          },
-        }),
-      ).resolves.toEqual(malformed)
-      expect(seen).toEqual([])
+      expect(result).toEqual({ ok: false, reason: 'revoke capability is not supported', index: 1 })
     })
   }
-
-  test('a revoke whose `cap` is a string still reaches the verifier', async () => {
-    // Control for the five rows above: the same construction with the one member well formed. The
-    // rejection there is the type of `cap`, not the fold having stopped supporting capabilities.
-    const good = signedRevoke('cap', 'header.payload.signature')
-    const seen: Array<unknown> = []
-    await expect(
-      foldLogAsync(did, [icp, good], {
-        verifyCapability: async ({ cap }) => {
-          seen.push(cap)
-          return { authorised: false, reason: 'declined' }
-        },
-      }),
-    ).resolves.toEqual({ ok: false, reason: 'declined', index: 1 })
-    expect(seen).toEqual(['header.payload.signature'])
-  })
 
   test('an unmutated inception still folds', () => {
     // Control for both rows above: the same re-signing path with nothing changed.
@@ -591,7 +532,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
     expect(at(result.states, 1).keys).toEqual(rot.event.k)
   })
 
-  test('one level further is rejected with a reason, by both folds', async () => {
+  test('one level further is rejected with a reason', () => {
     // Unsigned, because this package cannot sign a body it cannot canonicalize — which is also why
     // the depth guard has to run before the signature check rather than instead of it.
     const log = [
@@ -599,11 +540,6 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
       { ...rot, event: { ...rot.event, zz: nest(shallowestRejected) } },
     ] as Array<SignedEvent>
     expect(foldLog(did, log)).toEqual({ ok: false, reason: 'malformed event', index: 1 })
-    await expect(foldLogAsync(did, log)).resolves.toEqual({
-      ok: false,
-      reason: 'malformed event',
-      index: 1,
-    })
   })
 
   // 5000 is past the stack, not merely past the bound: before the guard each of these threw a
@@ -655,13 +591,12 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   ]
 
   for (const [name, log, expected] of chasms) {
-    test(`${name} is answered with a reason, not a RangeError`, async () => {
-      let sync: unknown
+    test(`${name} is answered with a reason, not a RangeError`, () => {
+      let result: unknown
       expect(() => {
-        sync = foldLog(did, log)
+        result = foldLog(did, log)
       }).not.toThrow()
-      expect(sync).toEqual(expected)
-      await expect(foldLogAsync(did, log)).resolves.toEqual(expected)
+      expect(result).toEqual(expected)
     })
   }
 
@@ -838,7 +773,7 @@ describe('resolveBranches() survives a hostile branch', () => {
     // contradicted and none of its events were discarded. The hostile branch never folded, so
     // nothing of it is counted either.
     const result = resolveBranches(did, [hostile, [icp, rot], [icp]])
-    expect(result).toEqual({ ok: true, winner: [icp, rot], superseded: 0, unverified: 0 })
+    expect(result).toEqual({ ok: true, winner: [icp, rot], superseded: 0 })
   })
 
   test('reports no valid history when every branch is hostile', () => {
@@ -846,7 +781,6 @@ describe('resolveBranches() survives a hostile branch', () => {
       ok: false,
       failure: 'no-valid-branch',
       duplicity: { gen: -1, seq: -1, digests: ['', ''] },
-      unverified: 0,
     })
   })
 
@@ -879,7 +813,6 @@ describe('resolveBranches() survives a hostile branch', () => {
       ok: false,
       failure: 'no-valid-branch',
       duplicity: { gen: -1, seq: -1, digests: ['', ''] },
-      unverified: 0,
     })
   })
 })

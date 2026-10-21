@@ -1,17 +1,16 @@
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
   createRevoke,
-  createRevokeWithKey,
   didFromInception,
   KEY_TARGET_PREFIX,
   keyFromTarget,
   keyTarget,
   verifyRevoke,
 } from '../src/events.js'
+import { foldLog } from '../src/fold.js'
 
 const seed = new Uint8Array(32).fill(1)
 const stolen = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
@@ -124,60 +123,30 @@ describe('a key target', () => {
   })
 })
 
-describe('createRevokeWithKey()', () => {
-  test('produces the identical event to the seed-taking form for the same key', () => {
-    // The two builders must not drift: a capability holder's revoke and an authority's revoke are
-    // the same wire object, differing only in where the signing key came from. Comparing the whole
-    // signed event covers the canonical bytes, the base64url convention and the claim set at once.
+describe('capability-authorised revoke removal', () => {
+  test('a revoke carrying a capability no longer folds', () => {
     const { inception, did } = setup()
-    const { privateKey } = deriveKeyPair(
+    const signed = createRevoke({
       seed,
-      authorityPath(0, activeKey.gen, activeKey.seq),
-      'EdDSA',
-    )
-
-    expect(
-      createRevokeWithKey({ privateKey, did, prior: inception.event, target: stolen }),
-    ).toEqual(
-      createRevoke({
-        seed,
-        profile: 0,
-        did,
-        prior: inception.event,
-        target: stolen,
-        keyPosition: activeKey,
-      }),
-    )
-  })
-
-  test('carries the capability the same way', () => {
-    const { inception, did } = setup()
-    const { privateKey } = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
-    const signed = createRevokeWithKey({
-      privateKey,
+      profile: 0,
       did,
       prior: inception.event,
       target: stolen,
-      cap: 'a-cap',
+      keyPosition: activeKey,
     })
-
-    expect(signed.event.cap).toBe('a-cap')
-    expect(signed.event.x).toBe(stolen)
+    const withCapability = { ...signed, event: { ...signed.event, cap: 'x' } }
+    expect(foldLog(did, [inception, withCapability])).toEqual({
+      ok: false,
+      reason: 'revoke capability is not supported',
+      index: 1,
+    })
   })
 
-  test('signs with the key it was handed and nothing else', () => {
-    // A device holding a management capability signs with its own key, which is not — and must not
-    // have to be — one of the profile's authority keys.
-    const { inception, did, priorDigest } = setup()
-    const device = new Uint8Array(32).fill(77)
-    const signed = createRevokeWithKey({
-      privateKey: device,
-      did,
-      prior: inception.event,
-      target: stolen,
-    })
-
-    expect(verifyRevoke(signed, { digest: priorDigest, keys: inception.event.k })).toBe(false)
+  test('the async fold and the speculative async resolver are gone', async () => {
+    const controller = await import('../src/index.js')
+    expect('foldLogAsync' in controller).toBe(false)
+    expect('resolveBranchesAsync' in controller).toBe(false)
+    expect('createRevokeWithKey' in controller).toBe(false)
   })
 })
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import { createInception, createRevoke, didFromInception, type SignedEvent } from '../src/events.js'
-import { foldLog, foldLogAsync } from '../src/fold.js'
+import { foldLog } from '../src/fold.js'
 
 const seed = new Uint8Array(32).fill(1)
 const delegateSeed = new Uint8Array(32).fill(9)
@@ -44,10 +44,10 @@ describe('wire types the fold never checks', () => {
     expect(skipped).toEqual(['false'])
   })
 
-  // CLOSED. `cap` is type-checked in `stepEvent` beside `x`, so caller-supplied verifier code is
-  // never handed a `cap` that is not a string. Construction untouched; the assertion is inverted
-  // and the control below — which already showed `x` being checked — now shows the two agreeing.
-  test('ROW 3 (closed): `cap` is checked in `stepEvent`, like `x` right above it', async () => {
+  // CLOSED. A revoke has no `cap` member: whatever type one carries, the fold refuses it in
+  // `stepEvent` rather than ignoring it, so an old capability-authorised revoke cannot be read as a
+  // plain one.
+  test('ROW 3 (closed): a `cap` of any type is refused, and `x` beside it is still checked', () => {
     const { icp, did } = build()
     const rev = createRevoke({
       seed: delegateSeed,
@@ -57,57 +57,25 @@ describe('wire types the fold never checks', () => {
       target,
       keyPosition: { gen: 0, seq: 0 },
     })
-    // One field mutated: `cap` set to a non-string. `x` is type-checked in `stepEvent`; `cap` is
-    // not, and it crosses a `(cap: string, ...)` callback boundary.
-    const forged = {
-      ...rev,
-      event: { ...rev.event, cap: { lifted: 'from another log' } },
-    } as unknown as SignedEvent
-
-    let seenType = 'never called'
-    const result = await foldLogAsync(did, [icp, forged], {
-      verifyCapability: async ({ cap }) => {
-        seenType = `${typeof cap}: ${JSON.stringify(cap)}`
-        return { authorised: false, reason: 'declined' }
-      },
-    })
-    expect(seenType).toBe('never called')
-    expect(result).toEqual({
-      ok: false,
-      reason: 'revoke capability is not a serialized token',
-      index: 1,
-    })
+    for (const cap of [{ lifted: 'from another log' }, 'header.payload.signature', null, 1]) {
+      const forged = { ...rev, event: { ...rev.event, cap } } as unknown as SignedEvent
+      expect(foldLog(did, [icp, forged])).toEqual({
+        ok: false,
+        reason: 'revoke capability is not supported',
+        index: 1,
+      })
+    }
 
     // CONTROL: the same event with `x` — the field right beside it — set to a non-string is
-    // rejected by the fold before the verifier is reached.
+    // rejected for its own reason, so the rejection above is the member and not the event.
     const badX = {
       ...rev,
       event: { ...rev.event, x: { not: 'a string' } },
     } as unknown as SignedEvent
-    let called = false
-    const control = await foldLogAsync(did, [icp, badX], {
-      verifyCapability: async () => {
-        called = true
-        return { authorised: false, reason: 'declined' }
-      },
+    expect(foldLog(did, [icp, badX])).toEqual({
+      ok: false,
+      reason: 'revoke names no target',
+      index: 1,
     })
-    // A non-string `x` is rejected by the fold before the verifier is reached.
-    expect(control.ok).toBe(false)
-    expect(called).toBe(false)
-
-    // Second control: the same event with a well-formed string `cap` does reach the verifier, so
-    // the rejection above is the member's type and not the capability path having gone away.
-    const wellFormed = {
-      ...rev,
-      event: { ...rev.event, cap: 'header.payload.signature' },
-    } as unknown as SignedEvent
-    let reached: unknown = 'never called'
-    await foldLogAsync(did, [icp, wellFormed], {
-      verifyCapability: async ({ cap }) => {
-        reached = cap
-        return { authorised: false, reason: 'declined' }
-      },
-    })
-    expect(reached).toBe('header.payload.signature')
   })
 })

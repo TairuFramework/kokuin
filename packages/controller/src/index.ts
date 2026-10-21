@@ -26,12 +26,10 @@ export {
   recoveryPath,
 } from './derivation.js'
 export {
-  type CreateRevokeOptions,
   type CreateRotateOptions,
   createInception,
   createReset,
   createRevoke,
-  createRevokeWithKey,
   createRotate,
   DID_PREFIX,
   didFor,
@@ -52,22 +50,13 @@ export {
   verifySignatures,
 } from './events.js'
 export {
-  CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD,
-  CAPABILITY_REVOKE_NEEDS_VERIFIER,
-  CAPABILITY_VERIFIER_FAILED,
-  CAPABILITY_VERIFIER_MALFORMED_ANSWER,
-  type CapabilityAuthorisation,
-  type FoldOptions,
   type FoldResult,
   foldLog,
-  foldLogAsync,
   type KeyState,
   keyStateAt,
   MAX_SKIPPED_SLACK,
   pruneDenySet,
-  REVOKE_NOT_SIGNED_BY_AUDIENCE,
   TOO_MANY_UNKNOWN_EVENTS,
-  type VerifyCapabilityParams,
 } from './fold.js'
 export {
   authoritativeStates,
@@ -78,9 +67,7 @@ export {
 } from './history.js'
 export {
   createControllerIdentity,
-  createControllerIdentityAsync,
   createControllerIdentityWithKey,
-  createControllerIdentityWithKeyAsync,
 } from './identity.js'
 export {
   decodeKey,
@@ -100,6 +87,5 @@ export {
   type ResolveFailure,
   type ResolveResult,
   resolveBranches,
-  resolveBranchesAsync,
 } from './supersede.js'
 export { VERSION_TAG } from './version.js'

@@ -15,22 +15,7 @@
 // the error — the duplication that makes a cross-copy `instanceof` unreliable.
 export { isUnresolvableIssuerError, UnresolvableIssuerError } from '@kokuin/token'
 
-export type {
-  CapabilityAuthorisation,
-  ControllerCapabilityVerifier,
-  ControllerCapabilityVerifierParams,
-} from './controller.js'
-export {
-  assertRevokeCapabilityAudience,
-  audienceConfirmation,
-  createControllerCapabilityVerifier,
-  REVOKE_AUDIENCE_KEY_MISMATCH,
-  REVOKE_LIFETIME_TOO_LONG,
-  REVOKE_NO_AUDIENCE_KEY,
-  REVOKE_NO_POSITION,
-  REVOKE_NOT_AUTHORISED,
-  REVOKE_UNBOUNDED_LIFETIME,
-} from './controller.js'
+export { audienceConfirmation } from './controller.js'
 export {
   AUDIENCE_REVOKED,
   assertValidDelegation,

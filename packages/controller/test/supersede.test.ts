@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
   createReset,
@@ -11,8 +10,8 @@ import {
   type EventCommon,
   type SignedEvent,
 } from '../src/events.js'
-import { type CapabilityAuthorisation, foldLog } from '../src/fold.js'
-import { resolveBranches, resolveBranchesAsync } from '../src/supersede.js'
+import { foldLog } from '../src/fold.js'
+import { resolveBranches } from '../src/supersede.js'
 
 const at = <T>(items: ReadonlyArray<T>, i: number): T => {
   const v = items[i]
@@ -21,18 +20,7 @@ const at = <T>(items: ReadonlyArray<T>, i: number): T => {
 }
 
 const seed = new Uint8Array(32).fill(1)
-const delegateSeed = new Uint8Array(32).fill(9)
 const victim = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-const cap = 'a-serialized-capability'
-
-/** Approves the capability, pinning the delegate's signing key as its audience. */
-const approve = async (): Promise<CapabilityAuthorisation> => ({
-  authorised: true,
-  audienceKey: {
-    alg: 'EdDSA',
-    publicKey: deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
-  },
-})
 
 function build() {
   const icp = createInception(seed, 0)
@@ -376,156 +364,6 @@ describe('resolveBranches()', () => {
       if (!result.ok) continue
       expect(at(result.winner, 1).event.t).toBe('rot')
       expect(result.superseded).toBe(2)
-    }
-  })
-})
-
-// The capability-authorised revoke is the management tier. The sync fold fails closed on one by
-// construction, so folding branches through it filtered every branch of such a log away as
-// invalid and reported "no valid history at all" — duplicity detection silently off for every
-// profile that uses the tier, with no async form to reach for.
-describe('resolveBranchesAsync()', () => {
-  function capLog() {
-    const { did, icp } = build()
-    const revoke = createRevoke({
-      seed: delegateSeed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 0 },
-      cap,
-    })
-    return { did, icp, revoke, branch: [icp, revoke] }
-  }
-
-  test('resolves a cap-bearing log the sync form cannot answer for', async () => {
-    const { did, branch } = capLog()
-
-    const sync = resolveBranches(did, [branch])
-    expect(sync.ok).toBe(false)
-    if (sync.ok) return
-    // Distinguishable from duplicity, and from a log with no valid history at all.
-    expect(sync.failure).toBe('needs-capability-verification')
-    expect(sync.duplicity.gen).toBe(-1)
-
-    const result = await resolveBranchesAsync(did, [branch], { verifyCapability: approve })
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.winner).toBe(branch)
-    expect(result.superseded).toBe(0)
-  })
-
-  test('reports duplicity on a cap-bearing fork, which the sync form could not see at all', async () => {
-    const { did, icp, revoke } = capLog()
-    const rival = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: 'did:key:zOther',
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const branches = [
-      [icp, revoke],
-      [icp, rival],
-    ]
-
-    // The finding the tier exists to make, and the answer the sync form gives instead: the branch it
-    // could check, and a count saying it did not see all of them. `unverified` is the whole of what
-    // makes that answer safe to act on — without reading it a caller takes a fork for a clean
-    // history — and it is why the sync form cannot simply drop such a branch and say nothing.
-    expect(resolveBranches(did, branches)).toEqual({
-      ok: true,
-      winner: [icp, rival],
-      superseded: 0,
-      unverified: 1,
-    })
-
-    const result = await resolveBranchesAsync(did, branches, { verifyCapability: approve })
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.failure).toBe('duplicity')
-    expect(result.duplicity.gen).toBe(0)
-    expect(result.duplicity.seq).toBe(1)
-  })
-
-  test('a branch whose capability the verifier declines is filtered, not fatal', async () => {
-    // A `cap`-bearing revoke reaches the capability path before any signature check — the
-    // capability names the signer — so anyone who can read a log can append one. With a verifier
-    // it is rejected and the branch is filtered like any other invalid one, which is what keeps
-    // the answer from being a denial of service on duplicity detection.
-    const { did, icp } = capLog()
-    const honest = [
-      icp,
-      createRevoke({
-        seed,
-        profile: 0,
-        did,
-        prior: icp.event,
-        target: victim,
-        keyPosition: { gen: 0, seq: 0 },
-      }),
-    ]
-    const forged = [
-      icp,
-      {
-        ...createRevoke({
-          seed,
-          profile: 0,
-          did,
-          prior: icp.event,
-          target: 'did:key:zForged',
-          keyPosition: { gen: 0, seq: 0 },
-          cap,
-        }),
-        sigs: [],
-      },
-    ]
-
-    const result = await resolveBranchesAsync(did, [honest, forged], {
-      verifyCapability: async () => ({ authorised: false, reason: 'no such grant' }),
-    })
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.winner).toBe(honest)
-  })
-
-  test('answers needs-capability-verification when no verifier is configured', async () => {
-    const { did, branch } = capLog()
-    expect(await resolveBranchesAsync(did, [branch])).toEqual({
-      ok: false,
-      failure: 'needs-capability-verification',
-      duplicity: { gen: -1, seq: -1, digests: ['', ''] },
-      unverified: 1,
-    })
-  })
-
-  test('matches the sync form on every log that carries no capability', async () => {
-    const { did, icp } = build()
-    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
-    const thief = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const reset = createReset(seed, 0, 1)
-    for (const branches of [
-      [[icp]],
-      [[icp], [icp, rot]],
-      [
-        [icp, thief],
-        [icp, rot],
-      ],
-      [
-        [icp, rot],
-        [icp, reset],
-      ],
-    ]) {
-      expect(await resolveBranchesAsync(did, branches)).toEqual(resolveBranches(did, branches))
     }
   })
 })

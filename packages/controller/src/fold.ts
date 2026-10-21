@@ -1,5 +1,3 @@
-import type { DIDMethodResolver, ResolvedSigningKey } from '@kokuin/token'
-
 import { digestOf, isCanonicalizable } from './canonical.js'
 import {
   type InceptionEvent,
@@ -8,13 +6,11 @@ import {
   type RevokeEvent,
   type RotateEvent,
   type SignedEvent,
-  verifyEventSignedBy,
   verifyInception,
   verifyReset,
   verifyRevoke,
   verifyRotate,
 } from './events.js'
-import { createStateResolver } from './state-resolver.js'
 
 export type KeyState = {
   did: string
@@ -65,112 +61,12 @@ export type FoldResult =
   | { ok: true; states: Array<KeyState> }
   | { ok: false; reason: string; index: number }
 
-/**
- * What a capability verifier answers a cap-bearing revoke with.
- *
- * `audienceKey` is the key the capability pins as its audience at mint time, never resolved at
- * verification time; the fold checks the event's own signature against it, binding the grant to the
- * party it was issued to.
- *
- * A key rather than a boolean because the fold, not the verifier, must tie the answer to the event
- * in hand. The log is public, so the serialized capability inside a revoke is readable by everyone
- * who can resolve the profile; with a boolean, any such reader could lift it out and chain a revoke
- * of their own with any bytes in `sigs`, covering whatever the capability's `res` covers — a
- * wildcard, for a management capability, so every device. Among divisions keeping a *single*
- * callback, this is the only one where neither side can leave the binding out.
- */
-export type CapabilityAuthorisation =
-  | { authorised: true; audienceKey: ResolvedSigningKey }
-  /** `reason` becomes the fold's failure reason verbatim, so it must describe this rejection. */
-  | { authorised: false; reason: string }
-
-export type FoldOptions = {
-  /**
-   * Verify a capability authorising a non-authority signer to revoke. Injected rather than imported
-   * so the sync path stays free of a capability dependency.
-   *
-   * Receives the serialized capability, the controller DID (which must be the capability `sub`), the
-   * DID being denied, and a resolver for the controller **at the position being verified**. That
-   * fourth argument makes the position contract keepable: the capability is issued by the very
-   * profile whose log carries the revoke, and the state to resolve it against is the prefix before
-   * this event — not the head (which would let a device revoked at event 1 keep authoring at event 2,
-   * the deny set being position-dependent only inside the fold) and not the whole log (which would
-   * recurse into the asking fold). Nothing outside the fold knows which position is being verified,
-   * so the fold answers rather than asks: this resolver holds exactly `states[0..i-1]`, is complete
-   * for the profile, and answers `Unknown DID` for anything else so a verifier can merge it into a
-   * wider registry for a chain's delegates. See {@link CapabilityAuthorisation}.
-   */
-  verifyCapability?: (params: VerifyCapabilityParams) => Promise<CapabilityAuthorisation>
-}
-
-/** What the fold hands {@link FoldOptions.verifyCapability} — see that member for each field. */
-export type VerifyCapabilityParams = {
-  cap: string
-  subject: string
-  target: string
-  subjectAtPosition: DIDMethodResolver
-}
-
-/**
- * Whether a verifier's answer is one this fold can act on. Total, and strict about both arms: an
- * `authorised: true` with no usable key would reach `verifyEventSignedBy` and throw, an
- * `authorised: false` with no reason would produce a non-string `FoldResult.reason`. Neither is
- * reachable from typed code, both from a stale build.
- *
- * The discriminant is compared against the literals, so a `'true'` string is malformed rather than
- * authorising. The key bytes go through `ArrayBuffer.isView`, not `instanceof Uint8Array`, which is
- * per-realm and would reject a correct answer built in a worker, a `vm` context, or across an
- * Electron bridge — the one way this guard could turn away a good answer.
- */
-function isCapabilityAuthorisation(value: unknown): value is CapabilityAuthorisation {
-  if (value == null || typeof value !== 'object') {
-    return false
-  }
-  const answer = value as Partial<CapabilityAuthorisation & { audienceKey: unknown }>
-  if (answer.authorised === true) {
-    const key = answer.audienceKey as ResolvedSigningKey | undefined
-    return key != null && typeof key.alg === 'string' && ArrayBuffer.isView(key.publicKey)
-  }
-  return answer.authorised === false && typeof answer.reason === 'string'
-}
-
 function fail(reason: string, index: number): FoldResult {
   return { ok: false, reason, index }
 }
 
 /** What a log entry that is not a {@link SignedEvent} at all fails with. */
 const MALFORMED_EVENT = 'malformed event'
-
-// The fold's capability-revoke failure reasons. Exported because they already are a contract:
-// `@kokuin/capability` asserts on them by string literal across a package boundary. `FoldResult.reason`
-// stays a plain string, so these name values rather than widening the type.
-
-/** A verifier threw. The thrown message is appended after `: `, so match with `startsWith`. */
-export const CAPABILITY_VERIFIER_FAILED = 'capability verifier failed'
-
-/** A verifier answered with something that is not a {@link CapabilityAuthorisation}. */
-export const CAPABILITY_VERIFIER_MALFORMED_ANSWER =
-  'capability verifier returned a malformed answer'
-
-/**
- * The capability authorised the revoke and pinned an audience key, and somebody else signed the
- * event. Distinct from a rejected grant: the delegation is sound and the signature is not.
- */
-export const REVOKE_NOT_SIGNED_BY_AUDIENCE = 'revoke is not signed by the capability audience'
-
-/**
- * The sync fold met a capability-authorised revoke, which it cannot verify by construction — the
- * management tier working as designed, answered by `foldLogAsync`. The capability follows after `: `,
- * so match with `startsWith`. Exported so speculative folders (`resolveBranches`) can tell it from a
- * genuinely broken log.
- */
-export const CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD = 'capability-authorised revoke needs an async fold'
-
-/**
- * The async fold met a capability-authorised revoke with no `verifyCapability` configured. Same
- * shape: the log is fine and the call was not equipped for it.
- */
-export const CAPABILITY_REVOKE_NEEDS_VERIFIER = 'capability-authorised revoke needs a verifier'
 
 /**
  * Whether a log entry has the envelope shape everything downstream reads without checking. The
@@ -206,23 +102,12 @@ function isSignedEventShape(value: unknown): value is SignedEvent {
 type StepOutcome =
   | { status: 'ok'; state: KeyState; skipped?: boolean }
   | { status: 'fail'; reason: string }
-  /**
-   * A cap-bearing revoke: `state` is what to apply *if* the capability verifies, and `signed` is the
-   * event, whose signature must be checked against the key the capability authorises.
-   */
-  | {
-      status: 'capability'
-      cap: string
-      target: string
-      state: KeyState
-      signed: SignedEvent<RevokeEvent>
-    }
 
 /**
  * Validate one event against the state so far and produce the next state. Pure and total — every
- * rejection is a returned reason, never a throw. Criticality is decided here so both entry points
- * inherit it: an unknown critical event fails closed, an unknown `crit: false` event at the next
- * position is skipped (prior state carried forward unchanged), and anything else fails closed.
+ * rejection is a returned reason, never a throw. Criticality is decided here: an unknown critical
+ * event fails closed, an unknown `crit: false` event at the next position is skipped (prior state
+ * carried forward unchanged), and anything else fails closed.
  */
 function stepEvent(
   did: string,
@@ -311,22 +196,20 @@ function stepEvent(
     if (rev.event.g !== prior.gen || rev.event.s !== prior.seq + 1) {
       return { status: 'fail', reason: 'sequence gap' }
     }
-    // `x` goes into the deny set and, for a cap-authorised revoke, into the verifier as the resource
-    // asked for — where a wildcard grant would happily authorise denying `undefined`.
     if (typeof rev.event.x !== 'string') {
       return { status: 'fail', reason: 'revoke names no target' }
     }
-    // `cap` crosses a callback boundary into caller-supplied code, the one place a wire value is
-    // handed to something that cannot have checked it. `x` above was checked and this was not.
-    if (rev.event.cap !== undefined && typeof rev.event.cap !== 'string') {
-      return { status: 'fail', reason: 'revoke capability is not a serialized token' }
+    // A revoke is authority-signed and nothing else. `cap` is not a member of the event any more; one
+    // carried on the wire is refused rather than ignored, so an old capability-authorised revoke
+    // stops folding instead of being read as a plain one.
+    if ('cap' in rev.event) {
+      return { status: 'fail', reason: 'revoke capability is not supported' }
     }
     // A key target may not name a key this position currently publishes. `resolve` is head-only, so
     // a key still in `k` is one the profile asserts it signs with *now*; the event that stops that is
     // `rotate` (whose pre-rotation commitment the leaked-key holder cannot forge), and denial is for
     // what the rotate leaves behind — the historic path, which survives a rotate. So: rotate-then-deny.
-    // Allowing it would let one cap-authorised revoke (wildcard `res`) from a device that never held
-    // the sub-seed disable the root tier, and leave a head whose own `k` the resolver must refuse.
+    // Allowing it would leave a head whose own `k` the resolver must refuse.
     const deniedKey = keyFromTarget(rev.event.x)
     if (
       deniedKey != null &&
@@ -340,9 +223,6 @@ function stepEvent(
     // is still wherever the last icp/rot put it.
     const state: KeyState = { ...prior, seq: rev.event.s, deny, digest: digestOf(rev.event) }
 
-    if (rev.event.cap != null) {
-      return { status: 'capability', cap: rev.event.cap, target: rev.event.x, state, signed: rev }
-    }
     if (!verifyRevoke(rev, { digest: prior.digest, keys: prior.keys })) {
       return { status: 'fail', reason: 'invalid revoke' }
     }
@@ -397,10 +277,9 @@ export const TOO_MANY_UNKNOWN_EVENTS = 'too many unknown events'
 export const INTERNAL_FOLD_INVARIANT = 'internal fold invariant: missing event or prior state'
 
 /**
- * The running budget for skipped events, shared by both fold entry points so the two cannot drift.
- * `understood` counts validated events (the inception is the first), `skipped` the ones carried past.
- * Checked as each skipped event arrives, so a padded log stops folding at the point it exceeds the
- * budget rather than after.
+ * The running budget for skipped events. `understood` counts validated events (the inception is the
+ * first), `skipped` the ones carried past. Checked as each skipped event arrives, so a padded log
+ * stops folding at the point it exceeds the budget rather than after.
  */
 function skipBudget(): { understood(): void; skip(): boolean } {
   let understood = 1
@@ -421,8 +300,7 @@ type FoldInit =
   | { ok: false; result: FoldResult }
 
 /**
- * Validate the inception and seed the state array both fold entry points start from. Shared so the
- * sync/async split begins only where the two loops differ.
+ * Validate the inception and seed the state array the fold starts from.
  */
 function initFold(did: string, events: Array<SignedEvent>): FoldInit {
   if (!Array.isArray(events)) {
@@ -475,9 +353,7 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
  * which a verifier evaluating at position `i` must use — that is what makes the deny set
  * position-dependent: clearing a DID later never retroactively validates its earlier actions.
  *
- * Synchronous, so it stays usable on an offline verifier's apply path. A capability-authorised revoke
- * needs async verification, so it fails closed here rather than trusting an unchecked capability — use
- * `foldLogAsync` when one may be present.
+ * Synchronous, so it stays usable on an offline verifier's apply path.
  */
 export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
   const init = initFold(did, events)
@@ -497,88 +373,7 @@ export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
     if (outcome.status === 'fail') {
       return fail(outcome.reason, i)
     }
-    if (outcome.status === 'capability') {
-      return fail(`${CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD}: ${outcome.cap}`, i)
-    }
     if (outcome.skipped) {
-      if (!budget.skip()) {
-        return fail(TOO_MANY_UNKNOWN_EVENTS, i)
-      }
-    } else {
-      budget.understood()
-    }
-    states.push(outcome.state)
-  }
-
-  return { ok: true, states }
-}
-
-/**
- * Async counterpart of {@link foldLog}. Shares {@link stepEvent}, so the only difference is a
- * capability-authorised revoke: this entry point awaits `options.verifyCapability` instead of failing
- * closed.
- */
-export async function foldLogAsync(
-  did: string,
-  events: Array<SignedEvent>,
-  options: FoldOptions = {},
-): Promise<FoldResult> {
-  const init = initFold(did, events)
-  if (!init.ok) {
-    return init.result
-  }
-  const { inception, states } = init
-  const budget = skipBudget()
-
-  for (let i = 1; i < events.length; i++) {
-    const prior = states[i - 1]
-    if (prior === undefined) {
-      return fail(INTERNAL_FOLD_INVARIANT, i)
-    }
-    // `events[i]` may be a hole or `undefined`; `stepEvent` reports that as `malformed event`.
-    const outcome = stepEvent(did, inception, events[i] as SignedEvent, prior)
-    if (outcome.status === 'fail') {
-      return fail(outcome.reason, i)
-    }
-    if (outcome.status === 'capability') {
-      if (options.verifyCapability == null) {
-        return fail(`${CAPABILITY_REVOKE_NEEDS_VERIFIER}: ${outcome.cap}`, i)
-      }
-      // The fold is total by contract; a verifier is caller-supplied code TypeScript cannot police
-      // across a package boundary or a stale build. Both ways it can break the contract — throwing,
-      // and answering with the wrong shape — come back as a `FoldResult` with a real reason, never an
-      // escaping exception or an `undefined` reason. Our adapter never throws; a third party's need
-      // not, and a throw is not evidence the capability authorises anything.
-      let authorisation: CapabilityAuthorisation
-      try {
-        authorisation = await options.verifyCapability({
-          cap: outcome.cap,
-          subject: did,
-          target: outcome.target,
-          // A copy: `states` keeps growing, and this resolver must keep answering for the position it
-          // was built at even if the verifier holds on to it.
-          subjectAtPosition: createStateResolver(did, [...states]),
-        })
-      } catch (cause) {
-        return fail(
-          `${CAPABILITY_VERIFIER_FAILED}: ${cause instanceof Error ? cause.message : String(cause)}`,
-          i,
-        )
-      }
-      if (!isCapabilityAuthorisation(authorisation)) {
-        return fail(CAPABILITY_VERIFIER_MALFORMED_ANSWER, i)
-      }
-      if (!authorisation.authorised) {
-        return fail(authorisation.reason, i)
-      }
-      // The capability authorises its audience, not its bearer. Checked here rather than left to the
-      // verifier so a verifier that simply forgot cannot make the fold accept a revoke from anyone
-      // who read the log — see `CapabilityAuthorisation`.
-      if (!verifyEventSignedBy(outcome.signed, authorisation.audienceKey)) {
-        return fail(REVOKE_NOT_SIGNED_BY_AUDIENCE, i)
-      }
-    }
-    if (outcome.status === 'ok' && outcome.skipped) {
       if (!budget.skip()) {
         return fail(TOO_MANY_UNKNOWN_EVENTS, i)
       }

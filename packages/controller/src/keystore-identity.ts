@@ -1,9 +1,8 @@
 import type { FullIdentity, KeyEntry } from '@kokuin/token'
 
 import { createInception, didFor } from './events.js'
-import type { FoldOptions } from './fold.js'
 import type { LogStore } from './history.js'
-import { createControllerIdentityAsync } from './identity.js'
+import { createControllerIdentity } from './identity.js'
 
 export type ProvideControllerIdentityParams = {
   /** The seed source: `provideAsync()`'s bytes are the controller root seed. Generates on first use. */
@@ -12,8 +11,6 @@ export type ProvideControllerIdentityParams = {
   profile: number
   /** Where the last accepted log for the DID lives — loaded to restore, written to on first generate. */
   logStore: LogStore
-  /** Forwarded to the fold for a log whose revoke carries a capability only the async fold can verify. */
-  options?: FoldOptions
 }
 
 /**
@@ -28,7 +25,6 @@ export async function provideControllerIdentity({
   entry,
   profile,
   logStore,
-  options,
 }: ProvideControllerIdentityParams): Promise<FullIdentity> {
   const seed = await entry.provideAsync()
   const did = didFor(seed, profile)
@@ -37,5 +33,5 @@ export async function provideControllerIdentity({
     log = [createInception(seed, profile)]
     await logStore.set(did, log)
   }
-  return createControllerIdentityAsync({ seed, profile, log, options })
+  return createControllerIdentity({ seed, profile, log })
 }

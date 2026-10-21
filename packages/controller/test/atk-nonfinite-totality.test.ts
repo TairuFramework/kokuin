@@ -8,7 +8,7 @@ import {
   type SignedEvent,
   verifySignatures,
 } from '../src/events.js'
-import { foldLog, foldLogAsync } from '../src/fold.js'
+import { foldLog } from '../src/fold.js'
 import { resolveBranches } from '../src/supersede.js'
 
 const seed = new Uint8Array(32).fill(1)
@@ -132,20 +132,6 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     // The hostile branch does not fold, so it is filtered like any other invalid branch and the
     // honest branch wins outright — not a duplicity report, and not "no valid history".
     expect(together).toEqual(aloneOk)
-  })
-
-  test('ROW 5 (closed): `foldLogAsync` resolves to a FoldResult rather than rejecting', async () => {
-    const { did } = build()
-    const hostile = fromWire(
-      '{"event":{"v":1,"t":"icp","g":0,"s":0,"crit":true,"k":["zAbc"],"ka":["zAbc"],"n":["zAbc"],"kt":1,"nt":1,"r":"zAbc","junk":1e400},"sigs":[]}',
-    ) as SignedEvent
-    let rejected: unknown
-    const resolvedWith = await foldLogAsync(did, [hostile]).catch((error) => {
-      rejected = error
-      return undefined
-    })
-    expect(rejected).toBeUndefined()
-    expect(resolvedWith).toEqual({ ok: false, reason: 'malformed event', index: 0 })
   })
 
   test('ROW 6 (closed): the exported `verifySignatures` is documented total and now is', () => {

@@ -6,9 +6,9 @@ import type {
 } from '@kokuin/token'
 
 import { DID_PREFIX, type SignedEvent } from './events.js'
-import type { FoldOptions, KeyState } from './fold.js'
+import type { KeyState } from './fold.js'
 import { authoritativeStates, type LogStore } from './history.js'
-import { allStatesAsync } from './state.js'
+import { allStates } from './state.js'
 import { agreementKeysFrom, DID_METHOD, signingKeyFrom } from './state-resolver.js'
 
 const CONTEXT = 'Controller resolver'
@@ -17,36 +17,17 @@ export type ControllerResolverOptions = {
   /**
    * Load a controller's event log. Returns undefined when the DID is unknown.
    *
-   * **Answer with the whole log**, even when a `verifyCapability` is configured. A capability
-   * authorising a revoke must be checked at the position the fold is at — a rotated-away key set must
-   * not verify a grant made under it, a device denied before that position must not author one —
-   * and neither question can be answered from a DID alone, all this callback receives. So neither is
-   * asked of it: the fold answers both by handing the verifier a resolver built from the prefix
-   * states. See `FoldOptions.verifyCapability`.
-   *
-   * ```ts
-   * const resolver = createControllerResolver({
-   *   loadLog: async (did) => await store.log(did),
-   *   verifyCapability: createControllerCapabilityVerifier(),
-   * })
-   * ```
+   * **Answer with the whole log**: the fold needs every event, and a prefix resolves to a head that
+   * is missing whatever came after it.
    *
    * Reuse the instance rather than building one per resolution: concurrent resolutions of one DID
    * share a single in-flight fold. Not a cache — the entry drops as soon as the fold settles.
    *
-   * One re-entry hazard remains, not this callback's: a `verifyToken` hook or a `resolver` passed to
-   * the capability verifier that resolves *this* DID through *this* resolver joins the calling fold
-   * and awaits a promise that cannot settle. Give such a hook a resolver of its own.
+   * One re-entry hazard remains, not this callback's: a `verifyToken` hook that resolves *this* DID
+   * through *this* resolver joins the calling fold and awaits a promise that cannot settle. Give such
+   * a hook a resolver of its own.
    */
   loadLog(did: string): Promise<Array<SignedEvent> | undefined>
-  /**
-   * Verify a capability authorising a non-authority signer to revoke, forwarded to the fold. Optional
-   * because most logs carry none: without it a log containing one fails to fold rather than being
-   * trusted. `createControllerCapabilityVerifier()` from `@kokuin/capability` is the implementation;
-   * it needs a registry only for a chain delegate whose DID method is not resolvable from the
-   * identifier alone.
-   */
-  verifyCapability?: FoldOptions['verifyCapability']
   /**
    * Where to remember the last log accepted for each DID, so a later one that is *behind* it is
    * refused rather than answered from. Without one, truncation is a silent revocation bypass: a peer
@@ -79,17 +60,14 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
 
   // Shared by every member: load, fold, throw `Unknown DID` when absent. The whole state array
   // rather than the head, because `resolveHistoric` answers about rotated-away keys; head-only
-  // members take `states[states.length - 1]`. Always the async fold: it differs from `foldLog` only
-  // in awaiting a capability-authorised revoke's verifier, so a mode-selecting option would choose
-  // nothing — the verifier is the only thing a caller supplies.
+  // members take `states[states.length - 1]`.
   async function computeStates(did: string): Promise<Array<KeyState>> {
     const events = await options.loadLog(did)
     if (events == null || events.length === 0) {
       throw new Error(`Unknown DID: ${did}`)
     }
-    const foldOptions = { verifyCapability: options.verifyCapability }
     if (options.history == null) {
-      return await allStatesAsync({ did, events, context: CONTEXT, options: foldOptions })
+      return allStates(did, events, CONTEXT)
     }
     // Compared against what this party last accepted, so a truncated log — folding cleanly, missing
     // the revoke that matters — is refused. See `LogStore`.
@@ -99,7 +77,6 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
       loaded: events,
       seen,
       context: CONTEXT,
-      options: foldOptions,
     })
     // Only after it has folded, and only in the memory-keeping direction: a log that lost never
     // reaches here, so the store never moves backwards.

@@ -1,9 +1,8 @@
 import { describe, expect, test } from 'vitest'
 
-import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
-  createRevokeWithKey,
+  createRevoke,
   createRotate,
   didFromInception,
   type EventCommon,
@@ -19,19 +18,20 @@ describe('branch precedence: current-key revokes never outrank the owning rotate
     const did = didFromInception(inception.event)
 
     // The thief holds the CURRENT authority private key (position 0,0) and nothing else.
-    // It cannot rotate — pre-rotation holds — but it can append revokes.
-    const stolen = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
+    // It cannot rotate — pre-rotation holds — but it can append revokes, signed at that position.
     // Annotated, not narrowed by inference: the array is a log and the cursor walks event types,
     // so `[inception]` inferring `SignedEvent<InceptionEvent>[]` made `test:types` fail on the
     // first `push`. Construction below is untouched.
     const thief: Array<SignedEvent> = [inception]
     let prior: EventCommon = inception.event
     for (let n = 0; n < 3; n++) {
-      const rev = createRevokeWithKey({
-        privateKey: stolen.privateKey,
+      const rev = createRevoke({
+        seed,
+        profile: 0,
         did,
         prior,
         target: `did:kokuin:zVictim${n}`,
+        keyPosition: { gen: 0, seq: 0 },
       })
       thief.push(rev)
       prior = rev.event
