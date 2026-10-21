@@ -7,48 +7,51 @@ lands).
 ## Intent
 
 The root signer (Ledger or cold mnemonic) should come out only for first setup, for adding a
-management device, for settling disputes between management devices, and for recovery. Day to day,
-a few trusted **management devices** (e.g. a desktop app that manages AI agents, plus the user's
-phone) mint grants for **edge** agents and devices and revoke them.
+management device, for settling disputes, and for recovery. Day to day, a few trusted **management
+devices** (e.g. a desktop app that manages AI agents, plus the user's phone) mint grants for
+**edge** agents and devices and revoke them, and renew each other.
 
 Today the management tier is a capability: a `rev` carrying `cap` is verified against the clock.
 Once that capability expires, every log containing a revoke it authorised stops folding
 (`REVOKE_NOT_AUTHORISED`): the DID becomes unresolvable for any newcomer, and a truncated prefix wins
-anti-truncation. With an offline root, the earlier "anchor by a later authority event" fix almost
-never fires, because authority events are rare by design. A management capability also cannot be
-renewed without root, since a delegated child cannot outlive its parent.
+anti-truncation. With an offline root, anchoring by a later authority event almost never fires, and a
+management capability cannot be renewed without root.
 
-The fix: **management authority lives in the log.** The fold judges a management-signed event by
-the management set published at that position, never by a clock. Time is checked only where it is
-already normal: on grants, which expire anyway.
+The fix: **management authority lives in the log**, and member actions **merge** instead of
+competing. A device cannot know whether its event races another member's, so no member action may
+make the log fork; every member action is monotonic and all of them are combined. Only root events
+form a single chain, and only root settles.
 
 ## Goals
 
-- The fold stays deterministic and clock-free for every log. A log that folds once folds forever.
+- The fold is deterministic and clock-free. The same input folds the same way forever.
+- Member actions never fork the log: concurrent member events merge.
 - Management devices hold a lease and renew each other without root.
 - Any single management device can revoke an edge holder alone.
 - Edge grants are minted by management devices, not by the root key.
 - Most verifiers work offline: a grant plus the log it travels with is enough to verify it.
-- Root signs only: every add, dispute settlement, recovery.
+- Root signs only: every add, settlement, recovery.
+- Consumers may prune: only the root chain and the current epoch are needed.
 
 ## Non-goals
 
 - A trusted clock, witnesses, or timestamped events.
-- Grants on the log. Grants stay off-log signed tokens; the log holds only the management set and
-  denials.
+- Grants on the log. Grants stay off-log signed tokens; the log holds the management set and denials.
 - Revoking an individual capability `jti` on the log (stays off-log via `revocation.ts`).
-- ES256 / P-256 member keys. Members are Ed25519 only; a second event signature algorithm is a
-  separate project.
+- ES256 / P-256 member keys. Members are Ed25519 only.
 - kubun / kumiai adoption. They get their own plans; this design defines what kokuin offers them.
-- Threshold (m-of-n) root keys; the fold stays n-of-n on `k`.
+- Threshold (m-of-n) root keys; root stays n-of-n on `k`.
 
 ## Anti-goals
 
-- Any rule under which a log that folded can stop folding with no new event.
-- Any way for a single management device to add a management key (a thief would add a sock-puppet
-  and the two would renew each other forever).
-- Any way for a management device to rotate, reset, touch `k`/`ka`/`n`, or renew itself.
-- Routine use (two members appending while one is offline) requiring root.
+- Any rule under which the same input folds differently later.
+- Any automatic choice of a winner between member branches (copying, cycles and digest grinding all
+  attack such a choice).
+- Any way for a member to add a member (sock-puppets would renew each other forever), rotate, reset,
+  touch `k`/`ka`/`n`, or renew itself.
+- An ordinary root action (an add, a root revoke) silently undoing a member's removal or revoke. Only
+  an explicit settlement may drop member events.
+- Pruning being required: a consumer may keep the full log.
 
 ## Decided rules
 
@@ -59,125 +62,179 @@ Decided with the user, in this form.
 | Add a management member (with a lease end) | root only | yes, every time |
 | Renew a member's lease | root, or any member **other than** the one renewed | no |
 | Remove a member | root, or any member other than the one removed | no |
-| Revoke an edge holder (`rev`, target a DID or retired key) | root, or any single member | no |
+| Revoke an edge holder (target a DID or retired key) | root, or any single member | no |
 | Mint an edge grant | any member (as issuer) | no |
-| Settle a fork the rules below cannot | root | yes |
+| Settle (new epoch, full state snapshot) | root | yes |
 
-- **Members** are an Ed25519 `did:key`, or a long-form `did:peer:4` that carries the pinned Ed25519
-  key (the same rule the `cnf` pin uses today). The add event carries the DID and the key; the fold
-  refuses an add whose DID does not carry that key, or any other DID form.
-- **The fold never reads the lease.** A member-signed event is valid iff its signer was a member at
-  that position. The lease end is carried in the state.
-- **Grants are bounded at mint.** A member-issued grant verifies only if its `exp` is no later than
-  the issuer's lease end in the log the verifier holds, plus the normal `exp` check. Lapse therefore
-  ends the grants by itself, and a member cannot stretch them: it cannot renew itself. Renewal does
-  not revive old grants; members re-mint.
+- **Members** are an Ed25519 `did:key`, or a long-form `did:peer:4` carrying the pinned Ed25519 key
+  (the rule the `cnf` pin uses today). The add carries the DID and the key; the fold refuses an add
+  whose DID does not carry that key, or any other DID form.
+- **"Other member" means another pinned key.** Self-renew and self-remove are judged by pinned-key
+  equality, irrespective of DID or incarnation, so one key added twice (concurrent retries, or once
+  as `did:key` and once as a peer DID) cannot renew itself through the alias.
+- **Root and member keys are disjoint.** A member pin may never be a key in `k`, `ka` or committed
+  in `n` on the current generation's root chain; adds, snapshots and rotations all enforce it. No
+  management device holds the seed or any root key.
+- **The fold never reads the lease.** Lease end is carried in the state; it bounds grants only. Only a
+  removal ends a member's log authority.
+- **Grants are bounded at mint.** A member grant verifies only if `exp` ≤ the issuer's lease end in
+  the state the verifier holds, plus the normal `exp` check.
 - **Short grants, long leases.** Lease (months) is how long a user can stay away before root is
-  needed. Edge grant lifetime is how late an offline verifier can learn of a revoke or removal:
-  default **12 hours**, configurable, enforced by the verifier as a maximum `exp - iat`. Members
-  re-mint automatically. An agent that is not renewed simply lapses, with no log entry; a revoke is
-  only for killing one early.
-- **Removal kills the member's grants** as soon as a verifier holds the removing log; honest grants
-  included, agents get new ones from another member.
-- **Two members, one removed:** the survivor works until its own lease end, then needs root, either
-  root renewing it or root adding a new member who renews it.
-- **Accepted leak:** a thief holding a member can remove the honest peer first (single-member
-  removal is decided) and then mint 12-hour grants until its own lease end, and deny edge holders.
-  It cannot add, renew itself, or touch the root keys. Root restores the honest member; a cold `rot`
-  with a pruned `d` undoes the denials. The bound on the leak is the lease length.
-- **Capability-authorised revoke is removed** (breaking change, accepted as safer). No production
-  producer exists; it is the source of the clock dependency.
+  needed. Edge grant lifetime bounds how late an offline verifier learns an **edge holder** was
+  revoked: default **12 hours**, configurable, enforced by the verifier as a maximum `exp - iat`.
+- **Removal kills the member's grants** for any verifier whose state contains the removal.
+- **Capability-authorised revoke is removed** (breaking change, accepted as safer).
 - **Example flow:** desktop install creates the mnemonic; root (still in hand) publishes the
   inception and adds the desktop. Adding the phone later is one root signature. From then on,
   desktop and phone renew each other and manage edge agents without root.
 
+### Accepted risks
+
+- **Stolen member.** A thief can remove every honest member (from any point where it was a member,
+  even after its own removal, by building on an older state). All removals stand, so the member set
+  can collapse; root settles. It can also deny edge holders and flood the epoch with events until
+  root settles. One root ceremony per theft.
+- **Stolen member vs offline verifiers.** A removed member keeps its pre-removal log and can mint
+  fresh 12-hour grants that verifiers which never see the removal accept, until its lease end. The
+  12-hour bound applies to revoked edge holders, not to stolen members; the lease is the bound here.
+- **Withheld events.** A peer can withhold member events from a verifier that has never seen them
+  (the existing first-contact truncation limitation). A verifier never forgets what it has seen.
+- **Flood shutdown.** A stolen member can saturate the epoch, and every grant that depends on it,
+  honest agents' included, stops verifying until root settles. Fail closed is chosen over guessing
+  which events to drop.
+- **Incomplete settlement.** A removal or denial withheld from root is not in its snapshot and is
+  lost; members re-issue their own revokes on the new epoch.
+
 ## Design
 
-### Root signature
+### Two layers
 
-"Root" means a signature by the current authority keys `k` (n-of-n, `verifySignatures`), on an
-event that does not rotate them, so adds do not burn pre-rotation. **Constraint for consumers:** no
-management device holds the seed or a current `k` private key, or root-only rules mean nothing.
-(kubun's shopping-lists app holds the seed on device today; that is its migration.)
+- **The root chain** is linear: `icp`, `rot`, reset. **Root-chain selection comes first, epoch
+  evaluation second.** The precedence is today's: a higher generation wins; a `rot` signed by the
+  pre-committed keys supersedes a competing current-key event; anything else is duplicity, which a
+  reset resolves. Since root adds and root revokes now live in epochs, a current-key event competing
+  with a `rot` is one in the epoch that `rot` closes; the comparison inputs change, the precedence
+  does not. `s`, `keySeq`, `resolveHistoric` and key derivation live on this chain only.
+- **Every `rot` is a settlement:** it carries the full state snapshot (management set with each
+  member's add reference and lease end; deny set; `ka` as today). `icp` starts the first epoch with
+  an empty set. **A reset stays blind and deterministic** (`createReset` is unchanged: no options,
+  empty deny set): it starts the new generation's first epoch with an empty set, and root re-adds
+  members with adds. The state after a `rot` **is** its snapshot; nothing before it contributes.
+  Root's tooling builds the snapshot from every branch it knows (all members, all pulled
+  revocations), minus what root chooses to drop. The snapshot is root's **chosen replacement
+  state**, not a proven complete merge: a removal or denial root never saw is not in it, and tooling
+  must present it that way.
+- **An epoch** is everything between one root-chain event and the next. Within an epoch, non-`rot`
+  events (member actions, root adds, root revokes) form a DAG rooted at the epoch's root-chain event.
+  Each such event names its epoch (the digest of that root-chain event) and lists the parent digests
+  it builds on (every head its author knows; a recommendation, not enforceable).
 
-### State
+### Folding an epoch
 
-`KeyState` gains the management set: each member's DID, pinned key, and lease end (unix seconds).
-`icp` starts it empty; a reset discards it (new generation, root re-adds); a `rot` carries it
-unchanged unless it carries a replacement snapshot (below). Invariant, like `k`: no member key is
-in `k`, `ka`, or the deny set of the same state.
+- **Authorisation is causal.** An epoch event is valid iff its signer is authorised in the state of
+  its ancestors: the epoch's starting snapshot plus the effects of all its ancestor events. Never
+  concurrent branches, arrival order, or wall time.
+- **Effects merge.** The epoch's state is the starting snapshot plus the union of effects of all
+  valid events: denials union; removals union; adds union; lease is the maximum renewal per member
+  incarnation; removal dominates renewal.
+- **Incarnations.** A member is identified by its add event's digest. Renew and remove target that
+  digest, so a delayed renew or remove never carries over to a re-add, and a grant names the
+  incarnation and generation it was minted under (below). A snapshot keeps each member's add
+  reference.
+- **Member revoke** may not target a member of its causal-past state (its DID or pinned key):
+  members are removed through remove. Existing rules (no denying a published `k`/`ka` key) apply.
+- **Denial dominates membership.** A member whose DID (any alias) or pinned key is denied in the
+  merged state is not an effective member: its later events are not authorised by that membership
+  and it issues no valid grants, until a settlement says otherwise. This covers a root add merging
+  with a concurrent revoke of the same DID or key. Both events are kept; neither is rejected for
+  arriving second.
+- **Old epochs never count.** An event naming an epoch other than the current one has no effect: its
+  effect is either in the newer snapshot or was dropped by it. A consumer that keeps the full log
+  keeps such events as history only.
+- **No cross-epoch parents.** Every parent is the named epoch's root-chain event or an event of the
+  same epoch; an event listing any other parent is refused. Snapshot add references are identifiers
+  the snapshot attests, not parent dependencies. This keeps a pruned and a full store in agreement.
+- **Incomplete input.** A missing parent means the input is incomplete, never an empty past; the
+  event is not applied until its parents are present. Cycles and malformed references are refused.
+- **Limits.** Two kinds, never confused:
+  - *Request limits* (event bytes, parents per event, pending unresolved events, deterministic
+    validation work per request) reject input. Unauthenticated or invalid input only ever gets
+    rejected; it never changes remembered state.
+  - *Epoch saturation:* more than a fixed number of distinct, authenticated, causally valid events
+    in one epoch. Saturation fails the epoch closed and is remembered until a settlement: a later
+    presentation of a subset does not clear it (unlike today's `history` fallback, which treats a
+    stored log that stops folding as no memory). While saturated, verifiers refuse every
+    authorisation that depends on that epoch, including root-issued grants whose holder denials can
+    no longer be read. The root chain still folds, so root can always settle into a fresh epoch, and
+    a verifier never needs to ingest a superseded epoch to fold the new one.
+  - Work is counted deterministically (events, edges, signatures), never by elapsed time; events are
+    deduplicated by digest.
+- **Root adds and root revokes** are ordinary epoch events (signed by the current `k`, no rotation,
+  so they do not burn pre-rotation). They merge like member events and never drop anything.
+- All new event types are `crit: true`, so a verifier that predates this fails closed. All are pure
+  signature checks, so the sync and async folds accept the same inputs.
 
-### Events
+### Pruning (optional)
 
-New event type(s), `crit: true`, so a verifier that predates this fails closed rather than skipping a
-removal. Each is checked against the state before it:
+The minimum a consumer must keep: the inception, the current generation's root chain, and the
+current epoch's events. Everything else (old epochs' member events, earlier generations) may be
+dropped or kept as history. A store holding more is never contradicted by one holding less, since
+old epochs have no effect.
 
-- **add** — root-signed. Member not already present, key not in `k`/`ka`, not denied, DID form as
-  above, lease end required.
-- **renew** — root, or a member other than the renewed one. Sets a new lease end.
-- **remove** — root, or a member other than the removed one.
-- **member revoke** — a `rev` signed by one member. May not target a current member (its DID or key):
-  members are removed through remove, so the fold can see the member rule. Existing `rev` rules (no
-  denying a published `k`/`ka` key) still apply.
-- **`rot`** gains an optional management-set snapshot that replaces the set, like `d` replaces the
-  deny set, so root can settle a dispute in one event.
+Dropping deny entries in a snapshot:
 
-All count as understood in the skip budget. All are pure signature checks, so the **sync**
-`foldLog` verifies them. With capability-authorised revokes gone, the sync and async folds accept
-the same logs.
+- **Retired signer keys** (`#key` of a key on the current generation's root chain) are never dropped
+  within the generation: historic resolution would accept fresh tokens signed with them again. Only
+  a reset retires them.
+- **Holder DIDs:** dropping one is a deliberate re-authorisation. It is safe only when every
+  authority that could mint grants to that holder has ended (members removed or settled away) and
+  their grants have expired; waiting for the grants root has seen to expire is not enough, since a
+  malicious member may keep minting. Root's tooling must say so; the log has no clock.
 
-### Forks and branch selection
+### Storage and verification views
 
-Two members appending at once (one offline) forks the log; so can a hostile member forking from a
-position where it was still a member. Rules, applied at the divergence point within a generation,
-after the existing "a `rot` signed by the pre-committed keys supersedes" rule:
-
-1. A root-signed event beats a member-signed rival.
-2. A branch that, after the divergence, **removes the member who signed the rival branch's first
-   event** wins, unless the rival also removes this branch's first signer: that is a dispute,
-   surfaced as duplicity for root.
-3. Otherwise (no conflict), the branch whose divergence event has the lower digest wins. The losing
-   branch's events are superseded; kokuin returns them so their authors re-issue them on the winner.
-   Until re-issued, a revoke on the losing branch is not in effect.
-
-Rule 2 is what contains a hostile ex-member: any fork it makes loses to the honest branch that
-removes it. Consumers should also avoid forks in the first place: ingest the latest head before
-appending, and re-issue their own events if they find themselves on a losing branch.
+The log is no longer an array: it is the root chain plus a set of epoch events. `LogStore` gains an
+atomic merge (union of authenticated events), so two writers never lose each other's events; the
+store packages use `withStoreTransaction`. History becomes: never forget an event seen in the
+current epoch, and accept a newer root chain only through the existing branch rules. A verification
+uses one frozen view for issuer membership, incarnation, pin, lease and every delegation-link denial
+check.
 
 ### Edge grants and offline verification
 
-A capability with `sub` = controller DID and `iss` = a member DID is a chain root when the member is
-in the management set at the head the verifier holds, and its `exp` ≤ that member's lease end.
-`checkCapability` and the delegation walk gain that arm next to `iss === sub`. Same power as a
-root-issued grant; it cannot confer management power, since management comes only from a root add.
-The edge holder may delegate further under the existing chain rules.
+A capability with `sub` = controller DID and `iss` = a member DID is a chain root when, in the view
+the verifier holds: the grant names the current generation and the issuer's add digest; that
+incarnation is an effective member (present, not removed, its DID and pinned key not denied); the
+grant is signed by the pinned member key (no other key a `did:peer:4` carries); and `exp` ≤ that
+incarnation's lease end. `checkCapability` and the delegation walk gain
+that arm next to `iss === sub`. Same power as a root grant; it cannot confer management power, since
+membership comes only from a root add. The edge holder may delegate further under existing rules.
 
-A grant travels with the controller log up to at least the event that set the issuer's current
-lease. A verifier folds it offline (sync, clock-free); if it holds a newer log, the existing
-`history` comparison prefers that one and refuses an older presented log. What an offline verifier
-cannot know is a removal or revoke after the log it was shown; a presenter can also show an older
-log on purpose. Both are bounded by the grant lifetime (12 h default).
-
-### Advisory lapse
-
-kokuin exposes, from a folded state and a caller-supplied time, which members' leases have passed,
-so consumers can warn or remove. It never makes a fold or resolution fail.
+A grant travels with a proof: the root chain up to the current `rot`, plus the epoch events that
+establish the issuer's membership and lease (their ancestor closure). A verifier merges it with what
+it holds, then folds offline.
 
 ## Left to the builder
 
-- Event type names and field spellings; one type with an op field vs several.
-- How the signer is named in a member event (by DID/key in the event vs matched by signature).
-- Default lease length (suggest 90 days) and where it is configured.
-- Resolver method names; whether removal also writes a deny entry for the member key.
-- The shape of the "superseded events to re-issue" result.
-- Removal of the capability-authorised revoke surface: `FoldOptions.verifyCapability`, the
+- Event type names and field spellings; how epoch and parents are encoded; signer identification.
+- Limit values; default lease (suggest 90 days) and where it is configured.
+- The proof bundle format and `LogStore` merge API; resolver method names.
+- Whether removal also writes a deny entry for the member key.
+- Removal of the capability-authorised revoke surface (`FoldOptions.verifyCapability`, the
   `capability` step outcome, `createControllerCapabilityVerifier`, `createRevokeWithKey`'s `cap`,
-  the `unverified` / `needs-capability-verification` plumbing in `supersede.ts` and `history.ts`.
+  the `unverified` / `needs-capability-verification` plumbing).
 - Conformance cases in `@kokuin/controller-conformance`, at minimum: member revoke folds with no
-  clock; a lapsed-but-unremoved member's events still fold; self-renew, member add, member revoke of
-  a member, and a non-Ed25519 or short-form-peer add all fail; a removed member's later events fail;
-  each fork rule wins its case and the mutual-removal fork is duplicity; a root `rot` snapshot
-  settles it; sync and async folds agree; a member grant with `exp` past the lease end, past the
-  12 h maximum, or from a removed member fails. Mutate each rule alone.
-- Docs: `docs/reference/controller.md` custody tiers, events, branch selection; and
-  `docs/reference/security.md` remedy ladder. Release note for the breaking removal.
+  clock; concurrent member events merge in every presentation order; copying an honest event onto a
+  hostile branch, removal cycles and digest grinding change nothing; mutual removal removes both;
+  self-renew (including through an alias of the same key), member add, member revoke of a member,
+  non-Ed25519 or short-form-peer adds, and a member pin equal to a root key all fail; old-epoch
+  events have no effect; cross-epoch parents are refused; a delayed remove does not hit a re-add;
+  a root add merged with a concurrent revoke of the same key yields no effective member; missing
+  parents are incomplete; saturation fails the epoch but not the root chain, survives a subset
+  presentation, and cannot be triggered by unauthenticated input; a snapshot cannot drop a retired
+  signer key's denial; a reset carries no snapshot; a cold `rot` beats a
+  current-key root event; a root add never drops a concurrent removal; a pruned and a full store
+  fold to the same state; a member grant past the lease, past 12 h, from a removed incarnation, from
+  a previous generation, or signed by an unpinned key fails. Mutate each rule alone.
+- Docs: `docs/reference/controller.md` (custody tiers, events, fold, branch selection, resolution),
+  `docs/reference/security.md` remedy ladder; release note for the breaking changes.
