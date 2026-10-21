@@ -78,9 +78,10 @@ function identityForKey({
   mismatch: string
 }): SigningIdentity {
   if (state.keys.length === 0) {
-    // Defensive, unreachable through either fold today (`verifySignatures` rejects an empty key set,
-    // `rev` carries `keys` forward). Kept so a future event type that can empty the set fails here
-    // rather than deriving a key for a controller that publishes none. `resolver.ts` holds it too.
+    // Defensive, unreachable through the fold today (`verifySignatures` rejects an empty key set, and
+    // the chain holds only key-establishing events). Kept so a future event type that can empty the
+    // set fails here rather than deriving a key for a controller that publishes none. `resolver.ts`
+    // holds it too.
     throw new Error(`Controller ${did} has no signing key`)
   }
 
@@ -118,8 +119,8 @@ function identityForState({
     mismatch: 'derived key is not one of the current authority keys',
   })
   // The agreement key sits at the same (keyGen, keySeq) as the authority key — both icp and rot
-  // derive them at matching indices, and a rev carries the agreement set forward — so one position
-  // locates both. Verified against the folded set, failing closed like the authority membership check.
+  // derive them at matching indices — so one position locates both. Verified against the folded
+  // set, failing closed like the authority membership check.
   const agreement = deriveKeyPair(
     seed,
     agreementPath(profile, state.keyGen, state.keySeq),
@@ -148,11 +149,11 @@ export type CreateControllerIdentityParams = {
  * built from a stale or truncated log signs with a retired key, minting tokens a current verifier
  * rejects. Rebuild from a re-read log after a rotation rather than holding one across it.
  *
- * The key is derived at `keyGen`/`keySeq`, not `gen`/`seq`: a revoke advances the sequence without
- * establishing a key (Amendment A), so deriving at `gen`/`seq` would produce a key never in `k` — an
- * unverifiable token, silently. Every token carries `kid: #<the key that signed it>`, so there is no
- * `kid` parameter — one naming any other key is a request it could not honour, and is rejected on
- * mismatch rather than dropped.
+ * The key is derived at `keyGen`/`keySeq`, the derivation index the fold names for the current keys
+ * — on a chain of key-establishing events the same number as `seq`, but the question asked is where
+ * the key lives, not where the event sits. Every token carries `kid: #<the key that signed it>`, so
+ * there is no `kid` parameter — one naming any other key is a request it could not honour, and is
+ * rejected on mismatch rather than dropped.
  *
  * Synchronous, and stays so: kubun's apply path depends on it.
  *

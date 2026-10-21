@@ -2,7 +2,7 @@ import {
   createControllerIdentity,
   createControllerResolver,
   createInception,
-  createRevoke,
+  createRotate,
   didFromInception,
   foldLog,
   type SignedEvent,
@@ -23,21 +23,20 @@ const seed = new Uint8Array(32).fill(31)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
 const controller = createControllerIdentity({ seed, profile: 0, log: [inception] })
-const inceptionKeyPosition = { gen: 0, seq: 0 }
 
 let log: Array<SignedEvent> = [inception]
 const methods: MethodRegistry = [
   createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) }),
 ]
 
+/** A rotate on the inception whose snapshot denies `target`. */
 function revokeOf(target: string): SignedEvent {
-  return createRevoke({
+  return createRotate({
     seed,
     profile: 0,
     did,
     prior: inception.event,
-    target,
-    keyPosition: inceptionKeyPosition,
+    options: { snapshot: { members: [], deny: [target] } },
   })
 }
 

@@ -2,7 +2,6 @@ import {
   createControllerIdentity,
   createControllerResolver,
   createInception,
-  createRevoke,
   createRotate,
   didFromInception,
   keyTarget,
@@ -38,23 +37,28 @@ import {
 const seed = new Uint8Array(32).fill(53)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
-/** The key the inception established, which the rotate retired and the revoke below denies. */
+const rotate = createRotate({
+  seed,
+  profile: 0,
+  did,
+  prior: inception.event,
+  options: { snapshot: { members: [], deny: [] } },
+})
+/** The key the inception established, which the rotate retired and the second rotate below denies. */
 const leaked = inception.event.k[0]
 if (leaked === undefined) throw new Error('expected inception key')
 /** icp → rot: the leaked key is retired for new issuance, and nothing more. */
 const rotated: Array<SignedEvent> = [inception, rotate]
-/** icp → rot → rev(#leaked): the leaked key denied outright. */
+/** icp → rot → rot denying #leaked: the leaked key denied outright. */
 const revoked: Array<SignedEvent> = [
   inception,
   rotate,
-  createRevoke({
+  createRotate({
     seed,
     profile: 0,
     did,
     prior: rotate.event,
-    target: keyTarget(leaked),
-    keyPosition: { gen: 0, seq: 1 },
+    options: { snapshot: { members: [], deny: [keyTarget(leaked)] } },
   }),
 ]
 
@@ -64,8 +68,12 @@ function registry(log: Array<SignedEvent>): MethodRegistry {
 
 /** Signs as the profile with the leaked key — what holding a since-rotated key gives you. */
 const thief = createControllerIdentity({ seed, profile: 0, log: [inception] })
-/** Signs as the profile with the key it currently holds. */
-const owner = createControllerIdentity({ seed, profile: 0, log: revoked })
+/**
+ * Signs as the profile with the key the first rotate established: published on both logs, never
+ * denied, so it differs from `thief` only in which key signed. (The denying rotate establishes a key
+ * of its own, which `rotated` has never published.)
+ */
+const owner = createControllerIdentity({ seed, profile: 0, log: rotated })
 
 const holder = createSigningIdentity(new Uint8Array(32).fill(61))
 

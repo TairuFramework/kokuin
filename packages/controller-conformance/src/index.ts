@@ -23,6 +23,15 @@ export type ConformanceSigned = {
   recoveryKey?: string
 }
 
+/** One management member as a snapshot carries it. Mirrors `@kokuin/controller`'s `MemberEntry`. */
+export type ConformanceMemberEntry = { did: string; key: string; add: string; lease: number }
+
+/** The whole state a root-chain event leaves behind. Mirrors `StateSnapshot`. */
+export type ConformanceStateSnapshot = {
+  members: Array<ConformanceMemberEntry>
+  deny: Array<string>
+}
+
 /** Per-position folded state. Mirrors `@kokuin/controller`'s `KeyState`. */
 export type ConformanceKeyState = {
   gen: number
@@ -30,11 +39,16 @@ export type ConformanceKeyState = {
   keyGen: number
   keySeq: number
   keys: Array<string>
-  /** Key agreement keys — an OR set. Established by icp/rot, carried forward across rev. */
+  /** Key agreement keys — an OR set, established by the same icp/rot as `keys`. */
   agreement: Array<string>
   next: Array<string>
   recovery: string
   deny: ReadonlySet<string>
+  /** The management set, keyed by each member's `add` digest. */
+  members: ReadonlyMap<string, ConformanceMemberEntry & { removed: boolean; effective: boolean }>
+  /** Digest of the chain event opening this state's epoch — a chain state's own `digest`. */
+  epoch: string
+  saturated: boolean
   digest: string
 }
 
@@ -66,16 +80,10 @@ export type ConformanceProfileEntry = {
 export type CreateRotateOptions = {
   seal?: string
   /**
-   * The complete deny set the rotate leaves behind — a **replacement**, not an addition. Named for
-   * that, because a caller who reads it as "also deny this" silently drops every entry the log had
-   * accumulated, un-revoking devices and un-retiring leaked keys with nothing in the log to say so.
+   * The complete state the rotate leaves behind — a **replacement**, not an addition. Required: every
+   * rotate is a settlement, and the state after it is its snapshot and nothing before it.
    */
-  denySnapshot?: Array<string>
-  /**
-   * Where the currently-active authority key lives — the last `icp`/`rot` position, i.e. the fold's
-   * `keyGen`/`keySeq`. Required once a revoke has intervened; see the `rotate after a revoke` case.
-   */
-  keyPosition?: { gen: number; seq: number }
+  snapshot: ConformanceStateSnapshot
 }
 
 /**
@@ -91,16 +99,14 @@ export type ControllerImplementation = {
     profile: number,
     did: string,
     prior: ConformanceEvent,
-    options?: CreateRotateOptions,
+    options: CreateRotateOptions,
   ) => ConformanceSigned
-  createReset: (seed: Uint8Array, profile: number, gen: number) => ConformanceSigned
-  createRevoke: (
+  /** A blind reset without `snapshot`; with one, the reset carries the whole state. */
+  createReset: (
     seed: Uint8Array,
     profile: number,
-    did: string,
-    prior: ConformanceEvent,
-    target: string,
-    keyPosition: { gen: number; seq: number },
+    gen: number,
+    snapshot?: ConformanceStateSnapshot,
   ) => ConformanceSigned
   didFromInception: (event: ConformanceEvent) => string
   foldLog: (did: string, events: Array<ConformanceSigned>) => ConformanceFoldResult
@@ -173,9 +179,30 @@ export function runControllerConformance(
   const seedB = new Uint8Array(32).fill(2)
   const seedC = new Uint8Array(32).fill(9)
 
+  // Real Ed25519 `did:key` identifiers, so the ones a snapshot carries as members decode.
   const deviceA = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-  const deviceB = 'did:key:z6MkAnotherStolenDeviceDidHere111111111111'
-  const deviceC = 'did:key:z6MkAThirdStolenDeviceDidHereForGoodMeasure0'
+  const deviceB = 'did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
+  const deviceC = 'did:key:z6MkfriQZgZXhtFA6kFHzuvhLHGRDDNzGRxeLnpKmZzHwUXR'
+
+  /** A member pinned to the key its `did:key` carries. */
+  function memberOf(did: string, add: string): ConformanceMemberEntry {
+    return { did, key: did.slice('did:key:'.length), add, lease: 1_900_000_000 }
+  }
+
+  /** A rotate on `prior` whose snapshot is `snapshot` (empty by default), signed by `seed`. */
+  function rotate(
+    seed: Uint8Array,
+    did: string,
+    prior: ConformanceEvent,
+    snapshot: ConformanceStateSnapshot = { members: [], deny: [] },
+  ): ConformanceSigned {
+    return impl.createRotate(seed, 0, did, prior, { snapshot })
+  }
+
+  /** A rotate on `prior` denying `deny` and carrying no members. */
+  function denying(did: string, prior: ConformanceEvent, deny: Array<string>): ConformanceSigned {
+    return rotate(seedA, did, prior, { members: [], deny })
+  }
 
   describe(`${impl.name} controller conformance`, () => {
     // 1. Determinism — same seed and index reproduce byte-identical inception and the same DID.
@@ -229,7 +256,7 @@ export function runControllerConformance(
       test('a rotate signed by the pre-committed next keys folds successfully', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
+        const rot = rotate(seedA, did, icp.event)
         const result = impl.foldLog(did, [icp, rot])
         expect(result.ok).toBe(true)
       })
@@ -239,7 +266,7 @@ export function runControllerConformance(
         const did = impl.didFromInception(icp.event)
         // seedC derives an unrelated key pair — the revealed keys will not match the digests the
         // inception pre-committed to.
-        const forged = impl.createRotate(seedC, 0, did, icp.event)
+        const forged = rotate(seedC, did, icp.event)
         const result = impl.foldLog(did, [icp, forged])
         expect(result.ok).toBe(false)
       })
@@ -290,9 +317,9 @@ export function runControllerConformance(
       test('a device denied at sequence N is not denied at N-1', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const rev = impl.createRevoke(seedA, 0, did, rot.event, deviceA, { gen: 0, seq: 1 })
-        const result = impl.foldLog(did, [icp, rot, rev])
+        const rot = rotate(seedA, did, icp.event)
+        const denied = denying(did, rot.event, [deviceA])
+        const result = impl.foldLog(did, [icp, rot, denied])
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -302,99 +329,123 @@ export function runControllerConformance(
       })
     })
 
-    // 5a. A `rev` target may name a KEY instead of a DID, spelled `#<the multibase key exactly as
-    // it appears in `k`>` — the same spelling a token's `kid` uses, which is what makes the two
-    // forms tellable apart on sight and needs no second field. It is what retires a leaked key for
-    // material it has *already* signed: a rotate retires a key for new issuance only, because
-    // historic resolution is designed to survive one, so retirement has to be an explicit event.
-    //
-    // Two properties, and the second is the one an implementation is most likely to skip. Denying a
-    // key the profile still publishes is refused rather than applied: it would leave a head whose
-    // own key set the resolver must turn away.
-    describe('key revocation', () => {
-      test('a `#<key>` target lands in the deny set under that spelling', () => {
+    // 5a. Every rotate is a settlement: it carries the whole state — members and denials — and the
+    // state after it is that snapshot, nothing before it. A rotate missing either half does not
+    // fold; that case is a re-signed copy of a valid rotate with both halves removed, so the
+    // signature genuinely verifies and only the snapshot rule can reject it.
+    describe('state snapshots', () => {
+      test('the state after a rotate is its snapshot', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const before = impl.foldLog(did, [icp, rot])
-        expect(before.ok).toBe(true)
-        if (!before.ok) {
-          return
-        }
-        // The inception's key, which the rotate has since retired.
-        const retired = `#${at(at(before.states, 0).keys, 0)}`
-        const rev = impl.createRevoke(seedA, 0, did, rot.event, retired, { gen: 0, seq: 1 })
-        const result = impl.foldLog(did, [icp, rot, rev])
+        const member = memberOf(deviceB, impl.digestOf('the add that admitted it'))
+        const first = rotate(seedA, did, icp.event, { members: [member], deny: [deviceA] })
+        const second = rotate(seedA, did, first.event)
+        const result = impl.foldLog(did, [icp, first, second])
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
         }
-        // Position-dependent like every other entry, and read at the same two positions.
+        expect([...at(result.states, 1).deny]).toEqual([deviceA])
+        expect(at(result.states, 1).members.get(member.add)).toEqual({
+          ...member,
+          removed: false,
+          effective: true,
+        })
+        // The next settlement replaces the state outright.
+        expect(at(result.states, 2).deny.size).toBe(0)
+        expect(at(result.states, 2).members.size).toBe(0)
+        // Every chain state opens its own epoch.
+        expect(at(result.states, 1).epoch).toBe(at(result.states, 1).digest)
+        expect(at(result.states, 1).saturated).toBe(false)
+      })
+
+      test('a rotate carrying no snapshot does not fold', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const valid = rotate(seedA, did, icp.event)
+        const { m: _m, d: _d, ...bare } = valid.event
+        const revealed = impl.authorityPrivateKey(seedA, 0, 0, 1)
+        const resign = (event: ConformanceEvent): ConformanceSigned => ({
+          event,
+          sigs: impl.signEvent(event, [revealed]),
+        })
+        expect(impl.foldLog(did, [icp, resign({ ...valid.event })]).ok).toBe(true)
+        expect(impl.foldLog(did, [icp, resign(bare as ConformanceEvent)]).ok).toBe(false)
+      })
+
+      test('a snapshot member may not pin a root key', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        // The inception's own key, as a `did:key` member: everything else about it is valid.
+        const rootKey = at(icp.event.k as Array<string>, 0)
+        const root = memberOf(`did:key:${rootKey}`, impl.digestOf('root as a member'))
+        const other = memberOf(deviceB, impl.digestOf('root as a member'))
+        const refused = rotate(seedA, did, icp.event, { members: [root], deny: [] })
+        expect(impl.foldLog(did, [icp, refused]).ok).toBe(false)
+        const control = rotate(seedA, did, icp.event, { members: [other], deny: [] })
+        expect(impl.foldLog(did, [icp, control]).ok).toBe(true)
+      })
+    })
+
+    // 5b. A deny entry may name a KEY instead of a DID, spelled `#<the multibase key exactly as it
+    // appears in `k`>` — the same spelling a token's `kid` uses, which is what makes the two forms
+    // tellable apart on sight. It is what retires a leaked key for material it has *already*
+    // signed: a rotate retires a key for new issuance only, because historic resolution is designed
+    // to survive one, so retirement has to be an explicit denial.
+    //
+    // Two properties an implementation is most likely to skip: a rotate may not establish a key its
+    // own snapshot denies, and once a rotate has denied a key of the generation's chain (a
+    // checkpointed retirement) no later rotate in the generation may drop it.
+    describe('key denial', () => {
+      test('a `#<key>` entry lands in the deny set under that spelling', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const rot = rotate(seedA, did, icp.event)
+        // The inception's key, which the rotate has since retired.
+        const retired = `#${at(icp.event.k as Array<string>, 0)}`
+        const denied = denying(did, rot.event, [retired])
+        const result = impl.foldLog(did, [icp, rot, denied])
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
         expect(at(result.states, 1).deny.has(retired)).toBe(false)
         expect(at(result.states, 2).deny.has(retired)).toBe(true)
-        // It denies a key, not a holder: the published key set is untouched.
-        expect(at(result.states, 2).keys).toEqual(at(result.states, 1).keys)
       })
 
-      test('a key the profile currently publishes cannot be denied', () => {
+      test('a rotate cannot establish a key its own snapshot denies', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const before = impl.foldLog(did, [icp, rot])
-        expect(before.ok).toBe(true)
-        if (!before.ok) {
-          return
-        }
-        // The rotate's own key — the head's `k` at the position this revoke sits at. Everything
-        // else about the event is identical to the accepted one above, so an implementation that
-        // fails this one is failing on the target and nothing else.
-        const current = `#${at(at(before.states, 1).keys, 0)}`
-        const rev = impl.createRevoke(seedA, 0, did, rot.event, current, { gen: 0, seq: 1 })
-        expect(impl.foldLog(did, [icp, rot, rev]).ok).toBe(false)
+        // The key this rotate reveals, read off an identical rotate with an empty snapshot.
+        const own = `#${at(rotate(seedA, did, icp.event).event.k as Array<string>, 0)}`
+        expect(impl.foldLog(did, [icp, denying(did, icp.event, [own])]).ok).toBe(false)
+        const retired = `#${at(icp.event.k as Array<string>, 0)}`
+        expect(impl.foldLog(did, [icp, denying(did, icp.event, [retired])]).ok).toBe(true)
+      })
+
+      test('a later rotate may not drop a checkpointed retired key', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const retired = `#${at(icp.event.k as Array<string>, 0)}`
+        const first = denying(did, icp.event, [retired])
+        expect(impl.foldLog(did, [icp, first, denying(did, first.event, [])]).ok).toBe(false)
+        expect(impl.foldLog(did, [icp, first, denying(did, first.event, [retired])]).ok).toBe(true)
+        // A holder DID carries no such rule: dropping one is a deliberate re-authorisation.
+        const holder = denying(did, icp.event, [deviceA])
+        expect(impl.foldLog(did, [icp, holder, denying(did, holder.event, [])]).ok).toBe(true)
       })
     })
 
-    // 5b. A revoke advances `seq` without establishing a key, so the log position and the
-    // pre-rotation derivation index diverge from that point on. An implementation that conflates
-    // them cannot rotate after a revoke at all — which also puts the deny-set snapshot, the only
-    // way to clear a denial short of a reset, out of reach.
-    describe('rotate after a revoke', () => {
-      test('folds, and its deny snapshot clears the accumulated set', () => {
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const rev = impl.createRevoke(seedA, 0, did, icp.event, deviceA, { gen: 0, seq: 0 })
-        const denied = impl.foldLog(did, [icp, rev])
-        expect(denied.ok).toBe(true)
-        if (!denied.ok) {
-          return
-        }
-        expect(at(denied.states, 1).deny.has(deviceA)).toBe(true)
-
-        const rot = impl.createRotate(seedA, 0, did, rev.event, {
-          keyPosition: { gen: at(denied.states, 1).keyGen, seq: at(denied.states, 1).keySeq },
-          denySnapshot: [],
-        })
-        const result = impl.foldLog(did, [icp, rev, rot])
-        expect(result.ok).toBe(true)
-        if (!result.ok) {
-          return
-        }
-        expect(at(result.states, 2).deny.has(deviceA)).toBe(false)
-        // The rotate established a key, so the derivation index advanced while `seq` ran ahead.
-        expect(at(result.states, 2).seq).toBe(2)
-        expect(at(result.states, 2).keySeq).toBe(1)
-      })
-    })
-
-    // 6. Reset clears the deny set and increments the generation.
+    // 6. Reset clears the state and increments the generation; a blind reset is a pure function of
+    // `(seed, profile, gen)`, and a reset carrying a snapshot folds to it.
     describe('reset', () => {
       test('clears the deny set and increments the generation', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const rev = impl.createRevoke(seedA, 0, did, rot.event, deviceA, { gen: 0, seq: 1 })
+        const rot = rotate(seedA, did, icp.event)
+        const denied = denying(did, rot.event, [deviceA])
         const reset = impl.createReset(seedA, 0, 1)
-        const result = impl.foldLog(did, [icp, rot, rev, reset])
+        const result = impl.foldLog(did, [icp, rot, denied, reset])
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -404,16 +455,37 @@ export function runControllerConformance(
         expect(state.seq).toBe(0)
         expect(state.deny.has(deviceA)).toBe(false)
       })
+
+      test('a blind reset is byte-identical per seed, profile and generation', () => {
+        expect(impl.createReset(seedA, 0, 1)).toEqual(impl.createReset(seedA, 0, 1))
+        expect(impl.createReset(seedA, 0, 1)).not.toEqual(impl.createReset(seedA, 0, 2))
+      })
+
+      test('a reset with a snapshot folds to that snapshot', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const member = memberOf(deviceB, impl.digestOf('carried across the reset'))
+        const reset = impl.createReset(seedA, 0, 1, { members: [member], deny: [deviceA] })
+        const result = impl.foldLog(did, [icp, reset])
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
+        expect(at(result.states, 1).gen).toBe(1)
+        expect([...at(result.states, 1).deny]).toEqual([deviceA])
+        expect(at(result.states, 1).members.get(member.add)?.effective).toBe(true)
+      })
     })
 
-    // 7. Precedence — higher (gen, seq) wins; at an equal position a superseding rotate beats a
-    // current-key event. Includes the three-branch tie regression: a pairwise reduction can bury
-    // the legitimate winner between two losing branches, which order-dependence would hide.
+    // 7. Precedence — higher (gen, seq) wins when one branch extends the other; two rotates that
+    // contradict each other at one position are duplicity however far one branch runs ahead, and
+    // the report does not depend on presentation order. The root chain carries only `icp`/`rot`,
+    // so any two valid branches diverge on two rotates, neither superseding the other.
     describe('precedence', () => {
       test('a higher sequence at the same generation wins', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
+        const rot = rotate(seedA, did, icp.event)
         const result = impl.resolveBranches(did, [[icp], [icp, rot]])
         expect(result.ok).toBe(true)
         if (!result.ok) {
@@ -422,83 +494,38 @@ export function runControllerConformance(
         expect(result.winner).toHaveLength(2)
       })
 
-      test('at an equal position, a superseding rotate beats a current-key event', () => {
+      test('a longer branch does not outrank a rotate it contradicts', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const thiefRevoke = impl.createRevoke(seedA, 0, did, icp.event, deviceA, {
-          gen: 0,
-          seq: 0,
-        })
-        const ownerRotate = impl.createRotate(seedA, 0, did, icp.event)
-        const result = impl.resolveBranches(did, [
-          [icp, thiefRevoke],
-          [icp, ownerRotate],
-        ])
-        expect(result.ok).toBe(true)
-        if (!result.ok) {
-          return
-        }
-        expect(at(result.winner, 1).event.t).toBe('rot')
-        expect(result.superseded).toBe(1)
-      })
-
-      // The property above only ever presents branches of equal length, which is exactly the blind
-      // spot that let an implementation pass while deciding supersession by head position: a stolen
-      // current key cannot rotate, but it can sign an unlimited run of revokes, each advancing the
-      // sequence, until the owner's recovering rotate sits behind. Supersession is a claim about
-      // the divergence point — KERI's rule is that a rotation supersedes a non-establishment event
-      // at its sequence number *and every event after it on that branch* — so the losing branch
-      // here is longer than the winner, and its whole tail must be discarded.
-      test('a superseding rotate beats a longer run of current-key events', () => {
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const first = impl.createRevoke(seedA, 0, did, icp.event, deviceA, { gen: 0, seq: 0 })
-        const second = impl.createRevoke(seedA, 0, did, first.event, deviceB, { gen: 0, seq: 0 })
-        const third = impl.createRevoke(seedA, 0, did, second.event, deviceC, { gen: 0, seq: 0 })
-        const thief = [icp, first, second, third]
-        expect(impl.foldLog(did, thief).ok).toBe(true)
-
-        const owner = [icp, impl.createRotate(seedA, 0, did, icp.event)]
+        const first = denying(did, icp.event, [deviceA])
+        const longer = [icp, first, denying(did, first.event, [deviceB])]
+        const shorter = [icp, denying(did, icp.event, [deviceC])]
         for (const order of [
-          [thief, owner],
-          [owner, thief],
+          [longer, shorter],
+          [shorter, longer],
         ]) {
           const result = impl.resolveBranches(did, order)
-          expect(result.ok).toBe(true)
-          if (!result.ok) {
+          expect(result.ok).toBe(false)
+          if (result.ok) {
             continue
           }
-          expect(result.winner).toHaveLength(2)
-          expect(at(result.winner, 1).event.t).toBe('rot')
-          expect(result.superseded).toBe(3)
-          // Nothing the stolen key denied survives into the authoritative history.
-          const folded = impl.foldLog(did, result.winner)
-          expect(folded.ok && at(folded.states, folded.states.length - 1).deny.size).toBe(0)
+          expect(result.duplicity.seq).toBe(1)
         }
       })
 
-      test('a superseding rotate wins a three-way tie regardless of presentation order', () => {
+      test('a three-way fork reports the same duplicity regardless of presentation order', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const thiefA = impl.createRevoke(seedA, 0, did, icp.event, deviceA, { gen: 0, seq: 0 })
-        const thiefB = impl.createRevoke(seedA, 0, did, icp.event, deviceB, { gen: 0, seq: 0 })
-        const owner = impl.createRotate(seedA, 0, did, icp.event)
-        const branchA = [icp, thiefA]
-        const branchB = [icp, thiefB]
-        const branchOwner = [icp, owner]
-        const orderings = [
-          [branchA, branchB, branchOwner],
-          [branchA, branchOwner, branchB],
-          [branchOwner, branchA, branchB],
-        ]
-        for (const order of orderings) {
-          const result = impl.resolveBranches(did, order)
-          expect(result.ok).toBe(true)
-          if (!result.ok) {
-            continue
-          }
-          expect(at(result.winner, 1).event.t).toBe('rot')
-          expect(result.superseded).toBe(2)
+        const branchA = [icp, denying(did, icp.event, [deviceA])]
+        const branchB = [icp, denying(did, icp.event, [deviceB])]
+        const branchC = [icp, denying(did, icp.event, [deviceC])]
+        const first = impl.resolveBranches(did, [branchA, branchB, branchC])
+        expect(first.ok).toBe(false)
+        for (const order of [
+          [branchA, branchC, branchB],
+          [branchC, branchA, branchB],
+        ]) {
+          expect(impl.resolveBranches(did, order)).toEqual(first)
         }
       })
     })
@@ -508,8 +535,8 @@ export function runControllerConformance(
       test('identical re-derived branches are not duplicity', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const a = impl.createRotate(seedA, 0, did, icp.event)
-        const b = impl.createRotate(seedA, 0, did, icp.event)
+        const a = rotate(seedA, did, icp.event)
+        const b = rotate(seedA, did, icp.event)
         const result = impl.resolveBranches(did, [
           [icp, a],
           [icp, b],
@@ -518,16 +545,14 @@ export function runControllerConformance(
       })
     })
 
-    // 9. Duplicity — two distinct current-key events at one position are surfaced, not merged.
+    // 9. Duplicity — two distinct rotates at one position are surfaced, not merged.
     describe('duplicity', () => {
-      test('two distinct current-key events at one position are surfaced', () => {
+      test('two distinct rotates at one position are surfaced', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const revokeA = impl.createRevoke(seedA, 0, did, icp.event, deviceA, { gen: 0, seq: 0 })
-        const revokeB = impl.createRevoke(seedA, 0, did, icp.event, deviceB, { gen: 0, seq: 0 })
         const result = impl.resolveBranches(did, [
-          [icp, revokeA],
-          [icp, revokeB],
+          [icp, denying(did, icp.event, [deviceA])],
+          [icp, denying(did, icp.event, [deviceB])],
         ])
         expect(result.ok).toBe(false)
         if (result.ok) {
@@ -576,6 +601,27 @@ export function runControllerConformance(
         // Skipped events carry the prior state forward unchanged, so the sequence does not
         // advance to the skipped event's own `s`.
         expect(at(result.states, 1).seq).toBe(0)
+      })
+
+      test('a chain revoke is an unknown critical event', () => {
+        // Revokes live in epochs, never on the root chain: one there, from an older log, fails the
+        // fold closed rather than being read as anything.
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const revoke: ConformanceSigned = {
+          event: {
+            v: 1,
+            t: 'rev',
+            i: did,
+            g: 0,
+            s: 1,
+            p: impl.digestOf(icp.event),
+            crit: true,
+            x: deviceA,
+          },
+          sigs: [],
+        }
+        expect(impl.foldLog(did, [icp, revoke]).ok).toBe(false)
       })
 
       test('an unknown event with no criticality flag fails closed', () => {
@@ -640,42 +686,13 @@ export function runControllerConformance(
       })
     })
 
-    // Regression: a revoke chained onto another revoke must sign at the key position carried in
-    // `keyGen`/`keySeq` — the position of the last icp/rot — not at the prior revoke's own
-    // position, which establishes no key at all.
-    describe('revoke chaining', () => {
-      test('a revoke chained onto another revoke folds successfully', () => {
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const rev1 = impl.createRevoke(seedA, 0, did, rot.event, deviceA, { gen: 0, seq: 1 })
-        const afterFirst = impl.foldLog(did, [icp, rot, rev1])
-        expect(afterFirst.ok).toBe(true)
-        if (!afterFirst.ok) {
-          return
-        }
-        const keyState = at(afterFirst.states, 2)
-        const rev2 = impl.createRevoke(seedA, 0, did, rev1.event, deviceC, {
-          gen: keyState.keyGen,
-          seq: keyState.keySeq,
-        })
-        const result = impl.foldLog(did, [icp, rot, rev1, rev2])
-        expect(result.ok).toBe(true)
-        if (!result.ok) {
-          return
-        }
-        expect(at(result.states, 3).deny.has(deviceA)).toBe(true)
-        expect(at(result.states, 3).deny.has(deviceC)).toBe(true)
-      })
-    })
-
-    // 12. Agreement keys — an inception publishes a non-empty key agreement set, a rotate
-    // replaces it, and a revoke leaves it unchanged. Property 2 asserts the post-rotate set
-    // *differs* from the inception's rather than merely being non-empty — an implementation that
-    // carried the inception's `ka` forward on rotate would pass a mere non-empty check. Properties
-    // 1-3 also assert the folded value equals the `ka` the triggering event actually declared, not
-    // just that it changes/holds shape — otherwise an implementation folding an entirely unrelated
-    // (but still non-empty, still-changing, still-stable) value would pass all three. Property 4
+    // 12. Agreement keys — an inception publishes a non-empty key agreement set and a rotate
+    // replaces it. Property 2 asserts the post-rotate set *differs* from the inception's rather than
+    // merely being non-empty — an implementation that carried the inception's `ka` forward on
+    // rotate would pass a mere non-empty check. Properties 1-2 also assert the folded value equals
+    // the `ka` the triggering event actually declared, not just that it changes shape — otherwise an
+    // implementation folding an entirely unrelated (but still non-empty, still-changing) value would
+    // pass both. Property 3
     // forges an inception with a genuinely valid signature and a genuinely matching DID whose only
     // defect is an empty declared `ka` — the same isolation technique as the root-override group
     // above, using `authorityPrivateKey` in place of `recoveryPrivateKey`. A byte-level splice
@@ -702,7 +719,7 @@ export function runControllerConformance(
       test('a rotate replaces the agreement set', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
+        const rot = rotate(seedA, did, icp.event)
         const result = impl.foldLog(did, [icp, rot])
         expect(result.ok).toBe(true)
         if (!result.ok) {
@@ -710,20 +727,6 @@ export function runControllerConformance(
         }
         expect(at(result.states, 1).agreement).not.toEqual(at(result.states, 0).agreement)
         expect(at(result.states, 1).agreement).toEqual(rot.event.ka)
-      })
-
-      test('a revoke leaves the agreement set unchanged', () => {
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const rev = impl.createRevoke(seedA, 0, did, rot.event, deviceA, { gen: 0, seq: 1 })
-        const result = impl.foldLog(did, [icp, rot, rev])
-        expect(result.ok).toBe(true)
-        if (!result.ok) {
-          return
-        }
-        expect(at(result.states, 2).agreement).toEqual(at(result.states, 1).agreement)
-        expect(at(result.states, 2).agreement).toEqual(rot.event.ka)
       })
 
       test('an inception with a genuinely valid signature but an empty agreement set is rejected', () => {

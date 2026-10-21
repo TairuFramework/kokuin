@@ -196,7 +196,7 @@ async function assertAudienceNotRevoked(
     return
   }
   const denied = await resolveDenySet(sub)
-  // Both spellings: a deny set names whatever the `rev` event wrote, which for a `did:peer:4`
+  // Both spellings: a deny set names whatever the denying event wrote, which for a `did:peer:4`
   // device may be either form, while `aud` may arrive as the other one.
   if (denied.has(aud) || denied.has(normalizeDID(aud))) {
     throw new Error(`${AUDIENCE_REVOKED}: ${aud}`)

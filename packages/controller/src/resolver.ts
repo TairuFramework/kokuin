@@ -31,7 +31,7 @@ export type ControllerResolverOptions = {
   /**
    * Where to remember the last log accepted for each DID, so a later one that is *behind* it is
    * refused rather than answered from. Without one, truncation is a silent revocation bypass: a peer
-   * serving a prefix that stops just before the `rev` denying their device produces a log that folds
+   * serving a prefix that stops just before the event denying their device produces a log that folds
    * cleanly and yields a deny set missing exactly that entry.
    *
    * Optional, because the guarantee needs storage this package cannot provide and a first encounter

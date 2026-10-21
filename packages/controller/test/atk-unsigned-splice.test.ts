@@ -3,7 +3,6 @@ import { describe, expect, test } from 'vitest'
 import {
   createInception,
   createReset,
-  createRevoke,
   createRotate,
   didFromInception,
   type SignedEvent,
@@ -17,17 +16,22 @@ const deviceX = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 function build() {
   const icp = createInception(seed, 0)
   const did = didFromInception(icp.event)
-  // The honest history: rotate once, then revoke deviceX.
-  const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
-  const rev = createRevoke({
+  // The honest history: rotate once, then rotate again denying deviceX.
+  const rot = createRotate({
+    seed,
+    profile: 0,
+    did,
+    prior: icp.event,
+    options: { snapshot: { members: [], deny: [] } },
+  })
+  const denying = createRotate({
     seed,
     profile: 0,
     did,
     prior: rot.event,
-    target: deviceX,
-    keyPosition: { gen: 0, seq: 1 },
+    options: { snapshot: { members: [], deny: [deviceX] } },
   })
-  return { icp, did, rot, rev, honest: [icp, rot, rev] }
+  return { icp, did, rot, denying, honest: [icp, rot, denying] }
 }
 
 /**
@@ -151,10 +155,10 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
   })
 
   test('ROW 7: the forged event is also splice-able into the middle of the honest log', () => {
-    const { icp, did, rot, rev, honest } = build()
+    const { icp, did, rot, denying, honest } = build()
     // A skipped event carries `digest: prior.digest` forward, so the *next* honest event still
     // chains. The log grows, every position after the splice shifts, and the fold is still `ok`.
-    const spliced = [icp, forged(did, digestOfPrefix(did, [icp]), { g: 0, s: 1 }), rot, rev]
+    const spliced = [icp, forged(did, digestOfPrefix(did, [icp]), { g: 0, s: 1 }), rot, denying]
     const a = foldLog(did, honest)
     const b = foldLog(did, spliced)
     if (a.ok && b.ok) {

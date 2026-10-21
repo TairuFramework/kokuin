@@ -3,7 +3,6 @@ import { HozonDB } from '@hozon/db'
 import {
   createControllerResolver,
   createInception,
-  createRevoke,
   createRotate,
   decodeKey,
   didFromInception,
@@ -35,7 +34,13 @@ const seed = new Uint8Array(32).fill(1)
 function buildRotatedLog(logSeed: Uint8Array = seed) {
   const icp = createInception(logSeed, 0)
   const did = didFromInception(icp.event)
-  const rot = createRotate({ seed: logSeed, profile: 0, did, prior: icp.event })
+  const rot = createRotate({
+    seed: logSeed,
+    profile: 0,
+    did,
+    prior: icp.event,
+    options: { snapshot: { members: [], deny: [] } },
+  })
   const headKeyEncoded = rot.event.k[0]
   const inceptionKeyEncoded = icp.event.k[0]
   if (headKeyEncoded == null || inceptionKeyEncoded == null) {
@@ -60,25 +65,29 @@ async function denySet(
   return await resolver.resolveDenySet(did)
 }
 
-// `[icp, rot, rev]` where `rev` denies the inception key the rotate retired. A `rev` cannot deny a
-// key the head still publishes, so the rotate must retire it first -- then the head deny set carries
-// `#<retired key>`, the key-target spelling a reader matches rather than enumerates. The truncated
-// prefix `[icp, rot]` folds cleanly and its deny set is missing exactly that entry.
+// `[icp, rot, rev]` where `rev` is a second rotate whose snapshot denies the inception key the first
+// rotate retired, so the head deny set carries `#<retired key>`, the key-target spelling a reader
+// matches rather than enumerates. The truncated prefix `[icp, rot]` folds cleanly and its deny set is
+// missing exactly that entry.
 function buildRevokedLog(revokedSeed: Uint8Array) {
   const icp = createInception(revokedSeed, 0)
   const did = didFromInception(icp.event)
-  const rot = createRotate({ seed: revokedSeed, profile: 0, did, prior: icp.event })
+  const rot = createRotate({
+    seed: revokedSeed,
+    profile: 0,
+    did,
+    prior: icp.event,
+    options: { snapshot: { members: [], deny: [] } },
+  })
   const retiredKey = icp.event.k[0]
   if (retiredKey == null) throw new Error('expected an inception key')
   const denyEntry = keyTarget(retiredKey)
-  const rev = createRevoke({
+  const rev = createRotate({
     seed: revokedSeed,
     profile: 0,
     did,
     prior: rot.event,
-    target: denyEntry,
-    // The active authority key still sits where the rotate put it, gen 0 / seq 1.
-    keyPosition: { gen: 0, seq: 1 },
+    options: { snapshot: { members: [], deny: [denyEntry] } },
   })
   return {
     did,
@@ -164,7 +173,13 @@ export function controllerStoreCases(
     // shared store.
     const icp = createInception(OVERWRITE_SEED, 0)
     const did = didFromInception(icp.event)
-    const rot = createRotate({ seed: OVERWRITE_SEED, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed: OVERWRITE_SEED,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const long = [icp, rot] as Array<SignedEvent>
     const short = [icp] as Array<SignedEvent>
 
@@ -244,15 +259,17 @@ export function controllerStoreCases(
 
     test('a genuine fork is refused after the full log was accepted', async () => {
       const { did, icp, rot, full } = buildRevokedLog(FORK_SEED)
-      // A rival revoke at the same position as the accepted log's revoke: two current-key events, no
-      // rotate to settle them, so branch resolution reports duplicity -- a fork, not a truncation.
-      const rival = createRevoke({
+      // A rival rotate at the same position as the accepted log's denying one: both reveal the
+      // pre-committed key, neither supersedes the other, so branch resolution reports duplicity --
+      // a fork, not a truncation.
+      const rival = createRotate({
         seed: FORK_SEED,
         profile: 0,
         did,
         prior: rot.event,
-        target: 'did:key:z6MkForkRivalDeviceDidHere00000000000000000',
-        keyPosition: { gen: 0, seq: 1 },
+        options: {
+          snapshot: { members: [], deny: ['did:key:z6MkForkRivalDeviceDidHere00000000000000000'] },
+        },
       })
       const fork = [icp, rot, rival] as Array<SignedEvent>
 

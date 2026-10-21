@@ -1,10 +1,9 @@
 import { describe, expect, test } from 'vitest'
 
-import { createInception, createRevoke, didFromInception, type SignedEvent } from '../src/events.js'
+import { createInception, didFromInception, type SignedEvent } from '../src/events.js'
 import { foldLog } from '../src/fold.js'
 
 const seed = new Uint8Array(32).fill(1)
-const delegateSeed = new Uint8Array(32).fill(9)
 const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
 function build() {
@@ -44,38 +43,18 @@ describe('wire types the fold never checks', () => {
     expect(skipped).toEqual(['false'])
   })
 
-  // CLOSED. A revoke has no `cap` member: whatever type one carries, the fold refuses it in
-  // `stepEvent` rather than ignoring it, so an old capability-authorised revoke cannot be read as a
-  // plain one.
-  test('ROW 3 (closed): a `cap` of any type is refused, and `x` beside it is still checked', () => {
-    const { icp, did } = build()
-    const rev = createRevoke({
-      seed: delegateSeed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    for (const cap of [{ lifted: 'from another log' }, 'header.payload.signature', null, 1]) {
-      const forged = { ...rev, event: { ...rev.event, cap } } as unknown as SignedEvent
-      expect(foldLog(did, [icp, forged])).toEqual({
+  // CLOSED. The root chain carries no `rev`: a revoke from an older log, plain or
+  // capability-authorised, reaches the unknown-type path and, being critical, fails the fold closed
+  // rather than being read as anything — and a `cap` beside it changes nothing.
+  test('ROW 3 (closed): a chain `rev`, with or without a `cap`, is an unknown critical event', () => {
+    const { icp, did, digest } = build()
+    const rev = { v: 1, t: 'rev', i: did, g: 0, s: 1, p: digest, crit: true, x: target }
+    for (const event of [rev, { ...rev, cap: 'header.payload.signature' }]) {
+      expect(foldLog(did, [icp, { event, sigs: ['AAAA'] } as unknown as SignedEvent])).toEqual({
         ok: false,
-        reason: 'revoke capability is not supported',
+        reason: 'unknown critical event type: rev',
         index: 1,
       })
     }
-
-    // CONTROL: the same event with `x` — the field right beside it — set to a non-string is
-    // rejected for its own reason, so the rejection above is the member and not the event.
-    const badX = {
-      ...rev,
-      event: { ...rev.event, x: { not: 'a string' } },
-    } as unknown as SignedEvent
-    expect(foldLog(did, [icp, badX])).toEqual({
-      ok: false,
-      reason: 'revoke names no target',
-      index: 1,
-    })
   })
 })

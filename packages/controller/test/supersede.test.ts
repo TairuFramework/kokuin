@@ -4,7 +4,6 @@ import { digestOf } from '../src/canonical.js'
 import {
   createInception,
   createReset,
-  createRevoke,
   createRotate,
   didFromInception,
   type EventCommon,
@@ -28,10 +27,30 @@ function build() {
   return { did, icp }
 }
 
+/**
+ * A rotate on `prior` whose snapshot denies `deny`. Two of these on one prior with different `deny`
+ * are both signed by the pre-committed key — a fork only the controller can have made.
+ */
+function settle(did: string, prior: EventCommon, deny: Array<string>): SignedEvent {
+  return createRotate({
+    seed,
+    profile: 0,
+    did,
+    prior,
+    options: { snapshot: { members: [], deny } },
+  })
+}
+
 describe('resolveBranches()', () => {
   test('a longer branch at the same generation wins on sequence', () => {
     const { did, icp } = build()
-    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const result = resolveBranches(did, [[icp], [icp, rot]])
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -40,18 +59,17 @@ describe('resolveBranches()', () => {
 
   test('a higher generation wins outright over a longer lower generation', () => {
     const { did, icp } = build()
-    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
-    const rev = createRevoke({
+    const rot = createRotate({
       seed,
       profile: 0,
       did,
-      prior: rot.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 1 },
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
     })
+    const denying = settle(did, rot.event, [victim])
     const reset = createReset(seed, 0, 1)
     const result = resolveBranches(did, [
-      [icp, rot, rev],
+      [icp, rot, denying],
       [icp, reset],
     ])
     expect(result.ok).toBe(true)
@@ -59,75 +77,15 @@ describe('resolveBranches()', () => {
     expect(at(result.winner, 1).event.g).toBe(1)
   })
 
-  test('a rotate signed by pre-committed next keys supersedes a current-key event at the same position', () => {
+  test('two different rotates at the same position are duplicity, not a merge', () => {
+    // Both reveal the pre-committed key, so neither supersedes the other: the root chain carries
+    // only rotates past the inception, and two of them disagreeing is a fork for a reset to settle.
     const { did, icp } = build()
-    // The thief holds the current authority key — established by the inception at (0, 0) — and
-    // revokes the owner's other device.
-    const thiefRevoke = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    // The owner rotates using the pre-committed next keys at the same position.
-    const ownerRotate = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rotateA = settle(did, icp.event, [victim])
+    const rotateB = settle(did, icp.event, ['did:key:zOther'])
     const result = resolveBranches(did, [
-      [icp, thiefRevoke],
-      [icp, ownerRotate],
-    ])
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(at(result.winner, 1).event.t).toBe('rot')
-    expect(result.superseded).toBe(1)
-  })
-
-  test('order of presentation does not change the winner', () => {
-    const { did, icp } = build()
-    const thiefRevoke = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const ownerRotate = createRotate({ seed, profile: 0, did, prior: icp.event })
-    const a = resolveBranches(did, [
-      [icp, ownerRotate],
-      [icp, thiefRevoke],
-    ])
-    const b = resolveBranches(did, [
-      [icp, thiefRevoke],
-      [icp, ownerRotate],
-    ])
-    expect(a.ok && b.ok).toBe(true)
-    if (!a.ok || !b.ok) return
-    expect(at(a.winner, 1).event.t).toBe(at(b.winner, 1).event.t)
-  })
-
-  test('two current-key events at the same position are duplicity, not a merge', () => {
-    const { did, icp } = build()
-    const revokeA = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const revokeB = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: 'did:key:zOther',
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const result = resolveBranches(did, [
-      [icp, revokeA],
-      [icp, revokeB],
+      [icp, rotateA],
+      [icp, rotateB],
     ])
     expect(result.ok).toBe(false)
     if (result.ok) return
@@ -137,8 +95,20 @@ describe('resolveBranches()', () => {
 
   test('re-derivation is idempotent, so identical branches are not duplicity', () => {
     const { did, icp } = build()
-    const a = createRotate({ seed, profile: 0, did, prior: icp.event })
-    const b = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const a = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
+    const b = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const result = resolveBranches(did, [
       [icp, a],
       [icp, b],
@@ -154,71 +124,14 @@ describe('resolveBranches()', () => {
     expect(result.superseded).toBe(0)
   })
 
-  // Regression: branches are compared at the point they diverge, not at their heads. A thief
-  // holding a current authority key cannot rotate — pre-rotation holds — but can sign an unlimited
-  // run of revokes, each advancing the sequence. Comparing heads made that run outrank the owner's
-  // recovering rotate outright, which is the one property superseding recovery exists to provide.
-  test('a recovering rotate beats an arbitrarily longer run of current-key events', () => {
-    const { did, icp } = build()
-    for (const length of [2, 3, 8]) {
-      const thief: Array<SignedEvent> = [icp]
-      let prior: EventCommon = icp.event
-      for (let n = 0; n < length; n++) {
-        const rev = createRevoke({
-          seed,
-          profile: 0,
-          did,
-          prior,
-          target: `${victim}${n}`,
-          keyPosition: { gen: 0, seq: 0 },
-        })
-        thief.push(rev)
-        prior = rev.event
-      }
-      const owner = [icp, createRotate({ seed, profile: 0, did, prior: icp.event })]
-
-      const result = resolveBranches(did, [thief, owner])
-      expect(result.ok).toBe(true)
-      if (!result.ok) continue
-      expect(result.winner).toBe(owner)
-      // The rotate supersedes the event it forked from *and* everything the thief piled on after
-      // it — KERI's rule is "at that sequence number and every event after it on that branch".
-      expect(result.superseded).toBe(length)
-      // Nothing the thief denied survives into the authoritative history.
-      const folded = foldLog(did, result.winner)
-      expect(folded.ok && at(folded.states, folded.states.length - 1).deny.size).toBe(0)
-    }
-  })
-
   // Duplicity is reported where the branches actually disagree, which for branches of unequal
   // length is not their heads: the head digests would name events the other branch has no opinion
   // about at all.
   test('duplicity is reported at the divergence point, not at the heads', () => {
     const { did, icp } = build()
-    const forkA = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const forkB = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: 'did:key:zOther',
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const forkBNext = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: forkB.event,
-      target: 'did:key:zThird',
-      keyPosition: { gen: 0, seq: 0 },
-    })
+    const forkA = settle(did, icp.event, [victim])
+    const forkB = settle(did, icp.event, ['did:key:zOther'])
+    const forkBNext = settle(did, forkB.event, ['did:key:zThird'])
     const result = resolveBranches(did, [
       [icp, forkA],
       [icp, forkB, forkBNext],
@@ -237,17 +150,7 @@ describe('resolveBranches()', () => {
   // a key-takeover fork.
   test('a branch whose only extension is a skipped event cannot force duplicity', () => {
     const { did, icp } = build()
-    const honest = [
-      icp,
-      createRevoke({
-        seed,
-        profile: 0,
-        did,
-        prior: icp.event,
-        target: victim,
-        keyPosition: { gen: 0, seq: 0 },
-      }),
-    ]
+    const honest = [icp, settle(did, icp.event, [victim])]
     const noise = [
       icp,
       {
@@ -298,7 +201,13 @@ describe('resolveBranches()', () => {
   // wire, so a branch padded with one used to read as a position ahead of the branch it is padding.
   test('a branch padded with a skipped event does not outrank the branch it pads', () => {
     const { did, icp } = build()
-    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const honest = [icp, rot]
     // Appended by someone holding no key material: an unknown, non-critical, unsigned event at the
     // next sequence position, which is all the fold can ask of a type it cannot verify.
@@ -325,45 +234,25 @@ describe('resolveBranches()', () => {
     }
   })
 
-  // Beyond the brief's cases: with two thieves at the same position, a sequential pairwise
-  // reduction can compare the two thieves to each other before ever reaching the owner's rotate,
-  // reporting duplicity between them and burying the legitimate winner. The order in which the
-  // three branches are presented must not change that the owner's rotate wins.
-  test('a superseding rotate wins a three-way tie regardless of presentation order', () => {
+  // With three contenders at one position, a sequential pairwise reduction could report a different
+  // pair depending on which two it compared first. The whole group is resolved at once, so the
+  // report — which digests, at which position — must not depend on presentation order.
+  test('a three-way fork reports the same duplicity regardless of presentation order', () => {
     const { did, icp } = build()
-    const thiefA = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const thiefB = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: 'did:key:zOtherVictim',
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const owner = createRotate({ seed, profile: 0, did, prior: icp.event })
     const branches = [
-      [icp, thiefA],
-      [icp, thiefB],
-      [icp, owner],
+      [icp, settle(did, icp.event, [victim])],
+      [icp, settle(did, icp.event, ['did:key:zOtherVictim'])],
+      [icp, settle(did, icp.event, [])],
     ]
     const orderings = [
       [at(branches, 0), at(branches, 1), at(branches, 2)],
       [at(branches, 0), at(branches, 2), at(branches, 1)],
       [at(branches, 2), at(branches, 0), at(branches, 1)],
     ]
+    const first = resolveBranches(did, at(orderings, 0))
+    expect(first.ok).toBe(false)
     for (const order of orderings) {
-      const result = resolveBranches(did, order)
-      expect(result.ok).toBe(true)
-      if (!result.ok) continue
-      expect(at(result.winner, 1).event.t).toBe('rot')
-      expect(result.superseded).toBe(2)
+      expect(resolveBranches(did, order)).toEqual(first)
     }
   })
 })

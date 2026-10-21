@@ -2,7 +2,6 @@ import {
   createControllerIdentity,
   createControllerResolver,
   createInception,
-  createRevoke,
   createRotate,
   didFromInception,
   keyTarget,
@@ -30,7 +29,13 @@ describe('a rotated-away authority key, at the capability path', () => {
     const seed = new Uint8Array(32).fill(31)
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const rotate = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const fullLog = [inception, rotate]
 
     // The verifier sees the WHOLE log: the profile has rotated, so the inception key is retired.
@@ -86,16 +91,12 @@ describe('a rotated-away authority key, at the capability path', () => {
     // is not allowed to be what retires.
     const leakedKey = inception.event.k[0]
     if (leakedKey === undefined) throw new Error('expected inception key')
-    const revoke = createRevoke({
+    const revoke = createRotate({
       seed,
       profile: 0,
       did,
       prior: rotate.event,
-      target: keyTarget(leakedKey),
-      keyPosition: {
-        gen: 0,
-        seq: 1,
-      },
+      options: { snapshot: { members: [], deny: [keyTarget(leakedKey)] } },
     })
     const remediedLog = [inception, rotate, revoke]
     const remedied: MethodRegistry = [

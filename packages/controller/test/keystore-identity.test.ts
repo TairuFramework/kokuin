@@ -5,7 +5,7 @@ import { isFullIdentity } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
 import { agreementPath, deriveKeyPair } from '../src/derivation.js'
-import { createInception, createRevoke, createRotate, didFromInception } from '../src/events.js'
+import { createInception, createRotate, didFromInception } from '../src/events.js'
 import { createMemoryLogStore } from '../src/history.js'
 import { provideControllerIdentity } from '../src/keystore-identity.js'
 
@@ -72,7 +72,13 @@ describe('provideControllerIdentity', () => {
     const logStore = createMemoryLogStore()
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rot = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     await logStore.set(did, [inception, rot])
 
     const identity = await provideControllerIdentity({
@@ -84,32 +90,6 @@ describe('provideControllerIdentity', () => {
     const token = await identity.signToken({ sub: 'x' })
     // After a rotate the authority key is the rotate's revealed key, so the kid names it.
     expect(token.header.kid).toBe(`#${rot.event.k[0]}`)
-  })
-
-  test('resolves the pre-revoke key after a revoke', async () => {
-    const seed = new Uint8Array(32).fill(7)
-    const logStore = createMemoryLogStore()
-    const inception = createInception(seed, 0)
-    const did = didFromInception(inception.event)
-    const revoke = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: inception.event,
-      target: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK',
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    await logStore.set(did, [inception, revoke])
-
-    const identity = await provideControllerIdentity({
-      entry: memoryEntry(seed),
-      profile: 0,
-      logStore,
-    })
-    expect(identity.id).toBe(did)
-    const token = await identity.signToken({ sub: 'x' })
-    // The revoke established no key, so the authority key is still the inception's.
-    expect(token.header.kid).toBe(`#${inception.event.k[0]}`)
   })
 })
 

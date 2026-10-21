@@ -8,7 +8,7 @@ import { resolveBranches } from './supersede.js'
  * it.
  *
  * A folded log carries no proof it is the *whole* log: a peer serving a prefix — stopping just before
- * the `rev` denying their device — produces one that folds cleanly and yields a deny set missing
+ * the event denying their device — produces one that folds cleanly and yields a deny set missing
  * exactly the entry that matters. Nothing inside a single log distinguishes truncation from a log
  * that is simply short, so the fork-detection limitation does not reach it: there is no second branch,
  * only an honest-looking prefix. Comparing against what this party has already seen supplies the

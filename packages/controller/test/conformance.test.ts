@@ -8,7 +8,6 @@ import {
   type CreateRotateOptions,
   createInception,
   createReset,
-  createRevoke,
   createRotate,
   didFromInception,
   type EventCommon,
@@ -48,8 +47,8 @@ const suite: ConformanceSuite = {
   test,
 }
 
-// The conformance contract stays positional; the real functions now take a params object, so the
-// two that changed are bridged here. `createReset`/`createInception` are unchanged and pass through.
+// The conformance contract stays positional; the real `createRotate` takes a params object, so it
+// is bridged here. `createReset`/`createInception` are positional already and pass through.
 const implementation = {
   name: '@kokuin/controller',
   createInception,
@@ -58,17 +57,9 @@ const implementation = {
     profile: number,
     did: string,
     prior: EventCommon,
-    options?: CreateRotateOptions,
+    options: CreateRotateOptions,
   ) => createRotate({ seed, profile, did, prior, options }),
   createReset,
-  createRevoke: (
-    seed: Uint8Array,
-    profile: number,
-    did: string,
-    prior: EventCommon,
-    target: string,
-    keyPosition: { gen: number; seq: number },
-  ) => createRevoke({ seed, profile, did, prior, target, keyPosition }),
   didFromInception,
   foldLog,
   resolveBranches,
@@ -79,7 +70,7 @@ const implementation = {
   signEvent,
 }
 
-// `@kokuin/controller`'s events use a closed `EventType` union ('icp' | 'rot' | 'rev'), while the
+// `@kokuin/controller`'s events use a closed `EventType` union ('icp' | 'rot'), while the
 // suite's `ConformanceEvent` intentionally widens `t` to `string` so its criticality group can
 // construct an event of an unknown type. That widening makes the real functions' parameters
 // contravariantly incompatible with the suite's declared signatures — a genuine variance mismatch

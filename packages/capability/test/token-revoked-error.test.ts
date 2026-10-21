@@ -2,7 +2,6 @@ import {
   createControllerIdentity,
   createControllerResolver,
   createInception,
-  createRevoke,
   createRotate,
   didFromInception,
   keyTarget,
@@ -58,20 +57,25 @@ describe('TokenRevokedError', () => {
     const seed = new Uint8Array(32).fill(53)
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const rotate = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const leaked = inception.event.k[0]
     if (leaked === undefined) throw new Error('expected inception key')
     const rotated: Array<SignedEvent> = [inception, rotate]
     const revoked: Array<SignedEvent> = [
       inception,
       rotate,
-      createRevoke({
+      createRotate({
         seed,
         profile: 0,
         did,
         prior: rotate.event,
-        target: keyTarget(leaked),
-        keyPosition: { gen: 0, seq: 1 },
+        options: { snapshot: { members: [], deny: [keyTarget(leaked)] } },
       }),
     ]
     const registry = (log: Array<SignedEvent>): MethodRegistry => [

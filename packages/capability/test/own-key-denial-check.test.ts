@@ -2,7 +2,6 @@ import {
   createControllerIdentity,
   createControllerResolver,
   createInception,
-  createRevoke,
   createRotate,
   didFromInception,
   keyTarget,
@@ -32,22 +31,24 @@ import {
 const seed = new Uint8Array(32).fill(41)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
+const rotate = createRotate({
+  seed,
+  profile: 0,
+  did,
+  prior: inception.event,
+  options: { snapshot: { members: [], deny: [] } },
+})
 const leakedKey = inception.event.k[0]
 if (leakedKey === undefined) throw new Error('expected inception key')
 
 describe('key revocation, independently', () => {
   test('the denial stops the leaked key and leaves the live key working', async () => {
-    const revoke = createRevoke({
+    const revoke = createRotate({
       seed,
       profile: 0,
       did,
       prior: rotate.event,
-      target: keyTarget(leakedKey),
-      keyPosition: {
-        gen: 0,
-        seq: 1,
-      },
+      options: { snapshot: { members: [], deny: [keyTarget(leakedKey)] } },
     })
     const denied: MethodRegistry = [
       createControllerResolver({
@@ -147,16 +148,12 @@ describe('key revocation, independently', () => {
 
     const beforeDenial = await invoke(before)
 
-    const revoke = createRevoke({
+    const revoke = createRotate({
       seed,
       profile: 0,
       did,
       prior: rotate.event,
-      target: keyTarget(leakedKey),
-      keyPosition: {
-        gen: 0,
-        seq: 1,
-      },
+      options: { snapshot: { members: [], deny: [keyTarget(leakedKey)] } },
     })
     const after: MethodRegistry = [
       createControllerResolver({
@@ -216,16 +213,12 @@ describe('key revocation, independently', () => {
 
     const beforeDenial = await invoke(before)
 
-    const revoke = createRevoke({
+    const revoke = createRotate({
       seed,
       profile: 0,
       did,
       prior: rotate.event,
-      target: keyTarget(leakedKey),
-      keyPosition: {
-        gen: 0,
-        seq: 1,
-      },
+      options: { snapshot: { members: [], deny: [keyTarget(leakedKey)] } },
     })
     const after: MethodRegistry = [
       createControllerResolver({
@@ -242,16 +235,12 @@ describe('key revocation, independently', () => {
     // The plant-a-record denial of service the swallow exists to stop. An untrusted backend hands
     // back a record signed by a key this DID never had, claiming to revoke a live grant. If
     // honouring denied-key records had widened into honouring unverifiable ones, this would deny.
-    const revoke = createRevoke({
+    const revoke = createRotate({
       seed,
       profile: 0,
       did,
       prior: rotate.event,
-      target: keyTarget(leakedKey),
-      keyPosition: {
-        gen: 0,
-        seq: 1,
-      },
+      options: { snapshot: { members: [], deny: [keyTarget(leakedKey)] } },
     })
     const methods: MethodRegistry = [
       createControllerResolver({

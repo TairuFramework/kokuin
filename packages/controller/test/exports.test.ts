@@ -25,8 +25,7 @@ describe('public surface', () => {
       'createInception',
       'createRotate',
       'createReset',
-      'createRevoke',
-      // A `rev` target may name a key instead of a DID. Downstream builds the target and reads it
+      // A deny entry may name a key instead of a DID. Downstream builds the entry and reads it
       // back out of a deny set, and neither should mean hardcoding `#` — the spelling is a wire
       // format, so the one place that knows it publishes it.
       'keyTarget',
@@ -40,10 +39,18 @@ describe('public surface', () => {
       'verifyInception',
       'verifyRotate',
       'verifyReset',
-      'verifyRevoke',
       'verifySignatures',
       'foldLog',
       'keyStateAt',
+      // Carrying a state forward without silently dropping part of it, and the reasons a
+      // snapshot is refused with.
+      'snapshotOf',
+      'isMemberEntry',
+      'ROTATE_NEEDS_SNAPSHOT',
+      'SNAPSHOT_MALFORMED',
+      'SNAPSHOT_MEMBER_KEY_IS_ROOT',
+      'SNAPSHOT_MEMBER_DID_MISMATCH',
+      'SNAPSHOT_DROPS_RETIRED_KEY',
       'resolveBranches',
       'enumerateProfiles',
       'handleForDID',
@@ -66,6 +73,10 @@ describe('public surface', () => {
       'createControllerIdentityWithKeyAsync',
       'createRevokeWithKey',
       'verifyEventSignedBy',
+      // The chain revoke left the root chain with it.
+      'createRevoke',
+      'verifyRevoke',
+      'pruneDenySet',
       'CAPABILITY_VERIFIER_FAILED',
       'CAPABILITY_VERIFIER_MALFORMED_ANSWER',
       'REVOKE_NOT_SIGNED_BY_AUDIENCE',

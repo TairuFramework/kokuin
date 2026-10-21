@@ -50,7 +50,13 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
   test('ROW 1 (closed): a rotate carrying `r` is refused, not accepted-and-ignored', () => {
     const icp = createInception(ownerSeed, 0)
     const did = didFromInception(icp.event)
-    const rot = createRotate({ seed: ownerSeed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed: ownerSeed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
 
     const newRecovery = recoveryKeyOf(newRootSeed)
 
@@ -81,7 +87,13 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
   test('ROW 2 (unchanged): a foreign recovery key cannot author a reset — now for one reason', () => {
     const icp = createInception(ownerSeed, 0)
     const did = didFromInception(icp.event)
-    const rot = createRotate({ seed: ownerSeed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed: ownerSeed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const newRecovery = recoveryKeyOf(newRootSeed)
     const mutated: RotateWithRecovery = {
       ...rot.event,
@@ -111,7 +123,13 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
   test('ROW 3 (closed): the original recovery key authors a reset, and nothing claims otherwise', () => {
     const icp = createInception(ownerSeed, 0)
     const did = didFromInception(icp.event)
-    const rot = createRotate({ seed: ownerSeed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed: ownerSeed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const newRecovery = recoveryKeyOf(newRootSeed)
     const mutated: RotateWithRecovery = {
       ...rot.event,
@@ -128,7 +146,13 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
     // ROW 3 control: the same reset by the same key over a log whose rotate carries no `r`. The
     // original recovery key still authors a reset — that is the property, and it is now the only
     // story the state tells, since `KeyState.recovery` is the inception's commitment throughout.
-    const plainRot = createRotate({ seed: ownerSeed, profile: 0, did, prior: icp.event })
+    const plainRot = createRotate({
+      seed: ownerSeed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const control = foldLog(did, [icp, plainRot, oldReset])
     expect(control.ok).toBe(true)
     if (!control.ok) return

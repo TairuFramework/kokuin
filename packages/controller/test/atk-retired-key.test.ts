@@ -42,13 +42,19 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
   test('ROW 1 (closed): after two rotations, the ORIGINAL key mints nothing that verifies', async () => {
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot1 = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const rot2 = createRotate({
       seed,
       profile: 0,
       did,
       prior: rot1.event,
-      options: { keyPosition: { gen: 0, seq: 1 } },
+      options: { snapshot: { members: [], deny: [] } },
     })
     const log = [icp, rot1, rot2]
 
@@ -72,7 +78,13 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
   test('ROW 2 (control): a `kid` the profile NEVER published is refused', async () => {
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot1 = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const log = [icp, rot1]
     const stranger = await mintWithKeyAt(did, 0, 0, strangerSeed)
     let error: unknown
@@ -85,7 +97,13 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
   test('ROW 3 (control): after a RESET the same retired key is refused', async () => {
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot1 = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const reset = createReset(seed, 0, 1)
     const stolen = await mintWithKeyAt(did, 0, 0)
 
@@ -107,8 +125,8 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
   })
 
   test('ROW 4 (closed): a rotate carrying an empty deny snapshot retires the key too', async () => {
-    // Nothing about the deny set touches the profile's own retired authority keys — the deny set
-    // names *audiences*, and the fold carries every past key set forward inside the generation.
+    // Retiring a key for *new* issuance needs no denial: `resolve` answers from the head's `k`
+    // alone, so a rotate whose snapshot denies nothing retires the key all the same.
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
     const rot1 = createRotate({
@@ -116,7 +134,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { denySnapshot: [] },
+      options: { snapshot: { members: [], deny: [] } },
     })
     const stolen = await mintWithKeyAt(did, 0, 0)
     let error: unknown
@@ -136,13 +154,19 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     // artefact says so, and gets the whole current generation.
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot1 = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const rot2 = createRotate({
       seed,
       profile: 0,
       did,
       prior: rot1.event,
-      options: { keyPosition: { gen: 0, seq: 1 } },
+      options: { snapshot: { members: [], deny: [] } },
     })
     const log = [icp, rot1, rot2]
 
@@ -158,5 +182,52 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       error = e
     })
     expect(error).toBeInstanceOf(Error)
+  })
+
+  test('ROW 6 (closed): a later rotate cannot un-retire a key an earlier rotate denied', async () => {
+    // The thief holds the inception key and waits: if any later rotate's snapshot could leave the
+    // denial out, historic resolution would accept its fresh tokens again. The checkpointed
+    // retirement is the chain's own rule, so the rotate that drops it does not fold at all.
+    const icp = createInception(seed, 0)
+    const did = didFromInception(icp.event)
+    const retired = `#${icp.event.k[0]}`
+    const rot1 = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [retired] } },
+    })
+    const stolen = await mintWithKeyAt(did, 0, 0)
+    await expect(
+      verifyToken(stolen, { methods: registry([icp, rot1], did), historic: true }),
+    ).rejects.toThrow(/kid names a key the controller has revoked/)
+
+    const dropping = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: rot1.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
+    await expect(
+      verifyToken(stolen, { methods: registry([icp, rot1, dropping], did), historic: true }),
+    ).rejects.toThrow(/snapshot drops a retired key denial/)
+
+    // Control: the same rotate keeping the denial folds, and the stolen key stays refused.
+    const keeping = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: rot1.event,
+      options: { snapshot: { members: [], deny: [retired] } },
+    })
+    await expect(
+      verifyToken(stolen, { methods: registry([icp, rot1, keeping], did), historic: true }),
+    ).rejects.toThrow(/kid names a key the controller has revoked/)
+    const live = await mintWithKeyAt(did, 0, 2)
+    await expect(
+      verifyToken(live, { methods: registry([icp, rot1, keeping], did) }),
+    ).resolves.toBeDefined()
   })
 })

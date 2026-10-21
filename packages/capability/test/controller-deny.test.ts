@@ -3,10 +3,11 @@ import {
   createControllerResolver,
   createInception,
   createReset,
-  createRevoke,
   createRotate,
   didFromInception,
+  foldLog,
   type SignedEvent,
+  snapshotOf,
 } from '@kokuin/controller'
 import {
   createIdentity,
@@ -36,19 +37,16 @@ const at = <T>(items: ReadonlyArray<T>, i: number): T => {
   return v
 }
 
-// The spec's definition of `revoke`: "Adds a DID to the profile's deny set: no capability whose
-// `aud` is that DID is valid from this position onward." Everything here is real — a real inception,
-// a real revoke signed by the profile's authority key, a real `createCapability`, and a real
-// delegate holding its own key. A stub deny set would agree with an implementation that enforces
-// nothing, which is what this file exists to stop.
+// A deny entry naming a DID: "no capability whose `aud` is that DID is valid from this position
+// onward." Everything here is real — a real inception, a real rotate whose snapshot denies the DID,
+// signed by the profile's pre-committed key, a real `createCapability`, and a real delegate holding
+// its own key. A stub deny set would agree with an implementation that enforces nothing, which is
+// what this file exists to stop.
 
 const seed = new Uint8Array(32).fill(31)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
 const controller = createControllerIdentity({ seed, profile: 0, log: [inception] })
-
-/** The authority key the inception establishes lives at gen 0 / seq 0. */
-const inceptionKeyPosition = { gen: 0, seq: 0 }
 
 const delegate = createSigningIdentity(new Uint8Array(32).fill(41))
 const bystander = createSigningIdentity(new Uint8Array(32).fill(43))
@@ -59,16 +57,20 @@ const methods: MethodRegistry = [
   createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) }),
 ]
 
-/** A revoke denying `target`, chained onto the inception and signed by the profile. */
-function revokeOf(target: string): SignedEvent {
-  return createRevoke({
+/** A rotate on `prior` whose snapshot is exactly `deny`, signed by the profile. */
+function settle(prior: SignedEvent['event'], deny: Array<string>): SignedEvent {
+  return createRotate({
     seed,
     profile: 0,
     did,
-    prior: inception.event,
-    target,
-    keyPosition: inceptionKeyPosition,
+    prior,
+    options: { snapshot: { members: [], deny } },
   })
+}
+
+/** A rotate denying `target`, chained onto the inception. */
+function revokeOf(target: string): SignedEvent {
+  return settle(inception.event, [target])
 }
 
 async function mintFor(audience: SigningIdentity, signer = controller): Promise<string> {
@@ -113,7 +115,7 @@ describe('a capability whose audience the profile has revoked', () => {
 
   test('a capability to an audience that was not revoked still verifies', async () => {
     // The control row. Without it this file passes against an implementation that rejects every
-    // capability the moment a log carries any revoke at all.
+    // capability the moment a log carries any denial at all.
     const denied = await mintFor(delegate)
     const allowed = await mintFor(bystander)
     log = [inception, revokeOf(delegate.id)]
@@ -122,11 +124,13 @@ describe('a capability whose audience the profile has revoked', () => {
     await expect(invoke(bystander, allowed)).resolves.toBeUndefined()
   })
 
-  test('the denial survives a rotation', async () => {
-    // A rotate carries the accumulated deny set forward unless it publishes a snapshot, so routine
-    // key hygiene must not quietly re-admit a revoked device.
+  test('the denial survives a rotation that carries the state forward', async () => {
+    // A rotate's snapshot replaces the state, so routine key hygiene builds it from the fold's own
+    // answer (`snapshotOf`) and must not quietly re-admit a revoked device.
     const cap = await mintFor(delegate)
     const revoke = revokeOf(delegate.id)
+    const folded = foldLog(did, [inception, revoke])
+    if (!folded.ok) throw new Error('did not fold')
     log = [
       inception,
       revoke,
@@ -135,32 +139,19 @@ describe('a capability whose audience the profile has revoked', () => {
         profile: 0,
         did,
         prior: revoke.event,
-        options: { keyPosition: inceptionKeyPosition },
+        options: { snapshot: snapshotOf(at(folded.states, 1)) },
       }),
     ]
 
     await expect(invoke(delegate, cap)).rejects.toThrow(/audience is revoked/)
   })
 
-  test('a deny-set snapshot clears it', async () => {
-    // `d` replaces the accumulated set rather than adding to it — the "cold rotate clearing the
-    // deny set" the spec's remedy ladder names.
+  test('a snapshot leaving it out clears it', async () => {
+    // `d` replaces the prior set rather than adding to it — the "cold rotate clearing the deny set"
+    // the spec's remedy ladder names. A holder DID, unlike a retired key, may be dropped.
     const cap = await mintFor(delegate)
     const revoke = revokeOf(delegate.id)
-    log = [
-      inception,
-      revoke,
-      createRotate({
-        seed,
-        profile: 0,
-        did,
-        prior: revoke.event,
-        options: {
-          keyPosition: inceptionKeyPosition,
-          denySnapshot: [],
-        },
-      }),
-    ]
+    log = [inception, revoke, settle(revoke.event, [])]
 
     await expect(invoke(delegate, cap)).resolves.toBeUndefined()
   })
@@ -472,21 +463,14 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
 })
 
 describe('the deny set the resolver exposes', () => {
-  test('is the head state, and carries every revoke in the current generation', async () => {
+  test('is the head state: the latest snapshot, not an accumulation', async () => {
     const first = revokeOf(delegate.id)
-    const second = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: first.event,
-      target: bystander.id,
-      keyPosition: inceptionKeyPosition,
-    })
+    const second = settle(first.event, [bystander.id])
     log = [inception, first, second]
 
     const denied = await at(methods, 0).resolveDenySet?.(did)
     expect(denied).toBeDefined()
-    expect([...(denied ?? [])].sort()).toEqual([delegate.id, bystander.id].sort())
+    expect([...(denied ?? [])]).toEqual([bystander.id])
   })
 
   test('is empty for a log that revokes nothing', async () => {

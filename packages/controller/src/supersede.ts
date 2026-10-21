@@ -122,7 +122,9 @@ function commonSpine(a: FoldedBranch, b: FoldedBranch): number {
  * signed by the pre-committed next keys outranks any current-key operation — at the diverging
  * position *and* over everything after it on the losing branch. That is what makes the owner win the
  * race against a thief holding a current key regardless of who published first or how far ahead: a
- * stolen current key cannot rotate but can sign revokes all day, so length must not decide this.
+ * stolen current key cannot rotate but can sign current-key events without limit, so length must not
+ * decide this. The root chain itself holds only `icp`/`rot`, so two branches that both fold diverge on
+ * two rotates, neither of which supersedes the other: duplicity, for a reset to resolve.
  */
 function supersedes({
   candidate,
@@ -289,7 +291,7 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
  *
  * Comparing heads instead would make branch *length* decisive below the top generation — the one
  * resource a thief has in abundance (a stolen current key cannot rotate but can sign unlimited
- * revokes). A longer branch still wins when it is the same history carried further, which the
+ * current-key events). A longer branch still wins when it is the same history carried further, which the
  * divergence walk sees as a prefix.
  *
  * `superseded` counts the state-advancing events discarded from losing branches (what a cache must

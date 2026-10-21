@@ -4,9 +4,9 @@ import { canonicalBytes, digestOf } from '../src/canonical.js'
 import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
-  createRevoke,
   createRotate,
   didFromInception,
+  type SignedEvent,
   signEvent,
   verifyRotate,
   verifySignatures,
@@ -31,33 +31,73 @@ function setup() {
 describe('createRotate()', () => {
   test('advances the sequence and keeps the generation', () => {
     const { inception, did } = setup()
-    const { event } = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const { event } = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     expect(event.s).toBe(1)
     expect(event.g).toBe(0)
   })
 
   test('names the DID explicitly, unlike inception', () => {
     const { inception, did } = setup()
-    expect(createRotate({ seed, profile: 0, did, prior: inception.event }).event.i).toBe(did)
+    expect(
+      createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: inception.event,
+        options: { snapshot: { members: [], deny: [] } },
+      }).event.i,
+    ).toBe(did)
   })
 
   test('chains to the previous event by digest', () => {
     const { inception, did, priorDigest } = setup()
-    expect(createRotate({ seed, profile: 0, did, prior: inception.event }).event.p).toBe(
-      priorDigest,
-    )
+    expect(
+      createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: inception.event,
+        options: { snapshot: { members: [], deny: [] } },
+      }).event.p,
+    ).toBe(priorDigest)
   })
 
   test('reveals the keys the prior event pre-committed', () => {
     const { inception, did } = setup()
-    const { event } = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const { event } = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     expect(digestOf(event.k[0])).toBe(inception.event.n[0])
   })
 
   test('is reproducible from the seed when it carries no optional fields', () => {
     const { inception, did } = setup()
-    expect(createRotate({ seed, profile: 0, did, prior: inception.event })).toEqual(
-      createRotate({ seed, profile: 0, did, prior: inception.event }),
+    expect(
+      createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: inception.event,
+        options: { snapshot: { members: [], deny: [] } },
+      }),
+    ).toEqual(
+      createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: inception.event,
+        options: { snapshot: { members: [], deny: [] } },
+      }),
     )
   })
 
@@ -65,117 +105,114 @@ describe('createRotate()', () => {
     const { inception, did } = setup()
     const seal = digestOf({ grant: 'management' })
     expect(
-      createRotate({ seed, profile: 0, did, prior: inception.event, options: { seal } }).event.a,
-    ).toBe(seal)
-  })
-
-  test('carries a deny-set snapshot when one is given', () => {
-    const { inception, did } = setup()
-    const denySnapshot = ['did:key:zStolen']
-    expect(
-      createRotate({ seed, profile: 0, did, prior: inception.event, options: { denySnapshot } })
-        .event.d,
-    ).toEqual(denySnapshot)
-  })
-
-  test('a rotate chained onto a revoke reveals the key the log actually pre-committed', () => {
-    // Amendment A, on the rotate side. A revoke advances `s` without establishing a key, so the
-    // committed next key still sits one past the last icp/rot — not one past the revoke. Deriving
-    // from `prior.s` reveals a key nothing ever committed, and the rotate cannot fold: after any
-    // revoke the log would be permanently unrotatable, which also makes the deny-set snapshot the
-    // spec's remedy ladder is built on unreachable.
-    const { inception, did } = setup()
-    const revoke = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: inception.event,
-      target: 'did:key:zStolen',
-      keyPosition: {
-        gen: 0,
-        seq: 0,
-      },
-    })
-    const state = keyStateAt(foldLog(did, [inception, revoke]), 1)
-    expect(state).toBeDefined()
-    if (state == null) return
-
-    const rotate = createRotate({
-      seed,
-      profile: 0,
-      did,
-      prior: revoke.event,
-      options: {
-        keyPosition: { gen: state.keyGen, seq: state.keySeq },
-        denySnapshot: [],
-      },
-    })
-    expect(digestOf(rotate.event.k[0])).toBe(state.next[0])
-
-    const folded = foldLog(did, [inception, revoke, rotate])
-    expect(folded).toMatchObject({ ok: true })
-    if (!folded.ok) return
-    // The snapshot really replaced the accumulated set.
-    expect(at(folded.states, 1).deny.has('did:key:zStolen')).toBe(true)
-    expect(at(folded.states, 2).deny.size).toBe(0)
-    // And the log keeps rotating from there, now that the key positions have diverged for good.
-    const again = createRotate({
-      seed,
-      profile: 0,
-      did,
-      prior: rotate.event,
-      options: {
-        keyPosition: { gen: at(folded.states, 2).keyGen, seq: at(folded.states, 2).keySeq },
-      },
-    })
-    expect(foldLog(did, [inception, revoke, rotate, again])).toMatchObject({ ok: true })
-  })
-
-  test('without a keyPosition it still rotates from an icp or rot, where the two coincide', () => {
-    // The default has to stay right for the overwhelmingly common case, which is every call site
-    // in this repo.
-    const { inception, did } = setup()
-    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
-    expect(foldLog(did, [inception, rotate])).toMatchObject({ ok: true })
-    expect(
       createRotate({
         seed,
         profile: 0,
         did,
         prior: inception.event,
-        options: { keyPosition: { gen: 0, seq: 0 } },
-      }),
-    ).toEqual(rotate)
+        options: { seal, snapshot: { members: [], deny: [] } },
+      }).event.a,
+    ).toBe(seal)
+  })
+
+  test('carries the state snapshot it is given, as `m` and `d`', () => {
+    const { inception, did } = setup()
+    const deny = ['did:key:zStolen']
+    const { event } = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny } },
+    })
+    expect(event.d).toEqual(deny)
+    expect(event.m).toEqual([])
+  })
+
+  test('a rotate chained onto a rotate reveals the key the log pre-committed, at its own `s`', () => {
+    // The root chain holds only key-establishing events, so the derivation index of each rotate's
+    // key is its sequence: no position to pass, and none to get wrong.
+    const { inception, did } = setup()
+    const log: Array<SignedEvent> = [inception]
+    let prior: SignedEvent['event'] = inception.event
+    for (let i = 0; i < 4; i++) {
+      const rot = createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior,
+        options: { snapshot: { members: [], deny: [] } },
+      })
+      log.push(rot)
+      prior = rot.event
+    }
+    const result = foldLog(did, log)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.states.map((state) => state.keySeq)).toEqual([0, 1, 2, 3, 4])
+    expect(result.states.map((state) => state.seq)).toEqual([0, 1, 2, 3, 4])
+    expect(keyStateAt(result, 4)?.keys).toEqual([
+      encodeKey(deriveKeyPair(seed, authorityPath(0, 0, 4), 'EdDSA').publicKey, 'EdDSA'),
+    ])
   })
 })
 
 describe('verifyRotate()', () => {
   test('accepts a rotate signed by the pre-committed next keys', () => {
     const { inception, did, priorDigest } = setup()
-    const signed = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const signed = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     expect(verifyRotate(signed, { digest: priorDigest, n: inception.event.n })).toBe(true)
   })
 
   test('rejects a rotate whose keys were not pre-committed — a stolen device cannot rotate', () => {
     const { inception, did, priorDigest } = setup()
     const other = new Uint8Array(32).fill(9)
-    const signed = createRotate({ seed: other, profile: 0, did, prior: inception.event })
+    const signed = createRotate({
+      seed: other,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     expect(verifyRotate(signed, { digest: priorDigest, n: inception.event.n })).toBe(false)
   })
 
   test('rejects a rotate that does not chain to the prior digest', () => {
     const { inception, did } = setup()
-    const signed = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const signed = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     expect(verifyRotate(signed, { digest: digestOf({ other: true }), n: inception.event.n })).toBe(
       false,
     )
   })
 
-  test('rejects a tampered deny snapshot — it is covered by the signature', () => {
+  test('rejects a tampered state snapshot — both halves are covered by the signature', () => {
     const { inception, did, priorDigest } = setup()
-    const signed = createRotate({ seed, profile: 0, did, prior: inception.event })
-    const tampered = { ...signed, event: { ...signed.event, d: ['did:key:zInjected'] } }
-    expect(verifyRotate(tampered, { digest: priorDigest, n: inception.event.n })).toBe(false)
+    const signed = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
+    const injected = { did: 'did:key:zInjected', key: 'zInjected', add: 'zAdd', lease: 1 }
+    for (const patch of [{ d: ['did:key:zInjected'] }, { m: [injected] }]) {
+      const tampered = { ...signed, event: { ...signed.event, ...patch } }
+      expect(verifyRotate(tampered, { digest: priorDigest, n: inception.event.n })).toBe(false)
+    }
+    // Control: the untouched event verifies.
+    expect(verifyRotate(signed, { digest: priorDigest, n: inception.event.n })).toBe(true)
   })
 
   test('rejects a key presented as an authority key when it is X25519-tagged, not EdDSA', () => {
@@ -185,7 +222,13 @@ describe('verifyRotate()', () => {
     // real private key gives a genuinely valid Ed25519 signature over these exact bytes — so this
     // only fails if verification checks the tag, not just whether the signature verifies.
     const { inception, did } = setup()
-    const signed = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const signed = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
     const event = { ...signed.event, k: [encodeKey(current.publicKey, 'X25519')] }
     const sigs = signEvent(event, [current.privateKey])
@@ -197,7 +240,13 @@ describe('verifyRotate()', () => {
   // valid signature, so only a dedicated `ka` check — not a signature failure — can reject these.
   test('rejects a rotate publishing no key agreement key', () => {
     const { inception, did, priorDigest } = setup()
-    const signed = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const signed = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
     const event = { ...signed.event, ka: [] }
     const sigs = signEvent(event, [current.privateKey])
@@ -206,7 +255,13 @@ describe('verifyRotate()', () => {
 
   test('rejects a rotate whose ka holds a key that is not X25519-tagged', () => {
     const { inception, did, priorDigest } = setup()
-    const signed = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const signed = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
     const event = { ...signed.event, ka: [at(signed.event.k, 0)] }
     const sigs = signEvent(event, [current.privateKey])
@@ -215,159 +270,35 @@ describe('verifyRotate()', () => {
 })
 
 describe('createRotate() refuses to emit an event the fold would reject', () => {
-  // `keyPosition` is where the currently-active authority key lives, and it decides which key gets
-  // derived. Defaulted from `prior.s`, it is right only while the log's sequence and its derivation
-  // index still coincide — and a `rev` advances `s` while establishing no key, so after the first
-  // revoke of a generation they part company and never rejoin. A wrong position produced a
-  // well-formed, correctly signed event that no fold would ever accept, and said nothing at emit
-  // time. It is checked here against `prior`'s own pre-rotation commitment, which is in the
-  // argument already.
-  const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+  // The key a rotate reveals is derived one past `prior`'s position and must be the one `prior`
+  // committed in `n`. For a prior that is an event of this seed's own log that always holds; a
+  // hand-built prior is where it does not, and a well-formed, correctly signed event no fold would
+  // accept is worse than a throw at emit time.
+  const snapshot = { members: [], deny: [] }
 
-  test('the default is refused on a rotate chained onto a revoke', () => {
+  test('a prior that commits no key is refused', () => {
     const { inception, did } = setup()
-    const rev = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: inception.event,
-      target,
-      keyPosition: { gen: 0, seq: 0 },
-    })
+    const { n: _n, ...uncommitted } = inception.event
+    expect(() =>
+      createRotate({ seed, profile: 0, did, prior: uncommitted, options: { snapshot } }),
+    ).toThrow(/pre-commits no key/)
+  })
 
-    expect(() => createRotate({ seed, profile: 0, did, prior: rev.event })).toThrow(
-      /pre-commits no key/,
-    )
-    // Control: the same rotate with the position the fold would name folds cleanly, so what was
-    // refused is the missing position and not the shape of the log.
+  test('a prior committing a key other than the one derived at its next position is refused', () => {
+    const { inception, did } = setup()
+    const elsewhere = { ...inception.event, n: [digestOf('a key nothing derives')] }
+    expect(() =>
+      createRotate({ seed, profile: 0, did, prior: elsewhere, options: { snapshot } }),
+    ).toThrow(/pre-committed/)
+    // Control: the real prior emits and folds.
     const good = createRotate({
       seed,
       profile: 0,
       did,
-      prior: rev.event,
-      options: { keyPosition: { gen: 0, seq: 0 } },
-    })
-    expect(foldLog(did, [inception, rev, good]).ok).toBe(true)
-  })
-
-  test('the default is refused on a rotate two events past a revoke, not just the next one', () => {
-    // The case a "pass it after a revoke" rule misses: `s` stays ahead of the derivation index for
-    // the rest of the generation, so this rotate's prior is an ordinary `rot` and the default is
-    // still wrong. Here it is caught by the commitment rather than by the missing-`n` rule.
-    const { inception, did } = setup()
-    const rev = createRevoke({
-      seed,
-      profile: 0,
-      did,
       prior: inception.event,
-      target,
-      keyPosition: { gen: 0, seq: 0 },
+      options: { snapshot },
     })
-    const rot = createRotate({
-      seed,
-      profile: 0,
-      did,
-      prior: rev.event,
-      options: { keyPosition: { gen: 0, seq: 0 } },
-    })
-
-    expect(() => createRotate({ seed, profile: 0, did, prior: rot.event })).toThrow(/pre-committed/)
-    const good = createRotate({
-      seed,
-      profile: 0,
-      did,
-      prior: rot.event,
-      options: { keyPosition: { gen: 0, seq: 1 } },
-    })
-    expect(foldLog(did, [inception, rev, rot, good]).ok).toBe(true)
-  })
-
-  test('an explicitly wrong position is refused too, not only a defaulted one', () => {
-    const { inception, did } = setup()
-
-    expect(() =>
-      createRotate({
-        seed,
-        profile: 0,
-        did,
-        prior: inception.event,
-        options: { keyPosition: { gen: 0, seq: 5 } },
-      }),
-    ).toThrow(/pre-committed/)
-    expect(() =>
-      createRotate({
-        seed,
-        profile: 0,
-        did,
-        prior: inception.event,
-        options: { keyPosition: { gen: 1, seq: 0 } },
-      }),
-    ).toThrow(/pre-committed/)
-    // Control: the right position — which is also the default here — emits and folds.
-    expect(
-      foldLog(did, [
-        inception,
-        createRotate({
-          seed,
-          profile: 0,
-          did,
-          prior: inception.event,
-          options: { keyPosition: { gen: 0, seq: 0 } },
-        }),
-      ]).ok,
-    ).toBe(true)
-  })
-
-  test('every position of a revoke-heavy generation emits, and the whole log folds', () => {
-    // The end this exists for: a log stays rotatable after any number of revokes, and the deny-set
-    // snapshot — the "cold rotate" of the remedy ladder — rides on exactly such a rotate.
-    const { inception, did } = setup()
-    const a = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: inception.event,
-      target,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const b = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: a.event,
-      target: `${target}2`,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const cold = createRotate({
-      seed,
-      profile: 0,
-      did,
-      prior: b.event,
-      options: {
-        keyPosition: { gen: 0, seq: 0 },
-        denySnapshot: [],
-      },
-    })
-    const c = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: cold.event,
-      target: `${target}3`,
-      keyPosition: { gen: 0, seq: 1 },
-    })
-    const last = createRotate({
-      seed,
-      profile: 0,
-      did,
-      prior: c.event,
-      options: { keyPosition: { gen: 0, seq: 1 } },
-    })
-
-    const result = foldLog(did, [inception, a, b, cold, c, last])
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.states.map((state) => state.keySeq)).toEqual([0, 0, 0, 1, 1, 2])
+    expect(foldLog(did, [inception, good]).ok).toBe(true)
   })
 
   test('a seed that is not the log`s root is left alone — the fold is that layer', () => {
@@ -378,7 +309,13 @@ describe('createRotate() refuses to emit an event the fold would reject', () => 
     const { inception, did } = setup()
     const foreign = new Uint8Array(32).fill(9)
 
-    const forged = createRotate({ seed: foreign, profile: 0, did, prior: inception.event })
+    const forged = createRotate({
+      seed: foreign,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     expect(forged.event.t).toBe('rot')
     expect(foldLog(did, [inception, forged])).toEqual({
       ok: false,
@@ -395,7 +332,13 @@ describe('a rotate`s thresholds and seal are checked', () => {
   // it as one.
   function rotateWith(patch: Record<string, unknown>) {
     const { inception, did, priorDigest } = setup()
-    const base = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const base = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const event = { ...base.event, ...patch } as unknown as typeof base.event
     const key = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
     return {
@@ -444,10 +387,16 @@ describe('a rotate`s thresholds and seal are checked', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { seal: 'zSomeExternalDigest' },
+      options: { seal: 'zSomeExternalDigest', snapshot: { members: [], deny: [] } },
     })
     expect(sealed.event.a).toBe('zSomeExternalDigest')
-    const plain = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const plain = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     expect(plain.event.a).toBeUndefined()
     // The member is present-and-undefined on the object and absent from the encoding — the
     // canonicalizer drops undefined members — so a sealless rotate's digest does not depend on it.

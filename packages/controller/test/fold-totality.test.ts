@@ -11,7 +11,6 @@ import { authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js
 import {
   createInception,
   createReset,
-  createRevoke,
   createRotate,
   didFromInception,
   type EventCommon,
@@ -44,17 +43,44 @@ const other = 'did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
 
 const icp = createInception(seed, 0)
 const did = didFromInception(icp.event)
-const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
-const reset = createReset(seed, 0, 1)
-const inceptionKeyPosition = { gen: 0, seq: 0 }
-const revoke = createRevoke({
+const rot = createRotate({
   seed,
   profile: 0,
   did,
   prior: icp.event,
-  target,
-  keyPosition: inceptionKeyPosition,
+  options: { snapshot: { members: [], deny: [] } },
 })
+const reset = createReset(seed, 0, 1)
+// A chain `rev` as an older log carries one, signed by the inception key. The chain no longer has the
+// type, so it reaches the unknown-type path; it is here as a well-formed envelope around a body the
+// fold does not understand.
+const revokeBody = {
+  v: 1,
+  t: 'rev',
+  i: did,
+  g: 0,
+  s: 1,
+  p: digestOf(icp.event),
+  crit: true,
+  x: target,
+}
+const revoke = {
+  event: revokeBody,
+  sigs: signEvent(revokeBody as unknown as EventCommon, [
+    deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA').privateKey,
+  ]),
+} as unknown as SignedEvent
+
+/** A rotate off the inception whose snapshot denies `deny`: two with different `deny` are a fork. */
+function settled(deny: Array<string>): SignedEvent {
+  return createRotate({
+    seed,
+    profile: 0,
+    did,
+    prior: icp.event,
+    options: { snapshot: { members: [], deny } },
+  })
+}
 
 /** A copy of `signed` with one member of its event removed — a field a peer simply did not send. */
 function withoutEventMember(signed: SignedEvent, member: string): unknown {
@@ -97,7 +123,7 @@ const malformed: Array<[string, Array<unknown>, FoldResult]> = [
     { ok: false, reason: 'malformed event', index: 1 },
   ],
   [
-    'a revoke carrying no `sigs`',
+    'a chain revoke carrying no `sigs`',
     [icp, { event: revoke.event }],
     { ok: false, reason: 'malformed event', index: 1 },
   ],
@@ -125,11 +151,6 @@ const malformed: Array<[string, Array<unknown>, FoldResult]> = [
     'a reset whose `k` is absent',
     [icp, withoutEventMember(reset, 'k')],
     { ok: false, reason: 'invalid reset', index: 1 },
-  ],
-  [
-    'a revoke naming no target',
-    [icp, withoutEventMember(revoke, 'x')],
-    { ok: false, reason: 'revoke names no target', index: 1 },
   ],
   // The envelope's third member, on an otherwise perfectly valid reset. Deleting `recoveryKey`
   // proves nothing about the guard — an absent one is already `invalid reset` — so these two carry
@@ -300,12 +321,6 @@ describe('a malformed event its own author signed', () => {
     }
   }
 
-  /** The revoke, mutated and re-signed by the profile's own current authority key. */
-  function signedRevoke(member: string, value: unknown): SignedEvent {
-    const event = { ...revoke.event, [member]: value }
-    return { event, sigs: signEvent(event as EventCommon, [authority(0).privateKey]) }
-  }
-
   /**
    * An inception, mutated and re-signed. Self-certifying works against us here: the DID is the
    * hash of the event, so *any* body is a legitimate inception for the DID it hashes to.
@@ -320,17 +335,37 @@ describe('a malformed event its own author signed', () => {
     [
       'a rotate whose deny snapshot is a scalar',
       [icp, signedRotate('d', 7)],
-      { ok: false, reason: 'invalid rotate', index: 1 },
+      { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a rotate whose deny snapshot is a string',
       [icp, signedRotate('d', 'did:key:zAbc')],
-      { ok: false, reason: 'invalid rotate', index: 1 },
+      { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a rotate whose deny snapshot holds a non-string',
       [icp, signedRotate('d', ['did:key:zAbc', 7])],
-      { ok: false, reason: 'invalid rotate', index: 1 },
+      { ok: false, reason: 'malformed state snapshot', index: 1 },
+    ],
+    [
+      'a rotate whose member list is a scalar',
+      [icp, signedRotate('m', 7)],
+      { ok: false, reason: 'malformed state snapshot', index: 1 },
+    ],
+    [
+      'a rotate whose member list is a string',
+      [icp, signedRotate('m', 'did:key:zAbc')],
+      { ok: false, reason: 'malformed state snapshot', index: 1 },
+    ],
+    [
+      'a rotate whose member list holds a non-object',
+      [icp, signedRotate('m', [null])],
+      { ok: false, reason: 'malformed state snapshot', index: 1 },
+    ],
+    [
+      'a rotate whose member list is absent',
+      [icp, signedRotate('m', undefined)],
+      { ok: false, reason: 'rotate carries no state snapshot', index: 1 },
     ],
     [
       'a rotate whose `n` is null',
@@ -353,6 +388,11 @@ describe('a malformed event its own author signed', () => {
       'a reset whose `n` is null',
       [icp, signedReset('n', null)],
       { ok: false, reason: 'invalid reset', index: 1 },
+    ],
+    [
+      'a reset whose member list is a scalar',
+      [icp, signedReset('m', 7)],
+      { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a reset whose deny snapshot is a scalar',
@@ -382,7 +422,7 @@ describe('a malformed event its own author signed', () => {
     [
       'a rotate whose deny snapshot holds a nested array',
       [icp, signedRotate('d', [[target]])],
-      { ok: false, reason: 'invalid rotate', index: 1 },
+      { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a rotate whose recovery commitment is an object',
@@ -404,22 +444,6 @@ describe('a malformed event its own author signed', () => {
       [icp, signedReset('n', [7])],
       { ok: false, reason: 'invalid reset', index: 1 },
     ],
-    // The target goes into a `ReadonlySet<string>`, where an object would be denied by identity.
-    [
-      'an authority-signed revoke naming an object as its target',
-      [icp, signedRevoke('x', { evil: true })],
-      { ok: false, reason: 'revoke names no target', index: 1 },
-    ],
-    [
-      'an authority-signed revoke naming an array as its target',
-      [icp, signedRevoke('x', [target])],
-      { ok: false, reason: 'revoke names no target', index: 1 },
-    ],
-    [
-      'an authority-signed revoke naming null as its target',
-      [icp, signedRevoke('x', null)],
-      { ok: false, reason: 'revoke names no target', index: 1 },
-    ],
   ]
 
   for (const [name, log, expected] of cases) {
@@ -429,7 +453,7 @@ describe('a malformed event its own author signed', () => {
   }
 
   test('a rotate whose deny snapshot is well formed still folds', () => {
-    // The control for the three rows above: the same re-signing machinery with a legal `d`.
+    // The control for the snapshot rows above: the same re-signing machinery with a legal `d`.
     const result = foldLog(did, [icp, signedRotate('d', [target])])
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -440,7 +464,13 @@ describe('a malformed event its own author signed', () => {
     // The commitment goes into `KeyState.next`, which the *next* rotate reads — one event away
     // from the log that caused it. Rejecting at publication is what keeps that read safe.
     const [forgedDid, forged] = signedInception('n', null)
-    const following = createRotate({ seed, profile: 0, did: forgedDid, prior: forged.event })
+    const following = createRotate({
+      seed,
+      profile: 0,
+      did: forgedDid,
+      prior: forged.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     expect(foldLog(forgedDid, [forged, following])).toEqual({
       ok: false,
       reason: 'invalid inception',
@@ -456,18 +486,6 @@ describe('a malformed event its own author signed', () => {
       index: 0,
     })
   })
-
-  for (const value of [42, {}, [], ['a'], true, 'header.payload.signature']) {
-    test(`a revoke whose \`cap\` is ${JSON.stringify(value)} is refused`, () => {
-      // A revoke has no `cap` member; one on the wire is refused whatever its type.
-      const evil = signedRevoke('cap', value)
-      let result: unknown
-      expect(() => {
-        result = foldLog(did, [icp, evil])
-      }).not.toThrow()
-      expect(result).toEqual({ ok: false, reason: 'revoke capability is not supported', index: 1 })
-    })
-  }
 
   test('an unmutated inception still folds', () => {
     // Control for both rows above: the same re-signing path with nothing changed.
@@ -564,27 +582,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
       'a revoke carrying an unread member 5000 levels deep',
       [
         icp,
-        {
-          ...createRevoke({
-            seed,
-            profile: 0,
-            did,
-            prior: icp.event,
-            target,
-            keyPosition: inceptionKeyPosition,
-          }),
-          event: {
-            ...createRevoke({
-              seed,
-              profile: 0,
-              did,
-              prior: icp.event,
-              target,
-              keyPosition: inceptionKeyPosition,
-            }).event,
-            zz: abyss(),
-          },
-        },
+        { ...revoke, event: { ...revoke.event, zz: abyss() } },
       ] as unknown as Array<SignedEvent>,
       { ok: false, reason: 'malformed event', index: 1 },
     ],
@@ -603,28 +601,8 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   test('one hostile branch no longer kills duplicity detection for the well-formed ones', () => {
     // The denial of service `isSignedEventShape`'s docstring names: a thief who cannot produce a
     // valid event crashing duplicity resolution for every well-formed branch beside it.
-    const forkA = [
-      icp,
-      createRevoke({
-        seed,
-        profile: 0,
-        did,
-        prior: icp.event,
-        target,
-        keyPosition: inceptionKeyPosition,
-      }),
-    ]
-    const forkB = [
-      icp,
-      createRevoke({
-        seed,
-        profile: 0,
-        did,
-        prior: icp.event,
-        target: other,
-        keyPosition: inceptionKeyPosition,
-      }),
-    ]
+    const forkA = [icp, settled([target])]
+    const forkB = [icp, settled([other])]
     const hostile = [
       icp,
       { ...rot, event: { ...rot.event, a: abyss() } },
@@ -733,28 +711,8 @@ describe('resolveBranches() survives a hostile branch', () => {
   // Two well-formed branches that genuinely fork, plus one an attacker fabricated. Before the shape
   // guards the fabricated branch threw a TypeError out of `resolveBranches`, which is a denial of
   // service on the one mechanism that exists to detect a key-takeover fork.
-  const forkA = [
-    icp,
-    createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target,
-      keyPosition: inceptionKeyPosition,
-    }),
-  ]
-  const forkB = [
-    icp,
-    createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: other,
-      keyPosition: inceptionKeyPosition,
-    }),
-  ]
+  const forkA = [icp, settled([target])]
+  const forkB = [icp, settled([other])]
   const hostile = [icp, withoutEventMember(rot, 'k')] as Array<SignedEvent>
 
   test('still reports duplicity among the well-formed branches', () => {

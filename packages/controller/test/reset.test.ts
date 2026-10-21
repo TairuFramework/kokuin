@@ -5,7 +5,6 @@ import { authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js
 import {
   createInception,
   createReset,
-  createRevoke,
   createRotate,
   didFromInception,
   signEvent,
@@ -104,13 +103,12 @@ describe('verifyReset()', () => {
     )
   })
 
-  // A reset carries an empty deny set and no seal — that is what makes "blind reset" mean the same
-  // bytes for every holder of the same seed, which the branch selector relies on to treat two blind
-  // resets at one generation as idempotent rather than as a fork. The rule lives in `createReset`,
-  // which always emits `d: []` and no `a`; the checker enforces it too, so a reset carrying either —
-  // re-signed by the real recovery key, so only a dedicated check can reject it — does not fold as a
-  // reset that clears-then-repopulates the deny set or anchors where a reset never should.
-  test('rejects a reset carrying a non-empty deny snapshot', () => {
+  // A blind reset carries `d: []`, no `m` and no seal — that is what makes "blind reset" mean the
+  // same bytes for every holder of the same seed, which the branch selector relies on to treat two
+  // blind resets at one generation as idempotent rather than as a fork. A reset may instead carry a
+  // whole snapshot, `m` and `d` together; half of one is refused. Each body below is re-signed by the
+  // real recovery key, so only a dedicated check can reject it.
+  test('rejects a reset carrying a deny set but no member list', () => {
     const { inception } = setup()
     const signed = createReset(seed, 0, 1)
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
@@ -119,6 +117,25 @@ describe('verifyReset()', () => {
     expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
       false,
     )
+  })
+
+  test('rejects a reset carrying a member list but no deny set', () => {
+    const { inception } = setup()
+    const signed = createReset(seed, 0, 1, { members: [], deny: [] })
+    const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
+    const { d: _d, ...event } = signed.event
+    const sigs = signEvent(event, [recovery.privateKey])
+    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
+      false,
+    )
+  })
+
+  test('accepts a reset carrying a whole snapshot', () => {
+    const { inception } = setup()
+    const signed = createReset(seed, 0, 1, { members: [], deny: ['did:key:zStillDenied'] })
+    expect(signed.event.m).toEqual([])
+    expect(signed.event.d).toEqual(['did:key:zStillDenied'])
+    expect(verifyReset(signed, inception.event)).toBe(true)
   })
 
   test('rejects a reset carrying a seal', () => {
@@ -147,7 +164,13 @@ describe('the recovery commitment is fixed at inception', () => {
 
   test('a rotate carrying `r` is refused, at every position and by both verifiers', () => {
     const { inception, did } = setup()
-    const rot = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const withRecovery = { ...rot.event, r: digestOf('anything at all') }
     const key = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
     const forged = { event: withRecovery, sigs: signEvent(withRecovery, [key.privateKey]) }
@@ -189,19 +212,30 @@ describe('the recovery commitment is fixed at inception', () => {
     // Including across a reset, which opens a new generation under the same root — and this is the
     // value `verifyReset` enforces, so the state and the verifier agree by construction now.
     const { inception, did } = setup()
-    const rot = createRotate({ seed, profile: 0, did, prior: inception.event })
-    const rev = createRevoke({
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
+    const denying = createRotate({
       seed,
       profile: 0,
       did,
       prior: rot.event,
-      target,
-      keyPosition: { gen: 0, seq: 1 },
+      options: { snapshot: { members: [], deny: [target] } },
     })
     const reset = createReset(seed, 0, 1)
-    const after = createRotate({ seed, profile: 0, did, prior: reset.event })
+    const after = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: reset.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
 
-    const result = foldLog(did, [inception, rot, rev, reset, after])
+    const result = foldLog(did, [inception, rot, denying, reset, after])
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.states.map((state) => state.recovery)).toEqual(

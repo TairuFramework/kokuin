@@ -2,7 +2,6 @@ import { describe, expect, test } from 'vitest'
 
 import {
   createInception,
-  createRevoke,
   createRotate,
   didFromInception,
   type SignedEvent,
@@ -22,16 +21,14 @@ function fromWire(json: string): unknown {
 function build() {
   const icp = createInception(seed, 0)
   const did = didFromInception(icp.event)
-  const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
-  const rev = createRevoke({
+  const rot = createRotate({
     seed,
     profile: 0,
     did,
-    prior: rot.event,
-    target: deviceX,
-    keyPosition: { gen: 0, seq: 1 },
+    prior: icp.event,
+    options: { snapshot: { members: [], deny: [] } },
   })
-  return { icp, did, rot, rev, honest: [icp, rot, rev] }
+  return { icp, did, rot, honest: [icp, rot] }
 }
 
 // CLOSED. The fold's envelope guard now asks `isCanonicalizable` rather than `withinCanonicalDepth`,
@@ -81,7 +78,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     expect(returned).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
   })
 
-  test('ROW 3 (closed): the same trick on a `rev` — answered at any log position', () => {
+  test('ROW 3 (closed): the same trick past the inception — answered at any log position', () => {
     const { icp, did, honest } = build()
     const good = foldLog(did, [icp])
     if (!good.ok) throw new Error('fixture')
@@ -104,12 +101,13 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     expect(thrown).toBeUndefined()
     expect(hostileResult).toEqual({ ok: false, reason: 'malformed event', index: 1 })
 
-    // ROW 3 control: identical rev with a finite `junk` -> a returned failure, and a *different*
-    // reason, so the rejection above is the non-finite member and not the junk signature bytes.
+    // ROW 3 control: identical event with a finite `junk` -> a returned failure, and a *different*
+    // reason, so the rejection above is the non-finite member and not the junk signature bytes or
+    // the type: the chain carries no `rev`, so the tame body reaches the unknown-type path.
     const tame = fromWire(raw.replace('JUNK', '1')) as SignedEvent
     const control = foldLog(did, [icp, tame])
-    expect(control).toEqual({ ok: false, reason: 'invalid revoke', index: 1 })
-    expect(honest.length).toBe(3)
+    expect(control).toEqual({ ok: false, reason: 'unknown critical event type: rev', index: 1 })
+    expect(honest.length).toBe(2)
   })
 
   test('ROW 4 (closed): a hostile branch is filtered, and the honest one still wins', () => {

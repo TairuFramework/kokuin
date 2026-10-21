@@ -120,8 +120,8 @@ export const KEY_REVOKED = 'kid names a key the controller has revoked'
  * The signing key `header` names, out of an already-folded log. `historic` picks which question above
  * is asked, and defaults to the safe one.
  *
- * **A revoked key answers neither question.** A `rev` naming `#<key>` retires a key for material it
- * has *already* signed, and this is where that bites — every `did:kokuin:` signature check reaches a
+ * **A revoked key answers neither question.** A deny entry naming `#<key>` retires a key for material
+ * it has *already* signed, and this is where that bites — every `did:kokuin:` signature check reaches a
  * resolved key through here, so the denial covers `verifyToken` on both `historic` settings, every
  * capability and revocation record `@kokuin/capability` verifies. The historic arm is the live one:
  * a revoked key is never in the head's `k` (the `KeyState.deny` invariant), so only the backwards
@@ -171,8 +171,8 @@ export function signingKeyFrom({
 }
 
 /**
- * The head's key agreement set, minus anything it has revoked. A `rev` may name an agreement key as
- * readily as a signing one (the target spelling is the key, not its purpose), and these are the keys
+ * The head's key agreement set, minus anything it has revoked. A deny entry may name an agreement key
+ * as readily as a signing one (the target spelling is the key, not its purpose), and these are the keys
  * a *sender* encrypts to — encrypting to a revoked key is the one outcome a denial must prevent.
  *
  * Like the signing side, unreachable from a log this package folded (the `KeyState.deny` invariant)

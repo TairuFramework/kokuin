@@ -4,7 +4,6 @@ import { describe, expect, test } from 'vitest'
 import {
   createInception,
   createReset,
-  createRevoke,
   createRotate,
   didFromInception,
   type SignedEvent,
@@ -57,7 +56,13 @@ describe('createControllerResolver()', () => {
 
   test('resolves the rotated key after a rotation, not the original', async () => {
     const { icp, did } = build()
-    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const resolver = createControllerResolver({ loadLog: async () => [icp, rot] })
     const resolved = await resolver.resolve(did, {})
     expect(resolved.publicKey).toEqual(decodeKey(at(rot.event.k, 0)).publicKey)
@@ -104,7 +109,13 @@ describe('createControllerResolver().resolve() with a kid', () => {
 
   test('a kid naming a key the log rotated away is historic-only', async () => {
     const { icp, did } = build()
-    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const resolver = createControllerResolver({ loadLog: async () => [icp, rot] })
     const retired = at(icp.event.k, 0)
 
@@ -152,18 +163,23 @@ describe('createControllerResolver().resolve() with a kid', () => {
 })
 
 describe('createControllerResolver() and a revoked key', () => {
-  /** icp → rot → rev(`#<the inception key>`): the leaked key retired, then explicitly denied. */
+  /** icp → rot → rot denying `#<the inception key>`: the leaked key retired, then denied. */
   function revokedKeyLog() {
     const { icp, did } = build()
-    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const leaked = at(icp.event.k, 0)
-    const rev = createRevoke({
+    const rev = createRotate({
       seed,
       profile: 0,
       did,
       prior: rot.event,
-      target: `#${leaked}`,
-      keyPosition: { gen: 0, seq: 1 },
+      options: { snapshot: { members: [], deny: [`#${leaked}`] } },
     })
     return { did, leaked, rot, rev, rotated: [icp, rot], revoked: [icp, rot, rev] }
   }
@@ -181,7 +197,7 @@ describe('createControllerResolver() and a revoked key', () => {
       publicKey: decodeKey(leaked).publicKey,
     })
 
-    // One more event — a `rev` naming the key — and the same question is refused.
+    // One more event — a rotate whose snapshot denies the key — and the same question is refused.
     const afterRevoke = createControllerResolver({ loadLog: async () => revoked })
     await expect(afterRevoke.resolveHistoric?.(did, { kid: `#${leaked}` })).rejects.toThrow(
       `Controller ${did} kid names a key the controller has revoked: #${leaked}`,
@@ -207,41 +223,39 @@ describe('createControllerResolver() and a revoked key', () => {
   test('the rest of the profile keeps resolving', async () => {
     // The control every row above needs: the revoke must deny one key, not break the log. Without
     // this, a fold that rejected the whole three-event log would look identical from the outside.
-    const { did, rot, revoked } = revokedKeyLog()
+    const { did, rot, rev, revoked } = revokedKeyLog()
     const resolver = createControllerResolver({ loadLog: async () => revoked })
-    const current = at(rot.event.k, 0)
+    const current = at(rev.event.k, 0)
 
     await expect(resolver.resolve(did, {})).resolves.toEqual({
       alg: 'EdDSA',
       publicKey: decodeKey(current).publicKey,
     })
     await expect(resolver.resolveHistoric?.(did, { kid: `#${current}` })).resolves.toBeDefined()
+    // The key the first rotate established, retired since but never denied, still answers.
+    await expect(
+      resolver.resolveHistoric?.(did, { kid: `#${at(rot.event.k, 0)}` }),
+    ).resolves.toBeDefined()
     await expect(resolver.resolveAgreementKey?.(did)).resolves.toHaveLength(1)
   })
 
-  test('a deny-set snapshot lifts it again', async () => {
-    // The denial is state, not a one-way door: `d` prunes the set, and the key resolves again.
-    // This is also what proves the check reads the head's set rather than remembering the event.
+  test('a later snapshot cannot lift it', async () => {
+    // A checkpointed retirement outlives every later rotate in the generation: a snapshot leaving
+    // it out would hand the thief historic resolution back, so the rotate that tries does not fold
+    // and the resolver answers nothing from that log.
     const { did, leaked, rev, revoked } = revokedKeyLog()
-    const folded = foldLog(did, revoked)
-    if (!folded.ok) throw new Error('did not fold')
-    const head = at(folded.states, folded.states.length - 1)
     const cleared = createRotate({
       seed,
       profile: 0,
       did,
       prior: rev.event,
-      options: {
-        keyPosition: { gen: head.keyGen, seq: head.keySeq },
-        denySnapshot: [],
-      },
+      options: { snapshot: { members: [], deny: [] } },
     })
     const resolver = createControllerResolver({ loadLog: async () => [...revoked, cleared] })
 
-    await expect(resolver.resolveHistoric?.(did, { kid: `#${leaked}` })).resolves.toEqual({
-      alg: 'EdDSA',
-      publicKey: decodeKey(leaked).publicKey,
-    })
+    await expect(resolver.resolveHistoric?.(did, { kid: `#${leaked}` })).rejects.toThrow(
+      /snapshot drops a retired key denial/,
+    )
   })
 })
 
@@ -297,7 +311,13 @@ describe('createControllerResolver() shared folds', () => {
     expect(before.publicKey).toEqual(decodeKey(at(icp.event.k, 0)).publicKey)
 
     // The log grows between two sequential resolutions.
-    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     log = [icp, rot]
     const after = await resolver.resolve(did, {})
 
@@ -363,7 +383,13 @@ describe('createControllerResolver().resolveAgreementKey()', () => {
 
   test('reflects a rotation rather than the inception', async () => {
     const { icp, did } = build()
-    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const resolver = createControllerResolver({ loadLog: async () => [icp, rot] })
     const keys = await resolver.resolveAgreementKey?.(did)
     const key = keys?.[0]
@@ -384,7 +410,13 @@ describe('createStateResolver()', () => {
   // into a wider registry without one profile's key state ever standing in for another's.
   test('answers for its own DID and refuses every other', async () => {
     const { icp, did } = build()
-    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const result = foldLog(did, [icp, rot])
     if (!result.ok) throw new Error('did not fold')
     const resolver = createStateResolver(did, result.states)
@@ -453,18 +485,17 @@ describe('createStateResolver()', () => {
 
   test('carries the deny set of the position it was built at', async () => {
     const { icp, did } = build()
-    const rev = createRevoke({
+    const rev = createRotate({
       seed,
       profile: 0,
       did,
       prior: icp.event,
-      target: device,
-      keyPosition: { gen: 0, seq: 0 },
+      options: { snapshot: { members: [], deny: [device] } },
     })
     const result = foldLog(did, [icp, rev])
     if (!result.ok) throw new Error('did not fold')
 
-    // Position 0 — before the revoke — and position 1, from the same fold.
+    // Position 0 — before the denying rotate — and position 1, from the same fold.
     await expect(
       createStateResolver(did, result.states.slice(0, 1)).resolveDenySet?.(did),
     ).resolves.toEqual(new Set())

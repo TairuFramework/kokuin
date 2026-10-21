@@ -29,7 +29,13 @@ describe.each(backendsNamed('postgres'))('$name jsonb log column', (b) => {
     const seed = new Uint8Array(32).fill(7)
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const log = [icp, rot] as Array<SignedEvent>
 
     const db = new HozonDB({ adapter: await b.createAdapter() })

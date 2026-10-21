@@ -5,10 +5,10 @@ import { digestOf } from '../src/canonical.js'
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
 import {
   createInception,
-  createRevoke,
   createRotate,
   didFromInception,
   type InceptionEvent,
+  type SignedEvent,
   signEvent,
 } from '../src/events.js'
 import { createControllerIdentity } from '../src/identity.js'
@@ -44,7 +44,13 @@ describe('createControllerIdentity()', () => {
   test('signs with the rotated key after a rotation, not the inception key', () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const rotate = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
 
     const identity = createControllerIdentity({ seed, profile: 0, log: [inception, rotate] })
     const publicKey = encodeKey(identity.publicKey, 'EdDSA')
@@ -58,33 +64,16 @@ describe('createControllerIdentity()', () => {
     expect(publicKey).not.toBe(authorityKey(0, 0))
   })
 
-  test('signs at the key position, not the event position, after a revoke', () => {
+  test('refuses a log that does not fold rather than signing with a stale key', () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    // A revoke advances `seq` to 1 but establishes no key — Amendment A. The active authority key
-    // is still the inception's, at gen 0 / seq 0.
-    const revoke = createRevoke({
+    const rotate = createRotate({
       seed,
       profile: 0,
       did,
       prior: inception.event,
-      target: device,
-      keyPosition: { gen: 0, seq: 0 },
+      options: { snapshot: { members: [], deny: [] } },
     })
-
-    const identity = createControllerIdentity({ seed, profile: 0, log: [inception, revoke] })
-    const publicKey = encodeKey(identity.publicKey, 'EdDSA')
-
-    expect(publicKey).toBe(inception.event.k[0])
-    // Deriving at `gen`/`seq` would land on (0, 1) — the pre-committed *next* key, which no event
-    // has revealed in `k`. Tokens signed with it would verify nowhere.
-    expect(publicKey).not.toBe(authorityKey(0, 1))
-  })
-
-  test('refuses a log that does not fold rather than signing with a stale key', () => {
-    const inception = createInception(seed, 0)
-    const did = didFromInception(inception.event)
-    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
     // A rotate that re-reveals the inception key instead of the pre-committed one: it does not
     // match the inception's `n`, so the fold rejects it.
     const forged = { ...rotate, event: { ...rotate.event, k: [inception.event.k[0]] } }
@@ -101,7 +90,13 @@ describe('createControllerIdentity()', () => {
   test('refuses a log whose first event is not an inception', () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const rotate = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
 
     expect(() => createControllerIdentity({ seed, profile: 0, log: [rotate] })).toThrow(
       /must be an inception/,
@@ -125,20 +120,26 @@ describe('createControllerIdentity()', () => {
     )
   })
 
-  test('refuses a revoke carrying a capability', () => {
+  test('refuses a log carrying a chain revoke, which the root chain no longer has', () => {
     const inception = createInception(seed, 0)
-    const revoke = createRevoke({
-      seed,
-      profile: 0,
-      did: didFromInception(inception.event),
-      prior: inception.event,
-      target: device,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const log = [inception, { ...revoke, event: { ...revoke.event, cap: 'x' } }]
+    const did = didFromInception(inception.event)
+    const revoke = {
+      event: {
+        v: 1,
+        t: 'rev',
+        i: did,
+        g: 0,
+        s: 1,
+        p: digestOf(inception.event),
+        crit: true,
+        x: device,
+      },
+      sigs: ['AAAA'],
+    } as unknown as SignedEvent
+    const log = [inception, revoke]
 
     expect(() => createControllerIdentity({ seed, profile: 0, log })).toThrow(
-      /revoke capability is not supported/,
+      /unknown critical event type: rev/,
     )
   })
 })
@@ -155,7 +156,13 @@ describe('createControllerIdentity() kid', () => {
   test('stamps the rotated key after a rotation, not the retired one', async () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const rotate = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
 
     const identity = createControllerIdentity({ seed, profile: 0, log: [inception, rotate] })
     const signed = await identity.signToken({ hello: 'world' })

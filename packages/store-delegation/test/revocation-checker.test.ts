@@ -10,7 +10,6 @@ import {
   createControllerIdentity,
   createControllerResolver,
   createInception,
-  createRevoke,
   createRotate,
   didFromInception,
   keyTarget,
@@ -381,7 +380,13 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     const seed = new Uint8Array(32).fill(71)
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rotate = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rotate = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const beforeRotate = createControllerIdentity({ seed, profile: 0, log: [icp] })
     const jti = 'jti-rotated'
     const record = await createRevocationRecord(beforeRotate, jti)
@@ -399,19 +404,24 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     const seed = new Uint8Array(32).fill(53)
     const icp = createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rotate = createRotate({ seed, profile: 0, did, prior: icp.event })
+    const rotate = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      options: { snapshot: { members: [], deny: [] } },
+    })
     const leaked = icp.event.k[0]
     if (leaked === undefined) throw new Error('expected inception key')
     const revoked: Array<SignedEvent> = [
       icp,
       rotate,
-      createRevoke({
+      createRotate({
         seed,
         profile: 0,
         did,
         prior: rotate.event,
-        target: keyTarget(leaked),
-        keyPosition: { gen: 0, seq: 1 },
+        options: { snapshot: { members: [], deny: [keyTarget(leaked)] } },
       }),
     ]
     const thief = createControllerIdentity({ seed, profile: 0, log: [icp] })
