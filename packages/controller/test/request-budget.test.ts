@@ -69,16 +69,18 @@ function revoke(target: string, parents: Array<string> = [head.epoch]): SignedEv
   })
 }
 
+// Signed once: deriving the root key per forgery made fixture setup, not the fold, the slow part.
+const template = createRevoke({
+  did,
+  head,
+  parents: [head.epoch],
+  signer: { root: { seed, profile } },
+  target: 'did:key:zForged',
+})
+
 /** A root-shaped revoke under a signature that does not verify: a forgery no key went into. */
 function forged(i: number): SignedEvent<EpochEvent> {
-  const genuine = createRevoke({
-    did,
-    head,
-    parents: [head.epoch],
-    signer: { root: { seed, profile } },
-    target: `did:key:zForged${i}`,
-  })
-  return { event: { ...genuine.event, x: `did:key:zForgedOther${i}` }, sigs: genuine.sigs }
+  return { event: { ...template.event, x: `did:key:zForgedOther${i}` }, sigs: template.sigs }
 }
 
 function shuffled<T>(items: Array<T>, salt: number): Array<T> {
