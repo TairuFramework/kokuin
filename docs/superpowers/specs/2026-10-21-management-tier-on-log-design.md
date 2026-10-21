@@ -127,7 +127,11 @@ Decided with the user, in this form.
     with different bytes are duplicity, which only the recovery-key holder can cause and a reset at
     a higher generation resolves. Members it carries keep their add references, but every grant
     names its generation, so all prior grants still die; members re-mint. Root/member key
-    disjointness applies to the new generation's keys.
+    disjointness is checked against the **new** generation's keys. `verifyReset`'s empty-deny
+    check becomes snapshot-aware; the recovery anchor, signature checks and the blind generator's
+    byte identity stay. A relay can reveal two differing resets root really signed at one
+    generation (e.g. a snapshot reset, then a blind retry), but cannot forge one; a higher
+    generation resolves it.
 
   The state after a `rot` **is** its snapshot; nothing before it contributes.
   Root's tooling builds the snapshot from every branch it knows (all members, all pulled
@@ -153,9 +157,15 @@ Decided with the user, in this form.
   reference.
 - **Member revoke** may not target a member of its causal-past state (its DID or pinned key):
   members are removed through remove. Existing rules (no denying a published `k`/`ka` key) apply.
-- **Denial dominates membership.** A member whose DID (any alias) or pinned key is denied in the
-  merged state is not an effective member: its later events are not authorised by that membership
-  and it issues no valid grants, until a settlement says otherwise. This covers a root add merging
+- **One predicate: "this denial targets this membership".** True iff the denial is the member's DID
+  under canonical DID equivalence (`normalizeDID`: long and short `did:peer:4` forms are one DID) or
+  `#` plus its pinned key. Nothing broader: "any DID containing that public key" is not an alias,
+  since anyone can manufacture such a document. The member-revoke guard and denial dominance use
+  exactly this predicate.
+- **Denial dominates membership.** A member targeted by a denial in the merged state is not an
+  effective member: an event whose causal past contains that denial is not authorised by the
+  membership, and it issues no valid grants, until a settlement says otherwise. Its events
+  concurrent with the denial are not voided. This covers a root add merging
   with a concurrent revoke of the same DID or key. Both events are kept; neither is rejected for
   arriving second.
 - **Old epochs never count.** An event naming an epoch other than the current one has no effect: its
@@ -193,9 +203,14 @@ old epochs have no effect.
 
 Dropping deny entries in a snapshot:
 
-- **Retired signer keys** (`#key` of a key on the current generation's root chain) are never dropped
-  within the generation: historic resolution would accept fresh tokens signed with them again. Only
-  a reset retires them.
+- **Retired signer keys** (`#key` of a key on the current generation's root chain): once a `rot`
+  snapshot carries such a denial (a *checkpointed* retirement), every later snapshot in the
+  generation must carry it too, and the fold rejects a `rot` that drops one. The root chain alone
+  enforces this, so pruned and full stores agree. Historic resolution would otherwise accept fresh
+  tokens signed with the key again. Only a reset clears them. A retired-key denial made in an epoch
+  and omitted by the next snapshot (root never saw it) is not checkpointed: it is lost under the
+  incomplete-settlement risk, and root's tooling must surface retired keys on the chain that the
+  snapshot does not deny.
 - **Holder DIDs:** dropping one is a deliberate re-authorisation. It is safe only when every
   authority that could mint grants to that holder has ended (members removed or settled away) and
   their grants have expired; waiting for the grants root has seen to expire is not enough, since a
