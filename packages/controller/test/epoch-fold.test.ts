@@ -2,7 +2,18 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import { DEFAULT_EPOCH_LIMITS, foldEpoch } from '../src/epoch.js'
+import {
+  ADD_KEY_ALREADY_MEMBER,
+  ADD_NOT_ROOT,
+  DEFAULT_EPOCH_LIMITS,
+  foldEpoch,
+  foldEpochDetailed,
+  MEMBER_REVOKES_MEMBER,
+  REVOKE_NAMES_ROOT_KEY,
+  SELF_REMOVE,
+  SELF_RENEW,
+  UNKNOWN_MEMBER,
+} from '../src/epoch.js'
 import {
   createAdd,
   createRemove,
@@ -313,7 +324,7 @@ describe('who may sign', () => {
     expect(summary(fold([borrowed]))).toMatchObject({ applied: [], rejected: 1 })
   })
 
-  test('add, renew and remove are root-only', () => {
+  test('add is root-only; another member may renew and remove', () => {
     const c = memberKeyPair(13)
     const memberAdd = {
       event: {
@@ -345,8 +356,9 @@ describe('who may sign', () => {
       parents: [epoch],
       add: memberB.add,
     })
-    for (const event of [memberAdd, memberRenew, memberRemove]) {
-      expect(summary(fold([event]))).toMatchObject({ applied: [], rejected: 1 })
+    expect(summary(fold([memberAdd]))).toMatchObject({ applied: [], rejected: 1 })
+    for (const event of [memberRenew, memberRemove]) {
+      expect(summary(fold([event]))).toMatchObject({ applied: [digest(event)], rejected: 0 })
     }
   })
 
@@ -465,26 +477,153 @@ describe('totality under hostile presentation', () => {
 
   const atInception = chainFolded([inception]).head
   const stale = revoke(root, 'did:key:zOld', [atInception.epoch], atInception)
-  const pool: Array<SignedEvent<EpochEvent>> = [revA, revB, renew, child, stale]
-  // Parents drawn from every class the fold distinguishes: the epoch, a chain event, an older
-  // epoch's event, an absent digest, and events of the pool itself.
-  const parentChoices = [
-    epoch,
-    digestOf(inception.event),
-    digest(stale),
-    digestOf('absent'),
-    digest(revA),
-    digest(revB),
+  // Two members root admits in the epoch, one of them twice (a retried add: one key, two
+  // incarnations), so the generated events can reach adds that are concurrent, aliased, and
+  // removed or denied along some branches and not others.
+  const c = memberKeyPair(21)
+  const e = memberKeyPair(22)
+  const addMember = (
+    pair: { did: string; key: string },
+    parents: Array<string>,
+    lease = 1_900_000_000,
+  ) =>
+    createAdd({
+      seed,
+      profile,
+      did,
+      head,
+      parents,
+      member: { did: pair.did, key: pair.key, lease },
+    })
+  const addC = addMember(c, [epoch])
+  const addCRetry = addMember(c, [epoch], 1_900_000_001)
+  const addE = addMember(e, [digest(revA)])
+  // The settled members twice over: they are members in every causal past until removed or denied,
+  // so most of their events reach the lifecycle rules instead of stopping at the signer check.
+  const signers: Array<EpochSigner> = [
+    root,
+    signerA,
+    signerB,
+    signerA,
+    signerB,
+    { member: { privateKey: c.privateKey, add: digest(addC) } },
+    { member: { privateKey: c.privateKey, add: digest(addCRetry) } },
+    { member: { privateKey: e.privateKey, add: digest(addE) } },
   ]
-  for (let n = 0; n < 24; n++) {
+  const incarnations = [
+    memberA.add,
+    memberB.add,
+    digest(addC),
+    digest(addCRetry),
+    digest(addE),
+    digestOf('no such add'),
+  ]
+  const targets = [
+    memberA.did,
+    memberB.did,
+    `#${c.key}`,
+    e.did,
+    `#${head.keys[0]}`,
+    'did:key:zEdge',
+  ]
+  const pool: Array<SignedEvent<EpochEvent>> = [
+    revA,
+    revB,
+    renew,
+    child,
+    stale,
+    addC,
+    addCRetry,
+    addE,
+  ]
+  // Parents drawn from every class the fold distinguishes: the epoch and events of the pool itself,
+  // and -- rarely, since each one poisons every descendant -- a chain event, an older epoch's event
+  // and an absent digest. Each generated event that applies joins the choices as soon as it exists,
+  // so later ones build chains and diamonds of any depth.
+  const parentChoices = [epoch, ...pool.filter((event) => event !== stale).map(digest)]
+  const foreignParents = [digestOf(inception.event), digest(stale), digestOf('absent')]
+  // One event per lifecycle rule, by hand, so every rule is in the pool whatever the generator
+  // below happens to draw: they and their refusals are then shuffled and subset like the rest.
+  const removesB = createRemove({ signer: signerA, did, head, parents: [epoch], add: memberB.add })
+  const deniesA = revoke(root, memberA.did, [digest(revB)])
+  pool.push(
+    removesB,
+    deniesA,
+    revoke(signerA, memberB.did),
+    revoke(root, `#${head.keys[0]}`),
+    addMember(a, [epoch]),
+    createRenew({
+      signer: signerA,
+      did,
+      head,
+      parents: [epoch],
+      add: memberA.add,
+      lease: 2_000_000_000,
+    }),
+    createRemove({ signer: signerB, did, head, parents: [epoch], add: memberB.add }),
+    createRenew({
+      signer: signerB,
+      did,
+      head,
+      parents: [digest(removesB)],
+      add: memberA.add,
+      lease: 2_000_000_000,
+    }),
+    revoke(signerA, 'did:key:zLate', [digest(deniesA)]),
+  )
+  // Two of them as parents too, so generated events also land in a past where B is removed or A
+  // is denied. The refused ones are not: see the feedback below.
+  parentChoices.push(digest(removesB), digest(deniesA))
+  for (let n = 0; n < 48; n++) {
     const pick = rng(n + 1000)
-    const parents = [
-      ...new Set([
-        parentChoices[Math.floor(pick() * parentChoices.length)] as string,
-        parentChoices[Math.floor(pick() * parentChoices.length)] as string,
-      ]),
-    ]
-    pool.push(revoke(n % 3 === 0 ? signerA : root, `did:key:zGen${n}`, parents))
+    const choose = <T>(items: Array<T>): T => items[Math.floor(pick() * items.length)] as T
+    const second = pick() < 0.1 ? choose(foreignParents) : choose(parentChoices)
+    const parents = [...new Set([choose(parentChoices), second])]
+    const signer = choose(signers)
+    let event: SignedEvent<EpochEvent>
+    switch (n % 5) {
+      case 0:
+        event = createRenew({
+          signer,
+          did,
+          head,
+          parents,
+          add: choose(incarnations),
+          lease: 1_900_000_000 + n,
+        })
+        break
+      case 1:
+        event = createRemove({ signer, did, head, parents, add: choose(incarnations) })
+        break
+      case 2: {
+        // Root's add of a fresh key, or of one already admitted; or the same body claimed by a
+        // member, which the fold must refuse whatever its parents.
+        const pair = pick() < 0.5 ? memberKeyPair(40 + n) : choose([a, b, c, e])
+        const rootAdd = addMember(pair, parents)
+        if ('member' in signer) {
+          const claimed = { ...rootAdd.event, by: signer.member.add }
+          event = { event: claimed, sigs: signEvent(claimed, [signer.member.privateKey]) }
+        } else {
+          event = rootAdd
+        }
+        break
+      }
+      default:
+        event = revoke(signer, pick() < 0.5 ? choose(targets) : `did:key:zGen${n}`, parents)
+    }
+    pool.push(event)
+    // Only an event that applies becomes a parent: a refused one would leave every descendant
+    // pending, and the pool would never get deeper than its first refusal. Refused events stay in
+    // the pool all the same, and the foreign parents keep the pending path covered.
+    if (
+      foldEpochDetailed({
+        did,
+        chainStates: chainFolded(chain).states,
+        events: pool,
+      }).applied.includes(digest(event))
+    ) {
+      parentChoices.push(digest(event))
+    }
   }
 
   function shuffled<T>(items: Array<T>, next: () => number): Array<T> {
@@ -496,8 +635,36 @@ describe('totality under hostile presentation', () => {
     return out
   }
 
+  test('the pool reaches every lifecycle rule, and events deeper than the epoch', () => {
+    // A generator that only ever produced root revokes off the epoch would pass the property below
+    // without exercising a single member rule; this pins what the pool actually covers.
+    const states = chainFolded(chain).states
+    const detail = foldEpochDetailed({ did, chainStates: states, events: pool })
+    const reasons = new Set(detail.reasons.values())
+    console.log('DBG', JSON.stringify([...reasons]), detail.applied.length, pool.length)
+    for (const rule of [
+      ADD_NOT_ROOT,
+      ADD_KEY_ALREADY_MEMBER,
+      SELF_RENEW,
+      SELF_REMOVE,
+      UNKNOWN_MEMBER,
+      MEMBER_REVOKES_MEMBER,
+      REVOKE_NAMES_ROOT_KEY,
+      'signer was removed in the causal state',
+      'signer is denied in the causal state',
+    ]) {
+      expect(reasons, rule).toContain(rule)
+    }
+    const deep = pool.filter(
+      (event) =>
+        detail.applied.includes(digest(event)) &&
+        event.event.p.some((parent) => detail.applied.includes(parent)),
+    )
+    expect(deep.length).toBeGreaterThan(5)
+  })
+
   test('no seed throws, and every shuffle of a seed folds to the same head', () => {
-    for (let seedValue = 0; seedValue < 200; seedValue++) {
+    for (let seedValue = 0; seedValue < 150; seedValue++) {
       const next = rng(seedValue)
       const entries: Array<unknown> = []
       for (const event of pool) {

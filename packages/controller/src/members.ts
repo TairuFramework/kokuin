@@ -81,6 +81,32 @@ export function denialTargetsMember(entry: string, member: MemberEntry): boolean
   return entry.startsWith('did:') && canonicalDID(entry) === canonicalDID(member.did)
 }
 
+/**
+ * Every root key a member pin must stay clear of, for one generation: each `k`/`ka` on its chain,
+ * each commitment in an `n`, and the inception's recovery commitment (one recovery key per profile
+ * for its life, so a root key in every generation).
+ */
+export type RootKeySet = {
+  keys: ReadonlySet<string>
+  /** Digests, as `n` carries them. */
+  commitments: ReadonlySet<string>
+  /** A digest, as `r` carries it. */
+  recovery: string
+}
+
+/**
+ * Whether `key` is a root key of the generation `root` describes. **The** disjointness test: a
+ * snapshot's members and an epoch's adds are judged by exactly this, so the two paths that admit a
+ * member cannot drift apart on which keys a management device may never hold.
+ */
+export function isRootKey(key: string, root: RootKeySet): boolean {
+  if (root.keys.has(key)) {
+    return true
+  }
+  const digest = digestOf(key)
+  return root.commitments.has(digest) || digest === root.recovery
+}
+
 export type ValidateSnapshotParams = {
   snapshot: StateSnapshot
   /** Every `k`/`ka` on the current generation's chain, including the event carrying the snapshot. */
@@ -139,11 +165,13 @@ export function validateSnapshot(params: ValidateSnapshotParams): string | null 
     adds.add(entry.add)
     pins.add(entry.key)
   }
-  const rootKeys = new Set(generationKeys)
-  const commitments = new Set(generationCommitments)
+  const root: RootKeySet = {
+    keys: new Set(generationKeys),
+    commitments: new Set(generationCommitments),
+    recovery,
+  }
   for (const entry of members as Array<MemberEntry>) {
-    const digest = digestOf(entry.key)
-    if (rootKeys.has(entry.key) || commitments.has(digest) || digest === recovery) {
+    if (isRootKey(entry.key, root)) {
       return SNAPSHOT_MEMBER_KEY_IS_ROOT
     }
   }

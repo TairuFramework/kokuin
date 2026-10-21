@@ -171,6 +171,11 @@ export type ControllerImplementation = {
   createEpochEvent: (params: ConformanceEpochEventParams) => ConformanceEpochSigned
   /** Test-support only: a fresh Ed25519 member key pair and the `did:key` that carries it. */
   memberKeyPair: () => { privateKey: Uint8Array; key: string; did: string }
+  /**
+   * Test-support only: a long-form `did:peer:4` carrying exactly `key` as its one signing key -- the
+   * other DID form a member may take, so one key can be admitted under two DIDs.
+   */
+  memberPeerDID: (key: string) => string
   /** Test-support only: sign an event with arbitrary private keys. Used only for the forgeries above. */
   signEvent: (event: ConformanceEvent, privateKeys: Array<Uint8Array>) => Array<string>
 }
@@ -951,6 +956,173 @@ export function runControllerConformance(
         expect(complete).toEqual(summary([revA, revB, child]))
         expect(complete.pending).toBe(0)
         expect(complete.applied).toHaveLength(3)
+      })
+    })
+    // Member lifecycle. Every case here is one a merge-not-compete design must get right without a
+    // winner: aliases of one key, removals that point at each other, an honest event replayed into a
+    // hostile context, and a denial racing the add it denies. Rejections are read off the counts and
+    // the head; which rule refused an event is the implementation's business.
+    describe('management members', () => {
+      const icp = impl.createInception(seedA, 0)
+      const did = impl.didFromInception(icp.event)
+      const keys = [impl.memberKeyPair(), impl.memberKeyPair(), impl.memberKeyPair()]
+      const entries = keys.map(({ did: memberDID, key }, i) => ({
+        did: memberDID,
+        key,
+        add: impl.digestOf(`the add that admitted member ${i}`),
+        lease: 1_900_000_000,
+      }))
+      const chain = [icp, rotate(seedA, did, icp.event, { members: entries, deny: [] })]
+      const settled = impl.foldLog(did, { chain, events: [] })
+      if (!settled.ok) {
+        throw new Error(`fixture chain does not fold: ${settled.reason}`)
+      }
+      const head = settled.head
+      const root: ConformanceEpochSigner = { root: { seed: seedA, profile: 0 } }
+      const signers: Array<ConformanceEpochSigner> = keys.map(({ privateKey }, i) => ({
+        member: { privateKey, add: at(entries, i).add },
+      }))
+      const [first, second, third] = [at(signers, 0), at(signers, 1), at(signers, 2)]
+      const [one, two, three] = [at(entries, 0), at(entries, 1), at(entries, 2)]
+
+      function event(
+        signer: ConformanceEpochSigner,
+        body: ConformanceEpochBody,
+        parents: Array<string> = [head.epoch],
+      ): ConformanceEpochSigned {
+        return impl.createEpochEvent({ signer, did, head, parents, body })
+      }
+
+      const digest = (signed: ConformanceEpochSigned) => impl.digestOf(signed.event)
+
+      function folded(events: Array<ConformanceEpochSigned>) {
+        const result = impl.foldLog(did, { chain, events })
+        if (!result.ok) {
+          throw new Error(`log does not fold: ${result.reason}`)
+        }
+        return result
+      }
+
+      function summary(events: Array<ConformanceEpochSigned>) {
+        const result = folded(events)
+        return {
+          deny: [...result.head.deny].sort(),
+          members: [...result.head.members.entries()].sort(([x], [y]) => (x < y ? -1 : 1)),
+          applied: [...result.applied].sort(),
+          pending: result.pending,
+          rejected: result.rejected,
+        }
+      }
+
+      function permutations<T>(items: Array<T>): Array<Array<T>> {
+        if (items.length <= 1) {
+          return [items]
+        }
+        return items.flatMap((item, i) =>
+          permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [
+            item,
+            ...rest,
+          ]),
+        )
+      }
+
+      function sameInEveryOrder(events: Array<ConformanceEpochSigned>) {
+        const expected = summary(events)
+        for (const order of permutations(events)) {
+          expect(summary(order)).toEqual(expected)
+        }
+        return expected
+      }
+
+      test('a member cannot renew itself, even through a second add of the same key', () => {
+        const fresh = impl.memberKeyPair()
+        const member = { key: fresh.key, lease: 1_900_000_000 }
+        // Root admits one key twice, concurrently: as a did:key and as the long-form peer DID.
+        const asKey = event(root, { t: 'add', member: { ...member, did: fresh.did } })
+        const asPeer = event(root, {
+          t: 'add',
+          member: { ...member, did: impl.memberPeerDID(fresh.key) },
+        })
+        const parents = [digest(asKey), digest(asPeer)]
+        const self: ConformanceEpochSigner = {
+          member: { privateKey: fresh.privateKey, add: digest(asKey) },
+        }
+        const renewal = event(
+          self,
+          { t: 'ren', add: digest(asPeer), lease: 2_000_000_000 },
+          parents,
+        )
+        const result = folded([asKey, asPeer, renewal])
+        expect(result.rejected).toBe(1)
+        expect(result.head.members.get(digest(asPeer))?.lease).toBe(1_900_000_000)
+        // Control: another member's renewal of the alias, from the same parents, applies.
+        const other = event(first, { t: 'ren', add: digest(asPeer), lease: 2_000_000_000 }, parents)
+        const control = folded([asKey, asPeer, other])
+        expect(control.rejected).toBe(0)
+        expect(control.head.members.get(digest(asPeer))?.lease).toBe(2_000_000_000)
+      })
+
+      test('mutual removal removes both members, in every order', () => {
+        const expected = sameInEveryOrder([
+          event(first, { t: 'rmv', add: two.add }),
+          event(second, { t: 'rmv', add: one.add }),
+        ])
+        expect(expected.rejected).toBe(0)
+        const members = new Map(expected.members)
+        expect(members.get(one.add)?.removed).toBe(true)
+        expect(members.get(two.add)?.removed).toBe(true)
+        expect(members.get(three.add)?.effective).toBe(true)
+      })
+
+      test('a removal cycle of three removes all three, in every order', () => {
+        const expected = sameInEveryOrder([
+          event(first, { t: 'rmv', add: two.add }),
+          event(second, { t: 'rmv', add: three.add }),
+          event(third, { t: 'rmv', add: one.add }),
+        ])
+        expect(expected.rejected).toBe(0)
+        for (const [, member] of expected.members) {
+          expect(member.removed).toBe(true)
+          expect(member.effective).toBe(false)
+        }
+      })
+
+      test('copying an honest event onto a hostile branch changes nothing', () => {
+        const honest = event(first, { t: 'ren', add: three.add, lease: 2_000_000_000 })
+        const hostile = event(second, { t: 'rmv', add: one.add })
+        const expected = summary([honest, hostile])
+        expect(expected.rejected).toBe(0)
+        // The same body, however presented and under whatever extra signature, is one event.
+        const recopied = { event: { ...honest.event }, sigs: [...honest.sigs] }
+        const resigned = {
+          event: honest.event,
+          sigs: impl.signEvent(honest.event as ConformanceEvent, [at(keys, 1).privateKey]),
+        }
+        for (const order of permutations([honest, hostile, recopied, resigned])) {
+          expect(summary(order)).toEqual(expected)
+        }
+        // Re-parented under the removal it is a body the honest member never signed.
+        const rebased = { event: { ...honest.event, p: [digest(hostile)] }, sigs: honest.sigs }
+        expect(summary([honest, hostile, rebased])).toEqual({ ...expected, rejected: 1 })
+      })
+
+      test('a root add merged with a concurrent revoke of the same key yields no effective member', () => {
+        const fresh = impl.memberKeyPair()
+        for (const signer of [root, first]) {
+          for (const target of [`#${fresh.key}`, fresh.did]) {
+            const added = event(root, {
+              t: 'add',
+              member: { did: fresh.did, key: fresh.key, lease: 1_900_000_000 },
+            })
+            const expected = sameInEveryOrder([added, event(signer, { t: 'rev', target })])
+            // Both kept: neither is refused for arriving second.
+            expect(expected.rejected).toBe(0)
+            expect(expected.applied).toHaveLength(2)
+            const member = new Map(expected.members).get(digest(added))
+            expect(member?.removed).toBe(false)
+            expect(member?.effective).toBe(false)
+          }
+        }
       })
     })
   })

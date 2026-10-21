@@ -4,6 +4,7 @@ import type {
   ControllerImplementation,
 } from '@kokuin/controller-conformance'
 import { runControllerConformance } from '@kokuin/controller-conformance'
+import { type DIDDoc, encodePeer4 } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
@@ -55,6 +56,16 @@ function memberKeyPair(): { privateKey: Uint8Array; key: string; did: string } {
   const privateKey = ed25519.utils.randomSecretKey()
   const key = encodeKey(ed25519.getPublicKey(privateKey), 'EdDSA')
   return { privateKey, key, did: `did:key:${key}` }
+}
+
+/** Test-support only: a long-form `did:peer:4` carrying exactly `key` as its one signing key. */
+function memberPeerDID(key: string): string {
+  const doc = {
+    '@context': ['https://www.w3.org/ns/did/v1'],
+    verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase: key }],
+    authentication: ['#key-0'],
+  } as DIDDoc
+  return encodePeer4(doc).longForm
 }
 
 /** The one builder the contract names, over the real per-type ones. */
@@ -119,6 +130,7 @@ const implementation = {
   authorityPrivateKey,
   createEpochEvent,
   memberKeyPair,
+  memberPeerDID,
   signEvent,
 }
 
