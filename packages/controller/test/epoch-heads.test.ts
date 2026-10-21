@@ -4,8 +4,8 @@ import { digestOf } from '../src/canonical.js'
 import { createRevoke, type EpochEvent } from '../src/epoch-events.js'
 import { createInception, didFromInception, keyTarget, type SignedEvent } from '../src/events.js'
 import { foldLog } from '../src/fold.js'
-import { MAX_EVENT_PARENTS } from '../src/limits.js'
-import { type ControllerLog, epochHeads } from '../src/log.js'
+import { MAX_EPOCH_EVENTS, MAX_EVENT_PARENTS, MAX_LOG_EVENTS } from '../src/limits.js'
+import { type ControllerLog, epochHeads, LOG_TOO_LARGE, mergeLogs, pruneLog } from '../src/log.js'
 
 const seed = new Uint8Array(32).fill(1)
 const profile = 0
@@ -68,11 +68,38 @@ describe('epochHeads', () => {
     expect(epochHeads(did, log)).toEqual([digestOf(applied.event)])
   })
 
-  test('more heads than a builder may name are all returned', () => {
-    const events = Array.from({ length: MAX_EVENT_PARENTS + 1 }, (_, i) =>
+  test('more tips than a builder may name give the smallest MAX_EVENT_PARENTS, which build', () => {
+    const events = Array.from({ length: MAX_EVENT_PARENTS + 3 }, (_, i) =>
       revoke([head.epoch], `did:example:${i}`),
     )
-    expect(epochHeads(did, logOf(events))).toHaveLength(MAX_EVENT_PARENTS + 1)
+    const tips = events.map((event) => digestOf(event.event)).sort()
+    const heads = epochHeads(did, logOf(events))
+    expect(heads).toEqual(tips.slice(0, MAX_EVENT_PARENTS))
+    // The documented use, `parents: epochHeads(did, log)`, builds and applies.
+    const merge = revoke(heads, 'did:example:merge')
+    const after = foldLog(did, logOf([...events, merge]))
+    expect(after.ok && after.applied).toContain(digestOf(merge.event))
+    // The tips it left out are still tips, beside it, so the next event folds them in.
+    const next = epochHeads(did, logOf([...events, merge]))
+    expect(next).toEqual([...tips.slice(MAX_EVENT_PARENTS), digestOf(merge.event)].sort())
+    const last = revoke(next, 'did:example:last')
+    expect(epochHeads(did, logOf([...events, merge, last]))).toEqual([digestOf(last.event)])
+  })
+
+  test('a log larger than any a verifier holds is refused before folding', () => {
+    const events = Array.from(
+      { length: MAX_LOG_EVENTS + MAX_EPOCH_EVENTS + 2 },
+      () => null,
+    ) as unknown as Array<SignedEvent<EpochEvent>>
+    expect(() => epochHeads(did, logOf(events))).toThrow(LOG_TOO_LARGE)
+    expect(() => pruneLog(did, logOf(events))).toThrow(LOG_TOO_LARGE)
+    expect(() => mergeLogs(did, logOf(events), logOf([]))).toThrow(LOG_TOO_LARGE)
+    expect(() => mergeLogs(did, logOf([]), logOf(events))).toThrow(LOG_TOO_LARGE)
+    // One short of the limit is only junk: dropped, never refused.
+    const within = events.slice(1)
+    expect(epochHeads(did, logOf(within))).toEqual([head.epoch])
+    expect(pruneLog(did, logOf(within)).events).toEqual([])
+    expect(mergeLogs(did, logOf(within), logOf([])).events).toEqual([])
   })
 
   test('a log that does not fold throws with the fold reason', () => {
