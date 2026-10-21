@@ -96,7 +96,8 @@ export type KeyState = {
  * `states` is one state per chain event, which is what historic resolution scans. `head` is the last
  * chain state merged with the current epoch: its `deny`, `members` and `saturated` are the live
  * answers. `applied`, `pending` and `rejected` account for the epoch events presented -- the digests
- * that took effect, the well-formed ones still waiting on a parent, and the ones refused.
+ * that took effect, the well-formed ones still waiting on a parent, and the ones refused (see
+ * `FoldEpochResult` for how refusals are counted).
  */
 export type FoldResult =
   | {

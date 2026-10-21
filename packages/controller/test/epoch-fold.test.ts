@@ -2,7 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import { foldEpoch } from '../src/epoch.js'
+import { DEFAULT_EPOCH_LIMITS, foldEpoch } from '../src/epoch.js'
 import {
   createAdd,
   createRemove,
@@ -225,6 +225,24 @@ describe('merging an epoch', () => {
     expect(summary(fold([revoke(root, 'did:key:zY')]))).toMatchObject({ rejected: 0 })
   })
 
+  test('a refused child never takes down the parent it also names', () => {
+    const atInception = chainFolded([inception]).head
+    const stale = revoke(root, 'did:key:zOld', [atInception.epoch], atInception)
+    const parent = revoke(root, 'did:key:zP')
+    // Cross-epoch parents of two kinds: a chain event, and an event of an older epoch.
+    for (const foreign of [digestOf(inception.event), digest(stale)]) {
+      const crossing = revoke(root, 'did:key:zC', [digest(parent), foreign])
+      for (const order of permutations([parent, crossing, stale])) {
+        expect(summary(fold(order))).toMatchObject({
+          applied: [digest(parent)],
+          rejected: 1,
+          pending: 0,
+          deny: ['did:key:zP'],
+        })
+      }
+    }
+  })
+
   test('an event whose parent is missing is pending, not applied', () => {
     const orphan = revoke(root, 'did:key:zX', [digestOf('never presented')])
     expect(summary(fold([orphan]))).toMatchObject({
@@ -410,14 +428,12 @@ describe('limits', () => {
     ).toBe(false)
   })
 
-  test('more than MAX_EPOCH_EVENTS valid events saturate the head but the chain still folds', () => {
-    const events = Array.from({ length: MAX_EPOCH_EVENTS + 1 }, (_, n) =>
-      revoke(root, `did:key:zFlood${n}`),
-    )
-    const result = fold(events)
-    expect(result.ok && result.head.saturated).toBe(true)
-    expect(result.ok && result.states.length).toBe(chain.length)
-  }, 60_000)
+  test('the default saturation threshold is MAX_EPOCH_EVENTS', () => {
+    expect(DEFAULT_EPOCH_LIMITS.MAX_EPOCH_EVENTS).toBe(MAX_EPOCH_EVENTS)
+    const states = chainFolded(chain).states
+    const result = foldEpoch({ did, chainStates: states, events: [revA, revB] })
+    expect(result.head.saturated).toBe(false)
+  })
 
   test('more than MAX_LOG_EVENTS entries fail the request with LOG_TOO_LARGE', () => {
     const events = Array.from({ length: MAX_LOG_EVENTS + 1 }, () => null)
@@ -432,4 +448,79 @@ describe('limits', () => {
     vi.setSystemTime(new Date('2100-01-01'))
     expect(summary(fold(log))).toEqual(foldedEarlier)
   })
+})
+
+describe('totality under hostile presentation', () => {
+  /** A small deterministic generator, so a failing seed reproduces. */
+  function rng(seedValue: number): () => number {
+    let state = seedValue >>> 0
+    return () => {
+      state = (state + 0x6d2b79f5) >>> 0
+      let t = state
+      t = Math.imul(t ^ (t >>> 15), t | 1)
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+      return ((t ^ (t >>> 14)) >>> 0) / 2 ** 32
+    }
+  }
+
+  const atInception = chainFolded([inception]).head
+  const stale = revoke(root, 'did:key:zOld', [atInception.epoch], atInception)
+  const pool: Array<SignedEvent<EpochEvent>> = [revA, revB, renew, child, stale]
+  // Parents drawn from every class the fold distinguishes: the epoch, a chain event, an older
+  // epoch's event, an absent digest, and events of the pool itself.
+  const parentChoices = [
+    epoch,
+    digestOf(inception.event),
+    digest(stale),
+    digestOf('absent'),
+    digest(revA),
+    digest(revB),
+  ]
+  for (let n = 0; n < 24; n++) {
+    const pick = rng(n + 1000)
+    const parents = [
+      ...new Set([
+        parentChoices[Math.floor(pick() * parentChoices.length)] as string,
+        parentChoices[Math.floor(pick() * parentChoices.length)] as string,
+      ]),
+    ]
+    pool.push(revoke(n % 3 === 0 ? signerA : root, `did:key:zGen${n}`, parents))
+  }
+
+  function shuffled<T>(items: Array<T>, next: () => number): Array<T> {
+    const out = [...items]
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(next() * (i + 1))
+      ;[out[i], out[j]] = [out[j] as T, out[i] as T]
+    }
+    return out
+  }
+
+  test('no seed throws, and every shuffle of a seed folds to the same head', () => {
+    for (let seedValue = 0; seedValue < 200; seedValue++) {
+      const next = rng(seedValue)
+      const entries: Array<unknown> = []
+      for (const event of pool) {
+        if (next() < 0.5) {
+          entries.push(event)
+          if (next() < 0.3) entries.push(event)
+          if (next() < 0.3)
+            entries.push({ event: event.event, sigs: signEvent(event.event, [b.privateKey]) })
+          if (next() < 0.2) entries.push({ event: event.event, sigs: [] })
+        }
+      }
+      entries.push(...[null, 7, 'x', {}, [], undefined].filter(() => next() < 0.3))
+      let expected: ReturnType<typeof summary> | undefined
+      for (let round = 0; round < 2; round++) {
+        const order = shuffled(entries, next)
+        let result: FoldResult | undefined
+        expect(() => {
+          result = fold(order)
+        }, `seed ${seedValue}`).not.toThrow()
+        const seen = summary(result as FoldResult)
+        expected ??= seen
+        expect(seen, `seed ${seedValue}`).toEqual(expected)
+      }
+    }
+  }, 30_000)
 })

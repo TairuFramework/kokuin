@@ -933,6 +933,17 @@ export function runControllerConformance(
         })
       })
 
+      test('an event naming a foreign parent beside a genuine one is refused without disturbing it', () => {
+        const parent = revoke(root, 'did:key:zP')
+        const crossing = revoke(root, 'did:key:zC', [
+          impl.digestOf(parent.event),
+          impl.digestOf(icp.event),
+        ])
+        const expected = summary([parent])
+        expect(summary([parent, crossing])).toEqual({ ...expected, rejected: 1 })
+        expect(summary([crossing, parent])).toEqual({ ...expected, rejected: 1 })
+      })
+
       test('an event whose parent is missing waits, and applies once the parent is presented', () => {
         const waiting = summary([child])
         expect(waiting).toEqual({ ...summary([]), pending: 1 })

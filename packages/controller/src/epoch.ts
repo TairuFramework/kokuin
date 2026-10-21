@@ -23,6 +23,9 @@ type EpochState = {
 
 export type EpochLimits = { MAX_EPOCH_EVENTS: number }
 
+/** What {@link foldEpoch} uses when a caller lowers nothing: pinned so a test can see it. */
+export const DEFAULT_EPOCH_LIMITS: EpochLimits = { MAX_EPOCH_EVENTS }
+
 export type FoldEpochParams = {
   did: string
   /** The chain's states, in order; the last is the anchor the epoch grew from. */
@@ -39,7 +42,10 @@ export type FoldEpochResult = {
   applied: Array<string>
   /** Well-formed events of this epoch whose parents never all applied. */
   pending: number
-  /** Entries that are not valid epoch events, or events the fold refused. */
+  /**
+   * Refusals, counted by distinct event: an event presented any number of times counts once. An entry
+   * that is not an epoch event at all has no digest to dedupe by and counts once per entry.
+   */
   rejected: number
 }
 
@@ -190,7 +196,7 @@ function insertSorted(sorted: Array<string>, digest: string): void {
  */
 export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
   const { did, chainStates, events } = params
-  const maxEvents = params.limits?.MAX_EPOCH_EVENTS ?? MAX_EPOCH_EVENTS
+  const maxEvents = params.limits?.MAX_EPOCH_EVENTS ?? DEFAULT_EPOCH_LIMITS.MAX_EPOCH_EVENTS
   const anchor = chainStates[chainStates.length - 1] as KeyState
   const reasons = new Map<string, string>()
   let rejected = 0
@@ -234,41 +240,51 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
   // Parents. A parent that is neither the anchor nor a candidate is judged by what it is: another
   // epoch's event or a chain event refuses the child; a refused same-epoch event leaves it pending;
   // anything else is simply not here yet, which is also pending.
+  //
+  // Two passes: every candidate's parents are classified before any edge is registered, so an event
+  // refused for a cross-epoch parent never leaves an edge behind for a surviving parent to follow.
+  const crossEpoch: Array<string> = []
+  for (const candidate of candidates.values()) {
+    if (
+      candidate.event.p.some(
+        (parent) =>
+          parent !== anchor.epoch &&
+          !candidates.has(parent) &&
+          (otherEpochs.has(parent) || chainDigests.has(parent)),
+      )
+    ) {
+      crossEpoch.push(candidate.digest)
+    }
+  }
+  for (const digest of crossEpoch) {
+    candidates.delete(digest)
+    reasons.set(digest, 'event lists a parent outside its epoch')
+    rejected++
+  }
   const children = new Map<string, Array<string>>()
   const waiting = new Map<string, number>()
   const ready: Array<string> = []
-  for (const candidate of [...candidates.values()].sort((x, y) => (x.digest < y.digest ? -1 : 1))) {
-    let crossEpoch = false
+  for (const candidate of candidates.values()) {
     let waits = 0
     for (const parent of candidate.event.p) {
       if (parent === anchor.epoch) continue
+      waits++
       if (candidates.has(parent)) {
-        waits++
         const list = children.get(parent)
         if (list === undefined) children.set(parent, [candidate.digest])
         else list.push(candidate.digest)
-      } else if (otherEpochs.has(parent) || chainDigests.has(parent)) {
-        crossEpoch = true
-      } else {
-        // Refused same-epoch events and absent ones alike never apply, so this edge never clears.
-        waits++
       }
-    }
-    if (crossEpoch) {
-      candidates.delete(candidate.digest)
-      reasons.set(candidate.digest, 'event lists a parent outside its epoch')
-      rejected++
-      continue
+      // Anything else -- a refused event, an absent one -- never applies, so this edge never clears.
     }
     waiting.set(candidate.digest, waits)
-  }
-  // A child of an event refused above keeps its edge to it, which never clears: it stays pending.
-  for (const [digest, waits] of waiting) {
-    if (waits === 0 && candidates.has(digest)) insertSorted(ready, digest)
+    if (waits === 0) insertSorted(ready, candidate.digest)
   }
 
   // 2-4. Kahn's algorithm, smallest ready digest first. `after` is memoised per digest and dropped
-  // once its last child has read it, so a long chain of events never holds quadratic state.
+  // once its last child has read it. That frees a plain chain, but not every shape: a chain e1..en
+  // with a side event per ei that also names en keeps about n/2 states alive until en applies. Work
+  // and memory are bounded by the request limit (MAX_LOG_EVENTS events of at most MAX_EVENT_PARENTS
+  // parents each), roughly events x parents x state size, not by this release.
   const anchorAfter = anchorState(anchor)
   const after = new Map<string, EpochState>()
   const unread = new Map<string, number>()
@@ -278,7 +294,8 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
 
   while (ready.length > 0) {
     const digest = ready.shift() as string
-    const candidate = candidates.get(digest) as Candidate
+    const candidate = candidates.get(digest)
+    if (candidate === undefined) continue
     evaluated++
 
     const causal = emptyState()
@@ -314,9 +331,10 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
       after.set(digest, causal)
       unread.set(digest, kids.length)
       for (const kid of kids) {
-        const left = (waiting.get(kid) ?? 1) - 1
-        waiting.set(kid, left)
-        if (left === 0) insertSorted(ready, kid)
+        const left = waiting.get(kid)
+        if (left === undefined || !candidates.has(kid)) continue
+        waiting.set(kid, left - 1)
+        if (left === 1) insertSorted(ready, kid)
       }
     }
   }
@@ -327,10 +345,6 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
     if (!appliedSet.has(digest) && !reasons.has(digest)) {
       reasons.set(digest, 'a parent is missing or was not applied')
     }
-  }
-
-  if (applied.length === 0) {
-    return { head: anchor, applied, pending, rejected, reasons }
   }
 
   const members = new Map<string, MemberState>()
