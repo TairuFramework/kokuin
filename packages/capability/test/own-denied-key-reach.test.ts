@@ -116,7 +116,7 @@ describe('a key the profile has revoked', () => {
     // key is never in the head's `k` — `headSigningKey` turns it away before the deny check is
     // reached. The deny check's head arm is therefore a guard for a `states` array a caller built
     // or a third party folded, not a live path; `controller/test/resolver.test.ts` reaches it
-    // through `createStateResolver`. Recorded here so a future reader does not chase the "wrong"
+    // through `resolverOver` over a hand-built head. Recorded here so a future reader does not chase the "wrong"
     // message, and so that losing the invariant shows up as this row changing.
     expect(before).toMatch(/not current/)
     expect(after).toMatch(/not current/)

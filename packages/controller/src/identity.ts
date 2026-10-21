@@ -63,8 +63,8 @@ function withKid(identity: SigningIdentity, kid: string): SigningIdentity {
 
 /**
  * Bind a private key the caller holds to the DID, having checked the folded state publishes its
- * public half. Shared by all four entry points, so the membership rule and `kid` binding are written
- * once. Membership, not `keys[0]`: a set may publish several keys and the one in hand need not be
+ * public half. Shared by both entry points (the seed one through {@link identityForState}), so the
+ * membership rule and `kid` binding are written once. Membership, not `keys[0]`: a set may publish several keys and the one in hand need not be
  * first (co-signers' keys belong to other holders); what must hold is that the resolver can answer
  * with this key. A key outside the set signs unverifiable tokens, so fail loudly at construction.
  */
@@ -100,8 +100,8 @@ function identityForKey({
 }
 
 /**
- * Derive the signing key the folded state establishes and bind it to the DID. Shared by the sync and
- * async seed entry points, which differ only in how they reach the state.
+ * Derive the signing key the folded state establishes and bind it to the DID: the seed entry point's
+ * half, kept apart from folding the log so it reads as the derivation alone.
  */
 function identityForState({
   seed,

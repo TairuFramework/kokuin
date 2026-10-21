@@ -54,7 +54,10 @@ transaction instead of opening a nested one. No statement binds more than 500 pa
   DID: on Postgres the row is locked on read, and a first insert that loses a race re-reads the
   winner's row and **runs `update` again** — so `update` must be free of side effects. On SQLite one
   process's single connection serialises merges; across processes a stale read fails on write with
-  `SQLITE_BUSY` rather than losing an update. When `update` throws, nothing is written. The store
+  `SQLITE_BUSY` rather than losing an update. When `update` throws, nothing is written; when it
+  returns `current` itself (nothing changed, as `authoritativeLog` answers a resolution that learned
+  nothing new), nothing is written either and `updated_at` does not move. A stored value that is not
+  a log, or not JSON at all, reads as no memory rather than throwing. The store
   does not arbitrate: a caller ingesting an **untrusted** log (one pulled from a peer) must build the
   update from `authoritativeLog`, as the resolver does — writing peer bytes directly bypasses the
   anti-truncation guarantee.

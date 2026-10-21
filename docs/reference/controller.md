@@ -180,7 +180,7 @@ An epoch event shares the envelope's spirit and fields of its own:
 | `rmv` | `add` (the incarnation removed) | Root, or any member whose pinned key is not the target's |
 | `rev` | `x`: a DID or a key target | Root, or any single member — never targeting a member |
 
-Parents list every head the author knows — a recommendation the fold cannot enforce. `epochHeads(did, log)` computes them: the applied events of the current epoch that no applied event names as a parent, sorted, or `[head.epoch]` for an empty epoch. It throws if the log does not fold, and returns every head even past `MAX_EVENT_PARENTS`; a builder with more tips names any `MAX_EVENT_PARENTS` of them and later events merge the rest. Leases are unix seconds as non-negative safe integers. A member is identified by its **add digest**, its *incarnation*: renew and remove name that digest, so a delayed renew or remove never carries over to a re-add of the same key.
+Parents list every head the author knows — a recommendation the fold cannot enforce. `epochHeads(did, log)` computes them: the applied events of the current epoch that no applied event names as a parent, sorted, or `[head.epoch]` for an empty epoch. It throws if the log does not fold, and returns at most `MAX_EVENT_PARENTS` heads — the smallest digests when the epoch has more tips — so its answer is always a valid `parents`. The tips left out stay tips, and the next event built from `epochHeads` names them: repeated building folds every tip in. Leases are unix seconds as non-negative safe integers. A member is identified by its **add digest**, its *incarnation*: renew and remove name that digest, so a delayed renew or remove never carries over to a re-add of the same key.
 
 ```typescript
 import {
@@ -188,7 +188,8 @@ import {
 } from '@kokuin/controller'
 
 const now = Math.floor(Date.now() / 1000)
-// `head` is the fold's head; `parents` every head of the current epoch this party holds.
+// `head` is the fold's head; `parents` the current epoch's heads this party holds (at most
+// `MAX_EVENT_PARENTS`).
 const folded = foldLog(did, log)
 if (!folded.ok) throw new Error(folded.reason)
 const head = folded.head
@@ -281,7 +282,7 @@ Concurrent adds of one key (a retry) cannot see each other, so both stand; pinne
 
 Two kinds of limit, never confused:
 
-- **Request limits reject input.** `MAX_LOG_EVENTS` (8192) epoch events per input — more fails the whole input with `LOG_TOO_LARGE` at index `-1`, since it is no event's fault — and, per event, `MAX_EVENT_PARENTS` (16) parents, `MAX_EVENT_SIGNATURES` (16) signatures and `MAX_EVENT_BYTES` (8192) canonical body bytes. Unauthenticated or invalid input only ever gets rejected; it never changes remembered state. Work is counted in events, edges and signatures, never elapsed time.
+- **Request limits reject input.** `MAX_LOG_EVENTS` (8192) epoch events per input — more fails the whole input with `LOG_TOO_LARGE` at index `-1`, since it is no event's fault — and, per event, `MAX_EVENT_PARENTS` (16) parents, `MAX_EVENT_SIGNATURES` (16) signatures and `MAX_EVENT_BYTES` (8192) canonical body bytes. `MAX_FAILED_SIGNATURES` (64) bounds the signature checks an input can make fail: each distinct copy that does not verify is charged for every signature it carries, and past the limit the whole input fails with `TOO_MANY_FAILED_SIGNATURES` at index `-1`. Nothing honest fails a check — every copy a verifier keeps verified when it was kept — so the limit costs an honest relay nothing; the count is a function of the presentation, never its order. `epochHeads`, `pruneLog` and `mergeLogs` take a held log, and accept up to `MAX_EPOCH_EVENTS + 1 + MAX_LOG_EVENTS` events (one saturated epoch plus one presentation); more throws `LOG_TOO_LARGE`. Unauthenticated or invalid input only ever gets rejected; it never changes remembered state. Work is counted in events, edges and signatures, never elapsed time.
 - **Saturation is the one limit authenticated input can reach.** An epoch with more than `MAX_EPOCH_EVENTS` (4096) distinct, authenticated, causally valid events is `saturated`. The resolver then refuses every answer for the controller until root settles into a fresh epoch. The chain still folds, so root can always settle, and a verifier never needs to ingest a superseded epoch to fold the new one. Fail closed is chosen over guessing which events to drop.
 
 `MAX_LOG_EVENTS` sits above `MAX_EPOCH_EVENTS` so a saturating epoch can still be presented whole and remembered as saturated, rather than turned away as oversized. The price is verification cost: see [./security.md](./security.md#verification-cost).
@@ -376,6 +377,7 @@ A verification asking several questions of one controller — is the issuer a me
 - **The chain** must extend the one seen or win against it under the branch rules. One that loses is refused (`LOG_NOT_AUTHORITATIVE`); a genuine fork is refused outright (`LOG_FORKED`). This is a real branch comparison, not a high-water mark over `(gen, seq)`, because a reset legitimately replaces a longer lower-generation chain.
 - **The epoch** is the union of what was seen and what was loaded, folded on the settled chain: a presentation that withholds an event this party has seen cannot make it forget it. The answer is that union's fold, not the presentation's.
 - **What is remembered** is the settled chain and the current epoch's **applied** events, one verified copy each — nothing else. An unsigned, forged, malformed or pending entry was never authenticated and never reaches the store, so a relay flooding a presentation changes nothing remembered and cannot saturate the epoch. A pending event is not lost, only not vouched for: presenting it again once its parents are known applies it. Old epochs' events are dropped at the settlement that supersedes them, which is what bounds memory to one epoch.
+- **Memory is not authenticated twice.** A stored event of the current epoch was authenticated when it was stored, and a copy that verified under an epoch verifies under it every time, so the fold takes the stored copy as authentic, still judging its authorisation afresh, and checks no presented copy of the same body. Only what a presentation adds is checked, and a presentation refused by a request limit (`LOG_TOO_LARGE`, `TOO_MANY_FAILED_SIGNATURES`) is refused whole, memory untouched. This trusts the store; one an attacker can write to defeats every guarantee here anyway, since it can simply forget.
 - **Saturation is remembered until a settlement.** A saturated epoch is stored as exactly enough applied events to stay saturated on every refold, so a later presentation of a subset does not clear it. Without a `history` store there is nothing to remember, and each resolution answers for its presentation alone.
 
 A stored log whose chain no longer folds is treated as no memory: local corruption or a tightened fold rule is one round of the guarantee to give up, since refusing forever would brick every cached profile.
@@ -387,7 +389,7 @@ type LogStore = {
 }
 ```
 
-`merge` is **atomic per DID**: no two updates for one DID interleave, so two presentations merged concurrently both land rather than the second overwriting the first with a log built from a stale read. When `update` throws, nothing is written. `update` **may run more than once** — a persistent store reruns it when it loses a first-insert race — so it must be free of side effects; only its last result is written. `createMemoryLogStore()` covers a process lifetime; `@kokuin/store-controller` persists one (see [./stores.md](./stores.md)). The store writes whatever `update` returns: arbitration lives in `authoritativeLog`, never in the store.
+`merge` is **atomic per DID**: no two updates for one DID interleave, so two presentations merged concurrently both land rather than the second overwriting the first with a log built from a stale read. When `update` throws, nothing is written. `update` **may run more than once** — a persistent store reruns it when it loses a first-insert race — so it must be free of side effects; only its last result is written. `createMemoryLogStore()` covers a process lifetime; `@kokuin/store-controller` persists one (see [./stores.md](./stores.md)). The store writes whatever `update` returns, except `current` itself — the very object it was handed — which means nothing changed and is not written. `authoritativeLog` answers that way whenever a resolution learned nothing new, so a resolution that only re-reads what is held writes nothing. Arbitration lives in `authoritativeLog`, never in the store.
 
 ## Management members
 

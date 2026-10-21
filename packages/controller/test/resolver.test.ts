@@ -11,7 +11,7 @@ import {
 import { foldLog } from '../src/fold.js'
 import { decodeKey } from '../src/keys.js'
 import { createControllerResolver } from '../src/resolver.js'
-import { createStateResolver } from '../src/state-resolver.js'
+import { fixedViewResolver } from './fixed-view.js'
 import { buildTwoKeyLog, strangerKey } from './two-key-log.js'
 
 const at = <T>(items: ReadonlyArray<T>, i: number): T => {
@@ -431,7 +431,7 @@ describe('createControllerResolver().resolveAgreementKey()', () => {
   })
 })
 
-describe('createStateResolver()', () => {
+describe('a resolver over a fixed view', () => {
   // A resolver over already-folded states. It answers for one profile only, so it can be merged
   // into a wider registry without one profile's key state ever standing in for another's.
   test('answers for its own DID and refuses every other', async () => {
@@ -445,7 +445,7 @@ describe('createStateResolver()', () => {
     })
     const result = foldLog(did, { chain: [icp, rot], events: [] })
     if (!result.ok) throw new Error('did not fold')
-    const resolver = createStateResolver(did, result.states, result.head)
+    const resolver = fixedViewResolver(did, result.states, result.head)
 
     expect(resolver.method).toBe('kokuin')
     await expect(resolver.resolve(did, {})).resolves.toEqual({
@@ -471,7 +471,7 @@ describe('createStateResolver()', () => {
   })
 
   // The head arm of the deny check in `signingKeyFrom`. It is unreachable from a log this package
-  // folded — the fold refuses to deny a key the profile publishes — but `createStateResolver` is
+  // folded — the fold refuses to deny a key the profile publishes — but `resolverOver` can be
   // handed a head, and the invariant is the fold's property, not the head's. A third
   // party's fold, or a cached snapshot, can produce one.
   test('refuses a head key the state it was handed also denies', async () => {
@@ -484,14 +484,14 @@ describe('createStateResolver()', () => {
     // Control: the identical state, identical key, and an empty deny set — so what refuses below
     // is the denial and not the hand-built state.
     await expect(
-      createStateResolver(did, [head], head).resolve(did, { kid: target }),
+      fixedViewResolver(did, [head], head).resolve(did, { kid: target }),
     ).resolves.toEqual({
       alg: 'EdDSA',
       publicKey: decodeKey(at(head.keys, 0)).publicKey,
     })
 
     const denied = { ...head, deny: new Set([target]) }
-    const denying = createStateResolver(did, [denied], denied)
+    const denying = fixedViewResolver(did, [denied], denied)
     await expect(denying.resolve(did, { kid: target })).rejects.toThrow(/has revoked/)
     // And with no `kid` at all, where the answer is volunteered rather than asked for.
     await expect(denying.resolve(did, {})).rejects.toThrow(/has revoked/)
@@ -503,9 +503,9 @@ describe('createStateResolver()', () => {
     if (!result.ok) throw new Error('did not fold')
     const head = at(result.states, 0)
 
-    expect(await createStateResolver(did, [head], head).resolveAgreementKey?.(did)).toHaveLength(1)
+    expect(await fixedViewResolver(did, [head], head).resolveAgreementKey?.(did)).toHaveLength(1)
     const denied = { ...head, deny: new Set([`#${at(head.agreement, 0)}`]) }
-    const denying = createStateResolver(did, [denied], denied)
+    const denying = fixedViewResolver(did, [denied], denied)
     // Empty rather than an error: to `@kokuin/jwe` that is "nothing to encrypt to", which is the
     // fail-closed direction.
     expect(await denying.resolveAgreementKey?.(did)).toEqual([])
@@ -525,12 +525,10 @@ describe('createStateResolver()', () => {
 
     // Position 0 — before the denying rotate — and position 1, from the same fold.
     await expect(
-      createStateResolver(did, result.states.slice(0, 1), at(result.states, 0)).resolveDenySet?.(
-        did,
-      ),
+      fixedViewResolver(did, result.states.slice(0, 1), at(result.states, 0)).resolveDenySet?.(did),
     ).resolves.toEqual(new Set())
     await expect(
-      createStateResolver(did, result.states, result.head).resolveDenySet?.(did),
+      fixedViewResolver(did, result.states, result.head).resolveDenySet?.(did),
     ).resolves.toEqual(new Set([device]))
   })
 })

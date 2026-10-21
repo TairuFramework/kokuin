@@ -34,12 +34,8 @@ import {
   createControllerResolver,
   createControllerResolverWithin,
 } from '../src/resolver.js'
-import {
-  createStateResolver,
-  EPOCH_SATURATED,
-  KEY_REVOKED,
-  MEMBER_NOT_EFFECTIVE,
-} from '../src/state-resolver.js'
+import { EPOCH_SATURATED, KEY_REVOKED, MEMBER_NOT_EFFECTIVE } from '../src/state-resolver.js'
+import { fixedViewResolver } from './fixed-view.js'
 
 const seed = new Uint8Array(32).fill(7)
 const profile = 0
@@ -281,7 +277,7 @@ describe('saturation', () => {
     const result = foldLog(did, saturated)
     if (!result.ok) throw new Error('fixture does not fold')
     await expectEveryMemberRefused(
-      createStateResolver(did, result.states, { ...result.head, saturated: true }),
+      fixedViewResolver(did, result.states, { ...result.head, saturated: true }),
     )
   })
 

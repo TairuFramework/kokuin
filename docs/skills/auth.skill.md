@@ -494,7 +494,8 @@ any claim whose subject is the profile rather than a device
   ```typescript
   import { createRevoke, epochHeads, keyTarget } from '@kokuin/controller'
 
-  // `head` is the fold's head; `epochHeads` every head of the current epoch this party holds.
+  // `head` is the fold's head; `epochHeads` the current epoch's heads this party holds, at most
+  // `MAX_EVENT_PARENTS` of them.
   // Root signs here; a management member passes `{ member: { privateKey, add } }`.
   const rev = createRevoke({
     did,
@@ -573,7 +574,7 @@ const observedAt = await logs.getObservedAt(did) // last explicit store write
 ```
 
 - `merge(did, update)` writes what `update` makes of the stored log, atomically per DID; `update`
-  may run more than once, so keep it free of side effects. The store does not arbitrate: build the
+  may run more than once, so keep it free of side effects. Returning `current` itself writes nothing. The store does not arbitrate: build the
   update from `authoritativeLog` (`@kokuin/controller`) for an **untrusted** log, as the resolver does
 - Passing the store as `history` makes the resolver refuse a chain behind one already seen and
   never forget a current-epoch event it accepted

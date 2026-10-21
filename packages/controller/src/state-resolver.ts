@@ -248,7 +248,7 @@ export function memberFrom(did: string, head: KeyState, query: MemberQuery): Res
 
 /**
  * A `DIDMethodResolver` answering every member out of the view `load` yields for the asked DID —
- * the one shape the live resolver, its frozen views and {@link createStateResolver} share, so the
+ * the one shape the live resolver and its frozen views share, so the
  * saturation refusal and the choice of which half of the view answers what are written once.
  *
  * **A saturated head answers nothing**, `resolveHistoric` included: the epoch's denials can no
@@ -299,26 +299,4 @@ export function resolverOver(load: (did: string) => Promise<FoldedView>): DIDMet
       return memberFrom(subject, (await live(subject)).head, member)
     },
   }
-}
-
-/**
- * A `DIDMethodResolver` answering for exactly one profile, out of already-folded state: `head` for
- * every live answer, `states` for the historic key scan (see {@link FoldedView}). The two must come
- * from one fold, or the resolver answers about two different logs.
- *
- * Answers only for `did`; any other identifier is `Unknown DID`, so a caller merging this into a
- * wider registry falls back to its own resolver for another `did:kokuin:` delegate and never serves
- * one profile's state for another's. Not a cache: the states are the caller's, fixed at construction.
- */
-export function createStateResolver(
-  did: string,
-  states: Array<KeyState>,
-  head: KeyState,
-): DIDMethodResolver {
-  return resolverOver(async (asked) => {
-    if (asked !== did) {
-      throw new Error(`Unknown DID: ${asked}`)
-    }
-    return { states, head }
-  })
 }
