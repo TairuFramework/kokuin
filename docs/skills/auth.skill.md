@@ -340,7 +340,9 @@ const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
 
 // Any log loader works — this one is a fixed in-memory log.
-const resolver = createControllerResolver({ loadLog: async () => [inception] })
+const resolver = createControllerResolver({
+  loadLog: async () => ({ chain: [inception], events: [] }),
+})
 
 const encrypter = await createTokenEncrypterAsync(did, { methods: [resolver] })
 const jwe = await encryptToken(encrypter, new TextEncoder().encode('hello'))
@@ -364,17 +366,17 @@ message was addressed
 - `createInception(seed, profile)` derives a deterministic inception event; `didFromInception`
   hashes it into the DID — same seed and profile index always produce the same DID
 - `createControllerResolver({ loadLog })` adapts a folded event log into a `DIDMethodResolver`;
-  `loadLog(did)` returns the DID's signed-event log, or `undefined` for an unknown DID — **the
-  whole log, always**, including with a `verifyCapability` configured. A capability-authorised
-  revoke is verified against a resolver the fold builds from its own prefix, so verifying it never
-  resolves the DID being folded; see Pattern 10 and `ControllerResolverOptions.loadLog`
+  `loadLog(did)` returns the DID's `ControllerLog` — `{ chain, events }`, the root chain and the
+  current epoch's management events — or `undefined` for an unknown DID. **The whole log, always**:
+  a withheld epoch revoke is a denial the resolution does not see
 - Reuse one resolver instance rather than building one per resolution: concurrent resolutions of
   one DID share a single fold, and a fresh instance per hop shares nothing
 - **Pass a `history` `LogStore` if this process will ever resolve the same DID twice.** Without one,
-  a peer serving a *prefix* of the log — stopping just before the `rev` that denies their device —
-  gives you a log that folds cleanly, chains every digest, verifies every signature, and has a deny
-  set missing exactly the entry that matters. With one, a log that does not supersede the last
-  accepted one is refused. `createMemoryLogStore()` covers a process lifetime; a consumer that
+  a peer serving a *prefix* of the chain, or the chain with the epoch revoke denying their device
+  withheld, gives you a log that folds cleanly, chains every digest, verifies every signature, and has a deny
+  set missing exactly the entry that matters. With one, a chain that does not supersede the last
+  accepted one is refused, and the current epoch's events are merged with what was seen, never
+  forgotten. `createMemoryLogStore()` covers a process lifetime; a consumer that
   survives restarts wants a persistent implementation, since the guarantee is only as durable as the
   memory of what was seen. It does nothing on a first encounter — only a witness or an anchor can
   — see `docs/reference/security.md`
@@ -406,10 +408,17 @@ import { createUnsignedToken, signToken, verifyToken } from '@kokuin/token'
 const seed = new Uint8Array(32).fill(7)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const log = [inception, createRotate(seed, 0, did, inception.event)]
+const rotate = createRotate({
+  seed,
+  profile: 0,
+  did,
+  prior: inception.event,
+  options: { snapshot: { members: [], deny: [] } }, // every rotate settles the whole state
+})
+const log = { chain: [inception, rotate], events: [] }
 
 // Folds the log and derives the authority key the *current* state establishes.
-const identity = createControllerIdentity(seed, 0, log)
+const identity = createControllerIdentity({ seed, profile: 0, log })
 identity.id // the did:kokuin: DID, not a did:key:
 
 const token = await signToken(identity, createUnsignedToken({ hello: 'world' }))
@@ -423,14 +432,14 @@ verified.payload.iss // === did
 any claim whose subject is the profile rather than a device
 
 **Key points**:
-- **Prefer `createControllerIdentityWithKey(privateKey, log)` on any path that runs often.** The seed
+- **Prefer `createControllerIdentityWithKey({ privateKey, log })` on any path that runs often.** The seed
   is the root of everything the profile can ever do — rotate, reset, derive every key at every index
   — and the design keeps it for rare ceremonies on a Ledger or a cold mnemonic. The key form signs as
   the profile with the current authority private key alone (a `KeyStore` entry hands back exactly
   that shape), and cannot rotate, because a rotate must reveal the key the log pre-committed and only
-  the seed derives that one. Same guards, same `kid`, same failures; `…WithKeyAsync` for a log whose
-  revoke carries a capability. The seed form below is the ceremony API
-- `createControllerIdentity(seed, profile, log)` takes the **log**, not a `{ gen, seq }` position.
+  the seed derives that one. Same guards, same `kid`, same failures. The seed form below is the
+  ceremony API
+- `createControllerIdentity({ seed, profile, log })` takes the **log**, not a `{ gen, seq }` position.
   What that buys is narrow but real: the caller cannot name a position, so the signing key always
   matches the log it was handed. **The log is still the caller's freshness contract** — build an
   identity from a stale or truncated log and it signs with whatever key that log's head
@@ -441,48 +450,11 @@ any claim whose subject is the profile rather than a device
 - It throws when the log does not fold, and when the derived key is not one of the current
   authority keys — a wrong `seed` or a wrong `profile` for that log
 - The key it derives sits at the fold's `keyGen`/`keySeq` — where the current keys were
-  *established* — not at `gen`/`seq`, which is the position of the last event. A revoke advances
-  the sequence without establishing a key, so the two diverge
-- A revoke carrying a capability (`cap`) authorises a non-authority signer, and verifying that
-  capability is async. `createControllerIdentity` stays synchronous and throws on such a log; use
-  `createControllerIdentityAsync(seed, profile, log, { verifyCapability })` for one, and give
-  `createControllerResolver` a `verifyCapability` too so the verifier side folds it.
-  Without a verifier both still fail closed rather than trusting the capability.
-  `createControllerCapabilityVerifier` (`@kokuin/capability`) is the real implementation of that
-  callback. **One resolver, and `loadLog` answers with the whole log:**
-
-  ```typescript
-  import { createControllerCapabilityVerifier } from '@kokuin/capability'
-
-  const resolver = createControllerResolver({
-    loadLog: async () => log,
-    verifyCapability: createControllerCapabilityVerifier(),
-  })
-  ```
-
-  The verifier needs no registry for the profile being folded. The fold hands it a resolver for
-  that profile **at the position of the event being verified**, and that answer shadows anything
-  the caller configured for the same method — so inside the fold, a caller's own `resolve` and
-  `resolveDenySet` **for the subject** are not consulted at all. A policy resolver that denies a DID
-  out of band has no effect on who may author a `rev`; the lever that still works there is the
-  `verifyToken` hook, which runs on the capability the event names and rejects the revoke by
-  throwing. Two things depend on the position and neither can be
-  answered from a DID alone, which is all `loadLog` receives: the key set that must verify the
-  capability's signature (a key set the log rotated away afterwards must not verify a grant made
-  under it) and the deny set that decides whether the *author* of this revoke is still allowed to
-  author one. A registry configured once per DID is right for at most one event of a log and
-  silently wrong for the rest — and wrong in the direction that applies a revoke a denied device
-  authored. Pass `methods` only for a link in the chain whose own DID method needs it, such as an
-  intermediate delegate that is itself a `did:kokuin:` profile
-
-  One re-entry hazard remains and it is not `loadLog`'s: a `verifyToken` hook passed to the
-  verifier — a revocation checker over the same registry, say — that resolves *this* profile
-  through *this* resolver joins the fold that is calling it and waits on a promise that cannot
-  settle. Give such a hook a resolver of its own.
-
-  A capability authorising a revoke must also pin its audience's key in `cnf.kid`
-  (`audienceConfirmation(key)`); one without it is rejected rather than resolved, so that the
-  audience rotating its own key can never make this profile unresolvable
+  *established* — the derivation index, named apart from the event position `seq`. Both identities
+  fold the chain alone: epoch events never change a root key
+- **One re-entry hazard**: a `verifyToken` hook that resolves *this* profile through *this* resolver
+  joins the fold that is calling it and waits on a promise that cannot settle. Give such a hook a
+  resolver of its own
 - Without `methods`, `verifyToken` fails with `Unknown DID` — the identifier carries no key.
   `did:key` and `did:peer:4` need no entry
 - `checkCapability` / `checkDelegationChain` (`@kokuin/capability`) take the same `methods` option
@@ -492,15 +464,16 @@ any claim whose subject is the profile rather than a device
   delegation fails, and a revocation record whose issuer cannot be resolved *at all* fails the
   verification closed. A record the registry can resolve but whose signature or `kid` does not check
   out is ignored instead — it is evidence about the record, not about revocation
-- **The deny set is enforced through the same `methods` registry.** A `rev` event adds a DID to the
-  profile's deny set, and `checkCapability` / `checkDelegationChain` reject any capability whose
+- **The deny set is enforced through the same `methods` registry.** A revoke adds a DID to the
+  profile's deny set — an epoch event signed by root or by any single management member, no rotate
+  needed — and `checkCapability` / `checkDelegationChain` reject any capability whose
   `aud` is in the deny set of its `sub` — every link in the chain, not just the leaf. That check
   reads `DIDMethodResolver.resolveDenySet`, which `createControllerResolver` implements, so a
   registry wired for resolution is wired for enforcement; there is no second option to forget. It is
   evaluated against the log's **current** head, never against a position the capability names —
-  `iat` is author-supplied and backdatable. A profile clears a denial with a deny-set snapshot
-  (`createRotate(…, { deny: [] })`) or with a `reset`
-- **A `rev` can also deny a key, and that is what retires a leaked one for what it has already
+  `iat` is author-supplied and backdatable. A profile clears a denial only by settling: a rotate whose
+  snapshot leaves it out (build it with `snapshotOf(head, { deny: [entry] })`), or a `reset`
+- **A revoke can also deny a key, and that is what retires a leaked one for what it has already
   signed.** The target is spelled `keyTarget(key)` — `#<the multibase key exactly as it appears in
   `k`>`, the same spelling a `kid` uses — and it rides the same deny set, so `resolveDenySet`
   answers with both forms. They cannot collide, so **match against the set, never enumerate it**:
@@ -519,21 +492,27 @@ any claim whose subject is the profile rather than a device
   ```typescript
   import { createRevoke, keyTarget } from '@kokuin/controller'
 
-  // `head` is the fold's head state — `keyGen`/`keySeq`, not `gen`/`seq`.
-  const rev = createRevoke(seed, 0, did, prior, keyTarget(leakedKey), {
-    gen: head.keyGen,
-    seq: head.keySeq,
+  // `head` is the fold's head; `parents` the current epoch's heads this party holds (at least
+  // `head.epoch`). Root signs here; a management member passes `{ member: { privateKey, add } }`.
+  const rev = createRevoke({
+    did,
+    head,
+    parents: [head.epoch],
+    signer: { root: { seed, profile: 0 } },
+    target: keyTarget(leakedKey),
   })
+  const next = { chain: log.chain, events: [...log.events, rev] }
   ```
 
-  **A key the profile currently publishes cannot be denied** — the fold rejects the event with
-  `revoke names a key the profile publishes`, and rejects a rotate that would establish a key its
-  own deny set names. Rotate first. The reasons are that `rotate` is the event a live compromise
+  **A key the chain currently publishes cannot be denied** — the fold refuses the revoke (`revoke
+  targets a key the chain publishes`), and fails a rotate that would establish a key its own
+  snapshot denies. Rotate first. The reasons are that `rotate` is the event a live compromise
   actually calls for (its pre-rotation commitment is what the leaked key cannot forge), and that a
-  `rev` may be capability-authorised — so allowing it would let a management-tier device with a
-  wildcard `res` stop the root tier from signing with a single event. The invariant this buys is
-  that a folded head's `k` and `ka` never contain a denied key, so a reader may take them at face
-  value. A denial is cleared the same way a DID denial is: a `d` snapshot or a `reset`
+  revoke may be signed by any single management member — so allowing it would let one member stop
+  the root signing with a single event. The invariant this buys is that a folded head's `k` and `ka`
+  never contain a denied key, so a reader may take them at face value. Once a rotate's snapshot
+  carries a retired-key denial, every later snapshot in the generation must keep it; only a `reset`
+  clears it
 
   The error is `Controller <did> kid names a key the controller has revoked: #<key>`, an
   `IssuerKeyNotFoundError` like every other `kid` failure — see the classification note below
@@ -550,7 +529,7 @@ any claim whose subject is the profile rather than a device
   already-issued capability, a revocation record — which a routine rotate must not invalidate,
   including copies held by third parties who cannot know a rotation happened. A `reset` invalidates
   even those: it bumps the generation, and every key from the prior one stops resolving under either
-  member. So does an explicit `rev` naming the key, which is the *only* way to stop historic
+  member. So does an explicit revoke naming the key, which is the *only* way to stop historic
   resolution short of a reset. A `kid` naming a key this profile never published, one outside what
   the member answers for, or one the profile has revoked, is an error — never a fall back to `k[0]`
 - `@kokuin/capability` sets `historic: true` for you on every capability in a chain and on every
@@ -591,9 +570,11 @@ const resolver = createControllerResolver({
 const observedAt = await logs.getObservedAt(did) // last explicit store write
 ```
 
-- `set` is plain last-writer-wins. It does not arbitrate, so run an **untrusted** log through the
-  resolver's `authoritativeStates` / `history` guard before calling it
-- Passing the store as `history` makes the resolver refuse a log behind one already seen
+- `merge(did, update)` writes what `update` makes of the stored log, atomically per DID; `update`
+  may run more than once, so keep it free of side effects. The store does not arbitrate: build the
+  update from `authoritativeLog` (`@kokuin/controller`) for an **untrusted** log, as the resolver does
+- Passing the store as `history` makes the resolver refuse a chain behind one already seen and
+  never forget a current-epoch event it accepted
 
 → Reference: docs/reference/stores.md
 
@@ -613,7 +594,8 @@ const observedAt = await logs.getObservedAt(did) // last explicit store write
 **Use `@kokuin/controller`** when:
 - Need a self-certifying DID (`did:kokuin:`) whose key set can rotate without changing the
   identifier
-- Building or resolving a folded key event log (inception, rotation, reset, revocation)
+- Building or resolving a folded key event log (inception, rotation, reset) and its management
+  tier (member adds, renewals, removals, revokes)
 - Encrypting to a `did:kokuin:` recipient through a registered `DIDMethodResolver`
 - Issuing tokens whose `iss` is a `did:kokuin:` profile (`createControllerIdentityWithKey` on a
   daily path, `createControllerIdentity` for a root ceremony), or verifying them
@@ -622,7 +604,8 @@ const observedAt = await logs.getObservedAt(did) // last explicit store write
 Before depending on any of it, read `docs/reference/security.md`: the guarantees, the assumptions,
 and the short list of things a consumer has to do — forward every optional resolver member through a
 wrapper, pass `methods` wherever a capability is checked, configure `history`, build a deny snapshot
-with `pruneDenySet`, and keep the seed off the daily path.
+with `snapshotOf`, answer each verification from one `frozen()` view, and keep the seed off the
+daily path.
 
 **Use `@kokuin/store-controller`** when:
 - Controller logs must persist in SQLite or Postgres via Hozon

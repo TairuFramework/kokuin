@@ -14,16 +14,19 @@ A profile identifier that survives key rotation, device theft and total device l
 
 ## The remedy ladder
 
-Three rungs, in increasing cost and blast radius. Each exists because the one below it is not enough for some compromise.
+Five rungs, in increasing cost and blast radius. Each exists because the one below it is not enough for some compromise, and the first two need no root at all.
 
 | Compromise | Remedy | What it costs |
 | --- | --- | --- |
-| A device is lost or stolen | `rev` naming the device DID | One event. The device's capabilities stop verifying from that log position onward |
-| An authority key leaked | `rot`, then `rev` naming the retired key | Two events, in that order. Already-issued material stays valid; the leaked key stops both minting and verifying |
-| The management tier has gone bad | Cold `rot` clearing the deny set | Reaching for the root. Every prior denial is discarded — build the snapshot with `pruneDenySet` |
-| Everything below has failed | `reset` — a rotate signed by the recovery key | The generation bumps and **every capability minted under the prior one dies** |
+| An edge device or agent is lost or stolen | A **member revoke** naming its DID | One epoch event, signed by any single management member. Its grants stop verifying for every verifier whose state holds the revoke; offline verifiers learn it no later than its grants expire |
+| A management member is lost or stolen | A **member remove** by another member, or a **root revoke or remove** | One epoch event. The member's log authority ends at the removal, and its grants stop verifying wherever the removal is seen. Root adds the denial a member may not |
+| An authority key leaked | `rot`, then a revoke naming the retired key | A settlement and an epoch event, in that order. Already-issued material stays valid; the leaked key stops both minting and verifying |
+| The management tier has gone bad — mutual removals, a flood, a saturated epoch | A **settlement `rot`** | Reaching for the root. The rotate's snapshot is root's chosen state; the epoch it closes stops counting. Build it with `snapshotOf` |
+| Everything below has failed | `reset` — a rotate signed by the recovery key, blind or carrying a snapshot | The generation bumps and **every grant minted under the prior one dies**, carried members' included |
 
-The ordering of the second row is not a nicety. A `rev` may not name a key the profile currently publishes: rotation is what an active compromise calls for, its pre-rotation commitment is unforgeable by the holder of the leaked key, and denial is for what the rotation leaves behind. Denying a live key would also let a capability-authorised revoke with a wildcard `res` stop the *root* signing with a single event, straight across the tier boundary.
+The ordering of the third row is not a nicety. A revoke may not name a key the chain currently publishes: rotation is what an active compromise calls for, its pre-rotation commitment is unforgeable by the holder of the leaked key, and denial is for what the rotation leaves behind. Denying a live key would also let a single management member stop the *root* signing with one event, straight across the tier boundary.
+
+A member may not revoke a member, and may not renew or remove itself. Members leave through remove, which ends their log authority without denying their key, so root can re-admit the device later; only root may deny a member. A member that could deny another would hold a removal that skips the self-remove rule and that root's own add could never undo short of a settlement.
 
 ## The two questions a resolver answers
 
@@ -40,7 +43,7 @@ resolveHistoric(did, header)  // "did this profile sign with this key at some po
 
 Callers opt in explicitly with `verifyToken({ historic: true })`. `@kokuin/capability` uses it unconditionally, and has to: head-only resolution there would invalidate every outstanding capability on a routine rotate, and would make a revocation record signed by a since-rotated key raise an error the revocation checker swallows — silently un-revoking, on the one path that must never fail open.
 
-The cost of that, stated plainly: a leaked, since-rotated authority key can still mint a capability that verifies. Rotation cannot be the fix without breaking the promise that a rotate does not invalidate already-issued material. **Retirement is explicit** — that is what a `rev` naming `#<key>` is for, and it is enforced where every `did:kokuin:` signature check reaches a resolved key, so it covers both settings of `historic`, everything the capability package verifies, and the fold's own capability-authorised revoke.
+The cost of that, stated plainly: a leaked, since-rotated authority key can still mint a capability that verifies. Rotation cannot be the fix without breaking the promise that a rotate does not invalidate already-issued material. **Retirement is explicit** — that is what a revoke naming `#<key>` is for, and it is enforced where every `did:kokuin:` signature check reaches a resolved key, so it covers both settings of `historic` and everything the capability package verifies.
 
 ## The deny set
 
@@ -51,12 +54,14 @@ One heterogeneous set with two spellings that cannot collide:
 
 **Match, never enumerate.** Ask whether the identifier in hand is present; do not treat the set as a list of revoked devices. A consumer that enumerates will see `#`-prefixed entries it has no vocabulary for.
 
-Two different position rules apply, and both are deliberate:
+Two different rules decide which denials count, and both are deliberate:
 
-- A **DID denial** is evaluated at the position being verified, inside the fold. An event is authored at one place in the log, and a later clearing must not retroactively validate it.
-- A **key denial** is evaluated at the **head**. A denial is a statement about the key, and the position an artefact carries is author-supplied — a thief would otherwise present a token whose `kid` resolves at a position before the revoke.
+- **Inside the fold**, an epoch event is judged by the denials in its **causal past** — its ancestors and the epoch's starting snapshot — never by concurrent branches or arrival order. An event is authored on top of a particular state, and a denial its author could not have seen does not void it; a denial in its past does.
+- **Outside the fold**, every answer comes from the **head**: the chain's last state merged with the whole current epoch. A denial is a statement about a key or a holder, and the position an artefact carries is author-supplied — a thief would otherwise present a token whose `kid` resolves at a position before the revoke.
 
 For the same reason, `resolveDenySet` answers for **now**, never for a position a capability names: `iat` is author-supplied and backdatable, so anchoring to it would let a revoked holder choose a moment before it was denied.
+
+**Denial dominates membership.** A member whose DID (under canonical DID equivalence) or `#`-pinned key a merged denial names is not an effective member: it authorises nothing, and the resolver refuses it as an issuer, until a settlement says otherwise. That is one predicate, used for both the member-revoke guard and dominance, and nothing broader: a DID document anyone can write containing a member's public key is not that member.
 
 ### What the deny set governs, and what it does not
 
@@ -78,35 +83,43 @@ Each of these is a rule whose violation fails **open** or bricks something, and 
 
 **Configure `history` on any resolver that will see a DID twice.** Without it a truncated log is accepted; see below.
 
-**Build a deny snapshot with `pruneDenySet`.** A rotate's `d` replaces the accumulated set. Writing one by hand and forgetting an entry un-revokes a device or un-retires a leaked key, with nothing in the log to say so.
+**Build a settlement snapshot with `snapshotOf`.** A rotate's snapshot replaces the whole state — members and denials. Writing one by hand and forgetting an entry un-revokes a device, un-retires a leaked key or dismisses a member, with nothing in the log to say so. Dropping a holder DID denial is a deliberate re-authorisation, safe only once every authority that could mint grants to that holder has ended (its members removed or settled away) and their grants have expired; waiting for the grants root has seen to expire is not enough, since a malicious member may keep minting. The log has no clock to check that for you.
 
-**Read `unverified` on a branch resolution.** Non-zero means a branch could not be checked and the answer is provisional — including a duplicity report, which might have been settled by the branch that was skipped.
+**Answer each verification from one frozen view.** `resolver.frozen()` folds each DID once and answers every question from that one state. Asked live, a revoke landing between "is the issuer a member" and "is this audience denied" gives a verdict no single state of the log supports.
 
 **Do not hold the seed on a daily path.** `createControllerIdentityWithKey` signs as the profile with the current authority key alone. A process holding the seed holds the power to rotate, reset, and derive every key at every index — the whole point of the tier boundary is that the daily path does not.
 
 **Rebuild an identity from a re-read log after a reset.** Tokens signed with a prior-generation key fail with `kid names a key outside the current generation`.
 
-## The `cnf` pin, and why the audience is never resolved
-
-A capability authorising a log revoke must pin its audience's signing key in `cnf` (RFC 7800), at mint time, with `audienceConfirmation(key)`. The fold checks the revoke event's own signature against exactly that key.
-
-The pin is mandatory and is **never** resolved. Resolving the audience is the bug it exists to remove: a revoke that stops verifying makes the whole log unfoldable and the profile's DID permanently unresolvable, so an audience rotating its own key could brick somebody else's identity. A capability with no `cnf`, or one whose `cnf` is unreadable, is rejected rather than resolved.
-
-The pin must also **name the audience**, checked against the audience's own identifier and nothing else. Authority on this path follows `cnf` while revocation follows `aud`; nothing makes them the same party unless this does, and a capability where they differ is a revoke authority that revoking cannot reach. That means the audience must be a `did:key`, or a `did:peer:4` **long form** whose `authentication` carries the key. An audience whose identifier carries no key — a `did:kokuin:` profile, a short-form `did:peer:4` — is refused, at verification and, more cheaply, at mint through `assertRevokeCapabilityAudience`. Every audience that remains has immutable key material, so the rotation hazard the rule was written against cannot arise at all.
-
-**A capability authorising a revoke must carry `exp`.** An omitted one is not a long grant but a permanent one — authority over the log for the life of the profile, with the deny set as the only remedy. A bounded grant lapses whether or not anybody notices, which is the asymmetry that matters at an offline verifier: revocation reaches it best-effort, expiry unconditionally. The *length* is not mandated, because the management capability is minted by the cold root and a short ceiling would mean reaching for the hardware to renew — set `maxLifetimeSeconds` on the verifier if you have a policy.
+**Treat a saturated controller as unavailable, not as "nothing denied".** The resolver throws `EPOCH_SATURATED` for every question while the current epoch is saturated; a wrapper that turns that into an empty answer fails open.
 
 ## Delegation
 
-Chains are capped at `DEFAULT_MAX_DELEGATION_DEPTH` (four: management → device → connector, plus headroom), counting the capability presented directly. Every link is checked against the request, not merely the leaf's ancestors: a presented capability's own `act`/`res`, `exp`, `nbf` and `iat` bind exactly like any other link's, and its audience is subject to the subject's deny set. Attenuation at the last hop was once a no-op precisely because those checks were missing.
+Chains are capped at `DEFAULT_MAX_DELEGATION_DEPTH` (four: issuer → device → connector, plus headroom), counting the capability presented directly. Every link is checked against the request, not merely the leaf's ancestors: a presented capability's own `act`/`res`, `exp`, `nbf` and `iat` bind exactly like any other link's, and its audience is subject to the subject's deny set. Attenuation at the last hop was once a no-op precisely because those checks were missing.
 
 ## Assumptions and named limitations
 
 These are the things this design does **not** protect against. Read them as part of the contract.
 
+### Accepted risks of the management tier
+
+Chosen with the design, in this form. Each has a root remedy, and none has an automatic one: any rule that picked a winner between member branches would itself be attackable by copying, cycles or digest grinding.
+
+- **A stolen member.** A thief can remove every honest member — from any point where it was a member, even after its own removal, by building on an older state — and every removal stands, so the member set can collapse. It can also deny edge holders, and flood the epoch with events. One root settlement per theft.
+- **A stolen member against offline verifiers.** A removed member keeps its pre-removal log and can mint fresh short grants that a verifier which never sees the removal accepts, until its lease end. The short grant lifetime bounds how late a verifier learns an *edge holder* was revoked; for a stolen member the lease is the bound.
+- **Withheld events.** A peer can withhold member events from a verifier that has never seen them — the first-contact truncation limitation below. A verifier with a `history` store never forgets what it has seen.
+- **Flood shutdown.** A stolen member can saturate the epoch, and every grant that depends on it, honest agents' included, stops verifying until root settles. Fail closed is chosen over guessing which events to drop.
+- **Incomplete settlement.** A removal or denial root never saw is not in its snapshot and is lost; members re-issue their own revokes on the new epoch. Retired-key denials are the one exception the chain enforces once a snapshot has checkpointed them.
+
+### Verification cost
+
+A request may carry up to `MAX_LOG_EVENTS` (8192) epoch events, and nothing about an event is known until its signature is checked. Folding `MAX_LOG_EVENTS` root-signed events costs about **9 s of Ed25519 verification**; the worst case measured, a 4096-event chain with a side event per link joining back to its end, took **10.1 s and about 400 MB**. Signatures dominate; the causal joins add about 1.4 s. A relay holding no key can make a verifier spend that on every presentation it sends — every forged signature is still a signature to check — and none of it changes remembered state. Rate-limit presentations per peer where that matters, and resolve through a `history` store, so a party re-folds what it already holds rather than re-receiving it.
+
+### Other limitations
+
 **A stolen mnemonic is terminal.** The thief holds every key at every index including the recovery key, and can always rotate ahead of the owner. This is the price of seed-rooting.
 
-**Truncation is only partly closed.** A peer serving a prefix produces a log that folds cleanly, chains every digest, verifies every signature, and yields a deny set missing exactly the entry that matters. The `history` store refuses one that is behind a log this party has already seen — which defeats replaying a stale prefix — but does nothing on a **first encounter**. Closing that needs a witness or an anchor: the profile publishing its head digest somewhere a verifier can reach independently. That is a subsystem, and it is not built. This is *suppression*, and the named limitation about forks does not reach it — there is no second branch to compare, only an honest-looking prefix.
+**Truncation is only partly closed.** A peer serving a chain prefix, or the full chain with an epoch revoke withheld, produces a log that folds cleanly, chains every digest, verifies every signature, and yields a deny set missing exactly the entry that matters. The `history` store refuses one that is behind a log this party has already seen — which defeats replaying a stale prefix — but does nothing on a **first encounter**. Closing that needs a witness or an anchor: the profile publishing its head digest somewhere a verifier can reach independently. That is a subsystem, and it is not built. This is *suppression*, and the named limitation about forks does not reach it — there is no second branch to compare, only an honest-looking prefix.
 
 **Cross-group duplicity is detectable, not preventable.** Detection still needs a member of both groups, an external witness, or a public mirror.
 
@@ -114,7 +127,7 @@ These are the things this design does **not** protect against. Read them as part
 
 **Unanchored capabilities remain backdatable.** `cap.iat` is author-supplied. A seal (`a` on a rotate) is what anchors a high-value grant to a log position.
 
-**No log compaction.** Every rotation is permanent and replayed at every welcome, which is why the design keeps rotations rare.
+**Compaction stops at the generation.** `pruneLog` drops earlier generations and superseded epochs, but every rotate of the current generation is permanent and replayed at every welcome, which is why the design keeps rotations rare.
 
 **Harvest-now-decrypt-later applies to `ka`.** X25519 is the only key agreement algorithm in this release and durable data encrypts to these keys, so this is a real window. The format is ready — `ka` is an OR set and keys are multicodec-tagged — and only the wire standard is missing. Signatures do not share the exposure: forgery needs a quantum computer at the moment of use, which rotation can stay ahead of.
 

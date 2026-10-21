@@ -279,8 +279,9 @@ Rotation is managed through `@kokuin/controller`. A rotation event contains:
 - **Prior event digest** (`p`): Chains to the prior event in the log
 - **Signature and agreement keys** (`k`, `ka`): The new key material being rotated into
 - **Pre-rotation commitments** (`n`): Digests of the keys the *next* rotation must reveal
+- **State snapshot** (`m`, `d`): The management members and deny set the rotation settles on — every rotation is a settlement
 
-`verifyRotate` validates a single rotate: it checks that `k` hashes to the digests the prior event committed in `n`. This creates a key takeover protection: an attacker who steals the current signing key still cannot rotate the profile, because rotation requires revealing keys that match the pre-committed digests — keys they do not possess. Chain-level operations (`foldLog` and `foldLogAsync`) walk the entire event log to establish the current key state.
+`verifyRotate` validates a single rotate: it checks that `k` hashes to the digests the prior event committed in `n`. This creates a key takeover protection: an attacker who steals the current signing key still cannot rotate the profile, because rotation requires revealing keys that match the pre-committed digests — keys they do not possess. `foldLog` walks the whole root chain to establish the current key state, then merges the current epoch's management events (member adds, renewals, removals and revokes) into it.
 
 One consequence reaches every caller of `verifyToken`, whether or not they think about controllers: a method whose key set rotates answers **two** questions, and the safe one is the default. `resolve` answers from the profile's current keys alone, so a rotated-away key stops verifying; `resolveHistoric`, reached only by `verifyToken({ historic: true })`, accepts a key that was authoritative earlier in the same generation, for material the issuer minted in the past. Use the second only for archived artefacts, never to authenticate a live signer.
 

@@ -8,11 +8,10 @@ complete" and "The design pass before the docs".
 
 **What was closed on the branch, so this item is not read as wider than it is:**
 
-- **Item 2 is done.** A capability authorising a `did:kokuin:` revoke must now carry `exp`
-  (`REVOKE_UNBOUNDED_LIFETIME`), with `maxLifetimeSeconds` available for a ceiling. Taken then rather
-  than filed because nothing downstream had adopted the method yet: the migration cost was zero and
-  would not have stayed zero. The general "a capability with no `exp` never expires" outside the
-  controller-revoke path stands, and is `backlog/2026-08-04-capability-iat-is-optional.md`'s
+- **Item 2 is moot.** It concerned the lifetime of a capability authorising a `did:kokuin:` revoke;
+  that capability-authorised revoke has since been removed, and management authority lives in the
+  log as management members (see `docs/reference/controller.md`). The general "a capability with no
+  `exp` never expires" stands, and is `backlog/2026-08-04-capability-iat-is-optional.md`'s
   neighbour.
 - **Item 1 is half closed.** `LogStore` on `createControllerResolver` refuses a loaded log that does
   not supersede the last one accepted for that DID, which defeats replaying a stale prefix to a party
@@ -20,9 +19,9 @@ complete" and "The design pass before the docs".
 
 ## 1. Truncation on a first encounter is still a silent revocation bypass
 
-`packages/controller/src/resolver.ts:94-102,136-147`. `loadLog` answers with whatever the caller
+`packages/controller/src/resolver.ts` (`computeView`). `loadLog` answers with whatever the caller
 has, and nothing establishes that it is the *whole* log. A peer who serves a prefix — stopping just
-before the `rev` that denies their device — produces a log that folds cleanly, verifies every
+before the settlement that denies their device, or withholds the epoch revoke that does — produces a log that folds cleanly, verifies every
 signature, chains every digest, and yields a deny set missing exactly the entry that matters. The
 verifier cannot tell a truncated log from a short one.
 
@@ -32,8 +31,9 @@ no second branch to compare, only an honest-looking prefix.
 
 **What shipped**, and what it does not reach: `ControllerResolverOptions.history` takes a `LogStore`,
 and a loaded log that does not supersede the last one accepted for that DID is refused
-(`LOG_NOT_AUTHORITATIVE`), as is a genuine fork against it (`LOG_FORKED`). The comparison is
-`resolveBranchesAsync`, deliberately *not* a high-water mark over `(gen, seq)` — supersession
+(`LOG_NOT_AUTHORITATIVE`), as is a genuine fork against it (`LOG_FORKED`); current-epoch events are
+merged with what was seen and never forgotten. The comparison is
+`resolveBranches` over root chains, deliberately *not* a high-water mark over `(gen, seq)` — supersession
 legitimately lowers the sequence, so a mark would have rejected the owner's recovering rotate at the
 moment it rescues the profile, which is a bricking bug rather than a defence. A stored log that no
 longer folds is treated as no memory rather than as a refusal, so a fold rule that tightens in a
