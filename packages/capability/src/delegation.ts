@@ -1,5 +1,4 @@
 import {
-  findMethodResolver,
   normalizeDID,
   type SignedHeader,
   type SignedPayload,
@@ -7,6 +6,8 @@ import {
   verifyToken,
 } from '@kokuin/token'
 
+import { assertAudienceNotRevoked } from './audience.js'
+import { assertMemberRoot, isMemberClaim } from './member.js'
 import { assertValidPattern, hasPermission, isStringOrStringArray } from './patterns.js'
 import { assertNonExpired, assertValidIssuedAt, assertValidNotBefore, now } from './time.js'
 import { assertCapabilityToken } from './token.js'
@@ -63,6 +64,21 @@ export async function createCapability<
   // If signer is the subject, no parent validation needed (root capability)
   if (normalizeDID(payload.sub) === normalizeDID(signerID)) {
     return await signer.signToken(payload, { header })
+  }
+
+  // A management member minting on the subject's behalf: also a chain root, its authority the
+  // signer's membership rather than a parent. Not checked against the log here — this package
+  // holds no view of it, and the verifier asks anyway — but the claims a verifier bounds the grant
+  // by must be there, so a grant that can never verify is refused before it is signed.
+  if (options?.member != null) {
+    const { member } = options
+    if (!isMemberClaim(member)) {
+      throw new Error('Invalid capability: malformed mbr claim')
+    }
+    if (typeof payload.exp !== 'number' || typeof payload.iat !== 'number') {
+      throw new Error('Invalid capability: a member grant requires exp and iat')
+    }
+    return await signer.signToken({ ...payload, mbr: { add: member.add, g: member.g } }, { header })
   }
 
   // Signer is delegating on behalf of someone else - validate authorization
@@ -132,78 +148,6 @@ export function assertValidDelegation(
 }
 
 /**
- * What a capability the subject has revoked its audience is rejected with. The audience DID is
- * appended, so a caller matching on this constant should use `startsWith` rather than equality.
- */
-export const AUDIENCE_REVOKED = 'Invalid capability: audience is revoked by the subject'
-
-/**
- * What a capability whose subject's deny set could not be consulted at all is rejected with. The
- * subject DID is appended, so match with `startsWith`.
- */
-export const DENY_SET_UNAVAILABLE =
-  'Invalid capability: no resolver for the subject, so its deny set cannot be checked'
-
-/**
- * Whether a DID's identifier carries its own verification material, so no registry entry is required
- * and no deny set can be silently skipped. `did:key` **is** its key; `did:peer` is self-contained
- * (long form embeds the doc, short form hashes one) and neither has a deny set to miss. Every other
- * method resolves through the registry, where a deny set lives, so its absence means the question was
- * not asked. A prefix test, not a registry lookup: the point is to catch the caller who supplied *no*
- * registry, which asking the missing registry cannot do.
- */
-function carriesOwnKeys(did: string): boolean {
-  return did.startsWith('did:key:') || did.startsWith('did:peer:')
-}
-
-/**
- * Reject a capability whose audience the subject has revoked. A `did:kokuin:` subject publishes a
- * deny set in its own key event log ("no capability whose `aud` is that DID is valid from this
- * position onward"), and nothing else turns that set into a denial (importing the log would cycle),
- * so the rule travels through `DIDMethodResolver.resolveDenySet` on the registry.
- *
- * Evaluated against the subject's **current** state, never a position the capability names: `iat` is
- * backdatable, so a holder could otherwise pick a moment before it was revoked.
- *
- * Silent when the subject's method publishes no deny set. A resolver that *has* one and cannot
- * produce it throws (fails closed). **Not silent when no registry could answer for the subject at
- * all** — that once matched a chain (the root link is issued by the subject, needing the registry)
- * but not the `iss === sub` arm, where the caller verified the token itself, so a caller resolving a
- * `did:kokuin:` subject with their own resolver then omitting `methods` got no enforcement and no
- * indication. The subject's own method is the test (see {@link carriesOwnKeys}).
- *
- * The *holder* half of the set. `#<key>` entries denying the subject's own keys are enforced where a
- * key is resolved (`verifyToken` on every link), not here — this sees `aud`, not the signing key. The
- * two forms cannot collide, so membership matching stays exact.
- */
-async function assertAudienceNotRevoked(
-  payload: { sub?: unknown; aud?: unknown },
-  options?: DelegationChainOptions,
-): Promise<void> {
-  const { sub, aud } = payload
-  if (typeof sub !== 'string' || typeof aud !== 'string') {
-    return
-  }
-  const resolver = options?.methods == null ? undefined : findMethodResolver(options.methods, sub)
-  if (resolver == null) {
-    if (carriesOwnKeys(sub)) {
-      return
-    }
-    throw new Error(`${DENY_SET_UNAVAILABLE}: ${sub}`)
-  }
-  const { resolveDenySet } = resolver
-  if (resolveDenySet == null) {
-    return
-  }
-  const denied = await resolveDenySet(sub)
-  // Both spellings: a deny set names whatever the denying event wrote, which for a `did:peer:4`
-  // device may be either form, while `aud` may arrive as the other one.
-  if (denied.has(aud) || denied.has(normalizeDID(aud))) {
-    throw new Error(`${AUDIENCE_REVOKED}: ${aud}`)
-  }
-}
-
-/**
  * The grant a `checkCapability` payload makes on its own behalf, or `undefined` when it makes none.
  * The payload is either an **invocation** (no permission of its own; its authority is the `cap`
  * chain) or a **capability presented directly** (carries its minted grant — what
@@ -232,20 +176,30 @@ export async function checkDelegationChain(
     throw new Error(`Invalid capability: delegation chain exceeds maximum depth of ${maxDepth}`)
   }
 
-  // Every link passes through here as `payload`, so one call covers the whole chain above the payload
-  // `checkCapability` was handed — a revoked *intermediate* is what a per-leaf check misses. After the
-  // depth bound, not before: this may fold a log, and the bound stops a caller-supplied chain
-  // deciding how much of that work happens.
-  await assertAudienceNotRevoked(payload, options)
+  // Every link passes through here as `payload`, so the audience checks below cover the whole chain
+  // above the payload `checkCapability` was handed — a revoked *intermediate* is what a per-leaf
+  // check misses. After the depth bound, not before: this may fold a log, and the bound stops a
+  // caller-supplied chain deciding how much of that work happens.
 
   if (capabilities.length === 0) {
     if (normalizeDID(payload.iss) !== normalizeDID(payload.sub)) {
-      throw new Error('Invalid capability: issuer should be subject')
+      if (payload.mbr == null) {
+        throw new Error('Invalid capability: issuer should be subject')
+      }
+      // Issued by a management member of the subject. Its audience check is part of the arm, asked
+      // of the same view as the issuer's membership. `assertMemberRoot` requires the link's signature
+      // to have verified: the walk did so before recursing here, and a direct caller with an empty
+      // chain vouches for its payload, as on the subject arm.
+      await assertMemberRoot(payload, options, atTime)
+      return
     }
+    await assertAudienceNotRevoked(payload, options)
     assertNonExpired(payload, atTime)
     assertValidIssuedAt(payload, atTime)
     return
   }
+
+  await assertAudienceNotRevoked(payload, options)
 
   const [head, ...tail] = capabilities
   if (head === undefined) {
@@ -313,6 +267,21 @@ export async function checkCapability(
       throw new Error('Invalid capability: permission not granted')
     }
 
+    return
+  }
+
+  // A grant issued by a management member, presented directly: the other root arm. As in the
+  // `iss === sub` arm, the caller verified the token's signature; the request must be within the
+  // grant, and everything else is the membership check, audience included.
+  if (payload.cap == null && (payload as { mbr?: unknown }).mbr != null) {
+    const grant = presentedGrant(payload)
+    if (grant == null) {
+      throw new Error('Invalid payload: missing act or res for member-issued token')
+    }
+    if (!hasPermission(permission, grant)) {
+      throw new Error('Invalid capability: permission not granted')
+    }
+    await assertMemberRoot(payload as CapabilityPayload, options, time)
     return
   }
 
