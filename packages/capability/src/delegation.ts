@@ -67,9 +67,11 @@ export async function createCapability<
   }
 
   // A management member minting on the subject's behalf: also a chain root, its authority the
-  // signer's membership rather than a parent. Not checked against the log here — this package
-  // holds no view of it, and the verifier asks anyway — but the claims a verifier bounds the grant
-  // by must be there, so a grant that can never verify is refused before it is signed.
+  // signer's membership rather than a parent. Not checked against the log here — this package holds
+  // no view of it, and the verifier asks anyway. What is checked is the shape a verifier bounds the
+  // grant by: a well-formed claim, both `exp` and `iat`, and `exp` not before `iat`. The lifetime and
+  // lease bounds are left to the verifier: the maximum lifetime is the verifier's setting, and a
+  // mint-side default would refuse grants a verifier configured wider accepts.
   if (options?.member != null) {
     const { member } = options
     if (!isMemberClaim(member)) {
@@ -77,6 +79,9 @@ export async function createCapability<
     }
     if (typeof payload.exp !== 'number' || typeof payload.iat !== 'number') {
       throw new Error('Invalid capability: a member grant requires exp and iat')
+    }
+    if (payload.exp < payload.iat) {
+      throw new Error('Invalid capability: a member grant expires before it is issued')
     }
     return await signer.signToken({ ...payload, mbr: { add: member.add, g: member.g } }, { header })
   }
@@ -150,8 +155,8 @@ export function assertValidDelegation(
 /**
  * The grant a `checkCapability` payload makes on its own behalf, or `undefined` when it makes none.
  * The payload is either an **invocation** (no permission of its own; its authority is the `cap`
- * chain) or a **capability presented directly** (carries its minted grant — what
- * `createControllerCapabilityVerifier` hands over, a key event having no invocation to wrap it). Only
+ * chain) or a **capability presented directly** (carries its minted grant, with no invocation to
+ * wrap it — a member-issued grant checked on its own, or any capability a caller verified itself). Only
  * the second has claims to enforce. `act`+`res` tell them apart: every capability carries the pair,
  * no invocation shape here does. Dropping it is no escape — a payload without it *is* an invocation,
  * whose request is checked against the leaf in `cap`.

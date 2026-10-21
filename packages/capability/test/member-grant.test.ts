@@ -258,21 +258,23 @@ describe('member-issued grants', () => {
     for (const mbr of [
       'member',
       { add: 1, g: 0 },
+      { add: '', g: 0 },
       { add, g: -1 },
       { add, g: 0.5 },
       { add, g: '0' },
       { add },
-      null,
+      { add, g: 0, by: 'root' },
     ]) {
       for (const check of await bothPaths(await grant({ mbr }))) {
-        await expect(check, JSON.stringify(mbr)).rejects.toThrow()
+        await expect(check, JSON.stringify(mbr)).rejects.toThrow(
+          `${MEMBER_GRANT_NOT_MEMBER}: malformed mbr claim`,
+        )
       }
     }
-    for (const mbr of ['member', { add: 1, g: 0 }, { add, g: -1 }, { add, g: 0.5 }, { add }]) {
-      await expect(
-        checkCapability(permission, await payloadOf(await grant({ mbr })), options()),
-      ).rejects.toThrow(`${MEMBER_GRANT_NOT_MEMBER}: malformed mbr claim`)
-    }
+    // A null claim is no claim: the payload is what it was before member grants existed.
+    const [direct, chained] = await bothPaths(await grant({ mbr: null }))
+    await expect(direct).rejects.toThrow('Invalid payload: no capability')
+    await expect(chained).rejects.toThrow('Invalid capability: issuer should be subject')
   })
 
   test('a member grant past the issuer lease is refused', async () => {
@@ -343,7 +345,7 @@ describe('member-issued grants', () => {
     )
     await expect(
       checkCapability(permission, await invocation([future]), options()),
-    ).rejects.toThrow()
+    ).rejects.toThrow('Invalid token: issued in the future')
   })
 
   test('a member grant is held to its own time claims', async () => {
@@ -484,7 +486,7 @@ describe('member-issued grants', () => {
     const impostor = createSigningIdentityForDID(asDID(m.did), new Uint8Array(32).fill(64))
     await expect(
       checkCapability(permission, await invocation([await grant({}, impostor)]), options()),
-    ).rejects.toThrow()
+    ).rejects.toThrow('Invalid signature')
     // Another DID claiming the member's incarnation is not that member.
     for (const check of await bothPaths(await grant({}, stranger.signer))) {
       await expect(check).rejects.toThrow(MEMBER_GRANT_NOT_MEMBER)
@@ -528,7 +530,7 @@ describe('member-issued grants', () => {
   test('an edge holder may delegate a member grant further under the existing chain rules', async () => {
     const parent = await grant()
     const delegate = async (payload: {
-      act?: string
+      act?: string | Array<string>
       res?: string
       exp?: number
     }): Promise<string> => {
@@ -548,15 +550,39 @@ describe('member-issued grants', () => {
     // Membership, lease and every link's denial come from one fold of the log.
     expect(loads()).toBe(1)
 
-    // Wider than the parent, or outliving it, is refused as for any delegation.
-    await expect(
-      delegate({ res: 'doc/*', act: 'admin' }).then(async (wider) =>
-        checkCapability(permission, await invocation([wider, parent], third), options()),
-      ),
-    ).rejects.toThrow()
+    // Wider than the parent, or outliving it, is refused as for any delegation: at mint, and — signed
+    // directly, past the mint check — at verification.
+    await expect(delegate({ act: ['write', 'admin'] })).rejects.toThrow(
+      'Invalid capability: delegated permission exceeds parent capability',
+    )
     await expect(delegate({ exp: T + 7200 })).rejects.toThrow(
       'Invalid capability: child expiry exceeds parent capability',
     )
+    const signedChild = async (overrides: Claims): Promise<string> =>
+      grantOf(edge, {
+        sub: did,
+        aud: third.id,
+        act: 'write',
+        res: 'doc/1',
+        exp: T + 1800,
+        ...overrides,
+      })
+    const wider = await signedChild({ act: ['write', 'admin'] })
+    await expect(
+      checkCapability(permission, await invocation([wider, parent], third), options()),
+    ).rejects.toThrow('Invalid capability: permission mismatch')
+    const outliving = await signedChild({ exp: T + 7200 })
+    await expect(
+      checkCapability(permission, await invocation([outliving, parent], third), options()),
+    ).rejects.toThrow('Invalid capability: child expiry exceeds parent capability')
+    // CONTROL — the same directly-signed child within the parent verifies.
+    await expect(
+      checkCapability(
+        permission,
+        await invocation([await signedChild({}), parent], third),
+        options(),
+      ),
+    ).resolves.toBeUndefined()
 
     // Denying either holder on the chain refuses it.
     for (const target of [edge.id, third.id]) {
@@ -605,12 +631,24 @@ describe('member-issued grants', () => {
       await expect(
         createCapability(m.signer, partial, undefined, { member: { add, g: 0 } }),
         missing,
-      ).rejects.toThrow(missing)
+      ).rejects.toThrow('Invalid capability: a member grant requires exp and iat')
     }
-    // A malformed claim is refused before signing.
+    // A malformed claim, or one with extra fields, is refused before signing.
+    for (const member of [
+      { add, g: -1 },
+      { add, g: 0, by: 'root' },
+    ]) {
+      await expect(
+        createCapability(m.signer, payload, undefined, { member }),
+        JSON.stringify(member),
+      ).rejects.toThrow('Invalid capability: malformed mbr claim')
+    }
+    // So is a grant that expires before it is issued.
     await expect(
-      createCapability(m.signer, payload, undefined, { member: { add, g: -1 } }),
-    ).rejects.toThrow('mbr')
+      createCapability(m.signer, { ...payload, exp: T - 120 }, undefined, {
+        member: { add, g: 0 },
+      }),
+    ).rejects.toThrow('Invalid capability: a member grant expires before it is issued')
     // CONTROL — without the option, a non-subject signer still needs a parent.
     await expect(createCapability(m.signer, payload)).rejects.toThrow('parentCapability required')
   })

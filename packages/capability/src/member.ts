@@ -43,6 +43,11 @@ export function isMemberClaim(value: unknown): value is MemberClaim {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false
   }
+  // Exactly these two members: the claim names an incarnation and nothing else, so an extension
+  // fails closed rather than riding along unread.
+  if (Object.keys(value).length !== 2) {
+    return false
+  }
   const { add, g } = value as Record<string, unknown>
   return typeof add === 'string' && add !== '' && Number.isSafeInteger(g) && (g as number) >= 0
 }

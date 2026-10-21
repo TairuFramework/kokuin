@@ -18,7 +18,7 @@ export type DelegationChainOptions = {
   /**
    * Optional DID method registry, forwarded to `verifyToken` for every capability in the chain.
    * Required when any link is issued by a method that cannot be resolved from the identifier
-   * alone, such as `did:kokuin:`.
+   * alone, such as `did:kokuin:`. For `did:kokuin:`, pass a per-verification `resolver.frozen()` view.
    */
   methods?: MethodRegistry
   /** Optional signature verifiers, forwarded to `verifyToken` for every capability in the chain. */
