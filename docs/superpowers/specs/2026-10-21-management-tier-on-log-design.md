@@ -117,9 +117,19 @@ Decided with the user, in this form.
   does not. `s`, `keySeq`, `resolveHistoric` and key derivation live on this chain only.
 - **Every `rot` is a settlement:** it carries the full state snapshot (management set with each
   member's add reference and lease end; deny set; `ka` as today). `icp` starts the first epoch with
-  an empty set. **A reset stays blind and deterministic** (`createReset` is unchanged: no options,
-  empty deny set): it starts the new generation's first epoch with an empty set, and root re-adds
-  members with adds. The state after a `rot` **is** its snapshot; nothing before it contributes.
+  an empty set. **A reset takes an optional snapshot** (decided with the user):
+  - *Blind* (no snapshot): unchanged from today. `createReset` stays a pure function of
+    `(seed, profile, gen)` with an empty deny set, so two blind resets at one generation are
+    identical bytes, not a fork. The new epoch starts empty; root re-adds members with individual
+    adds. This is the worst-case path, when root does not know the log's state.
+  - *With snapshot*: the same reset also carries the management set and deny set, so one recovery-key
+    signature carries the whole recovery and no further step is needed. Two resets at one generation
+    with different bytes are duplicity, which only the recovery-key holder can cause and a reset at
+    a higher generation resolves. Members it carries keep their add references, but every grant
+    names its generation, so all prior grants still die; members re-mint. Root/member key
+    disjointness applies to the new generation's keys.
+
+  The state after a `rot` **is** its snapshot; nothing before it contributes.
   Root's tooling builds the snapshot from every branch it knows (all members, all pulled
   revocations), minus what root chooses to drop. The snapshot is root's **chosen replacement
   state**, not a proven complete merge: a removal or denial root never saw is not in it, and tooling
@@ -232,7 +242,9 @@ it holds, then folds offline.
   a root add merged with a concurrent revoke of the same key yields no effective member; missing
   parents are incomplete; saturation fails the epoch but not the root chain, survives a subset
   presentation, and cannot be triggered by unauthenticated input; a snapshot cannot drop a retired
-  signer key's denial; a reset carries no snapshot; a cold `rot` beats a
+  signer key's denial; a blind reset stays byte-identical per `(seed, profile, gen)`; a reset with
+  a snapshot folds to that snapshot, kills prior-generation grants of carried members, and two
+  differing resets at one generation are duplicity resolved by a higher one; a cold `rot` beats a
   current-key root event; a root add never drops a concurrent removal; a pruned and a full store
   fold to the same state; a member grant past the lease, past 12 h, from a removed incarnation, from
   a previous generation, or signed by an unpinned key fails. Mutate each rule alone.
