@@ -180,7 +180,7 @@ An epoch event shares the envelope's spirit and fields of its own:
 | `rmv` | `add` (the incarnation removed) | Root, or any member whose pinned key is not the target's |
 | `rev` | `x`: a DID or a key target | Root, or any single member — never targeting a member |
 
-Parents list every head the author knows — a recommendation the fold cannot enforce. Leases are unix seconds as non-negative safe integers. A member is identified by its **add digest**, its *incarnation*: renew and remove name that digest, so a delayed renew or remove never carries over to a re-add of the same key.
+Parents list every head the author knows — a recommendation the fold cannot enforce. `epochHeads(did, log)` computes them: the applied events of the current epoch that no applied event names as a parent, sorted, or `[head.epoch]` for an empty epoch. It throws if the log does not fold, and returns every head even past `MAX_EVENT_PARENTS`; a builder with more tips names any `MAX_EVENT_PARENTS` of them and later events merge the rest. Leases are unix seconds as non-negative safe integers. A member is identified by its **add digest**, its *incarnation*: renew and remove name that digest, so a delayed renew or remove never carries over to a re-add of the same key.
 
 ```typescript
 import { createAdd, createRemove, createRenew, createRevoke, DEFAULT_LEASE_SECONDS } from '@kokuin/controller'

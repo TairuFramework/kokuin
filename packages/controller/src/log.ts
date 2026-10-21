@@ -92,6 +92,35 @@ export function withEpoch(
 }
 
 /**
+ * The parents an epoch event built now should name: the current epoch's applied events that no
+ * applied event names as a parent, sorted ascending, or `[head.epoch]` when none applied. An event
+ * naming every tip is causally after everything its author has seen, and authorisation is judged
+ * against exactly that causal past -- naming fewer leaves the author's own view out of it.
+ *
+ * Pending and rejected events are never heads: they are not part of the folded epoch. Throws, with
+ * the fold's reason, when the log does not fold; a builder has nothing to extend then.
+ *
+ * Every head is returned, so there can be more than `MAX_EVENT_PARENTS` of them. A builder with that
+ * many tips names any `MAX_EVENT_PARENTS` of them: the event is causally after those, and later
+ * events built from the heads then fold the rest in.
+ */
+export function epochHeads(did: string, log: ControllerLog): Array<string> {
+  const held = foldHeld(did, log)
+  if ('ok' in held) {
+    throw new Error(`${held.reason}: ${did}`)
+  }
+  const { result, authentic } = held
+  const named = new Set<string>()
+  for (const digest of result.applied) {
+    for (const parent of authentic.get(digest)?.event.p ?? []) {
+      named.add(parent)
+    }
+  }
+  const heads = result.applied.filter((digest) => !named.has(digest)).sort()
+  return heads.length === 0 ? [result.head.epoch] : heads
+}
+
+/**
  * One copy of each event the fold applied, in the fold's own order (parents first): all that may be
  * remembered of an epoch. An entry the fold did not apply was never authenticated, so it never
  * reaches memory however it was presented.

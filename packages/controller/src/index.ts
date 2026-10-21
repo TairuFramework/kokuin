@@ -116,6 +116,7 @@ export {
 } from './limits.js'
 export {
   type ControllerLog,
+  epochHeads,
   isControllerLog,
   LOG_TOO_LARGE,
   LOG_UNFOLDABLE,

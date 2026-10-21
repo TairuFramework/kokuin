@@ -641,7 +641,6 @@ describe('totality under hostile presentation', () => {
     const states = chainFolded(chain).states
     const detail = foldEpochDetailed({ did, chainStates: states, events: pool })
     const reasons = new Set(detail.reasons.values())
-    console.log('DBG', JSON.stringify([...reasons]), detail.applied.length, pool.length)
     for (const rule of [
       ADD_NOT_ROOT,
       ADD_KEY_ALREADY_MEMBER,

@@ -71,6 +71,7 @@ describe('public surface', () => {
       'createMemoryLogStore',
       'mergeLogs',
       'pruneLog',
+      'epochHeads',
       'LOG_FORKED',
       'LOG_NOT_AUTHORITATIVE',
       'LOG_UNFOLDABLE',
