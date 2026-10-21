@@ -3,7 +3,13 @@ import { type EpochEvent, isEpochEventShape, verifyEpochSignature } from './epoc
 import { keyFromTarget, type MemberEntry, type SignedEvent } from './events.js'
 import type { KeyState, MemberState } from './fold.js'
 import { MAX_EPOCH_EVENTS } from './limits.js'
-import { denialTargetsMember, isRootKey, memberCarriesKey, type RootKeySet } from './members.js'
+import {
+  createDenialMatcher,
+  type DenialMatcher,
+  isRootKey,
+  memberCarriesKey,
+  type RootKeySet,
+} from './members.js'
 
 // Merging an epoch. The epoch's events are a set, not a sequence: nothing here may depend on the order
 // they were presented in, how often, or which copy of a duplicate arrived first. The three places that
@@ -126,10 +132,13 @@ function anchorState(anchor: KeyState): EpochState {
   return state
 }
 
-/** Whether any denial in `deny` targets `member`: the one predicate, see `denialTargetsMember`. */
-function isDenied(deny: ReadonlySet<string>, member: MemberEntry): boolean {
+/**
+ * Whether any denial in `deny` targets `member`: the one predicate, `denialTargetsMember`, through the
+ * fold's memoised `matches`.
+ */
+function isDenied(deny: ReadonlySet<string>, member: MemberEntry, matches: DenialMatcher): boolean {
   for (const entry of deny) {
-    if (denialTargetsMember(entry, member)) return true
+    if (matches(entry, member)) return true
   }
   return false
 }
@@ -138,8 +147,8 @@ function isDenied(deny: ReadonlySet<string>, member: MemberEntry): boolean {
  * Added, not removed, not denied: a member whose events the state authorises. The same test the head
  * applies to `MemberState.effective`, here asked of a causal state.
  */
-function isEffective(state: EpochState, member: MemberEntry): boolean {
-  return !state.removed.has(member.add) && !isDenied(state.deny, member)
+function isEffective(state: EpochState, member: MemberEntry, matches: DenialMatcher): boolean {
+  return !state.removed.has(member.add) && !isDenied(state.deny, member, matches)
 }
 
 type Candidate = {
@@ -165,6 +174,7 @@ function evaluate(
   causal: EpochState,
   anchor: KeyState,
   roots: RootKeySet,
+  matches: DenialMatcher,
 ): { reason: string } | { effect: EpochState } {
   const { event, digest } = candidate
   // A copy of the same body under a different signature is not a different event, so the event is
@@ -179,7 +189,8 @@ function evaluate(
     const member = causal.added.get(event.by)
     if (member === undefined) return { reason: 'signer is not a member of the causal state' }
     if (causal.removed.has(event.by)) return { reason: 'signer was removed in the causal state' }
-    if (isDenied(causal.deny, member)) return { reason: 'signer is denied in the causal state' }
+    if (isDenied(causal.deny, member, matches))
+      return { reason: 'signer is denied in the causal state' }
     if (!candidate.copies.some((c) => verifyEpochSignature(c, { memberKey: member.key }))) {
       return { reason: 'invalid member signature' }
     }
@@ -190,12 +201,14 @@ function evaluate(
   switch (event.t) {
     case 'rev': {
       // A member removes members; it does not deny them. Denial dominates membership and a removal
-      // does not, so a revoke would be a removal that root's own add could never undo short of a
-      // settlement -- and one that skips the self-remove rule. Only *effective* members are shielded:
-      // a member already removed or denied in the causal past has no membership left to protect.
+      // does not, so a revoke would be a removal that skips the self-remove rule and that root's own
+      // add could never undo short of a settlement: a denied key or DID refuses every later add of it.
+      // Every member of the causal past is shielded, removed or denied ones included -- otherwise one
+      // member removes another and a second denies it on top, and root can no longer re-admit that
+      // key under any DID. Root alone may deny a member.
       if (signer !== null) {
         for (const member of causal.added.values()) {
-          if (denialTargetsMember(event.x, member) && isEffective(causal, member)) {
+          if (matches(event.x, member)) {
             return { reason: MEMBER_REVOKES_MEMBER }
           }
         }
@@ -220,13 +233,13 @@ function evaluate(
       if (isRootKey(entry.key, roots)) return { reason: ADD_KEY_IS_ROOT }
       // Judged against the causal past only. A denial concurrent with the add does not refuse it --
       // neither may be dropped for arriving second -- it makes the merged member non-effective.
-      if (isDenied(causal.deny, entry)) return { reason: ADD_KEY_DENIED }
+      if (isDenied(causal.deny, entry, matches)) return { reason: ADD_KEY_DENIED }
       // One key, one live incarnation along any causal line: a second effective add of the same key
       // would be an alias whose renewals the self-renew rule could only catch by key anyway, and
       // root has no reason to issue one. Concurrent adds (a retry) cannot see each other, so both
       // stand; pinned-key equality is what keeps them from renewing each other.
       for (const member of causal.added.values()) {
-        if (member.key === entry.key && isEffective(causal, member)) {
+        if (member.key === entry.key && isEffective(causal, member, matches)) {
           return { reason: ADD_KEY_ALREADY_MEMBER }
         }
       }
@@ -294,6 +307,8 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
     for (const commitment of state.next) commitments.add(commitment)
   }
   const roots: RootKeySet = { keys: rootKeys, commitments, recovery: anchor.recovery }
+  // One canonicalisation per distinct DID for the whole fold: see `createDenialMatcher`.
+  const matches = createDenialMatcher()
 
   // 1. Triage. Dedupe by digest; an event of another epoch is ignored silently (its effect is in the
   // newer snapshot or was dropped by it), but it is remembered by digest so that naming it as a
@@ -408,7 +423,7 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
       }
     }
 
-    const outcome = evaluate(candidate, causal, anchor, roots)
+    const outcome = evaluate(candidate, causal, anchor, roots, matches)
     if ('reason' in outcome) {
       rejected++
       reasons.set(digest, outcome.reason)
@@ -442,7 +457,7 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
   for (const [add, entry] of union.added) {
     const lease = Math.max(entry.lease, union.leases.get(add) ?? 0)
     const removed = union.removed.has(add)
-    const effective = !removed && !isDenied(union.deny, entry)
+    const effective = !removed && !isDenied(union.deny, entry, matches)
     members.set(add, { ...entry, lease, removed, effective })
   }
   return {

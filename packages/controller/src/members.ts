@@ -75,10 +75,37 @@ function canonicalDID(did: string): string {
  * different DID, denied through the key target or not at all.
  */
 export function denialTargetsMember(entry: string, member: MemberEntry): boolean {
+  return targets(entry, member, canonicalDID)
+}
+
+function targets(entry: string, member: MemberEntry, canonical: (did: string) => string): boolean {
   if (entry === keyTarget(member.key)) {
     return true
   }
-  return entry.startsWith('did:') && canonicalDID(entry) === canonicalDID(member.did)
+  return entry.startsWith('did:') && canonical(entry) === canonical(member.did)
+}
+
+/** {@link denialTargetsMember}, as one fold asks it many times over. */
+export type DenialMatcher = (entry: string, member: MemberEntry) => boolean
+
+/**
+ * {@link denialTargetsMember} with each DID canonicalised once. The predicate is the same; only the
+ * work is shared. A fold asks it for every deny entry against every member it judges, and a hostile
+ * entry can be a long-form `did:peer:4` close to the event byte limit, which `normalizeDID` decodes
+ * in full on every call. Scoped to one fold by its caller, so the cache holds only strings that
+ * fold was handed and dies with it.
+ */
+export function createDenialMatcher(): DenialMatcher {
+  const canonical = new Map<string, string>()
+  const canonicalOnce = (did: string): string => {
+    let value = canonical.get(did)
+    if (value === undefined) {
+      value = canonicalDID(did)
+      canonical.set(did, value)
+    }
+    return value
+  }
+  return (entry, member) => targets(entry, member, canonicalOnce)
 }
 
 /**

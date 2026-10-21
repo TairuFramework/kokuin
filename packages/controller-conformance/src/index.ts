@@ -1060,6 +1060,105 @@ export function runControllerConformance(
         const control = folded([asKey, asPeer, other])
         expect(control.rejected).toBe(0)
         expect(control.head.members.get(digest(asPeer))?.lease).toBe(2_000_000_000)
+        // Control: the same signer, from the same parents, renewing a member it does not pin
+        // applies -- so the refusal above is the self rule, not a refusal of epoch-added signers.
+        const sameSigner = event(self, { t: 'ren', add: one.add, lease: 2_000_000_000 }, parents)
+        const sameSignerControl = folded([asKey, asPeer, sameSigner])
+        expect(sameSignerControl.rejected).toBe(0)
+        expect(sameSignerControl.head.members.get(one.add)?.lease).toBe(2_000_000_000)
+      })
+
+      test('a member cannot add a member', () => {
+        const fresh = impl.memberKeyPair()
+        const rootAdd = event(root, {
+          t: 'add',
+          member: { did: fresh.did, key: fresh.key, lease: 1_900_000_000 },
+        })
+        // The root add with only `by` set, signed by that member instead of root.
+        const claimed = { ...rootAdd.event, by: one.add }
+        const memberAdd = {
+          event: claimed,
+          sigs: impl.signEvent(claimed as unknown as ConformanceEvent, [at(keys, 0).privateKey]),
+        }
+        const refused = folded([memberAdd])
+        expect(refused.rejected).toBe(1)
+        expect(refused.head.members.has(digest(memberAdd))).toBe(false)
+        // Control: the body root signed applies.
+        const control = folded([rootAdd])
+        expect(control.rejected).toBe(0)
+        expect(control.head.members.get(digest(rootAdd))?.effective).toBe(true)
+      })
+
+      test('a member cannot revoke a member of its causal past, even a removed one', () => {
+        const removal = event(second, { t: 'rmv', add: three.add })
+        const cases: Array<[ConformanceEpochSigned | null, string]> = [
+          [null, two.did],
+          [null, `#${two.key}`],
+          [removal, three.did],
+          [removal, `#${three.key}`],
+        ]
+        for (const [before, target] of cases) {
+          const prior = before === null ? [] : [before]
+          const parents = before === null ? [head.epoch] : [digest(before)]
+          const refused = event(first, { t: 'rev', target }, parents)
+          const result = summary([...prior, refused])
+          expect(result.rejected).toBe(1)
+          expect(result.deny).toEqual([])
+          // Control: root may deny the same target from the same parents.
+          const byRoot = summary([...prior, event(root, { t: 'rev', target }, parents)])
+          expect(byRoot.rejected).toBe(0)
+          expect(byRoot.deny).toEqual([target])
+        }
+        // Control: the same member may deny an edge holder.
+        expect(summary([event(first, { t: 'rev', target: 'did:key:zEdge' })]).rejected).toBe(0)
+      })
+
+      test('an add whose DID is not an Ed25519 did:key or long-form peer carrying its pin is refused', () => {
+        const fresh = impl.memberKeyPair()
+        const peer = impl.memberPeerDID(fresh.key)
+        // A P-256 did:key (the did:key method's own example), pinning the key it carries.
+        const p256 = 'did:key:zDnaerDaTF5BXEavCrfRZEk316dpbLsfPDZ3WJ5hRTPFU2169'
+        const cases: Array<[string, { did: string; key: string }]> = [
+          ['a non-Ed25519 key', { did: p256, key: p256.slice('did:key:'.length) }],
+          // The short form is the long form up to its second separator.
+          [
+            'a short-form peer',
+            { did: peer.slice(0, peer.indexOf(':', 'did:peer:4'.length)), key: fresh.key },
+          ],
+        ]
+        for (const [, member] of cases) {
+          const refused = event(root, { t: 'add', member: { ...member, lease: 1_900_000_000 } })
+          expect(summary([refused]).rejected).toBe(1)
+          expect(summary([refused]).members).toEqual(summary([]).members)
+        }
+        // Control: the long form of the same peer DID, and the did:key of the same key, apply.
+        for (const memberDID of [peer, fresh.did]) {
+          const added = event(root, {
+            t: 'add',
+            member: { did: memberDID, key: fresh.key, lease: 1_900_000_000 },
+          })
+          expect(summary([added]).rejected).toBe(0)
+        }
+      })
+
+      test('an add pinning a root key is refused', () => {
+        const retired = at(icp.event.k as Array<string>, 0)
+        for (const key of [at(head.keys, 0), retired]) {
+          const refused = event(root, {
+            t: 'add',
+            member: { did: `did:key:${key}`, key, lease: 1_900_000_000 },
+          })
+          const result = summary([refused])
+          expect(result.rejected).toBe(1)
+          expect(result.members).toEqual(summary([]).members)
+        }
+        // Control: the same add of a key root does not hold applies.
+        const fresh = impl.memberKeyPair()
+        const control = event(root, {
+          t: 'add',
+          member: { did: fresh.did, key: fresh.key, lease: 1_900_000_000 },
+        })
+        expect(summary([control]).rejected).toBe(0)
       })
 
       test('mutual removal removes both members, in every order', () => {

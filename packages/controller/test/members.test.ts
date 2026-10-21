@@ -38,6 +38,7 @@ import {
 import { type FoldResult, foldLog } from '../src/fold.js'
 import { encodeKey } from '../src/keys.js'
 import type { ControllerLog } from '../src/log.js'
+import { createDenialMatcher, denialTargetsMember } from '../src/members.js'
 
 const seed = new Uint8Array(32).fill(1)
 const profile = 0
@@ -69,6 +70,12 @@ function rootKeyAt(gen: number, seq: number): string {
     deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA').publicKey,
     'EdDSA',
   )
+}
+
+const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+  const value = items[i]
+  if (value === undefined) throw new Error(`expected element at ${i}`)
+  return value
 }
 
 const LEASE = 1_900_000_000
@@ -488,10 +495,25 @@ describe('revoking', () => {
     expect(result.head.members.get(memberB.add)).toMatchObject({ removed: false, effective: false })
   })
 
-  test('a member may revoke a member no longer effective in its causal past', () => {
+  test('a member may not revoke a member of its causal past, even one already removed or denied', () => {
+    // Otherwise C removes B, A denies B's key on top, and root's later re-add of that key under
+    // another DID is refused as denied: a member would have done what only root may.
     const removal = remove(signerC, memberB.add)
-    const revocation = revoke(signerA, memberB.did, [digest(removal)])
-    expect(reasonsFor([removal, revocation]).size).toBe(0)
+    const denial = revoke(root, memberB.did)
+    for (const [label, before] of [
+      ['removed', removal],
+      ['denied', denial],
+    ] as const) {
+      for (const target of [memberB.did, keyTarget(memberB.key)]) {
+        const revocation = revoke(signerA, target, [digest(before)])
+        expect(reasonsFor([before, revocation]).get(digest(revocation)), label).toBe(
+          MEMBER_REVOKES_MEMBER,
+        )
+      }
+    }
+    // The re-add the attack would have blocked: root admits B's key again, as a peer DID.
+    const readd = add({ did: peerDID(memberB.key), key: memberB.key }, [digest(removal)])
+    expect(reasonsFor([removal, readd]).size).toBe(0)
   })
 
   test('no signer may revoke a key the chain head publishes', () => {
@@ -531,5 +553,36 @@ describe('revoking', () => {
     expect(members.get(memberC.add)?.lease).toBe(2_000_000_000)
     expect(members.get(memberB.add)?.lease).toBe(LEASE)
     expect(members.get(memberA.add)?.effective).toBe(false)
+  })
+})
+
+describe('the fold-scoped denial matcher', () => {
+  test('agrees with denialTargetsMember on every entry, asked any number of times', () => {
+    const peer = peerDID(d.key)
+    const members: Array<MemberEntry> = [memberA, { ...memberB, did: peer, key: d.key }]
+    const entries = [
+      memberA.did,
+      keyTarget(memberA.key),
+      peer,
+      getPeer4ShortForm(peer),
+      keyTarget(d.key),
+      d.did,
+      'did:peer:4zQm:zNotADocument',
+      'did:key:z',
+      'not a did',
+      '',
+    ]
+    const matches = createDenialMatcher()
+    for (let round = 0; round < 2; round++) {
+      for (const entry of entries) {
+        for (const member of members) {
+          expect(matches(entry, member), `${entry} / ${member.did}`).toBe(
+            denialTargetsMember(entry, member),
+          )
+        }
+      }
+    }
+    // And the cases that matter are true: a short form denies its long-form member.
+    expect(matches(getPeer4ShortForm(peer), at(members, 1))).toBe(true)
   })
 })
