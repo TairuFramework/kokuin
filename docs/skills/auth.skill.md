@@ -458,7 +458,9 @@ any claim whose subject is the profile rather than a device
 - Without `methods`, `verifyToken` fails with `Unknown DID` — the identifier carries no key.
   `did:key` and `did:peer:4` need no entry
 - `checkCapability` / `checkDelegationChain` (`@kokuin/capability`) take the same `methods` option
-  and forward it to every `verifyToken` in the chain, as do `createCapability` (for its
+  — pass a fresh `resolver.frozen()` there per verification, so every question about the profile
+  (membership of a grant's issuer, lease, each link's audience denial) comes from one fold — and
+  forward it to every `verifyToken` in the chain, as do `createCapability` (for its
   parent-capability check) and `createRevocationChecker` / `createMemoryRevocationBackend` (for the
   record's issuer). A `did:kokuin:` issuer needs `methods` at each of those call sites: without it
   delegation fails, and a revocation record whose issuer cannot be resolved *at all* fails the
@@ -490,14 +492,14 @@ any claim whose subject is the profile rather than a device
   the key already signed.
 
   ```typescript
-  import { createRevoke, keyTarget } from '@kokuin/controller'
+  import { createRevoke, epochHeads, keyTarget } from '@kokuin/controller'
 
-  // `head` is the fold's head; `parents` the current epoch's heads this party holds (at least
-  // `head.epoch`). Root signs here; a management member passes `{ member: { privateKey, add } }`.
+  // `head` is the fold's head; `epochHeads` every head of the current epoch this party holds.
+  // Root signs here; a management member passes `{ member: { privateKey, add } }`.
   const rev = createRevoke({
     did,
     head,
-    parents: [head.epoch],
+    parents: epochHeads(did, log),
     signer: { root: { seed, profile: 0 } },
     target: keyTarget(leakedKey),
   })

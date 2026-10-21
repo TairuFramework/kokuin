@@ -183,14 +183,24 @@ An epoch event shares the envelope's spirit and fields of its own:
 Parents list every head the author knows — a recommendation the fold cannot enforce. `epochHeads(did, log)` computes them: the applied events of the current epoch that no applied event names as a parent, sorted, or `[head.epoch]` for an empty epoch. It throws if the log does not fold, and returns every head even past `MAX_EVENT_PARENTS`; a builder with more tips names any `MAX_EVENT_PARENTS` of them and later events merge the rest. Leases are unix seconds as non-negative safe integers. A member is identified by its **add digest**, its *incarnation*: renew and remove name that digest, so a delayed renew or remove never carries over to a re-add of the same key.
 
 ```typescript
-import { createAdd, createRemove, createRenew, createRevoke, DEFAULT_LEASE_SECONDS } from '@kokuin/controller'
+import {
+  createAdd, createRemove, createRenew, createRevoke, DEFAULT_LEASE_SECONDS, epochHeads, foldLog,
+} from '@kokuin/controller'
 
 const now = Math.floor(Date.now() / 1000)
-// Root admits a member. `head` is the fold's head; `parents` the epoch heads this party holds.
-const add = createAdd({ did, head, parents: [head.epoch], seed, profile: 0,
+// `head` is the fold's head; `parents` every head of the current epoch this party holds.
+const folded = foldLog(did, log)
+if (!folded.ok) throw new Error(folded.reason)
+const head = folded.head
+const parents = epochHeads(did, log)
+
+// Root admits a member.
+const add = createAdd({ did, head, parents, seed, profile: 0,
   member: { did: phoneDID, key: phoneKey, lease: now + DEFAULT_LEASE_SECONDS } })
 
-// The desktop, itself a member, renews the phone and revokes a lost agent — no root.
+// The desktop, itself a member, renews the phone and revokes a lost agent — no root. Each event
+// built from the same `parents` is concurrent with the others; refold and recompute `epochHeads`
+// to build one that sees them.
 const desktop = { member: { privateKey: desktopPrivateKey, add: desktopAdd } }
 const renew = createRenew({ did, head, parents, signer: desktop, add: phoneAdd, lease: now + DEFAULT_LEASE_SECONDS })
 const revoke = createRevoke({ did, head, parents, signer: desktop, target: agentDID })
@@ -397,7 +407,7 @@ The lifecycle, end to end:
 
 **Mutual removal removes both.** Two members removing each other concurrently both stand — removals union — and the set can collapse to empty; root settles. That is the stolen-member risk in [./security.md](./security.md#accepted-risks-of-the-management-tier), and it is accepted: any automatic choice between member branches would itself be attackable.
 
-**Grants minted by a member.** `resolveMember` is everything a grant verifier needs from the log: the pinned key the grant must be signed by, and the lease end its `exp` must not pass, for the generation and incarnation the grant names, answered from the frozen view the rest of the verification uses. The verifier itself belongs to `@kokuin/capability`.
+**Grants minted by a member.** `resolveMember` is everything a grant verifier needs from the log: the pinned key the grant must be signed by, and the lease end its `exp` must not pass, for the generation and incarnation the grant names, answered from the frozen view the rest of the verification uses. The verifier is `@kokuin/capability`'s `assertMemberRoot`, run by `checkCapability` and `checkDelegationChain` for a root carrying `mbr` — see [Grants issued by management members](./capability.md#grants-issued-by-management-members).
 
 ## Signing as a profile
 

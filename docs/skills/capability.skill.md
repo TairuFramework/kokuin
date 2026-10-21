@@ -39,7 +39,7 @@ const rootCapStr = stringifyToken(rootCap)
 ```
 
 **Key points**:
-- `act` and `res` follow `/`-separated path patterns; a trailing `*` is the only wildcard form (`docs/*` is valid; `docs/*/edit` is not). A component may hold letters, digits, `_ - . : #` — `#` because a `did:kokuin:` revoke target may be a key fragment, and the revoke permission is `{ act: 'revoke', res: <target> }`
+- `act` and `res` follow `/`-separated path patterns; a trailing `*` is the only wildcard form (`docs/*` is valid; `docs/*/edit` is not). A component may hold letters, digits, `_ - . : #` — `#` because a resource may be a key fragment (`#<key>`)
 - `sub` is the resource owner (root DID); `aud` is who may present or re-delegate this capability
 - `exp` is recommended — capabilities without expiry must be revoked explicitly
 
@@ -79,7 +79,7 @@ const delegatedCapStr = stringifyToken(delegatedCap)
 
 ### Pattern 3: Check a Capability
 
-Use `checkCapability` as the top-level entry point. It verifies that a signed payload grants a requested permission, following the `cap` delegation chain back to a self-issued root.
+Use `checkCapability` as the top-level entry point. It verifies that a signed payload grants a requested permission, following the `cap` delegation chain back to a self-issued or member-issued root (Pattern 3b).
 
 ```typescript
 import { checkCapability, checkDelegationChain } from '@kokuin/capability'
@@ -105,6 +105,34 @@ await checkDelegationChain(consumerPayload, [delegatedCapStr, rootCapStr], {
 - `checkDelegationChain` takes the `capabilities` array explicitly — head is the immediate parent, tail leads toward the root
 - `DEFAULT_MAX_DELEGATION_DEPTH` is 4; override via `options.maxDepth`
 - `assertNonExpired` and `assertValidIssuedAt` are called automatically on every link
+
+### Pattern 3b: Grants Issued by a Management Member
+
+A `did:kokuin:` profile's management members (devices its log admits by a root add, each pinning one Ed25519 key with a lease) mint edge grants for the profile without its root key: `sub` is the profile, `iss` the member, and `mbr: { add, g }` names the membership.
+
+```typescript
+import { checkCapability, createCapability } from '@kokuin/capability'
+
+const now = Math.floor(Date.now() / 1000)
+const grant = await createCapability(
+  memberIdentity, // a did:key, or the LONG form of a did:peer:4 — never the short form
+  { sub: profileDID, aud: agentDID, act: 'read', res: 'docs/*', iat: now, exp: now + 3600 },
+  undefined,
+  { member: { add: memberAddDigest, g: head.gen } },
+)
+
+// Verifier: one frozen view of the controller resolver per verification.
+await checkCapability(requested, invocationPayload, { methods: [controllerResolver.frozen()] })
+```
+
+**Key points**:
+- `member` writes `mbr: { add, g }` — the digest of the add event that admitted the issuer, and the log generation. `createCapability` requires numeric `exp` and `iat` with `exp >= iat` and a well-formed claim (exactly `add` and `g`); it does not ask the log
+- Verification (`assertMemberRoot`, run by `checkCapability` and `checkDelegationChain` for a root with `mbr` and `iss !== sub`), in order: well-formed `mbr` (`MEMBER_GRANT_NOT_MEMBER`); the subject's method has `resolveMember` (`MEMBER_GRANT_NO_RESOLVER`); the issuer is an effective member under that incarnation and the current generation (`MEMBER_GRANT_NOT_MEMBER`, original error as `cause` — removed, denied, reset, saturated and unresolvable all land here); `iss` carries exactly the pinned key (`MEMBER_GRANT_KEY_MISMATCH`); `exp <= lease` (`MEMBER_GRANT_PAST_LEASE`); `iat` present (`MEMBER_GRANT_NO_IAT`); `exp - iat <= maxMemberGrantLifetime` (`MEMBER_GRANT_TOO_LONG`); then time claims and the audience deny set. Match reasons with `startsWith`
+- **Bounded at mint**: a grant past the issuer's lease, or longer than `maxMemberGrantLifetime` (default `DEFAULT_MEMBER_GRANT_LIFETIME`, 43200 s = 12 h, set per verification in `DelegationChainOptions`), is refused, not trimmed. The lifetime bounds how late an offline verifier learns an edge holder was revoked; the lease bounds a stolen member that verifier never sees removed
+- A reset kills every member grant of the old generation, carried members' included: `g` must equal the log's current generation
+- **Pass `resolver.frozen()`, fresh per verification**, never the live resolver: membership, lease and every audience denial must come from one state of the log. One frozen view folds the log once for the whole chain
+- **Direct path**: `checkCapability(permission, grantPayload)` with a member grant as the payload trusts the caller to have verified its signature, exactly like the `iss === sub` arm. Inside a `cap` chain the walk verifies each link before asking about membership
+- A member grant is a chain root with the profile's own power over resources, and no management power: membership comes only from a root add in the log
 
 ### Pattern 4: Revocation
 
