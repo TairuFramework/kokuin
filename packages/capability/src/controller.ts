@@ -2,16 +2,13 @@ import {
   CODECS,
   type DIDMethodResolver,
   decodeMultibase,
-  decodePeer4,
   encodeMultibase,
   findMethodResolver,
   getAlgorithmAndPublicKey,
-  getPeer4ShortForm,
-  getSignatureInfo,
-  isPeer4,
   type MethodRegistry,
   normalizeDID,
   type ResolvedSigningKey,
+  signingKeysOf,
   verifyToken,
 } from '@kokuin/token'
 
@@ -118,48 +115,6 @@ function confirmedKey(cnf: ConfirmationClaim | undefined): ResolvedSigningKey {
   return { alg, publicKey }
 }
 
-/** As long as `resolveKidFromDoc` in `@kokuin/token` allows: base58 decoding is O(n^2). */
-const MAX_KEY_ENCODED = 64
-
-/**
- * The signing keys a DID carries in its identifier, or `null` when it carries none. `did:key` is its
- * key; a `did:peer:4` long form embeds the document, so its `authentication` keys (signing is what
- * the pin is for) are readable from the string. Anything network-backed answers `null` rather than
- * looking up -- see {@link REVOKE_AUDIENCE_KEY_MISMATCH}.
- *
- * Throws on an identifier that claims to carry a key and does not; the caller treats that as no
- * match.
- */
-function identifierKeys(did: string): Array<ResolvedSigningKey> | null {
-  if (did.startsWith('did:key:')) {
-    const [alg, publicKey] = getSignatureInfo(did)
-    return [{ alg, publicKey }]
-  }
-  if (!isPeer4(did) || did === getPeer4ShortForm(did)) {
-    return null
-  }
-  const { doc } = decodePeer4(did)
-  const keys: Array<ResolvedSigningKey> = []
-  for (const id of doc.authentication ?? []) {
-    const method = doc.verificationMethod.find((entry) => entry.id === id)
-    if (method == null || method.publicKeyMultibase.length > MAX_KEY_ENCODED) {
-      continue
-    }
-    let info: [ResolvedSigningKey['alg'], Uint8Array] | null = null
-    try {
-      info = getAlgorithmAndPublicKey(decodeMultibase(method.publicKeyMultibase))
-    } catch {
-      // Legal-but-unsupported multibase, or another key kind: not the pin either way, and one
-      // unreadable entry must not hide a readable one below.
-      continue
-    }
-    if (info != null) {
-      keys.push({ alg: info[0], publicKey: info[1] })
-    }
-  }
-  return keys
-}
-
 /** Whether two resolved keys are the same key. */
 function isSameKey(a: ResolvedSigningKey, b: ResolvedSigningKey): boolean {
   if (a.alg !== b.alg || a.publicKey.length !== b.publicKey.length) {
@@ -180,7 +135,7 @@ function contradictsAudience(aud: unknown, pinned: ResolvedSigningKey): boolean 
   }
   let carried: Array<ResolvedSigningKey> | null
   try {
-    carried = identifierKeys(aud)
+    carried = signingKeysOf(aud)
   } catch {
     // Claims to carry a key and does not: whatever the pin is, it is not this audience's, and nothing
     // about it starts working later.

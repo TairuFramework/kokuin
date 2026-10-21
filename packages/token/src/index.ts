@@ -31,6 +31,7 @@ export {
   type ResolveIssuerWithDocResult,
   resolveIssuer,
   resolveIssuerWithDoc,
+  signingKeysOf,
   UnresolvableIssuerError,
 } from './did.js'
 export {
@@ -64,8 +65,10 @@ export {
   type AgreementAlgorithm,
   type DIDMethodResolver,
   findMethodResolver,
+  type MemberQuery,
   type MethodRegistry,
   type ResolvedAgreementKey,
+  type ResolvedMember,
   type ResolvedSigningKey,
 } from './method.js'
 export {

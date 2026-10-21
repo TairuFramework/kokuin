@@ -7,6 +7,12 @@ export type ResolvedSigningKey = {
   publicKey: Uint8Array
 }
 
+/** The member of a subject's management tier being asked about: its DID, `add` digest and generation. */
+export type MemberQuery = { did: string; add: string; gen: number }
+
+/** The signing key a subject's log pins for a member, and when that membership lapses (unix seconds). */
+export type ResolvedMember = { key: ResolvedSigningKey; lease: number }
+
 export type AgreementAlgorithm = 'X25519'
 
 /** A key agreement key a DID method resolved for a recipient. */
@@ -68,6 +74,17 @@ export type DIDMethodResolver = {
    * break every implementation for a member most methods have no answer for.
    */
   resolveDenySet?(did: string): Promise<ReadonlySet<string>>
+  /**
+   * The key and lease the subject's log holds for one **member** of its management tier, answered for
+   * **now**. A grant issued by a member rather than by the subject's own key is valid only while that
+   * membership is live, so the verifier asks the log rather than trusting the grant's claims.
+   *
+   * Optional, and its **absence fails closed**: a method that cannot answer refuses every
+   * member-issued grant rather than falling back to {@link resolve}, which names the subject's own
+   * keys and would answer a different question. A member that is unknown, removed or lapsed must
+   * reject, never resolve.
+   */
+  resolveMember?(subject: string, member: MemberQuery): Promise<ResolvedMember>
 }
 
 export type MethodRegistry = ReadonlyArray<DIDMethodResolver>
