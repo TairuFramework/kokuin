@@ -4,6 +4,7 @@ import { base64urlnopad } from '@scure/base'
 
 import { canonicalBytes, digestOf, isCanonicalizable } from './canonical.js'
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from './derivation.js'
+import type { EpochEventCommon } from './epoch-events.js'
 import { encodeKey, tryDecodeKey } from './keys.js'
 
 export const DID_PREFIX = 'did:kokuin:'
@@ -63,7 +64,11 @@ export type InceptionEvent = EventCommon & {
   r: string
 }
 
-export type SignedEvent<E extends EventCommon = EventCommon> = {
+/**
+ * Generic over both tiers: a root-chain event and an epoch event share the envelope and signatures
+ * over canonical bytes, and nothing else.
+ */
+export type SignedEvent<E extends EventCommon | EpochEventCommon = EventCommon> = {
   event: E
   /** base64url ed25519 signatures over the canonical event bytes, positional against `event.k`. */
   sigs: Array<string>
@@ -74,7 +79,10 @@ export type SignedEvent<E extends EventCommon = EventCommon> = {
   recoveryKey?: string
 }
 
-export function signEvent(event: EventCommon, privateKeys: Array<Uint8Array>): Array<string> {
+export function signEvent(
+  event: EventCommon | EpochEventCommon,
+  privateKeys: Array<Uint8Array>,
+): Array<string> {
   const bytes = canonicalBytes(event)
   return privateKeys.map((key) => base64urlnopad.encode(ed25519.sign(bytes, key)))
 }
@@ -130,7 +138,7 @@ function verifyAgreementKeys(ka: Array<string>): boolean {
  * canonical encoding has no bytes for a signature to be over.
  */
 export function verifySignatures(
-  event: EventCommon,
+  event: EventCommon | EpochEventCommon,
   sigs: Array<string>,
   keys: Array<string>,
 ): boolean {
