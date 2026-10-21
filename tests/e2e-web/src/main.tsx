@@ -4,6 +4,7 @@ import App from './App'
 
 AppRegistry.registerComponent('App', () => App)
 
-AppRegistry.runApplication('App', {
-  rootTag: document.getElementById('root'),
-})
+const rootTag = document.getElementById('root')
+if (rootTag == null) throw new Error('Missing #root element')
+
+AppRegistry.runApplication('App', { rootTag })

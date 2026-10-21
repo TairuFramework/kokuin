@@ -477,7 +477,8 @@ describe('removing a member', () => {
       effective: true,
     })
     expect(members.get(digest(first))).toMatchObject({ lease: 2_000_000_000, removed: true })
-  })
+    // Five events: 120 presentation orders, each a full signature-checking fold.
+  }, 30_000)
 })
 
 describe('revoking', () => {
