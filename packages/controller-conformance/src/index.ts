@@ -594,6 +594,39 @@ export function runControllerConformance(
         }
       })
 
+      // A reset chains to the inception, so the same reset can sit on different prefixes: appended to a
+      // generation-0 chain, or straight after the inception in a pruned copy carried further. What
+      // precedes the top generation's reset cannot change the winner once both contain it.
+      test('a reset re-parented onto a different prefix is one history, not a fork', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        for (const reset of [
+          impl.createReset(seedA, 0, 1),
+          impl.createReset(seedA, 0, 1, { members: [], deny: [deviceA] }),
+        ]) {
+          const appended = [icp, rotate(seedA, did, icp.event), reset]
+          const carried = [icp, reset, rotate(seedA, did, reset.event)]
+          for (const order of [
+            [appended, carried],
+            [carried, appended],
+          ]) {
+            const result = impl.resolveBranches(did, order)
+            expect(result.ok).toBe(true)
+            if (!result.ok) {
+              continue
+            }
+            expect(result.winner).toEqual(carried)
+          }
+          // CONTROL — a rival rotate after the shared reset is still a fork.
+          const rival = [...appended, denying(did, reset.event, [deviceB])]
+          const forked = impl.resolveBranches(did, [rival, carried])
+          expect(forked.ok).toBe(false)
+          if (!forked.ok) {
+            expect([forked.duplicity.gen, forked.duplicity.seq]).toEqual([1, 1])
+          }
+        }
+      })
+
       // The spec's "a cold rot beats a current-key root event", in the form it now takes. Root revokes
       // and adds live in epochs, so no current-key event is ever on the chain for branch selection to
       // weigh: `resolveBranches` here only sees a prefix and its extension. What makes the rotate win

@@ -278,3 +278,48 @@ describe('resolveBranches()', () => {
     expect(settled.ok && settled.winner).toEqual(higher)
   })
 })
+
+// A reset chains to the inception, not to the event before it, so the same reset — byte-identical
+// when blind, and position-independent with a snapshot too — can sit on different prefixes: a
+// verifier appends it to the generation-0 chain it held, while a pruned copy carries it straight
+// after the inception and further. What precedes the top generation's reset cannot change the winner
+// once both contain it, so the two are one history, and the longer wins in either order.
+describe('a reset re-parented onto a different prefix', () => {
+  const { did, icp } = build()
+  const rot0 = settle(did, icp.event, [])
+  for (const [name, reset] of [
+    ['blind', createReset(seed, 0, 1)],
+    ['with a snapshot', createReset(seed, 0, 1, { members: [], deny: [victim] })],
+  ] as const) {
+    test(`${name}: the history carried further wins, in either order`, () => {
+      const appended = [icp, rot0, reset]
+      const carried = [icp, reset, settle(did, reset.event, [])]
+      for (const order of [
+        [appended, carried],
+        [carried, appended],
+      ]) {
+        const result = resolveBranches(did, order)
+        expect(result.ok).toBe(true)
+        if (!result.ok) return
+        expect(result.winner).toEqual(carried)
+        // Only the generation-0 rotate is discarded; the reset both carry is not.
+        expect(result.superseded).toBe(1)
+      }
+    })
+
+    test(`${name}: a rival rotate after the shared reset is still duplicity`, () => {
+      const one = [icp, rot0, reset, settle(did, reset.event, ['did:key:zOne'])]
+      const two = [icp, reset, settle(did, reset.event, ['did:key:zTwo'])]
+      for (const order of [
+        [one, two],
+        [two, one],
+      ]) {
+        const result = resolveBranches(did, order)
+        expect(result.ok).toBe(false)
+        if (result.ok) return
+        expect(result.failure).toBe('duplicity')
+        expect([result.duplicity.gen, result.duplicity.seq]).toEqual([1, 1])
+      }
+    })
+  }
+})

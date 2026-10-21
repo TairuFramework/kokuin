@@ -173,6 +173,28 @@ function intrinsicRefusal(event: EpochEvent, did: string, anchor: KeyState): str
 }
 
 /**
+ * Among the copies that verify, the one whose signature list sorts first, so two parties that saw the
+ * same event under different valid signatures remember the same bytes, whatever order each saw them
+ * in. Each distinct signature list is checked once: repeating a copy costs no extra verification.
+ */
+function canonicalCopy(
+  copies: Array<SignedEvent<EpochEvent>>,
+  verifies: (copy: SignedEvent<EpochEvent>) => boolean,
+): SignedEvent<EpochEvent> | undefined {
+  const checked = new Set<string>()
+  let best: { copy: SignedEvent<EpochEvent>; key: string } | undefined
+  for (const copy of copies) {
+    const key = copy.sigs.join(',')
+    if (checked.has(key)) continue
+    checked.add(key)
+    if ((best === undefined || key < best.key) && verifies(copy)) {
+      best = { copy, key }
+    }
+  }
+  return best?.copy
+}
+
+/**
  * Judge `event` against the state its parents established, and say what it adds. `null` reason means
  * it applies; the returned `effect` is then the event's own contribution.
  */
@@ -189,7 +211,7 @@ function evaluate(
   // genuine one depending on arrival order.
   let signer: MemberEntry | null = null
   if (event.by === undefined) {
-    candidate.authentic = candidate.copies.find((c) =>
+    candidate.authentic = canonicalCopy(candidate.copies, (c) =>
       verifyEpochSignature(c, { rootKeys: anchor.keys }),
     )
     if (candidate.authentic === undefined) {
@@ -201,7 +223,7 @@ function evaluate(
     if (causal.removed.has(event.by)) return { reason: 'signer was removed in the causal state' }
     if (isDenied(causal.deny, member, matches))
       return { reason: 'signer is denied in the causal state' }
-    candidate.authentic = candidate.copies.find((c) =>
+    candidate.authentic = canonicalCopy(candidate.copies, (c) =>
       verifyEpochSignature(c, { memberKey: member.key }),
     )
     if (candidate.authentic === undefined) {

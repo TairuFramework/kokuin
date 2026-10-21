@@ -424,6 +424,41 @@ describe('mergeLogs()', () => {
   })
 })
 
+describe('a reset re-parented onto a different prefix', () => {
+  // The verifier appended the reset to the generation-0 chain it held; a pruned peer carries the same
+  // reset straight after the inception and further. One history, whichever side holds which.
+  const reset = createReset(seed, profile, 1)
+  const appended = { chain: [icp, rot, reset], events: [] }
+  const carried = {
+    chain: [
+      icp,
+      reset,
+      createRotate({
+        seed,
+        profile,
+        did,
+        prior: reset.event,
+        options: { snapshot: { members: [], deny: [] } },
+      }),
+    ],
+    events: [],
+  }
+
+  test('mergeLogs keeps the history carried further, in either order', () => {
+    expect(mergeLogs(did, appended, carried).chain).toEqual(carried.chain)
+    expect(mergeLogs(did, carried, appended).chain).toEqual(carried.chain)
+  })
+
+  test('authoritativeLog accepts it carried further and refuses it served behind', () => {
+    expect(authoritativeLog({ did, loaded: carried, seen: appended, context }).log.chain).toEqual(
+      carried.chain,
+    )
+    expect(() => authoritativeLog({ did, loaded: appended, seen: carried, context })).toThrow(
+      LOG_NOT_AUTHORITATIVE,
+    )
+  })
+})
+
 describe('pruneLog()', () => {
   test('a pruned and a full store fold to the same head', () => {
     // Generation 0 with an epoch of its own, a reset, then a settled generation 1 with live events.

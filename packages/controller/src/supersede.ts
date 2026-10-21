@@ -58,8 +58,9 @@ type FoldedBranch = {
    * Indices into `branch` of the events that moved the fold — all but the skipped ones. The spine,
    * not the array, is a branch's history: a skipped event establishes nothing and must not contend
    * for a position, else a keyless attacker could append one unsigned unknown event to a copy of the
-   * inception and have it read as a rival history at position 1. `spine[0]` is always 0 (every valid
-   * branch of one log shares the inception whose digest is the DID).
+   * inception and have it read as a rival history at position 1. As built, `spine[0]` is 0, the inception every
+   * branch of one log shares; branch selection compares a copy trimmed to start at the top
+   * generation's first event (see `selectWinner`).
    */
   spine: Array<number>
 }
@@ -105,8 +106,8 @@ function preferred(candidate: FoldedBranch, incumbent: FoldedBranch): boolean {
 }
 
 /**
- * How far two branches agree, in spine entries. Zero is unreachable for branches of one log (they
- * share an inception), so a common prefix of 1 means they forked immediately after it.
+ * How far two branches agree, in spine entries. Zero means they disagree on their first entry: on
+ * spines trimmed to the top generation, two different resets opening it.
  */
 function commonSpine(a: FoldedBranch, b: FoldedBranch): number {
   const shortest = Math.min(a.spine.length, b.spine.length)
@@ -237,16 +238,38 @@ function selectWinner(valid: Array<FoldedBranch>): ResolveResult {
   const distinct = [...byHead.values()]
 
   const topGen = Math.max(...distinct.map((folded) => headState(folded).gen))
-  const resolved = resolveContenders(distinct.filter((f) => headState(f).gen === topGen))
+  // Compared from the top generation's first event on, not from the inception. A reset chains to the
+  // inception rather than to what preceded it, and its state is a function of the event alone, so one
+  // reset can sit on different prefixes — appended to a generation-0 chain by one party, straight
+  // after the inception in another's pruned copy. Once both contain it, what came before cannot change
+  // the winner; compared from the inception, the two would diverge at position 1 and read as a fork.
+  // At generation 0 the generation starts at the inception, so nothing is dropped.
+  const original = new Map<FoldedBranch, FoldedBranch>()
+  const contenders = distinct
+    .filter((folded) => headState(folded).gen === topGen)
+    .map((folded) => {
+      const start = folded.spine.findIndex(
+        (index) => required(folded.states, index, 'spine points past folded state').gen === topGen,
+      )
+      const trimmed = { ...folded, spine: folded.spine.slice(start) }
+      original.set(trimmed, folded)
+      return trimmed
+    })
+  const resolved = resolveContenders(contenders)
   if (!resolved.ok) {
     return resolved
   }
 
-  const { winner } = resolved
+  const winner = original.get(resolved.winner) ?? resolved.winner
+  // Discarded: what a loser's spine holds that the winner's does not. Counted by digest rather than
+  // from the common prefix, so a reset both carry on different prefixes is not counted as lost.
+  const kept = new Set(winner.spine.map((_, j) => spineDigest(winner, j)))
   let superseded = 0
   for (const loser of distinct) {
     if (loser !== winner) {
-      superseded += loser.spine.length - commonSpine(winner, loser)
+      for (let j = 0; j < loser.spine.length; j++) {
+        if (!kept.has(spineDigest(loser, j))) superseded++
+      }
     }
   }
   return { ok: true, winner: winner.branch, superseded }
