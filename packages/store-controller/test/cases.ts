@@ -1,12 +1,14 @@
 import type { Adapter } from '@hozon/adapter'
-import { HozonDB } from '@hozon/db'
+import { HozonDB, type Kysely } from '@hozon/db'
 import {
   type ControllerLog,
+  createAdd,
   createControllerResolver,
   createInception,
   createRotate,
   decodeKey,
   didFromInception,
+  type EpochEvent,
   foldLog,
   keyTarget,
   LOG_FORKED,
@@ -17,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
 import {
   type ControllerStoreAPI,
+  type ControllerStoreTables,
   controllerStoreDefinition,
   getControllerStore,
 } from '../src/index.js'
@@ -121,6 +124,45 @@ const TRUNCATION_SEED = new Uint8Array(32).fill(2)
 const FORK_SEED = new Uint8Array(32).fill(3)
 const OBSERVED_SEED = new Uint8Array(32).fill(4)
 const OVERWRITE_SEED = new Uint8Array(32).fill(9)
+const RACE_SEED = new Uint8Array(32).fill(10)
+const FIRST_RACE_SEED = new Uint8Array(32).fill(11)
+const LEGACY_SEED = new Uint8Array(32).fill(12)
+
+// An epoch event admitting a member named `name`, rooted at the log's head. The store never verifies
+// events, so these only need to be distinct, well-formed entries.
+function buildAdd(did: string, log: Array<SignedEvent>, logSeed: Uint8Array, name: string) {
+  const folded = foldLog(did, { chain: log, events: [] })
+  if (!folded.ok) throw new Error(`log did not fold: ${folded.reason}`)
+  const head = folded.states[folded.states.length - 1]
+  const key = head?.keys[0]
+  if (head == null || key == null) throw new Error('expected a folded head state')
+  return createAdd({
+    did,
+    head,
+    parents: ['epoch'],
+    seed: logSeed,
+    profile: 0,
+    member: { did: `did:key:${name}`, key, lease: 1_000 },
+  })
+}
+
+function memberNames(log: ControllerLog | undefined): Array<string> {
+  return (log?.events ?? [])
+    .map((signed) => (signed.event as Extract<EpochEvent, { t: 'add' }>).did)
+    .sort()
+}
+
+// Appends `event` to whatever the store holds, yielding to the event loop between the read and the
+// result so a store that does not serialise `merge` lets a concurrent one read the same row.
+function appendEvent(
+  base: Array<SignedEvent>,
+  event: SignedEvent<EpochEvent>,
+): (current: ControllerLog | undefined) => Promise<ControllerLog> {
+  return async (current) => {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    return { chain: current?.chain ?? base, events: [...(current?.events ?? []), event] }
+  }
+}
 
 /**
  * Registers the controller store conformance tests. Call inside a `describe`.
@@ -134,6 +176,8 @@ export function controllerStoreCases(
   const { tablePrefix } = options
   let db: HozonDB
   let store: ControllerStoreAPI
+  let adapter: Adapter
+  let rows: Kysely<ControllerStoreTables>
 
   // Write a chain as the whole stored log, bypassing arbitration: the store writes what `update` returns.
   async function put(did: string, chain: Array<SignedEvent>): Promise<void> {
@@ -141,9 +185,17 @@ export function controllerStoreCases(
   }
 
   beforeAll(async () => {
-    db = new HozonDB({ adapter: await harness.createAdapter(), tablePrefix })
+    adapter = await harness.createAdapter()
+    db = new HozonDB({ adapter, tablePrefix })
     db.register(controllerStoreDefinition)
+    // Direct row access, to store shapes `merge` never writes.
+    db.register({
+      name: 'controller-rows',
+      migrations: {},
+      createAPI: (rowsDB: Kysely<ControllerStoreTables>) => rowsDB,
+    })
     store = await getControllerStore(db)
+    rows = await db.getStore<Kysely<ControllerStoreTables>>('controller-rows')
   }, 60_000)
 
   afterAll(async () => {
@@ -202,6 +254,89 @@ export function controllerStoreCases(
     // store's -- this is the store's defining behavior.
     await put(did, short)
     expect(await store.get(did)).toEqual(chainOnly(short))
+  })
+
+  test('merge applies the update to the stored log and returns it', async () => {
+    const { did, log } = buildRotatedLog(RACE_SEED)
+    const added = buildAdd(did, log, RACE_SEED, 'one')
+    let seen: ControllerLog | undefined = chainOnly([])
+
+    const first = await store.merge(did, async (current) => {
+      seen = current
+      return chainOnly(log)
+    })
+    expect(seen).toBeUndefined()
+    expect(first).toEqual(chainOnly(log))
+
+    const second = await store.merge(did, async (current) => {
+      seen = current
+      return { chain: log, events: [added] }
+    })
+    expect(seen).toEqual(chainOnly(log))
+    expect(second).toEqual({ chain: log, events: [added] })
+    expect(await store.get(did)).toEqual({ chain: log, events: [added] })
+  })
+
+  test('a throwing update writes nothing', async () => {
+    const { did } = buildRotatedLog(RACE_SEED)
+    const before = await store.get(did)
+    await expect(
+      store.merge(did, async () => {
+        throw new Error('refused')
+      }),
+    ).rejects.toThrow('refused')
+    expect(await store.get(did)).toEqual(before)
+  })
+
+  test('two concurrent merges for one stored DID both land', async () => {
+    const { did, log } = buildRotatedLog(RACE_SEED)
+    await put(did, log)
+    const a = buildAdd(did, log, RACE_SEED, 'a')
+    const b = buildAdd(did, log, RACE_SEED, 'b')
+    await Promise.all([
+      store.merge(did, appendEvent(log, a)),
+      store.merge(did, appendEvent(log, b)),
+    ])
+    expect(memberNames(await store.get(did))).toEqual(['did:key:a', 'did:key:b'])
+  })
+
+  test('two concurrent first merges for a new DID both land', async () => {
+    const { did, log } = buildRotatedLog(FIRST_RACE_SEED)
+    const a = buildAdd(did, log, FIRST_RACE_SEED, 'a')
+    const b = buildAdd(did, log, FIRST_RACE_SEED, 'b')
+    expect(await store.get(did)).toBeUndefined()
+    await Promise.all([
+      store.merge(did, appendEvent(log, a)),
+      store.merge(did, appendEvent(log, b)),
+    ])
+    expect(memberNames(await store.get(did))).toEqual(['did:key:a', 'did:key:b'])
+  })
+
+  test('a legacy array row decodes as a chain with no epoch events', async () => {
+    const { did, log } = buildRotatedLog(LEGACY_SEED)
+    await rows
+      .insertInto('controller_logs')
+      .values({ did, log: adapter.encodeJSON(log) as ControllerLog })
+      .execute()
+    expect(await store.get(did)).toEqual(chainOnly(log))
+
+    let seen: ControllerLog | undefined
+    await store.merge(did, async (current) => {
+      seen = current
+      return current as ControllerLog
+    })
+    expect(seen).toEqual(chainOnly(log))
+    // Rewritten in the current shape.
+    expect(await store.get(did)).toEqual(chainOnly(log))
+  })
+
+  test('a stored value that is neither a log nor a legacy array is no memory', async () => {
+    const did = 'did:kokuin:malformed'
+    await rows
+      .insertInto('controller_logs')
+      .values({ did, log: adapter.encodeJSON({ nope: true }) as ControllerLog })
+      .execute()
+    expect(await store.get(did)).toBeUndefined()
   })
 
   test('resolve rejects an unknown DID', async () => {
