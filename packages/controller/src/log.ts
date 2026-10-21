@@ -1,6 +1,6 @@
 import { digestOf } from './canonical.js'
-import { DEFAULT_EPOCH_LIMITS, type EpochLimits, foldEpoch } from './epoch.js'
-import { type EpochEvent, isEpochEventShape, verifyEpochSignature } from './epoch-events.js'
+import { DEFAULT_EPOCH_LIMITS, type EpochLimits, foldEpochDetailed } from './epoch.js'
+import { type EpochEvent, isEpochEventShape } from './epoch-events.js'
 import type { SignedEvent } from './events.js'
 import { type FoldResult, foldLog, type KeyState } from './fold.js'
 import { resolveBranches } from './supersede.js'
@@ -40,19 +40,26 @@ export const LOG_FORKED = 'the loaded log and the one already seen are a fork'
 /** What {@link mergeLogs} and {@link pruneLog} fail with when no chain they were given folds. */
 export const LOG_UNFOLDABLE = 'no controller log chain folds'
 
+/** A fold of a held log, with the copy of each applied event whose signature the fold verified. */
+export type HeldFold = {
+  result: Extract<FoldResult, { ok: true }>
+  /** Per applied digest, the copy that verified. See {@link appliedCopies}. */
+  authentic: ReadonlyMap<string, SignedEvent<EpochEvent>>
+}
+
 /**
  * Fold a log this party already holds: the chain through the full fold, the epoch with no request
  * limit. The request limit bounds what one *input* may make a verifier do; a held log is the union of
- * inputs that each passed it, already authenticated event by event, and may legitimately hold more
- * (a saturated epoch beside the history of earlier ones). Folding it through {@link foldLog} would
- * turn a long memory into `LOG_TOO_LARGE` — "no memory" — which is exactly the forgetting the history
- * exists to prevent.
+ * inputs that each passed it and is already bounded by what memory keeps (one epoch, at most
+ * `MAX_EPOCH_EVENTS + 1` events once saturated), but the union with a fresh presentation can exceed
+ * it. Folding through {@link foldLog} would turn that into `LOG_TOO_LARGE` — "no memory" — which is
+ * exactly the forgetting the history exists to prevent.
  */
 export function foldHeld(
   did: string,
   log: ControllerLog,
   limits?: Partial<EpochLimits>,
-): FoldResult {
+): HeldFold | Extract<FoldResult, { ok: false }> {
   if (!isControllerLog(log)) {
     return { ok: false, reason: MALFORMED_LOG, index: 0 }
   }
@@ -69,63 +76,49 @@ export function withEpoch(
   states: Array<KeyState>,
   events: Array<unknown>,
   limits?: Partial<EpochLimits>,
-): Extract<FoldResult, { ok: true }> {
-  const merged = foldEpoch({ did, chainStates: states, events, limits })
+): HeldFold {
+  const merged = foldEpochDetailed({ did, chainStates: states, events, limits })
   return {
-    ok: true,
-    states,
-    head: merged.head,
-    applied: merged.applied,
-    pending: merged.pending,
-    rejected: merged.rejected,
+    result: {
+      ok: true,
+      states,
+      head: merged.head,
+      applied: merged.applied,
+      pending: merged.pending,
+      rejected: merged.rejected,
+    },
+    authentic: merged.authentic,
   }
 }
 
 /**
- * One copy of each event the fold applied, drawn from `presented`, in the fold's own order (parents
- * first). What may be remembered of an epoch, and nothing else: an entry the fold did not apply was
- * never authenticated, so it never reaches memory however it was presented.
+ * One copy of each event the fold applied, in the fold's own order (parents first): all that may be
+ * remembered of an epoch. An entry the fold did not apply was never authenticated, so it never
+ * reaches memory however it was presented.
  *
- * Two subtleties, both about copies. Copies of one body share a digest and differ only in signatures,
- * and the fold applies the event if *any* copy verifies — so "applied" does not say which copy did.
- * Keeping the first copy seen would let a relay put a forged copy ahead of the genuine one and have
- * memory keep the forgery, losing the event on the next fold. When a digest arrived under one
- * signature list that list is the one that verified; when under several, each is checked against the
- * signer the fold used (the chain head's keys for root, the incarnation's pinned key for a member)
- * until one passes.
+ * The copy is the one the fold itself verified, never re-derived here. Copies of one body share a
+ * digest and differ only in signatures, and the fold applies the event if *any* copy verifies — so
+ * "applied" alone does not say which copy to keep. Keeping the first one presented would let a relay
+ * put a forged copy ahead of the genuine one and have memory keep the forgery, losing the event on
+ * the next fold; re-checking signatures against a signer looked up afresh would answer a subtly
+ * different question from the one the fold answered, and drop the event whenever they disagree.
  *
- * And saturation: an epoch holding more than `MAX_EPOCH_EVENTS` applied events is kept as only the
+ * Saturation: an epoch holding more than `MAX_EPOCH_EVENTS` applied events is kept as only the
  * first `MAX_EPOCH_EVENTS + 1` of them. A prefix of the fold's topological order is closed under
  * ancestors, and an event's authorisation is a function of its ancestors alone, so the prefix refolds
  * to the same events applied — one more than the limit, saturated on every refold, never more held.
  */
 export function appliedCopies(
-  result: Extract<FoldResult, { ok: true }>,
-  presented: Array<unknown>,
+  { result, authentic }: HeldFold,
   limits?: Partial<EpochLimits>,
 ): Array<SignedEvent<EpochEvent>> {
   const maxEvents = limits?.MAX_EPOCH_EVENTS ?? DEFAULT_EPOCH_LIMITS.MAX_EPOCH_EVENTS
   const keep = result.head.saturated ? result.applied.slice(0, maxEvents + 1) : result.applied
-  const wanted = new Set(keep)
-  const copies = new Map<string, Array<SignedEvent<EpochEvent>>>()
-  for (const entry of presented) {
-    if (!isEpochEventShape(entry)) continue
-    const digest = digestOf(entry.event)
-    if (!wanted.has(digest)) continue
-    const list = copies.get(digest)
-    const copy = { event: entry.event, sigs: [...entry.sigs] }
-    if (list === undefined) {
-      copies.set(digest, [copy])
-    } else if (!list.some((known) => sameSignatures(known.sigs, copy.sigs))) {
-      list.push(copy)
-    }
-  }
   const kept: Array<SignedEvent<EpochEvent>> = []
   for (const digest of keep) {
-    const list = copies.get(digest) ?? []
-    const authentic = list.length === 1 ? list[0] : list.find((copy) => verifies(copy, result.head))
-    if (authentic !== undefined) {
-      kept.push(authentic)
+    const copy = authentic.get(digest)
+    if (copy !== undefined) {
+      kept.push({ event: copy.event, sigs: [...copy.sigs] })
     }
   }
   return kept
@@ -133,15 +126,6 @@ export function appliedCopies(
 
 function sameSignatures(a: Array<string>, b: Array<string>): boolean {
   return a.length === b.length && a.every((sig, i) => sig === b[i])
-}
-
-/** Whether `copy` verifies under the signer the fold judged its event by. */
-function verifies(copy: SignedEvent<EpochEvent>, head: KeyState): boolean {
-  if (copy.event.by === undefined) {
-    return verifyEpochSignature(copy, { rootKeys: head.keys })
-  }
-  const member = head.members.get(copy.event.by)
-  return member !== undefined && verifyEpochSignature(copy, { memberKey: member.key })
 }
 
 /**
@@ -217,11 +201,11 @@ export function mergeLogs(did: string, a: ControllerLog, b: ControllerLog): Cont
  * {@link foldHeld}). Throws {@link LOG_UNFOLDABLE} when the chain does not fold.
  */
 export function pruneLog(did: string, log: ControllerLog): ControllerLog {
-  const result = foldHeld(did, log)
-  if (!result.ok) {
-    throw new Error(`${LOG_UNFOLDABLE}: ${did}: ${result.reason} at event ${result.index}`)
+  const held = foldHeld(did, log)
+  if (!('result' in held)) {
+    throw new Error(`${LOG_UNFOLDABLE}: ${did}: ${held.reason} at event ${held.index}`)
   }
-  const { states, head } = result
+  const { states, head } = held.result
   const chain: Array<SignedEvent> = []
   for (const [i, signed] of log.chain.entries()) {
     const state = states[i]
@@ -230,5 +214,5 @@ export function pruneLog(did: string, log: ControllerLog): ControllerLog {
       chain.push(signed)
     }
   }
-  return { chain, events: appliedCopies(result, log.events) }
+  return { chain, events: appliedCopies(held) }
 }

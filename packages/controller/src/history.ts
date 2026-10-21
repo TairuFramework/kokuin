@@ -1,6 +1,4 @@
 import type { EpochLimits } from './epoch.js'
-import { type EpochEvent, isEpochEventShape } from './epoch-events.js'
-import type { SignedEvent } from './events.js'
 import { type FoldResult, foldLog, type KeyState } from './fold.js'
 import { MAX_LOG_EVENTS } from './limits.js'
 import {
@@ -105,6 +103,17 @@ function recall(
   return head === undefined ? undefined : { log: seen, head }
 }
 
+/** What {@link authoritativeLog} takes. */
+export type AuthoritativeLogParams = {
+  did: string
+  loaded: ControllerLog
+  seen: ControllerLog | undefined
+  context: string
+}
+
+/** What {@link authoritativeLog} answers: the log to remember, and the fold to answer from. */
+export type AuthoritativeLog = { log: ControllerLog; result: Extract<FoldResult, { ok: true }> }
+
 /**
  * Fold the loaded log against the one already seen, and say what to remember.
  *
@@ -120,39 +129,37 @@ function recall(
  * presentation that withholds an event this party has seen cannot make it forget it. The returned
  * `result` answers for that union, not for the presentation alone.
  *
- * **What to remember** is the settled chain, the events seen, and — from `loaded` — only the events
- * the fold applied. An unsigned, forged, malformed or still-pending entry was never authenticated, so
- * it never reaches the store: a relay flooding a presentation changes nothing remembered (and,
- * counting only applied events, cannot saturate the epoch either). A pending event is not lost
- * forever by this, only not vouched for: once its parents are known, presenting it again applies it.
- * A saturated epoch is remembered as exactly enough events to stay saturated on every refold (see
- * `appliedCopies`), so the refusal persists through a later presentation of a subset, until a
- * settlement opens a fresh epoch. Events of earlier epochs that were seen stay as history; they have
- * no effect, and `pruneLog` drops them.
+ * **What to remember** is the settled chain and the current epoch's applied events — nothing else.
+ * From `loaded`, an unsigned, forged, malformed or still-pending entry was never authenticated, so it
+ * never reaches the store: a relay flooding a presentation changes nothing remembered (and, counting
+ * only applied events, cannot saturate the epoch either). A pending event is not lost forever by
+ * this, only not vouched for: once its parents are known, presenting it again applies it. Events of
+ * any other epoch are dropped, seen or not: an event naming another epoch has no effect, its effect is
+ * in the newer snapshot or was dropped by it, and a verifier never needs to ingest a superseded epoch
+ * to fold the current one. That is what bounds memory: one epoch, at most `MAX_EPOCH_EVENTS + 1`
+ * events once saturated (see `appliedCopies`), so a held log always passes the request limit when
+ * forwarded, and a flooded epoch is gone the moment a settlement supersedes it. A saturated epoch's
+ * refusal persists through a later presentation of a subset, until that settlement.
  *
  * A stored log whose chain no longer folds is treated as no memory: local corruption or a tightened
  * fold rule is one round of the guarantee to give up, since only a folded log was ever stored and
  * refusing forever would brick every cached profile. A stored *saturated* epoch is not that case — it
  * folds, saturated, and is merged like any other memory, so its refusal stands. Stored epoch events are
- * folded without the request limit, which bounds a single input, not the union of inputs that each
- * passed it.
- *
- * `limits` is test-only: it lowers the saturation threshold so saturation is reachable without
- * thousands of signatures.
+ * folded together with the presentation without the request limit, which bounds a single input, not
+ * the union of two inputs that each passed it.
  */
-export function authoritativeLog({
-  did,
-  loaded,
-  seen,
-  context,
-  limits,
-}: {
-  did: string
-  loaded: ControllerLog
-  seen: ControllerLog | undefined
-  context: string
-  limits?: Partial<EpochLimits>
-}): { log: ControllerLog; result: Extract<FoldResult, { ok: true }> } {
+export function authoritativeLog(params: AuthoritativeLogParams): AuthoritativeLog {
+  return authoritativeLogWithin(params)
+}
+
+/**
+ * {@link authoritativeLog} under lowered epoch limits. Test-only: saturation is then reachable
+ * without thousands of signatures. Not exported from the package.
+ */
+export function authoritativeLogWithin(
+  { did, loaded, seen, context }: AuthoritativeLogParams,
+  limits?: Partial<EpochLimits>,
+): AuthoritativeLog {
   const invalid = (reason: string, index: number) =>
     new Error(`${context}: invalid log for ${did}: ${reason} at event ${index}`)
   // The request limit, before any work: `loaded` is the one untrusted input here.
@@ -194,14 +201,6 @@ export function authoritativeLog({
   }
 
   const remembered: Array<unknown> = memory?.log.events ?? []
-  const presented = [...remembered, ...loaded.events]
-  const result = withEpoch(did, states, presented, limits)
-  const history = remembered.filter(
-    (entry): entry is SignedEvent<EpochEvent> =>
-      isEpochEventShape(entry) && entry.event.e !== result.head.epoch,
-  )
-  return {
-    log: { chain, events: [...history, ...appliedCopies(result, presented, limits)] },
-    result,
-  }
+  const held = withEpoch(did, states, [...remembered, ...loaded.events], limits)
+  return { log: { chain, events: appliedCopies(held, limits) }, result: held.result }
 }

@@ -1,5 +1,5 @@
 import { digestOf } from './canonical.js'
-import { type RotateEvent, type SignedEvent, verifyRotate } from './events.js'
+import type { SignedEvent } from './events.js'
 import { type FoldResult, foldLog, type KeyState } from './fold.js'
 
 /** Index into an array whose element is a branch-resolution invariant, throwing rather than reading undefined. */
@@ -117,48 +117,20 @@ function commonSpine(a: FoldedBranch, b: FoldedBranch): number {
   return j
 }
 
-/**
- * Does `candidate` supersede `incumbent` at the point their branches diverge? Per KERI, a rotate
- * signed by the pre-committed next keys outranks any current-key operation — at the diverging
- * position *and* over everything after it on the losing branch. That is what makes the owner win the
- * race against a thief holding a current key regardless of who published first or how far ahead: a
- * stolen current key cannot rotate but can sign current-key events without limit, so length must not
- * decide this. The root chain itself holds only `icp`/`rot`, so two branches that both fold diverge on
- * two rotates, neither of which supersedes the other: duplicity, for a reset to resolve.
- */
-function supersedes({
-  candidate,
-  incumbent,
-  priorDigest,
-  priorNext,
-}: {
-  candidate: SignedEvent
-  incumbent: SignedEvent
-  priorDigest: string
-  priorNext: Array<string>
-}): boolean {
-  if (candidate.event.t !== 'rot') {
-    return false
-  }
-  if (incumbent.event.t === 'rot') {
-    return false
-  }
-  return verifyRotate(candidate as SignedEvent<RotateEvent>, {
-    digest: priorDigest,
-    n: priorNext,
-  })
-}
-
 type Resolution =
   | { ok: true; winner: FoldedBranch }
   | { ok: false; failure: ResolveFailure; duplicity: Duplicity }
 
 /**
- * Walk the contenders down to one, deciding at each divergence point rather than at the heads. Every
- * step resolves the *whole* surviving group at once: with three or more contenders, a sequential
- * pairwise reduction could compare two losing branches before reaching the one that supersedes both,
- * reporting duplicity between the losers and making the outcome depend on presentation order. The
- * group shrinks strictly each iteration, so this terminates.
+ * Walk the contenders down to one, deciding at each divergence point rather than at the heads. A
+ * contender ending at the divergence point is a prefix of the others and drops out; once every
+ * remaining contender carries an event there, they disagree on it, and nothing on the root chain can
+ * settle that within a generation — the chain holds only `icp` and `rot`, and two rotates at one
+ * position (or two resets at one generation) are both signed by keys only the controller holds,
+ * neither outranking the other. That is duplicity, for a reset at a higher generation to resolve.
+ *
+ * The whole surviving group is judged at once rather than pairwise, so the report is the same in every
+ * presentation order. The group shrinks strictly each iteration, so this terminates.
  */
 function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
   let group = contenders
@@ -185,112 +157,42 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
       continue
     }
 
-    // Group the contenders by the event they diverge on. Branches sharing one are decided further
-    // down.
-    const rivals = new Map<string, Array<FoldedBranch>>()
-    for (const folded of group) {
-      const digest = spineDigest(folded, divergence)
-      const bucket = rivals.get(digest)
-      if (bucket == null) {
-        rivals.set(digest, [folded])
-      } else {
-        bucket.push(folded)
-      }
-    }
-    const groups = [...rivals.values()]
-
-    // The state the diverging events all chain to. Identical across contenders, so any can answer.
-    const first = required(required(groups, 0, 'empty rival groups'), 0, 'empty rival group')
-    const prior = required(
-      first.states,
-      required(first.spine, divergence, 'spine index out of range') - 1,
+    // Every contender carries an event at the divergence point and at least two differ: two events the
+    // controller cannot both have authored. Deterministic regardless of arrival order: sort the
+    // conflicting digests, report from the branch sorted first.
+    const digests = [...new Set(group.map((folded) => spineDigest(folded, divergence)))].sort()
+    const firstDigest = required(digests, 0, 'no diverging digests')
+    const secondDigest = required(digests, 1, 'duplicity needs two digests')
+    const reporter = group.find(
+      (folded) => spineDigest(folded, divergence) === firstDigest,
+    ) as FoldedBranch
+    const at = required(
+      reporter.states,
+      required(reporter.spine, divergence, 'spine index out of range'),
       'divergence points past folded state',
     )
-
-    let dominant = -1
-    for (let i = 0; i < groups.length; i++) {
-      const candidateHead = required(
-        required(groups, i, 'empty rival group'),
-        0,
-        'empty rival group',
-      )
-      const candidate = required(
-        candidateHead.branch,
-        required(candidateHead.spine, divergence, 'spine index out of range'),
-        'divergence points past branch',
-      )
-      const dominatesAll = groups.every((other, j) => {
-        if (j === i) {
-          return true
-        }
-        const otherHead = required(other, 0, 'empty rival group')
-        return supersedes({
-          candidate,
-          incumbent: required(
-            otherHead.branch,
-            required(otherHead.spine, divergence, 'spine index out of range'),
-            'divergence points past branch',
-          ),
-          priorDigest: prior.digest,
-          priorNext: prior.next,
-        })
-      })
-      if (dominatesAll) {
-        if (dominant !== -1) {
-          // More than one branch dominates every other — impossible for a legitimate rotate (two
-          // distinct rotates never both supersede one another), but fall through to duplicity
-          // defensively rather than pick arbitrarily.
-          dominant = -2
-          break
-        }
-        dominant = i
-      }
+    return {
+      ok: false,
+      failure: 'duplicity',
+      duplicity: { gen: at.gen, seq: at.seq, digests: [firstDigest, secondDigest] },
     }
-
-    if (dominant < 0) {
-      // Two events the controller cannot both have authored, no rotate to settle it. Deterministic
-      // regardless of arrival order: sort the conflicting digests, report from the branch sorted
-      // first.
-      const digests = groups
-        .map((members) => spineDigest(required(members, 0, 'empty rival group'), divergence))
-        .sort()
-      const firstDigest = required(digests, 0, 'no diverging digests')
-      const secondDigest = required(digests, 1, 'duplicity needs two digests')
-      const reporter = groups.find(
-        (members) =>
-          spineDigest(required(members, 0, 'empty rival group'), divergence) === firstDigest,
-      ) as Array<FoldedBranch>
-      const reporterHead = required(reporter, 0, 'empty rival group')
-      const at = required(
-        reporterHead.states,
-        required(reporterHead.spine, divergence, 'spine index out of range'),
-        'divergence points past folded state',
-      )
-      return {
-        ok: false,
-        failure: 'duplicity',
-        duplicity: { gen: at.gen, seq: at.seq, digests: [firstDigest, secondDigest] },
-      }
-    }
-
-    group = required(groups, dominant, 'dominant group missing')
   }
 
   return { ok: true, winner: required(group, 0, 'empty contender group') }
 }
 
 /**
- * Pick the authoritative root chain among `chains` â chains only: epoch events never fork the log, so
+ * Pick the authoritative root chain among `chains` — chains only: epoch events never fork the log, so
  * they are never a branch to choose between (see `mergeLogs` in `log.ts`). Two rules, in order:
  *
  * 1. The highest folded generation wins outright. Only a reset raises the generation, and only the
- *    committed recovery key can author a reset â the root's override, unreachable by a thief.
+ *    committed recovery key can author a reset — the root's override, unreachable by a thief.
  * 2. Within that generation, chains are compared **at the point they diverge**, not at their heads. A
  *    chain that ends at the divergence point is a prefix of the other and loses to it; two chains
  *    that each carry an event there are duplicity, surfaced rather than merged.
  *
  * With root adds and root revokes moved into epochs, the chain holds only `icp` and `rot`, so the
- * second case is always two rotates, or two resets at one generation â both signed by keys only the
+ * second case is always two rotates, or two resets at one generation — both signed by keys only the
  * controller holds, neither outranking the other, and settled only by a reset at a higher generation.
  * The current-key event a cold rotate outranks still exists, but in the epoch that rotate closes,
  * where the fold gives it no effect; branch selection never sees it. That is also why chain length
@@ -299,7 +201,7 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
  * history carried further, which the divergence walk sees as a prefix.
  *
  * `superseded` counts the state-advancing events discarded from losing chains (what a cache must
- * invalidate â folded state is not append-only under supersession); skipped events are not counted.
+ * invalidate — folded state is not append-only under supersession); skipped events are not counted.
  * Chains that do not fold are filtered out before comparison, so a thief who cannot produce a valid
  * event cannot create a duplicity report.
  */

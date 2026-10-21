@@ -2,7 +2,9 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
+import type { EpochLimits } from '../src/epoch.js'
 import {
+  createRemove,
   createRevoke,
   type EpochEvent,
   type EpochSigner,
@@ -19,7 +21,9 @@ import {
 } from '../src/events.js'
 import { type FoldResult, foldLog, type KeyState } from '../src/fold.js'
 import {
+  type AuthoritativeLogParams,
   authoritativeLog,
+  authoritativeLogWithin,
   createMemoryLogStore,
   LOG_FORKED,
   LOG_NOT_AUTHORITATIVE,
@@ -74,6 +78,14 @@ function revoke(
   on: KeyState = head,
 ): SignedEvent<EpochEvent> {
   return createRevoke({ signer, did, head: on, parents, target })
+}
+
+/** Under a lowered saturation threshold, so saturation is reachable with a handful of signatures. */
+function underLimit({
+  limits,
+  ...params
+}: AuthoritativeLogParams & { limits: Partial<EpochLimits> }) {
+  return authoritativeLogWithin(params, limits)
 }
 
 const digest = (signed: SignedEvent<EpochEvent>): string => digestOf(signed.event)
@@ -155,7 +167,7 @@ describe('authoritativeLog()', () => {
 
   test('thousands of unsigned epoch events are neither stored nor saturating', () => {
     const flood = { chain, events: Array.from({ length: 5000 }, (_, n) => unsignedRevoke(n)) }
-    const { log, result } = authoritativeLog({
+    const { log, result } = underLimit({
       did,
       loaded: flood,
       seen: undefined,
@@ -192,10 +204,39 @@ describe('authoritativeLog()', () => {
     expect(alone.log.events).toHaveLength(0)
   })
 
+  test('the copy remembered is the one the fold verified, even once its signer is removed', () => {
+    // A member's revoke and root's removal of that member, concurrent: the revoke stands (its causal
+    // past holds the member), and the head no longer counts the member. Memory must still keep the
+    // member's genuine copy of the revoke, not a forged one presented beside it, and not neither.
+    const removal = createRemove({
+      signer: root,
+      did,
+      head,
+      parents: [head.epoch],
+      add: member.add,
+    })
+    const forged = { event: revA.event, sigs: [revB.sigs[0] as string] }
+    for (const events of [
+      [forged, revA, removal],
+      [removal, revA, forged],
+    ]) {
+      const { log, result } = authoritativeLog({
+        did,
+        loaded: { chain, events },
+        seen: undefined,
+        context,
+      })
+      expect(result.head.members.get(member.add)?.effective).toBe(false)
+      expect(result.head.deny.has('did:key:zA')).toBe(true)
+      expect(stored(log)).toEqual([revA, removal].map(digest).sort())
+      expect(log.events.find((entry) => digest(entry) === digest(revA))?.sigs).toEqual(revA.sigs)
+    }
+  })
+
   test('saturation persists when a later presentation carries only a subset', () => {
     const limits = { MAX_EPOCH_EVENTS: 2 }
     const all = [revA, revB, child, revoke('did:key:zD')]
-    const first = authoritativeLog({
+    const first = underLimit({
       did,
       loaded: { chain, events: all },
       seen: undefined,
@@ -212,12 +253,11 @@ describe('authoritativeLog()', () => {
       expect(event.p.every((parent) => parent === head.epoch || kept.has(parent))).toBe(true)
     }
 
-    const later = authoritativeLog({ did, loaded: withRevA, seen: first.log, context, limits })
+    const later = underLimit({ did, loaded: withRevA, seen: first.log, context, limits })
     expect(later.result.head.saturated).toBe(true)
     // CONTROL — the subset on its own does not saturate: memory is what keeps the refusal.
     expect(
-      authoritativeLog({ did, loaded: withRevA, seen: undefined, context, limits }).result.head
-        .saturated,
+      underLimit({ did, loaded: withRevA, seen: undefined, context, limits }).result.head.saturated,
     ).toBe(false)
   })
 
@@ -277,7 +317,7 @@ describe('authoritativeLog()', () => {
 
   test('a settlement drops a flood: the next epoch folds without ingesting the old one', () => {
     const limits = { MAX_EPOCH_EVENTS: 2 }
-    const flooded = authoritativeLog({
+    const flooded = underLimit({
       did,
       loaded: { chain, events: [revA, revB, child] },
       seen: undefined,
@@ -291,16 +331,54 @@ describe('authoritativeLog()', () => {
     const nextHead = folded({ chain: [icp, rot, settled], events: [] }).head
     const next = revoke('did:key:zNext', [nextHead.epoch], root, nextHead)
     const loaded = { chain: [icp, rot, settled], events: [next] }
-    const { log, result } = authoritativeLog({ did, loaded, seen: flooded.log, context, limits })
+    const { log, result } = underLimit({ did, loaded, seen: flooded.log, context, limits })
     expect(result.head.saturated).toBe(false)
     expect([...result.head.deny].sort()).toEqual(['did:key:zA', 'did:key:zNext'])
-    // The old epoch survives in memory only as history; a pruned copy carries none of it and folds the
-    // same.
-    expect(log.events).toHaveLength(flooded.log.events.length + 1)
-    const pruned = pruneLog(did, log)
-    expect(pruned.events).toEqual([next])
-    expect(deny(pruned)).toEqual(deny(log))
+    // The old epoch is gone from memory at the settlement: what is held is the new epoch alone, already
+    // as small as pruning would make it.
+    expect(flooded.log.events).toHaveLength(limits.MAX_EPOCH_EVENTS + 1)
+    expect(log.events).toEqual([next])
+    expect(pruneLog(did, log)).toEqual(log)
     expect(deny(loaded)).toEqual(deny(log))
+
+    // Dropping the old epoch is not forgetting the current one: a presentation withholding `next`
+    // still answers with it, and memory keeps it.
+    const withheld = underLimit({
+      did,
+      loaded: { chain: loaded.chain, events: [] },
+      seen: log,
+      context,
+      limits,
+    })
+    expect(withheld.result.head.deny.has('did:key:zNext')).toBe(true)
+    expect(withheld.log.events).toEqual([next])
+  })
+
+  test('memory holds one epoch: saturating epoch after epoch never grows it', () => {
+    const limits = { MAX_EPOCH_EVENTS: 2 }
+    let seen: ControllerLog | undefined
+    let prior = rot
+    let presented = chain
+    for (let round = 0; round < 3; round++) {
+      const on = folded({ chain: presented, events: [] }).head
+      const events = ['zW', 'zX', 'zY', 'zZ'].map((name) =>
+        revoke(`did:key:${name}${round}`, [on.epoch], root, on),
+      )
+      const { log, result } = underLimit({
+        did,
+        loaded: { chain: presented, events },
+        seen,
+        context,
+        limits,
+      })
+      expect(result.head.saturated).toBe(true)
+      expect(log.events).toHaveLength(limits.MAX_EPOCH_EVENTS + 1)
+      expect(log.events.every(({ event }) => event.e === on.epoch)).toBe(true)
+      seen = log
+      const next = settle(prior.event)
+      presented = [...presented, next]
+      prior = next
+    }
   })
 })
 

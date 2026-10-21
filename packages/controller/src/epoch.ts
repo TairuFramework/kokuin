@@ -91,6 +91,11 @@ export type FoldEpochResult = {
 export type FoldEpochDetail = FoldEpochResult & {
   /** Why each refused event was refused, by digest. Entries that are not events at all have no digest. */
   reasons: Map<string, string>
+  /**
+   * The copy that verified, for each applied digest: what may be remembered of the event. A copy of a
+   * body under other signatures shares its digest, so the digest alone does not say which to keep.
+   */
+  authentic: Map<string, SignedEvent<EpochEvent>>
 }
 
 function emptyState(): EpochState {
@@ -156,6 +161,8 @@ type Candidate = {
   event: EpochEvent
   /** Every presented copy. They share a body and so a digest; they differ only in signatures. */
   copies: Array<SignedEvent<EpochEvent>>
+  /** The copy whose signature verified, once {@link evaluate} has found one. */
+  authentic?: SignedEvent<EpochEvent>
 }
 
 /** Why an event is refused outright, or `null` when it is a candidate to evaluate. */
@@ -182,7 +189,10 @@ function evaluate(
   // genuine one depending on arrival order.
   let signer: MemberEntry | null = null
   if (event.by === undefined) {
-    if (!candidate.copies.some((c) => verifyEpochSignature(c, { rootKeys: anchor.keys }))) {
+    candidate.authentic = candidate.copies.find((c) =>
+      verifyEpochSignature(c, { rootKeys: anchor.keys }),
+    )
+    if (candidate.authentic === undefined) {
       return { reason: 'invalid root signature' }
     }
   } else {
@@ -191,7 +201,10 @@ function evaluate(
     if (causal.removed.has(event.by)) return { reason: 'signer was removed in the causal state' }
     if (isDenied(causal.deny, member, matches))
       return { reason: 'signer is denied in the causal state' }
-    if (!candidate.copies.some((c) => verifyEpochSignature(c, { memberKey: member.key }))) {
+    candidate.authentic = candidate.copies.find((c) =>
+      verifyEpochSignature(c, { memberKey: member.key }),
+    )
+    if (candidate.authentic === undefined) {
       return { reason: 'invalid member signature' }
     }
     signer = member
@@ -395,6 +408,7 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
   const after = new Map<string, EpochState>()
   const unread = new Map<string, number>()
   const applied: Array<string> = []
+  const authentic = new Map<string, SignedEvent<EpochEvent>>()
   const union = copyState(anchorAfter)
   let evaluated = 0
 
@@ -430,6 +444,7 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
       continue
     }
     applied.push(digest)
+    if (candidate.authentic !== undefined) authentic.set(digest, candidate.authentic)
     joinInto(union, outcome.effect)
     const kids = children.get(digest)
     if (kids !== undefined && kids.length > 0) {
@@ -471,11 +486,12 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
     pending,
     rejected,
     reasons,
+    authentic,
   }
 }
 
-/** {@link foldEpochDetailed} without the per-event reasons. */
+/** {@link foldEpochDetailed} without the per-event reasons and copies. */
 export function foldEpoch(params: FoldEpochParams): FoldEpochResult {
-  const { reasons: _reasons, ...result } = foldEpochDetailed(params)
+  const { reasons: _reasons, authentic: _authentic, ...result } = foldEpochDetailed(params)
   return result
 }

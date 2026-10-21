@@ -594,12 +594,13 @@ export function runControllerConformance(
         }
       })
 
-      // The root chain holds no current-key events any more: root revokes and adds live in epochs.
-      // So the event a cold rotate outranks is a current-key one in the epoch that rotate closes —
-      // the precedence is unchanged, only where the loser sits. A thief holding the current key can
-      // sign such events without limit; none of them survives the owner's rotate, which does not
-      // carry them, and none can stop it, since none is on the chain.
-      test('a cold rotate beats a current-key root event in the epoch it closes', () => {
+      // The spec's "a cold rot beats a current-key root event", in the form it now takes. Root revokes
+      // and adds live in epochs, so no current-key event is ever on the chain for branch selection to
+      // weigh: `resolveBranches` here only sees a prefix and its extension. What makes the rotate win
+      // is the epoch rule — old epochs never count — so this exercises that rule against a
+      // current-key event signed on the chain the rotate closes. A thief holding the current key can
+      // sign such events without limit; none survives the owner's rotate, which does not carry them.
+      test('a current-key root event has no effect once a cold rotate closes its epoch', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
         const atInception = impl.foldLog(did, { chain: [icp], events: [] })
