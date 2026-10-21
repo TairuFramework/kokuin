@@ -21,3 +21,9 @@ export const MAX_EVENT_BYTES = 8192
 
 /** A member's lease when the caller names none: 90 days, in seconds. */
 export const DEFAULT_LEASE_SECONDS = 7_776_000
+
+/**
+ * Request limit: signatures one epoch event may carry. Not counted in {@link MAX_EVENT_BYTES}, so it
+ * bounds the walk separately; a member event carries exactly one, a root event one per chain key.
+ */
+export const MAX_EVENT_SIGNATURES = 16

@@ -86,6 +86,30 @@ export type CreateRotateOptions = {
   snapshot: ConformanceStateSnapshot
 }
 
+/** A signed management-tier event: an epoch event has no root-chain `s`, so it is not a {@link ConformanceSigned}. */
+export type ConformanceEpochSigned = { event: Record<string, unknown>; sigs: Array<string> }
+
+/** Who signs an epoch event: the root, from its seed, or a member, from its pinned key's private half. */
+export type ConformanceEpochSigner =
+  | { root: { seed: Uint8Array; profile: number } }
+  | { member: { privateKey: Uint8Array; add: string } }
+
+/** The fields an epoch event adds to its envelope, by type. An add is root-only. */
+export type ConformanceEpochBody =
+  | { t: 'add'; member: { did: string; key: string; lease: number } }
+  | { t: 'ren'; add: string; lease: number }
+  | { t: 'rmv'; add: string }
+  | { t: 'rev'; target: string }
+
+export type ConformanceEpochEventParams = {
+  signer: ConformanceEpochSigner
+  did: string
+  /** The folded head the event builds on, naming the generation, the epoch and the signing key. */
+  head: ConformanceKeyState
+  parents: Array<string>
+  body: ConformanceEpochBody
+}
+
 /**
  * The contract every did:kokuin controller implementation owes, typed against its real
  * signatures rather than `(...args: never[]) => unknown` — an assertion suite can only exercise a
@@ -129,6 +153,10 @@ export type ControllerImplementation = {
    * declares an empty `ka`, isolating that check like `recoveryPrivateKey` does the root-override one.
    */
   authorityPrivateKey: (seed: Uint8Array, profile: number, gen: number, seq: number) => Uint8Array
+  /** Builds and signs one epoch event; throws on what the real builders refuse. */
+  createEpochEvent: (params: ConformanceEpochEventParams) => ConformanceEpochSigned
+  /** Test-support only: a fresh Ed25519 member key pair and the `did:key` that carries it. */
+  memberKeyPair: () => { privateKey: Uint8Array; key: string; did: string }
   /** Test-support only: sign an event with arbitrary private keys. Used only for the forgeries above. */
   signEvent: (event: ConformanceEvent, privateKeys: Array<Uint8Array>) => Array<string>
 }

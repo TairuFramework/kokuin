@@ -1,9 +1,21 @@
-import type { ConformanceSuite, ControllerImplementation } from '@kokuin/controller-conformance'
+import type {
+  ConformanceEpochBody,
+  ConformanceSuite,
+  ControllerImplementation,
+} from '@kokuin/controller-conformance'
 import { runControllerConformance } from '@kokuin/controller-conformance'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
 import { authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
+import {
+  createAdd,
+  createRemove,
+  createRenew,
+  createRevoke,
+  type EpochSigner,
+} from '../src/epoch-events.js'
 import {
   type CreateRotateOptions,
   createInception,
@@ -18,7 +30,8 @@ import {
   // key to isolate the recovery-digest check from signature verification.
   signEvent,
 } from '../src/events.js'
-import { foldLog } from '../src/fold.js'
+import { foldLog, type KeyState } from '../src/fold.js'
+import { encodeKey } from '../src/keys.js'
 import { enumerateProfiles } from '../src/profiles.js'
 import { resolveBranches } from '../src/supersede.js'
 
@@ -35,6 +48,43 @@ function authorityPrivateKey(
   seq: number,
 ): Uint8Array {
   return deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA').privateKey
+}
+
+/** Test-support only: a fresh Ed25519 member key pair and the `did:key` that carries it. */
+function memberKeyPair(): { privateKey: Uint8Array; key: string; did: string } {
+  const privateKey = ed25519.utils.randomSecretKey()
+  const key = encodeKey(ed25519.getPublicKey(privateKey), 'EdDSA')
+  return { privateKey, key, did: `did:key:${key}` }
+}
+
+/** The one builder the contract names, over the real per-type ones. */
+function createEpochEvent({
+  signer,
+  did,
+  head,
+  parents,
+  body,
+}: {
+  signer: EpochSigner
+  did: string
+  head: KeyState
+  parents: Array<string>
+  body: ConformanceEpochBody
+}) {
+  const base = { did, head, parents }
+  switch (body.t) {
+    case 'add':
+      if (!('root' in signer)) {
+        throw new Error('an add is root-only')
+      }
+      return createAdd({ ...base, ...signer.root, member: body.member })
+    case 'ren':
+      return createRenew({ ...base, signer, add: body.add, lease: body.lease })
+    case 'rmv':
+      return createRemove({ ...base, signer, add: body.add })
+    case 'rev':
+      return createRevoke({ ...base, signer, target: body.target })
+  }
 }
 
 // vitest's `expect` is structurally wider than the suite's minimal `ConformanceExpectation` —
@@ -67,6 +117,8 @@ const implementation = {
   digestOf,
   recoveryPrivateKey,
   authorityPrivateKey,
+  createEpochEvent,
+  memberKeyPair,
   signEvent,
 }
 

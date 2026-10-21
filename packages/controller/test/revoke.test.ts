@@ -59,9 +59,8 @@ describe('the root chain carries no revoke', () => {
     }
   })
 
-  test('the chain revoke builders and the async fold are gone', async () => {
+  test('the chain revoke verifier and the async fold are gone', async () => {
     const controller = await import('../src/index.js')
-    expect('createRevoke' in controller).toBe(false)
     expect('verifyRevoke' in controller).toBe(false)
     expect('foldLogAsync' in controller).toBe(false)
     expect('resolveBranchesAsync' in controller).toBe(false)

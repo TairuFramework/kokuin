@@ -26,6 +26,26 @@ export {
   recoveryPath,
 } from './derivation.js'
 export {
+  type AddEvent,
+  type CreateAddParams,
+  type CreateRemoveParams,
+  type CreateRenewParams,
+  type CreateRevokeParams,
+  createAdd,
+  createRemove,
+  createRenew,
+  createRevoke,
+  type EpochEvent,
+  type EpochEventCommon,
+  type EpochEventType,
+  type EpochSigner,
+  isEpochEventShape,
+  type RemoveEvent,
+  type RenewEvent,
+  type RevokeEvent,
+  verifyEpochSignature,
+} from './epoch-events.js'
+export {
   type CreateRotateOptions,
   createInception,
   createReset,
@@ -86,6 +106,14 @@ export {
   type ProvideControllerIdentityParams,
   provideControllerIdentity,
 } from './keystore-identity.js'
+export {
+  DEFAULT_LEASE_SECONDS,
+  MAX_EPOCH_EVENTS,
+  MAX_EVENT_BYTES,
+  MAX_EVENT_PARENTS,
+  MAX_EVENT_SIGNATURES,
+  MAX_LOG_EVENTS,
+} from './limits.js'
 export { enumerateProfiles, handleForDID, type ProfileEntry } from './profiles.js'
 export { type ControllerResolverOptions, createControllerResolver } from './resolver.js'
 export {

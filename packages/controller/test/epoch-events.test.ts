@@ -13,16 +13,21 @@ import {
   verifyEpochSignature,
 } from '../src/epoch-events.js'
 import { createInception, createRotate, didFromInception, type SignedEvent } from '../src/events.js'
-import { foldLog, type KeyState } from '../src/fold.js'
+import { foldLog, type KeyState, snapshotOf } from '../src/fold.js'
 import { encodeKey } from '../src/keys.js'
-import { DEFAULT_LEASE_SECONDS, MAX_EVENT_BYTES, MAX_EVENT_PARENTS } from '../src/limits.js'
+import {
+  DEFAULT_LEASE_SECONDS,
+  MAX_EVENT_BYTES,
+  MAX_EVENT_PARENTS,
+  MAX_EVENT_SIGNATURES,
+} from '../src/limits.js'
 
 const seed = new Uint8Array(32).fill(1)
 const profile = 0
 const inception = createInception(seed, profile)
 const did = didFromInception(inception.event)
 
-function headOf(events: Array<SignedEvent>): KeyState & { epoch: string } {
+function headOf(events: Array<SignedEvent>): KeyState {
   const result = foldLog(did, events)
   if (!result.ok) {
     throw new Error(`fixture log does not fold: ${result.reason}`)
@@ -31,7 +36,7 @@ function headOf(events: Array<SignedEvent>): KeyState & { epoch: string } {
   if (state === undefined) {
     throw new Error('fixture log folded to no state')
   }
-  return { ...state, epoch: state.digest }
+  return state
 }
 
 function memberKeyPair(): { privateKey: Uint8Array; key: string; did: string } {
@@ -72,12 +77,19 @@ describe('builders', () => {
       lease: member.lease,
     })
     expect(add.event.by).toBeUndefined()
+    expect('by' in add.event).toBe(false)
     expect(isEpochEventShape(add)).toBe(true)
     expect(verifyEpochSignature(add, { rootKeys: head.keys })).toBe(true)
   })
 
   test('a root signer derives the key at the head`s key position, not the inception`s', () => {
-    const rot = createRotate({ seed, profile, did, prior: inception.event })
+    const rot = createRotate({
+      seed,
+      profile,
+      did,
+      prior: inception.event,
+      options: { snapshot: snapshotOf(head) },
+    })
     const rotated = headOf([inception, rot])
     const add = createAdd({ seed, profile, did, head: rotated, parents: [rotated.epoch], member })
     expect(verifyEpochSignature(add, { rootKeys: rotated.keys })).toBe(true)
@@ -85,13 +97,26 @@ describe('builders', () => {
   })
 
   test('a root signer whose key the head does not publish is refused at build time', () => {
-    const rot = createRotate({ seed, profile, did, prior: inception.event })
+    const rot = createRotate({
+      seed,
+      profile,
+      did,
+      prior: inception.event,
+      options: { snapshot: snapshotOf(head) },
+    })
     const rotated = headOf([inception, rot])
     // The inception's position with the rotated head's keys: the derived key is the retired one.
     const stale = { ...rotated, keySeq: 0 }
     expect(() =>
       createAdd({ seed, profile, did, head: stale, parents: [stale.epoch], member }),
-    ).toThrow(/does not publish/)
+    ).toThrow(/not the head's only/)
+  })
+
+  test('a root signer is refused when the head publishes more keys than the one it derives', () => {
+    const wider = { ...head, keys: [...head.keys, m.key] }
+    expect(() =>
+      createAdd({ seed, profile, did, head: wider, parents: [wider.epoch], member }),
+    ).toThrow(/only published key/)
   })
 
   test('a member revoke names its signer and verifies only under the pinned key', () => {
@@ -119,7 +144,7 @@ describe('builders', () => {
     ]
     expect(built.map((signed) => signed.event.t)).toEqual(['ren', 'rmv', 'rev'])
     for (const signed of built) {
-      expect(signed.event.by).toBeUndefined()
+      expect('by' in signed.event).toBe(false)
       expect(isEpochEventShape(signed)).toBe(true)
       expect(verifyEpochSignature(signed, { rootKeys: head.keys })).toBe(true)
     }
@@ -240,6 +265,27 @@ describe('isEpochEventShape()', () => {
     expect(isEpochEventShape(strip(rev, 'x'))).toBe(false)
   })
 
+  test('refuses an oversized parent or signature list without walking it', () => {
+    // A getter on an entry would trip if the list were walked; the length check must come first.
+    let walked = false
+    const trap = (length: number) =>
+      new Proxy(
+        Array.from({ length }, () => 'z'),
+        {
+          get(target, key, receiver) {
+            if (key !== 'length') walked = true
+            return Reflect.get(target, key, receiver)
+          },
+        },
+      )
+    expect(isEpochEventShape(withEvent(add, (event) => (event.p = trap(1_000_000))))).toBe(false)
+    expect(isEpochEventShape({ ...add, sigs: trap(1_000_000) })).toBe(false)
+    expect(walked).toBe(false)
+    expect(isEpochEventShape({ ...add, sigs: Array(MAX_EVENT_SIGNATURES + 1).fill('s') })).toBe(
+      false,
+    )
+  })
+
   test('refuses a malformed envelope', () => {
     expect(isEpochEventShape(null)).toBe(false)
     expect(isEpochEventShape({ event: add.event })).toBe(false)
@@ -276,6 +322,13 @@ describe('verifyEpochSignature()', () => {
     expect(
       verifyEpochSignature({ ...rev, sigs: [sig ?? '', sig ?? ''] }, { memberKey: m.key }),
     ).toBe(false)
+  })
+
+  test('an oversized signature list fails before any is checked', () => {
+    const [sig] = add.sigs
+    const many = Array.from({ length: MAX_EVENT_SIGNATURES + 1 }, () => sig ?? '')
+    expect(verifyEpochSignature({ ...add, sigs: many }, { rootKeys: head.keys })).toBe(false)
+    expect(verifyEpochSignature({ ...rev, sigs: many }, { memberKey: m.key })).toBe(false)
   })
 
   test('a root event is n-of-n over the root keys', () => {

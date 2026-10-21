@@ -3,7 +3,7 @@ import { authorityPath, deriveKeyPair } from './derivation.js'
 import { didFor, type SignedEvent, signEvent, verifySignatures } from './events.js'
 import type { KeyState } from './fold.js'
 import { encodeKey } from './keys.js'
-import { MAX_EVENT_BYTES, MAX_EVENT_PARENTS } from './limits.js'
+import { MAX_EVENT_BYTES, MAX_EVENT_PARENTS, MAX_EVENT_SIGNATURES } from './limits.js'
 
 // The management tier. An epoch is everything between one root-chain event and the next; its events
 // (root adds, member actions, root and member revokes) form a DAG rooted at the root-chain event that
@@ -88,13 +88,7 @@ export type EpochSigner =
   | { root: { seed: Uint8Array; profile: number } }
   | { member: { privateKey: Uint8Array; add: string } }
 
-/**
- * What a builder reads from the head it builds on: the generation, the epoch, and where the active
- * authority key lives. Every folded head carries these; nothing else is needed.
- */
-export type EpochHead = Pick<KeyState, 'gen' | 'keyGen' | 'keySeq' | 'keys'> & { epoch: string }
-
-type BuildBase = { did: string; head: EpochHead; parents: Array<string> }
+type BuildBase = { did: string; head: KeyState; parents: Array<string> }
 
 export type CreateAddParams = BuildBase & {
   seed: Uint8Array
@@ -137,10 +131,11 @@ function buildEvent<E extends EpochEvent>(
     const { seed, profile } = signer.root
     const pair = deriveKeyPair(seed, authorityPath(profile, head.keyGen, head.keySeq), 'EdDSA')
     const derived = encodeKey(pair.publicKey, 'EdDSA')
-    if (didFor(seed, profile) === did && !head.keys.includes(derived)) {
+    // Exactly the one key: the verifier checks n-of-n, and this generator signs with one.
+    if (didFor(seed, profile) === did && !(head.keys.length === 1 && head.keys[0] === derived)) {
       throw new Error(
-        `Epoch event: the key at (gen ${head.keyGen}, seq ${head.keySeq}) is one the head does not ` +
-          'publish -- pass the folded head, whose keyGen / keySeq name the active authority key',
+        `Epoch event: the key at (gen ${head.keyGen}, seq ${head.keySeq}) is not the head's only ` +
+          'published key -- pass the folded head, whose keyGen / keySeq name the active authority key',
       )
     }
     privateKey = pair.privateKey
@@ -156,9 +151,13 @@ function buildEvent<E extends EpochEvent>(
     e: head.epoch,
     p,
     crit: true,
-    by: 'member' in signer ? signer.member.add : undefined,
   }
-  const event = { ...common, ...fields } as E
+  // Conditionally spread: a root event has no `by` key at all, not one set to undefined.
+  const event = {
+    ...common,
+    ...('member' in signer ? { by: signer.member.add } : {}),
+    ...fields,
+  } as E
   const signed: SignedEvent<E> = { event, sigs: signEvent(event, [privateKey]) }
   if (!isEpochEventShape(signed)) {
     throw new Error(
@@ -218,8 +217,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isStringList(value: unknown): value is Array<string> {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+/** Length is bounded before the walk, so an oversized list costs one comparison. */
+function isStringList(value: unknown, max: number): value is Array<string> {
+  return Array.isArray(value) && value.length <= max && value.every((e) => typeof e === 'string')
 }
 
 /** Unix seconds: a non-negative safe integer, so `"1800000000"` and `1.5` both fail. */
@@ -261,7 +261,11 @@ export function isEpochEventShape(value: unknown): value is SignedEvent<EpochEve
     return false
   }
   const { event, sigs } = value
-  if (!isStringList(sigs) || sigs.length === 0 || value.recoveryKey !== undefined) {
+  if (
+    !isStringList(sigs, MAX_EVENT_SIGNATURES) ||
+    sigs.length === 0 ||
+    value.recoveryKey !== undefined
+  ) {
     return false
   }
   if (
@@ -276,12 +280,7 @@ export function isEpochEventShape(value: unknown): value is SignedEvent<EpochEve
     return false
   }
   const p = event.p
-  if (
-    !isStringList(p) ||
-    p.length === 0 ||
-    p.length > MAX_EVENT_PARENTS ||
-    new Set(p).size !== p.length
-  ) {
+  if (!isStringList(p, MAX_EVENT_PARENTS) || p.length === 0 || new Set(p).size !== p.length) {
     return false
   }
   if (!hasTypeFields(event)) {
@@ -306,12 +305,16 @@ export function verifyEpochSignature(
   signer: { rootKeys: Array<string> } | { memberKey: string },
 ): boolean {
   const { event, sigs } = signed
-  if (!isRecord(event) || !Array.isArray(sigs)) {
+  if (!isRecord(event) || !Array.isArray(sigs) || sigs.length > MAX_EVENT_SIGNATURES) {
     return false
   }
   if ('rootKeys' in signer) {
     return event.by === undefined && verifySignatures(event, sigs, signer.rootKeys)
   }
   // One key, and `verifySignatures` matches signatures to keys one for one: exactly one signature.
-  return typeof event.by === 'string' && verifySignatures(event, sigs, [signer.memberKey])
+  return (
+    sigs.length === 1 &&
+    typeof event.by === 'string' &&
+    verifySignatures(event, sigs, [signer.memberKey])
+  )
 }
