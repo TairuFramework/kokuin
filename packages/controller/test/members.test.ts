@@ -11,6 +11,8 @@ import {
   ADD_KEY_DENIED,
   ADD_KEY_IS_ROOT,
   ADD_NOT_ROOT,
+  type FoldEpochDetail,
+  type FoldEpochParams,
   foldEpochDetailed,
   MEMBER_REVOKES_MEMBER,
   REVOKE_NAMES_ROOT_KEY,
@@ -39,6 +41,13 @@ import { type FoldResult, foldLog } from '../src/fold.js'
 import { encodeKey } from '../src/keys.js'
 import type { ControllerLog } from '../src/log.js'
 import { createDenialMatcher, denialTargetsMember } from '../src/members.js'
+
+/** {@link foldEpochDetailed}, which these fixtures never drive into the failed-signature refusal. */
+function detailOf(params: FoldEpochParams): FoldEpochDetail {
+  const detail = foldEpochDetailed(params)
+  if (!detail.ok) throw new Error(`epoch fold refused: ${detail.reason}`)
+  return detail
+}
 
 const seed = new Uint8Array(32).fill(1)
 const profile = 0
@@ -167,8 +176,7 @@ function rejectionsOf(controller: string, log: ControllerLog): Map<string, strin
   if (!folded.ok) {
     throw new Error(`chain does not fold: ${folded.reason}`)
   }
-  return foldEpochDetailed({ did: controller, chainStates: folded.states, events: log.events })
-    .reasons
+  return detailOf({ did: controller, chainStates: folded.states, events: log.events }).reasons
 }
 
 function reasonsFor(events: Array<SignedEvent<EpochEvent>>): Map<string, string> {

@@ -2,7 +2,13 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import { type EpochLimits, foldEpochDetailed } from '../src/epoch.js'
+import {
+  type EpochLimits,
+  type FoldEpochDetail,
+  type FoldEpochParams,
+  foldEpochDetailed,
+  TOO_MANY_FAILED_SIGNATURES,
+} from '../src/epoch.js'
 import {
   createRemove,
   createRevoke,
@@ -30,7 +36,15 @@ import {
   LOG_NOT_AUTHORITATIVE,
 } from '../src/history.js'
 import { encodeKey } from '../src/keys.js'
+import { MAX_FAILED_SIGNATURES } from '../src/limits.js'
 import { type ControllerLog, mergeLogs, pruneLog } from '../src/log.js'
+
+/** {@link foldEpochDetailed}, which these fixtures never drive into the failed-signature refusal. */
+function detailOf(params: FoldEpochParams): FoldEpochDetail {
+  const detail = foldEpochDetailed(params)
+  if (!detail.ok) throw new Error(`epoch fold refused: ${detail.reason}`)
+  return detail
+}
 
 const seed = new Uint8Array(32).fill(3)
 const profile = 0
@@ -166,8 +180,11 @@ describe('authoritativeLog()', () => {
     expect(stored(late.log)).toEqual([revA, revB, child].map(digest).sort())
   })
 
-  test('thousands of unsigned epoch events are neither stored nor saturating', () => {
-    const flood = { chain, events: Array.from({ length: 5000 }, (_, n) => unsignedRevoke(n)) }
+  test('unsigned epoch events up to the failed-signature limit are neither stored nor saturating', () => {
+    const flood = {
+      chain,
+      events: Array.from({ length: MAX_FAILED_SIGNATURES }, (_, n) => unsignedRevoke(n)),
+    }
     const { log, result } = underLimit({
       did,
       loaded: flood,
@@ -177,7 +194,14 @@ describe('authoritativeLog()', () => {
     })
     expect(log.events).toHaveLength(0)
     expect(result.head.saturated).toBe(false)
-    expect(result.rejected).toBe(5000)
+    expect(result.rejected).toBe(MAX_FAILED_SIGNATURES)
+  })
+
+  test('thousands of unsigned epoch events are refused as a whole', () => {
+    const flood = { chain, events: Array.from({ length: 5000 }, (_, n) => unsignedRevoke(n)) }
+    expect(() =>
+      underLimit({ did, loaded: flood, seen: undefined, context, limits: { MAX_EPOCH_EVENTS: 2 } }),
+    ).toThrow(TOO_MANY_FAILED_SIGNATURES)
   })
 
   test('a forged event riding along with a valid one is dropped, the valid one kept', () => {
@@ -444,7 +468,7 @@ describe('the copy the fold verifies', () => {
       [joined, genuine],
       [genuine, joined],
     ]) {
-      const folded = foldEpochDetailed({ did, chainStates: [anchor], events })
+      const folded = detailOf({ did, chainStates: [anchor], events })
       expect(folded.applied).toEqual([digest(once)])
       expect(folded.rejected).toBe(0)
       // The copy reported, and so remembered, is the genuine one in either order.
@@ -453,7 +477,7 @@ describe('the copy the fold verifies', () => {
   })
 
   test('CONTROL — the joined forgery alone is refused', () => {
-    const folded = foldEpochDetailed({ did, chainStates: [anchor], events: [joined] })
+    const folded = detailOf({ did, chainStates: [anchor], events: [joined] })
     expect(folded.applied).toEqual([])
     expect(folded.rejected).toBe(1)
   })

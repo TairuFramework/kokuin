@@ -6,6 +6,9 @@ import {
   ADD_KEY_ALREADY_MEMBER,
   ADD_NOT_ROOT,
   DEFAULT_EPOCH_LIMITS,
+  type FoldEpochDetail,
+  type FoldEpochParams,
+  type FoldEpochResult,
   foldEpoch,
   foldEpochDetailed,
   MEMBER_REVOKES_MEMBER,
@@ -34,6 +37,20 @@ import { type FoldResult, foldLog, type KeyState } from '../src/fold.js'
 import { encodeKey } from '../src/keys.js'
 import { MAX_EPOCH_EVENTS, MAX_LOG_EVENTS } from '../src/limits.js'
 import { type ControllerLog, isControllerLog, LOG_TOO_LARGE, MALFORMED_LOG } from '../src/log.js'
+
+/** {@link foldEpochDetailed}, which these fixtures never drive into the failed-signature refusal. */
+function detailOf(params: FoldEpochParams): FoldEpochDetail {
+  const detail = foldEpochDetailed(params)
+  if (!detail.ok) throw new Error(`epoch fold refused: ${detail.reason}`)
+  return detail
+}
+
+/** {@link foldEpoch}, which these fixtures never drive into the failed-signature refusal. */
+function epochOf(params: FoldEpochParams): FoldEpochResult {
+  const result = foldEpoch(params)
+  if (!result.ok) throw new Error(`epoch fold refused: ${result.reason}`)
+  return result
+}
 
 const seed = new Uint8Array(32).fill(1)
 const profile = 0
@@ -423,10 +440,10 @@ describe('limits', () => {
   test('more valid events than the saturation threshold saturate the head but the chain still folds', () => {
     const events = [revA, revB, renew]
     const states = chainFolded(chain).states
-    const over = foldEpoch({ did, chainStates: states, events, limits: { MAX_EPOCH_EVENTS: 2 } })
+    const over = epochOf({ did, chainStates: states, events, limits: { MAX_EPOCH_EVENTS: 2 } })
     expect(over.head.saturated).toBe(true)
     expect(over.applied).toHaveLength(3)
-    const at = foldEpoch({ did, chainStates: states, events, limits: { MAX_EPOCH_EVENTS: 3 } })
+    const at = epochOf({ did, chainStates: states, events, limits: { MAX_EPOCH_EVENTS: 3 } })
     expect(at.head.saturated).toBe(false)
     // Invalid events never count towards saturation.
     const junk = [
@@ -435,7 +452,7 @@ describe('limits', () => {
       revoke(root, 'x', [digestOf('absent')]),
     ]
     expect(
-      foldEpoch({ did, chainStates: states, events: junk, limits: { MAX_EPOCH_EVENTS: 3 } }).head
+      epochOf({ did, chainStates: states, events: junk, limits: { MAX_EPOCH_EVENTS: 3 } }).head
         .saturated,
     ).toBe(false)
   })
@@ -443,7 +460,7 @@ describe('limits', () => {
   test('the default saturation threshold is MAX_EPOCH_EVENTS', () => {
     expect(DEFAULT_EPOCH_LIMITS.MAX_EPOCH_EVENTS).toBe(MAX_EPOCH_EVENTS)
     const states = chainFolded(chain).states
-    const result = foldEpoch({ did, chainStates: states, events: [revA, revB] })
+    const result = epochOf({ did, chainStates: states, events: [revA, revB] })
     expect(result.head.saturated).toBe(false)
   })
 
@@ -616,7 +633,7 @@ describe('totality under hostile presentation', () => {
     // pending, and the pool would never get deeper than its first refusal. Refused events stay in
     // the pool all the same, and the foreign parents keep the pending path covered.
     if (
-      foldEpochDetailed({
+      detailOf({
         did,
         chainStates: chainFolded(chain).states,
         events: pool,
@@ -639,7 +656,7 @@ describe('totality under hostile presentation', () => {
     // A generator that only ever produced root revokes off the epoch would pass the property below
     // without exercising a single member rule; this pins what the pool actually covers.
     const states = chainFolded(chain).states
-    const detail = foldEpochDetailed({ did, chainStates: states, events: pool })
+    const detail = detailOf({ did, chainStates: states, events: pool })
     const reasons = new Set(detail.reasons.values())
     for (const rule of [
       ADD_NOT_ROOT,

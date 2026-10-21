@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, expectTypeOf, test } from 'vitest'
 
 import * as controller from '../src/index.js'
 
@@ -63,6 +63,9 @@ describe('public surface', () => {
       'MAX_EVENT_PARENTS',
       'MAX_EVENT_BYTES',
       'MAX_EVENT_SIGNATURES',
+      // A presentation refused for the signatures it makes a verifier check in vain.
+      'MAX_FAILED_SIGNATURES',
+      'TOO_MANY_FAILED_SIGNATURES',
       'DEFAULT_LEASE_SECONDS',
       'resolveBranches',
       // Remembering what was seen, and combining or trimming logs: what a consumer persisting
@@ -85,6 +88,14 @@ describe('public surface', () => {
     ]) {
       expect(controller).toHaveProperty(name)
     }
+  })
+
+  test('exports the types authoritativeLog is written in', () => {
+    // Type-level: a consumer wrapping `authoritativeLog` in its own store names these.
+    expectTypeOf(controller.authoritativeLog)
+      .parameter(0)
+      .toEqualTypeOf<controller.AuthoritativeLogParams>()
+    expectTypeOf(controller.authoritativeLog).returns.toEqualTypeOf<controller.AuthoritativeLog>()
   })
 
   test('does not leak internal helpers', () => {

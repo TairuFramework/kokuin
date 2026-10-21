@@ -1,4 +1,6 @@
+import { digestOf, isCanonicalizable } from './canonical.js'
 import type { EpochLimits } from './epoch.js'
+import type { SignedEvent } from './events.js'
 import { type FoldResult, foldLog, type KeyState } from './fold.js'
 import { MAX_LOG_EVENTS } from './limits.js'
 import {
@@ -42,7 +44,9 @@ export type LogStore = {
    * land rather than the second overwriting the first with a log built from a stale read. When
    * `update` throws, nothing is written and the throw propagates. `update` may be invoked more than
    * once (a persistent store reruns it when it loses a first-insert race), so it must be free of side
-   * effects; only the last result is written.
+   * effects; only the last result is written. An `update` returning `current` itself (the very object
+   * it was handed) means nothing changed, and the store skips the write: `authoritativeLog` answers
+   * that way whenever a resolution learned nothing new, which is most of them.
    */
   merge(
     did: string,
@@ -72,8 +76,9 @@ export function createMemoryLogStore(): LogStore {
     ): Promise<ControllerLog> {
       const previous = tails.get(did) ?? Promise.resolve()
       const run = previous.then(async () => {
-        const next = await update(logs.get(did))
-        logs.set(did, next)
+        const current = logs.get(did)
+        const next = await update(current)
+        if (next !== current) logs.set(did, next)
         return next
       })
       const tail = run.then(
@@ -105,6 +110,34 @@ function recall(
   return head === undefined ? undefined : { log: seen, head }
 }
 
+/** A chain or epoch entry, as far as comparing two of them needs. */
+type Entry = Pick<SignedEvent, 'sigs' | 'recoveryKey'> & { event: unknown }
+
+/** One log entry and another hold the same bytes: the same body, signatures and recovery key. */
+function sameEntry(entry: Entry, other: unknown): boolean {
+  if (other == null || typeof other !== 'object') return false
+  const { event, sigs, recoveryKey } = other as Partial<SignedEvent>
+  if (recoveryKey !== entry.recoveryKey || !Array.isArray(sigs)) return false
+  if (sigs.length !== entry.sigs.length || sigs.some((sig, i) => sig !== entry.sigs[i])) {
+    return false
+  }
+  // Digests, not object identity or JSON text: a store hands back a fresh copy, possibly with its
+  // keys reordered (Postgres `jsonb`), and the canonical form is what both sides agree on.
+  return isCanonicalizable(event) && digestOf(event) === digestOf(entry.event)
+}
+
+/** Whether `next` is `seen` again, entry for entry, so remembering it would change nothing. */
+function sameLog(next: ControllerLog, seen: ControllerLog): boolean {
+  const pairs: Array<[Array<Entry>, Array<unknown>]> = [
+    [next.chain, seen.chain],
+    [next.events, seen.events],
+  ]
+  return pairs.every(
+    ([mine, theirs]) =>
+      mine.length === theirs.length && mine.every((entry, i) => sameEntry(entry, theirs[i])),
+  )
+}
+
 /** What {@link authoritativeLog} takes. */
 export type AuthoritativeLogParams = {
   did: string
@@ -113,7 +146,10 @@ export type AuthoritativeLogParams = {
   context: string
 }
 
-/** What {@link authoritativeLog} answers: the log to remember, and the fold to answer from. */
+/**
+ * What {@link authoritativeLog} answers: the log to remember, and the fold to answer from. `log` is
+ * `seen` itself, the same object, when the resolution learned nothing new; see `LogStore.merge`.
+ */
 export type AuthoritativeLog = { log: ControllerLog; result: Extract<FoldResult, { ok: true }> }
 
 /**
@@ -149,6 +185,14 @@ export type AuthoritativeLog = { log: ControllerLog; result: Extract<FoldResult,
  * folds, saturated, and is merged like any other memory, so its refusal stands. Stored epoch events are
  * folded together with the presentation without the request limit, which bounds a single input, not
  * the union of two inputs that each passed it.
+ *
+ * **What is checked.** Stored epoch events of the settled chain's current epoch are not
+ * authenticated again: they were when they were stored, and a copy that verified under an epoch
+ * verifies under it every time (see `FoldEpochParams.trusted`). They are still authorised afresh,
+ * and a stored event of another epoch is simply ignored. Only what `loaded` adds is checked, and
+ * `loaded` is refused as a whole, memory untouched, once more than `MAX_FAILED_SIGNATURES` of its
+ * signatures fail (`TOO_MANY_FAILED_SIGNATURES`). This trusts the store: one that an attacker
+ * can write to defeats every guarantee here anyway, since it can simply forget what was seen.
  */
 export function authoritativeLog(params: AuthoritativeLogParams): AuthoritativeLog {
   return authoritativeLogWithin(params)
@@ -202,7 +246,13 @@ export function authoritativeLogWithin(
     states = winner.states
   }
 
-  const remembered: Array<unknown> = memory?.log.events ?? []
-  const held = withEpoch(did, states, [...remembered, ...loaded.events], limits)
-  return { log: { chain, events: appliedCopies(held, limits) }, result: held.result }
+  const held = withEpoch(did, states, loaded.events, limits, memory?.log.events)
+  if (!('result' in held)) {
+    throw invalid(held.reason, held.index)
+  }
+  const log = { chain, events: appliedCopies(held, limits) }
+  return {
+    log: memory !== undefined && sameLog(log, memory.log) ? memory.log : log,
+    result: held.result,
+  }
 }

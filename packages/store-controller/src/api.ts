@@ -20,9 +20,19 @@ export type ControllerStoreAPI = LogStore & {
 // value can still arrive as a string (adapter/driver dependent). Handle both. A
 // row written before the log split into chain and epoch events is a bare event
 // array: it is that chain, with no epoch events. Anything else is not a log and
-// is no memory, as the resolver treats a stored value of that shape.
+// is no memory, as the resolver treats a stored value of that shape -- a string
+// that does not parse included: throwing would refuse every later `get` and
+// `merge` for the DID, where no memory costs one round of the guarantee and the
+// next merge replaces the row.
 function decodeLog(value: unknown): ControllerLog | undefined {
-  const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value
+  let parsed: unknown = value
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value)
+    } catch {
+      return undefined
+    }
+  }
   if (Array.isArray(parsed)) {
     return { chain: parsed as Array<SignedEvent>, events: [] }
   }
@@ -53,7 +63,9 @@ export function createControllerStore(
       return adapter.decodeTimestamp(row.updated_at ?? row.created_at)
     },
 
-    // Writes whatever `update` returns: arbitration lives in the resolver
+    // Writes whatever `update` returns, unless it hands back `current` itself:
+    // that is "nothing changed" (see `LogStore.merge`), and the row -- written
+    // or not, legacy shape or not -- is left alone. Arbitration lives in the resolver
     // (`authoritativeLog`), never here. A caller ingesting an UNTRUSTED log (e.g.
     // one pulled from a peer) must build the update from `authoritativeLog` —
     // this store will not refuse a truncated or forked log on its own, so
@@ -95,8 +107,9 @@ export function createControllerStore(
         if (lock) query = query.forUpdate()
         const row = await query.executeTakeFirst()
         if (row != null || !lock) {
-          const next = await update(row == null ? undefined : decodeLog(row.log))
-          await write(next)
+          const current = row == null ? undefined : decodeLog(row.log)
+          const next = await update(current)
+          if (next !== current) await write(next)
           return next
         }
 
@@ -108,9 +121,10 @@ export function createControllerStore(
           .executeTakeFirst()
         if (Number(inserted.numInsertedOrUpdatedRows ?? 0) > 0) return first
 
-        const current = await query.executeTakeFirst()
-        const next = await update(current == null ? undefined : decodeLog(current.log))
-        await write(next)
+        const raced = await query.executeTakeFirst()
+        const current = raced == null ? undefined : decodeLog(raced.log)
+        const next = await update(current)
+        if (next !== current) await write(next)
         return next
       })
     },

@@ -459,10 +459,12 @@ function foldChain(
  * which a verifier evaluating at position `i` must use — that is what makes the deny set
  * position-dependent: clearing a DID later never retroactively validates its earlier actions.
  *
- * The epoch events then merge into the chain's last state to give `head` (see `foldEpoch`). Only the
- * request limit can fail that half: more than {@link MAX_LOG_EVENTS} entries is `LOG_TOO_LARGE`, at
- * index -1 because it is no event's fault. Past it, nothing in `log.events` can fail the fold --
- * a bad entry is counted and dropped -- so a relay cannot make a log unfoldable by padding it.
+ * The epoch events then merge into the chain's last state to give `head` (see `foldEpoch`). Only request
+ * limits can fail that half: more than {@link MAX_LOG_EVENTS} entries is `LOG_TOO_LARGE`, at
+ * index -1 because it is no event's fault, and so is more than `MAX_FAILED_SIGNATURES` signatures
+ * failing to verify (`TOO_MANY_FAILED_SIGNATURES`). Short of those, nothing in `log.events` can fail
+ * the fold -- a bad entry is counted and dropped -- so a relay cannot make a log unfoldable by padding
+ * it, only refused by forging past the limit, which no honest relay does.
  *
  * Synchronous, so it stays usable on an offline verifier's apply path.
  */
@@ -479,6 +481,9 @@ export function foldLog(did: string, log: ControllerLog): FoldResult {
   }
   const { states } = chain
   const merged = foldEpoch({ did, chainStates: states, events: log.events })
+  if (!merged.ok) {
+    return fail(merged.reason, -1)
+  }
   return {
     ok: true,
     states,

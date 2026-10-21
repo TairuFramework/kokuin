@@ -2,7 +2,7 @@ import { digestOf } from './canonical.js'
 import { type EpochEvent, isEpochEventShape, verifyEpochSignature } from './epoch-events.js'
 import { keyFromTarget, type MemberEntry, type SignedEvent } from './events.js'
 import type { KeyState, MemberState } from './fold.js'
-import { MAX_EPOCH_EVENTS } from './limits.js'
+import { MAX_EPOCH_EVENTS, MAX_FAILED_SIGNATURES } from './limits.js'
 import {
   createDenialMatcher,
   type DenialMatcher,
@@ -50,6 +50,13 @@ export const MEMBER_REVOKES_MEMBER = 'a member may not revoke a member'
 export const REVOKE_NAMES_ROOT_KEY = 'revoke targets a key the chain publishes'
 
 /**
+ * What a presentation fails with, as a whole, when the signatures on its copies that do not verify
+ * exceed {@link MAX_FAILED_SIGNATURES}. A request limit, so it shares `LOG_TOO_LARGE`'s prefix.
+ */
+export const TOO_MANY_FAILED_SIGNATURES =
+  'controller log exceeds request limits: too many signatures fail to verify'
+
+/**
  * What one epoch accumulates. A join-semilattice: union of `added`/`removed`/`deny`, the maximum of
  * `leases` per incarnation, so merging concurrent branches in any order lands on one state.
  */
@@ -71,11 +78,21 @@ export type FoldEpochParams = {
   chainStates: Array<KeyState>
   /** Untrusted: whatever was presented as epoch events. */
   events: Array<unknown>
+  /**
+   * Copies this verifier authenticated itself and kept: its own memory, never a presentation. A
+   * trusted copy of an event of this epoch is taken as authentic without checking its signatures
+   * again, and stands in for every presented copy of the same body, which are then not checked
+   * either. Its signer is fixed by the epoch: a root event's keys are the chain event the epoch names,
+   * a member event's key the add or snapshot entry its `by` digest names, so a copy that verified
+   * once under this epoch verifies under it every time. Authorisation is still judged afresh.
+   */
+  trusted?: Array<unknown>
   /** Test-only: lowers a limit so saturation is reachable without thousands of signatures. */
   limits?: Partial<EpochLimits>
 }
 
 export type FoldEpochResult = {
+  ok: true
   head: KeyState
   /** Digests of the events that applied, parents first, ties by ascending digest. */
   applied: Array<string>
@@ -97,6 +114,12 @@ export type FoldEpochDetail = FoldEpochResult & {
    */
   authentic: Map<string, SignedEvent<EpochEvent>>
 }
+
+/**
+ * A presentation refused as a whole by a request limit on the work it asked for. Never a judgement on
+ * any one event, so nothing about the epoch is learned from it.
+ */
+export type FoldEpochRefusal = { ok: false; reason: string }
 
 function emptyState(): EpochState {
   return { added: new Map(), removed: new Set(), leases: new Map(), deny: new Set() }
@@ -163,6 +186,21 @@ type Candidate = {
   copies: Array<SignedEvent<EpochEvent>>
   /** The copy whose signature verified, once {@link evaluate} has found one. */
   authentic?: SignedEvent<EpochEvent>
+  /** A copy from the verifier's own memory: authentic without a check. */
+  trusted?: SignedEvent<EpochEvent>
+}
+
+/**
+ * Signatures on copies that failed to verify, over one fold. Each failing copy is charged for every
+ * signature it carries, an upper bound on the Ed25519 work it cost (`verifySignatures` stops at the
+ * first bad one). The total is a function of the presentation, not its order: the events evaluated are,
+ * and so is each one's sorted walk of its copies in {@link canonicalCopy}. So stopping as soon as it
+ * passes the limit refuses exactly the presentations that would have passed it anyway.
+ */
+type SignatureBudget = { failed: number }
+
+function exhausted(budget: SignatureBudget): boolean {
+  return budget.failed > MAX_FAILED_SIGNATURES
 }
 
 /** Why an event is refused outright, or `null` when it is a candidate to evaluate. */
@@ -175,25 +213,29 @@ function intrinsicRefusal(event: EpochEvent, did: string, anchor: KeyState): str
 /**
  * Among the copies that verify, the one whose signature list sorts first, so two parties that saw the
  * same event under different valid signatures remember the same bytes, whatever order each saw them
- * in. Each distinct signature list is checked once: repeating a copy costs no extra verification.
+ * in. Each distinct signature list is checked once, in ascending order, stopping at the first that
+ * verifies: repeating a copy costs no extra verification, and neither does any list sorting after a
+ * genuine one. Every list that fails is charged to `budget`; the walk stops once it is spent.
  */
 function canonicalCopy(
   copies: Array<SignedEvent<EpochEvent>>,
   verifies: (copy: SignedEvent<EpochEvent>) => boolean,
+  budget: SignatureBudget,
 ): SignedEvent<EpochEvent> | undefined {
-  const checked = new Set<string>()
-  let best: { copy: SignedEvent<EpochEvent>; key: string } | undefined
+  const distinct = new Map<string, SignedEvent<EpochEvent>>()
   for (const copy of copies) {
     // JSON, not a join: signatures are untrusted strings and may hold any separator, and a lossy key
     // would let a forgery spelling the genuine list as one string shadow it, checked first.
     const key = JSON.stringify(copy.sigs)
-    if (checked.has(key)) continue
-    checked.add(key)
-    if ((best === undefined || key < best.key) && verifies(copy)) {
-      best = { copy, key }
-    }
+    if (!distinct.has(key)) distinct.set(key, copy)
   }
-  return best?.copy
+  for (const key of [...distinct.keys()].sort()) {
+    const copy = distinct.get(key) as SignedEvent<EpochEvent>
+    if (verifies(copy)) return copy
+    budget.failed += copy.sigs.length
+    if (exhausted(budget)) return undefined
+  }
+  return undefined
 }
 
 /**
@@ -206,16 +248,17 @@ function evaluate(
   anchor: KeyState,
   roots: RootKeySet,
   matches: DenialMatcher,
+  budget: SignatureBudget,
 ): { reason: string } | { effect: EpochState } {
   const { event, digest } = candidate
   // A copy of the same body under a different signature is not a different event, so the event is
   // authentic if any presented copy is. Judging only the first would let a forged copy shadow the
-  // genuine one depending on arrival order.
+  // genuine one depending on arrival order. A trusted copy was judged so when it was kept.
+  const authenticate = (verifies: (copy: SignedEvent<EpochEvent>) => boolean) =>
+    candidate.trusted ?? canonicalCopy(candidate.copies, verifies, budget)
   let signer: MemberEntry | null = null
   if (event.by === undefined) {
-    candidate.authentic = canonicalCopy(candidate.copies, (c) =>
-      verifyEpochSignature(c, { rootKeys: anchor.keys }),
-    )
+    candidate.authentic = authenticate((c) => verifyEpochSignature(c, { rootKeys: anchor.keys }))
     if (candidate.authentic === undefined) {
       return { reason: 'invalid root signature' }
     }
@@ -225,9 +268,7 @@ function evaluate(
     if (causal.removed.has(event.by)) return { reason: 'signer was removed in the causal state' }
     if (isDenied(causal.deny, member, matches))
       return { reason: 'signer is denied in the causal state' }
-    candidate.authentic = canonicalCopy(candidate.copies, (c) =>
-      verifyEpochSignature(c, { memberKey: member.key }),
-    )
+    candidate.authentic = authenticate((c) => verifyEpochSignature(c, { memberKey: member.key }))
     if (candidate.authentic === undefined) {
       return { reason: 'invalid member signature' }
     }
@@ -242,7 +283,10 @@ function evaluate(
       // add could never undo short of a settlement: a denied key or DID refuses every later add of it.
       // Every member of the causal past is shielded, removed or denied ones included -- otherwise one
       // member removes another and a second denies it on top, and root can no longer re-admit that
-      // key under any DID. Root alone may deny a member.
+      // key under any DID. Root alone may deny a member it can see. The shield is the causal past
+      // only: a member root adds concurrently is not in it, so a member on a branch that has not seen
+      // the add can deny its key or DID, and root's re-add is refused (`ADD_KEY_DENIED`) until a
+      // settlement drops the denial. An accepted stolen-member risk; see the security reference.
       if (signer !== null) {
         for (const member of causal.added.values()) {
           if (matches(event.x, member)) {
@@ -320,9 +364,11 @@ function insertSorted(sorted: Array<string>, digest: string): void {
 
 /**
  * Merge the current epoch into the chain's last state. Total: whatever `events` holds, the result is
- * a head, never a throw -- an entry that is not a valid epoch event is counted and dropped.
+ * a head or a refusal, never a throw -- an entry that is not a valid epoch event is counted and
+ * dropped. The one refusal is the request limit on failed signatures ({@link TOO_MANY_FAILED_SIGNATURES}),
+ * which `trusted` copies never count towards.
  */
-export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
+export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail | FoldEpochRefusal {
   const { did, chainStates, events } = params
   const maxEvents = params.limits?.MAX_EPOCH_EVENTS ?? DEFAULT_EPOCH_LIMITS.MAX_EPOCH_EVENTS
   const anchor = chainStates[chainStates.length - 1] as KeyState
@@ -353,6 +399,17 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
   const candidates = new Map<string, Candidate>()
   const otherEpochs = new Set<string>()
   const counted = new Set<string>()
+  // Memory first, so every presented copy of a held body finds its trusted copy already there. Held
+  // copies are this verifier's own, so one that is not of this epoch, or not an epoch event at all
+  // (a corrupted store), is simply not used: it is no refusal of anything presented.
+  for (const entry of params.trusted ?? []) {
+    if (!isEpochEventShape(entry) || entry.event.e !== anchor.epoch) continue
+    if (intrinsicRefusal(entry.event, did, anchor) !== null) continue
+    const digest = digestOf(entry.event)
+    if (!candidates.has(digest)) {
+      candidates.set(digest, { digest, event: entry.event, copies: [entry], trusted: entry })
+    }
+  }
   for (const entry of events) {
     if (!isEpochEventShape(entry)) {
       rejected++
@@ -375,7 +432,7 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
     const existing = candidates.get(digest)
     if (existing === undefined) {
       candidates.set(digest, { digest, event: entry.event, copies: [entry] })
-    } else {
+    } else if (existing.trusted === undefined) {
       existing.copies.push(entry)
     }
   }
@@ -434,12 +491,13 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
   const applied: Array<string> = []
   const authentic = new Map<string, SignedEvent<EpochEvent>>()
   const union = copyState(anchorAfter)
+  const budget: SignatureBudget = { failed: 0 }
   let evaluated = 0
 
   while (ready.length > 0) {
     const digest = ready.shift() as string
-    const candidate = candidates.get(digest)
-    if (candidate === undefined) continue
+    // `ready` only ever holds candidates, and none is deleted once edges are registered.
+    const candidate = candidates.get(digest) as Candidate
     evaluated++
 
     const causal = emptyState()
@@ -461,7 +519,10 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
       }
     }
 
-    const outcome = evaluate(candidate, causal, anchor, roots, matches)
+    const outcome = evaluate(candidate, causal, anchor, roots, matches, budget)
+    if (exhausted(budget)) {
+      return { ok: false, reason: TOO_MANY_FAILED_SIGNATURES }
+    }
     if ('reason' in outcome) {
       rejected++
       reasons.set(digest, outcome.reason)
@@ -476,8 +537,8 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
       after.set(digest, causal)
       unread.set(digest, kids.length)
       for (const kid of kids) {
-        const left = waiting.get(kid)
-        if (left === undefined || !candidates.has(kid)) continue
+        // Edges are registered only between candidates, each with its own count.
+        const left = waiting.get(kid) as number
         waiting.set(kid, left - 1)
         if (left === 1) insertSorted(ready, kid)
       }
@@ -500,6 +561,7 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
     members.set(add, { ...entry, lease, removed, effective })
   }
   return {
+    ok: true,
     head: {
       ...anchor,
       deny: union.deny,
@@ -515,7 +577,9 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail {
 }
 
 /** {@link foldEpochDetailed} without the per-event reasons and copies. */
-export function foldEpoch(params: FoldEpochParams): FoldEpochResult {
-  const { reasons: _reasons, authentic: _authentic, ...result } = foldEpochDetailed(params)
+export function foldEpoch(params: FoldEpochParams): FoldEpochResult | FoldEpochRefusal {
+  const detail = foldEpochDetailed(params)
+  if (!detail.ok) return detail
+  const { reasons: _reasons, authentic: _authentic, ...result } = detail
   return result
 }

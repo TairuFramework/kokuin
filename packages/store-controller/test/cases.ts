@@ -128,6 +128,8 @@ const RACE_SEED = new Uint8Array(32).fill(10)
 const FIRST_RACE_SEED = new Uint8Array(32).fill(11)
 const THROW_SEED = new Uint8Array(32).fill(13)
 const LEGACY_SEED = new Uint8Array(32).fill(12)
+const UNCHANGED_SEED = new Uint8Array(32).fill(14)
+const RESOLVED_SEED = new Uint8Array(32).fill(15)
 
 // An epoch event admitting a member named `name`, rooted at the log's head. The store never verifies
 // events, so these only need to be distinct, well-formed entries.
@@ -339,7 +341,66 @@ export function controllerStoreCases(
       return current as ControllerLog
     })
     expect(seen).toEqual(chainOnly(log))
-    // Rewritten in the current shape.
+    // Handing back `current` is "nothing changed": the row is not rewritten, and still decodes.
+    expect(await store.get(did)).toEqual(chainOnly(log))
+    await store.merge(did, async (current) => ({ ...(current as ControllerLog) }))
+    // A new log, even an equal one, is written, in the current shape.
+    expect(await store.get(did)).toEqual(chainOnly(log))
+  })
+
+  // Rows inserted with no `updated_at`, so a write of any kind would show as one.
+  async function insertUnstamped(did: string, log: unknown): Promise<void> {
+    await rows
+      .insertInto('controller_logs')
+      .values({ did, log: adapter.encodeJSON(log) as ControllerLog })
+      .execute()
+  }
+
+  async function stampOf(did: string): Promise<unknown> {
+    const row = await rows
+      .selectFrom('controller_logs')
+      .select('updated_at')
+      .where('did', '=', did)
+      .executeTakeFirst()
+    return row?.updated_at
+  }
+
+  test('an update returning the current log writes nothing', async () => {
+    const { did, log } = buildRotatedLog(UNCHANGED_SEED)
+    await insertUnstamped(did, chainOnly(log))
+    const returned = await store.merge(did, async (current) => current as ControllerLog)
+    expect(returned).toEqual(chainOnly(log))
+    expect(await stampOf(did)).toBeNull()
+    expect(await store.getObservedAt(did)).toBeInstanceOf(Date)
+  })
+
+  test('a resolution that learns nothing new writes nothing', async () => {
+    const { did, log } = buildRotatedLog(RESOLVED_SEED)
+    await insertUnstamped(did, chainOnly(log))
+    const resolver = createControllerResolver({
+      loadLog: async () => chainOnly(log),
+      history: store,
+    })
+    await resolver.resolve(did, {})
+    await resolver.resolve(did, {})
+    expect(await stampOf(did)).toBeNull()
+  })
+
+  test('a row that is not JSON at all is no memory, and the next merge replaces it', async () => {
+    // Postgres refuses such a row on insert; a text column (SQLite) keeps whatever was written.
+    if (adapter.kind === 'postgres') return
+    const { did, log } = buildRotatedLog(new Uint8Array(32).fill(16))
+    await rows
+      .insertInto('controller_logs')
+      .values({ did, log: '{"chain": [' as unknown as ControllerLog })
+      .execute()
+    expect(await store.get(did)).toBeUndefined()
+    let seen: ControllerLog | undefined = chainOnly(log)
+    await store.merge(did, async (current) => {
+      seen = current
+      return chainOnly(log)
+    })
+    expect(seen).toBeUndefined()
     expect(await store.get(did)).toEqual(chainOnly(log))
   })
 

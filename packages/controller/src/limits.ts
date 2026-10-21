@@ -13,6 +13,18 @@ export const MAX_EPOCH_EVENTS = 4096
  */
 export const MAX_LOG_EVENTS = 8192
 
+/**
+ * Request limit: signatures that fail to verify in one input, counted over every distinct copy the
+ * fold checks, each charged for every signature it carries. Past it the input is refused as a whole.
+ *
+ * Nothing honest fails a signature check: every copy a verifier holds verified when it was kept, and
+ * Ed25519 signing is deterministic, so a relay passing on what it holds carries no failures at all. So
+ * the limit can be small, and is: 64 checks cost a few tens of milliseconds, against the seconds an
+ * unbounded flood of forgeries cost when the limit was only {@link MAX_LOG_EVENTS}. It is above zero
+ * so that a little corruption in transit does not cost a whole presentation.
+ */
+export const MAX_FAILED_SIGNATURES = 64
+
 /** Request limit: parents one epoch event may list. */
 export const MAX_EVENT_PARENTS = 16
 

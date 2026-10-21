@@ -25,6 +25,7 @@ export {
   deriveKeyPair,
   recoveryPath,
 } from './derivation.js'
+export { TOO_MANY_FAILED_SIGNATURES } from './epoch.js'
 export {
   type AddEvent,
   type CreateAddParams,
@@ -85,6 +86,8 @@ export {
   TOO_MANY_UNKNOWN_EVENTS,
 } from './fold.js'
 export {
+  type AuthoritativeLog,
+  type AuthoritativeLogParams,
   authoritativeLog,
   createMemoryLogStore,
   LOG_FORKED,
@@ -112,6 +115,7 @@ export {
   MAX_EVENT_BYTES,
   MAX_EVENT_PARENTS,
   MAX_EVENT_SIGNATURES,
+  MAX_FAILED_SIGNATURES,
   MAX_LOG_EVENTS,
 } from './limits.js'
 export {

@@ -54,6 +54,8 @@ export type HeldFold = {
  * `MAX_EPOCH_EVENTS + 1` events once saturated), but the union with a fresh presentation can exceed
  * it. Folding through {@link foldLog} would turn that into `LOG_TOO_LARGE` — "no memory" — which is
  * exactly the forgetting the history exists to prevent.
+ *
+ * Nothing in `log` is trusted: every signature is checked, under the failed-signature limit.
  */
 export function foldHeld(
   did: string,
@@ -70,14 +72,22 @@ export function foldHeld(
   return withEpoch(did, chain.states, log.events, limits)
 }
 
-/** The chain's states merged with `events` as the current epoch, as {@link foldLog} reports it. */
+/**
+ * The chain's states merged with `events` as the current epoch, as {@link foldLog} reports it.
+ * `trusted` is this party's own memory (see `FoldEpochParams.trusted`), never a presentation. Refused,
+ * at index -1, when `events` passes the failed-signature limit.
+ */
 export function withEpoch(
   did: string,
   states: Array<KeyState>,
   events: Array<unknown>,
   limits?: Partial<EpochLimits>,
-): HeldFold {
-  const merged = foldEpochDetailed({ did, chainStates: states, events, limits })
+  trusted?: Array<unknown>,
+): HeldFold | Extract<FoldResult, { ok: false }> {
+  const merged = foldEpochDetailed({ did, chainStates: states, events, limits, trusted })
+  if (!merged.ok) {
+    return { ok: false, reason: merged.reason, index: -1 }
+  }
   return {
     result: {
       ok: true,
@@ -227,12 +237,18 @@ export function mergeLogs(did: string, a: ControllerLog, b: ControllerLog): Cont
  * A saturated epoch keeps exactly enough to stay saturated (see {@link appliedCopies}).
  *
  * Meant for a log this party already holds: the epoch is folded without the request limit (see
- * {@link foldHeld}). Throws {@link LOG_UNFOLDABLE} when the chain does not fold.
+ * {@link foldHeld}). Throws {@link LOG_UNFOLDABLE} when the chain does not fold,
+ * and the request limit's reason when the log passes one.
  */
 export function pruneLog(did: string, log: ControllerLog): ControllerLog {
   const held = foldHeld(did, log)
   if (!('result' in held)) {
-    throw new Error(`${LOG_UNFOLDABLE}: ${did}: ${held.reason} at event ${held.index}`)
+    // Index -1 is a request limit: the chain may fold fine, the log is refused as too much work.
+    throw new Error(
+      held.index === -1
+        ? `${held.reason}: ${did}`
+        : `${LOG_UNFOLDABLE}: ${did}: ${held.reason} at event ${held.index}`,
+    )
   }
   const { states, head } = held.result
   const chain: Array<SignedEvent> = []
