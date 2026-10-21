@@ -2,7 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import type { EpochLimits } from '../src/epoch.js'
+import { type EpochLimits, foldEpochDetailed } from '../src/epoch.js'
 import {
   createRemove,
   createRevoke,
@@ -18,6 +18,7 @@ import {
   type EventCommon,
   type MemberEntry,
   type SignedEvent,
+  signEvent,
 } from '../src/events.js'
 import { type FoldResult, foldLog, type KeyState } from '../src/fold.js'
 import {
@@ -421,6 +422,40 @@ describe('mergeLogs()', () => {
     const higher = { chain: [icp, reset], events: [] }
     expect(mergeLogs(did, lower, higher).chain).toEqual(higher.chain)
     expect(mergeLogs(did, higher, lower).chain).toEqual(higher.chain)
+  })
+})
+
+describe('the copy the fold verifies', () => {
+  // A two-key root anchor, so a genuine root copy carries two signatures. Joined with a comma they make
+  // one string a relay can present as a single forged signature; any lossy key for a signature list
+  // would treat that forgery and the genuine copy as one, and judging the forgery first would refuse
+  // the event.
+  const secondKey = new Uint8Array(32).fill(31)
+  const anchor = {
+    ...head,
+    keys: [...head.keys, encodeKey(ed25519.getPublicKey(secondKey), 'EdDSA')],
+  }
+  const once = revoke('did:key:zTwoKeys')
+  const genuine = { event: once.event, sigs: [...once.sigs, ...signEvent(once.event, [secondKey])] }
+  const joined = { event: once.event, sigs: [genuine.sigs.join(',')] }
+
+  test('a forgery spelling the genuine signatures as one string never shadows them', () => {
+    for (const events of [
+      [joined, genuine],
+      [genuine, joined],
+    ]) {
+      const folded = foldEpochDetailed({ did, chainStates: [anchor], events })
+      expect(folded.applied).toEqual([digest(once)])
+      expect(folded.rejected).toBe(0)
+      // The copy reported, and so remembered, is the genuine one in either order.
+      expect(folded.authentic.get(digest(once))?.sigs).toEqual(genuine.sigs)
+    }
+  })
+
+  test('CONTROL — the joined forgery alone is refused', () => {
+    const folded = foldEpochDetailed({ did, chainStates: [anchor], events: [joined] })
+    expect(folded.applied).toEqual([])
+    expect(folded.rejected).toBe(1)
   })
 })
 

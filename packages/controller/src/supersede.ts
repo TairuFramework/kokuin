@@ -58,9 +58,9 @@ type FoldedBranch = {
    * Indices into `branch` of the events that moved the fold — all but the skipped ones. The spine,
    * not the array, is a branch's history: a skipped event establishes nothing and must not contend
    * for a position, else a keyless attacker could append one unsigned unknown event to a copy of the
-   * inception and have it read as a rival history at position 1. As built, `spine[0]` is 0, the inception every
-   * branch of one log shares; branch selection compares a copy trimmed to start at the top
-   * generation's first event (see `selectWinner`).
+   * inception and have it read as a rival history at position 1. As built, `spine[0]` is 0, the
+   * inception every branch of one log shares; branch selection compares a copy trimmed to start at
+   * the top generation's first event (see `selectWinner`).
    */
   spine: Array<number>
 }

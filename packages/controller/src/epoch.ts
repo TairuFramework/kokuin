@@ -184,7 +184,9 @@ function canonicalCopy(
   const checked = new Set<string>()
   let best: { copy: SignedEvent<EpochEvent>; key: string } | undefined
   for (const copy of copies) {
-    const key = copy.sigs.join(',')
+    // JSON, not a join: signatures are untrusted strings and may hold any separator, and a lossy key
+    // would let a forgery spelling the genuine list as one string shadow it, checked first.
+    const key = JSON.stringify(copy.sigs)
     if (checked.has(key)) continue
     checked.add(key)
     if ((best === undefined || key < best.key) && verifies(copy)) {
