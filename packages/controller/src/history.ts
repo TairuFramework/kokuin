@@ -40,7 +40,9 @@ export type LogStore = {
    * Replace the log for this DID with what `update` makes of the current one, and return it. Atomic
    * per DID: no two `update`s for one DID interleave, so two presentations merged concurrently both
    * land rather than the second overwriting the first with a log built from a stale read. When
-   * `update` throws, nothing is written and the throw propagates.
+   * `update` throws, nothing is written and the throw propagates. `update` may be invoked more than
+   * once (a persistent store reruns it when it loses a first-insert race), so it must be free of side
+   * effects; only the last result is written.
    */
   merge(
     did: string,

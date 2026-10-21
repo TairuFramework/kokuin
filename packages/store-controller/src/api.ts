@@ -63,21 +63,25 @@ export function createControllerStore(
     // waits and then reads this one's result. A DID with no row has nothing to
     // lock: both merges would see none, so the insert is made `do nothing` and a
     // lost race (no row inserted) re-reads, now locking the row the winner wrote.
-    // SQLite has one writer at a time and no row locks.
+    // SQLite has no row locks: in one process the single connection's mutex
+    // serialises merges; across processes a stale deferred read fails with
+    // SQLITE_BUSY (or SQLITE_BUSY_SNAPSHOT) on write, so nothing is lost and the
+    // merge throws.
     async merge(
       did: string,
       update: (current: ControllerLog | undefined) => Promise<ControllerLog>,
     ): Promise<ControllerLog> {
       return await withStoreTransaction(db, async (trx) => {
         const lock = adapter.kind === 'postgres'
+        const values = (next: ControllerLog) => ({
+          did,
+          log: adapter.encodeJSON(next) as ControllerLog,
+          updated_at: adapter.encodeTimestamp(new Date()) as number,
+        })
         const write = async (next: ControllerLog): Promise<void> => {
           await trx
             .insertInto('controller_logs')
-            .values({
-              did,
-              log: adapter.encodeJSON(next) as ControllerLog,
-              updated_at: adapter.encodeTimestamp(new Date()) as number,
-            })
+            .values(values(next))
             .onConflict((oc) =>
               oc.column('did').doUpdateSet((eb) => ({
                 log: eb.ref('excluded.log'),
@@ -99,11 +103,7 @@ export function createControllerStore(
         const first = await update(undefined)
         const inserted = await trx
           .insertInto('controller_logs')
-          .values({
-            did,
-            log: adapter.encodeJSON(first) as ControllerLog,
-            updated_at: adapter.encodeTimestamp(new Date()) as number,
-          })
+          .values(values(first))
           .onConflict((oc) => oc.column('did').doNothing())
           .executeTakeFirst()
         if (Number(inserted.numInsertedOrUpdatedRows ?? 0) > 0) return first

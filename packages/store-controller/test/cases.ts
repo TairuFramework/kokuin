@@ -126,6 +126,7 @@ const OBSERVED_SEED = new Uint8Array(32).fill(4)
 const OVERWRITE_SEED = new Uint8Array(32).fill(9)
 const RACE_SEED = new Uint8Array(32).fill(10)
 const FIRST_RACE_SEED = new Uint8Array(32).fill(11)
+const THROW_SEED = new Uint8Array(32).fill(13)
 const LEGACY_SEED = new Uint8Array(32).fill(12)
 
 // An epoch event admitting a member named `name`, rooted at the log's head. The store never verifies
@@ -278,7 +279,8 @@ export function controllerStoreCases(
   })
 
   test('a throwing update writes nothing', async () => {
-    const { did } = buildRotatedLog(RACE_SEED)
+    const { did, log } = buildRotatedLog(THROW_SEED)
+    await put(did, log)
     const before = await store.get(did)
     await expect(
       store.merge(did, async () => {
@@ -286,6 +288,7 @@ export function controllerStoreCases(
       }),
     ).rejects.toThrow('refused')
     expect(await store.get(did)).toEqual(before)
+    expect(before).toEqual(chainOnly(log))
   })
 
   test('two concurrent merges for one stored DID both land', async () => {
@@ -293,10 +296,20 @@ export function controllerStoreCases(
     await put(did, log)
     const a = buildAdd(did, log, RACE_SEED, 'a')
     const b = buildAdd(did, log, RACE_SEED, 'b')
-    await Promise.all([
-      store.merge(did, appendEvent(log, a)),
-      store.merge(did, appendEvent(log, b)),
-    ])
+    // The first update waits until the second merge has been issued, so an unlocked store lets both
+    // read the same row.
+    let issued: () => void = () => {}
+    const secondIssued = new Promise<void>((resolve) => {
+      issued = resolve
+    })
+    const slow = appendEvent(log, a)
+    const first = store.merge(did, async (current) => {
+      await secondIssued
+      return await slow(current)
+    })
+    const second = store.merge(did, appendEvent(log, b))
+    issued()
+    await Promise.all([first, second])
     expect(memberNames(await store.get(did))).toEqual(['did:key:a', 'did:key:b'])
   })
 
