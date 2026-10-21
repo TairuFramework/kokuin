@@ -191,8 +191,10 @@ export type AuthoritativeLog = { log: ControllerLog; result: Extract<FoldResult,
  * verifies under it every time (see `FoldEpochParams.trusted`). They are still authorised afresh,
  * and a stored event of another epoch is simply ignored. Only what `loaded` adds is checked, and
  * `loaded` is refused as a whole, memory untouched, once more than `MAX_FAILED_SIGNATURES` of its
- * signatures fail (`TOO_MANY_FAILED_SIGNATURES`). This trusts the store: one that an attacker
- * can write to defeats every guarantee here anyway, since it can simply forget what was seen.
+ * signatures fail (`TOO_MANY_FAILED_SIGNATURES`). This trusts the store for signatures, not only
+ * for completeness: whoever can write it can plant an unsigned event of the current epoch and have
+ * it applied (a member added, say), not merely make this party forget. Only ever write what this
+ * function returned for the same DID.
  */
 export function authoritativeLog(params: AuthoritativeLogParams): AuthoritativeLog {
   return authoritativeLogWithin(params)

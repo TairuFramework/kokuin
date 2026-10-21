@@ -20,6 +20,8 @@ db.register(controllerStoreDefinition)
 const logs = await getControllerStore(db)
 
 // Merge an untrusted presentation through the same arbitration the resolver uses.
+// Never write peer bytes (or a `mergeLogs` union) directly: stored events of the
+// current epoch are not re-verified, so a forged one would be applied.
 await logs.merge(did, async (seen) =>
   authoritativeLog({ did, loaded: presented, seen, context: 'sync' }).log,
 )

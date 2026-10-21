@@ -68,8 +68,10 @@ export function createControllerStore(
     // or not, legacy shape or not -- is left alone. Arbitration lives in the resolver
     // (`authoritativeLog`), never here. A caller ingesting an UNTRUSTED log (e.g.
     // one pulled from a peer) must build the update from `authoritativeLog` —
-    // this store will not refuse a truncated or forked log on its own, so
-    // writing peer bytes directly would bypass the anti-truncation guarantee.
+    // this store will not refuse a truncated or forked log on its own, and the
+    // resolver does not re-verify the current epoch's stored events. Writing
+    // peer bytes directly would bypass the anti-truncation guarantee AND let a
+    // forged event of the current epoch be applied as authentic.
     // The read and the write share a store transaction, which joins an enclosing
     // one. Postgres locks the row on read (`for update`), so a concurrent merge
     // waits and then reads this one's result. A DID with no row has nothing to
