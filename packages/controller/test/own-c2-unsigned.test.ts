@@ -52,7 +52,7 @@ describe('keyless branch hijack, independent reproduction', () => {
       const head = resolved.winner[resolved.winner.length - 1]
       if (head === undefined) throw new Error('expected a winning event')
       expect(head).toBe(denying)
-      expect(foldLog(did, resolved.winner).ok).toBe(true)
+      expect(foldLog(did, { chain: resolved.winner, events: [] }).ok).toBe(true)
     }
   })
 })

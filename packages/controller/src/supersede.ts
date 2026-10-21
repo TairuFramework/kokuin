@@ -303,7 +303,7 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
 export function resolveBranches(did: string, branches: Array<Array<SignedEvent>>): ResolveResult {
   const valid: Array<FoldedBranch> = []
   for (const branch of branches) {
-    const folded = branchFrom(branch, foldLog(did, branch))
+    const folded = branchFrom(branch, foldLog(did, { chain: branch, events: [] }))
     if (folded != null) {
       valid.push(folded)
     }

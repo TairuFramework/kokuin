@@ -80,7 +80,7 @@ export async function authoritativeStates({
   if (seen == null || seen.length === 0) {
     return { log: loaded, states }
   }
-  const previous = foldLog(did, seen)
+  const previous = foldLog(did, { chain: seen, events: [] })
   if (!previous.ok) {
     return { log: loaded, states }
   }
@@ -104,7 +104,7 @@ export async function authoritativeStates({
       `${resolved.failure === 'duplicity' ? LOG_FORKED : LOG_NOT_AUTHORITATIVE}: ${did}`,
     )
   }
-  const winner = foldLog(did, resolved.winner)
+  const winner = foldLog(did, { chain: resolved.winner, events: [] })
   const winnerHead = winner.ok ? winner.states[winner.states.length - 1] : undefined
   if (winnerHead === undefined || winnerHead.digest !== head) {
     throw new Error(`${LOG_NOT_AUTHORITATIVE}: ${did}`)

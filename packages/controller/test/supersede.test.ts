@@ -158,7 +158,7 @@ describe('resolveBranches()', () => {
         sigs: [],
       } as unknown as SignedEvent,
     ]
-    expect(foldLog(did, noise).ok).toBe(true)
+    expect(foldLog(did, { chain: noise, events: [] }).ok).toBe(true)
 
     for (const order of [
       [honest, noise],
@@ -218,7 +218,7 @@ describe('resolveBranches()', () => {
         sigs: [],
       } as unknown as SignedEvent,
     ]
-    expect(foldLog(did, padded).ok).toBe(true)
+    expect(foldLog(did, { chain: padded, events: [] }).ok).toBe(true)
 
     for (const order of [
       [honest, padded],

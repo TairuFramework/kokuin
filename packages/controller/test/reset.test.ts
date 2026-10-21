@@ -179,7 +179,7 @@ describe('the recovery commitment is fixed at inception', () => {
     expect(verifyRotate(forged, { digest: digestOf(inception.event), n: inception.event.n })).toBe(
       false,
     )
-    expect(foldLog(did, [inception, forged])).toEqual({
+    expect(foldLog(did, { chain: [inception, forged], events: [] })).toEqual({
       ok: false,
       reason: 'invalid rotate',
       index: 1,
@@ -191,7 +191,7 @@ describe('the recovery commitment is fixed at inception', () => {
     expect(verifyRotate(control, { digest: digestOf(inception.event), n: inception.event.n })).toBe(
       true,
     )
-    expect(foldLog(did, [inception, control]).ok).toBe(true)
+    expect(foldLog(did, { chain: [inception, control], events: [] }).ok).toBe(true)
   })
 
   test('a reset carrying `r` is refused too — it is a rotate body and shares the check', () => {
@@ -206,7 +206,7 @@ describe('the recovery commitment is fixed at inception', () => {
     )
     // Control: the same reset without the member verifies and folds.
     expect(verifyReset(signed, inception.event)).toBe(true)
-    expect(foldLog(did, [inception, signed]).ok).toBe(true)
+    expect(foldLog(did, { chain: [inception, signed], events: [] }).ok).toBe(true)
   })
 
   test('`KeyState.recovery` is the inception commitment at every position of a mixed log', () => {
@@ -236,7 +236,7 @@ describe('the recovery commitment is fixed at inception', () => {
       options: { snapshot: { members: [], deny: [] } },
     })
 
-    const result = foldLog(did, [inception, rot, denying, reset, after])
+    const result = foldLog(did, { chain: [inception, rot, denying, reset, after], events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.states.map((state) => state.recovery)).toEqual(

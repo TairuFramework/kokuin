@@ -38,7 +38,7 @@ describe('kept: `isKeyList(event.k)` in verifyInception', () => {
       const [forgedDid, forged] = signedInception(value)
       let result: FoldResult | undefined
       expect(() => {
-        result = foldLog(forgedDid, [forged])
+        result = foldLog(forgedDid, { chain: [forged], events: [] })
       }).not.toThrow()
       expect(result).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
     })
@@ -46,6 +46,6 @@ describe('kept: `isKeyList(event.k)` in verifyInception', () => {
 
   test('control: an unmutated re-signed inception folds', () => {
     const [forgedDid, forged] = signedInception(icp.event.k)
-    expect(foldLog(forgedDid, [forged]).ok).toBe(true)
+    expect(foldLog(forgedDid, { chain: [forged], events: [] }).ok).toBe(true)
   })
 })

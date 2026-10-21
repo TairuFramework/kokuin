@@ -52,7 +52,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     let thrown: unknown
     let returned: unknown
     try {
-      returned = foldLog(did, [hostile])
+      returned = foldLog(did, { chain: [hostile], events: [] })
     } catch (error) {
       thrown = error
     }
@@ -70,7 +70,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     let thrown: unknown
     let returned: unknown
     try {
-      returned = foldLog(did, [tame])
+      returned = foldLog(did, { chain: [tame], events: [] })
     } catch (error) {
       thrown = error
     }
@@ -80,7 +80,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
 
   test('ROW 3 (closed): the same trick past the inception — answered at any log position', () => {
     const { icp, did, honest } = build()
-    const good = foldLog(did, [icp])
+    const good = foldLog(did, { chain: [icp], events: [] })
     if (!good.ok) throw new Error('fixture')
     const head = good.states[0]
     if (head === undefined) throw new Error('fixture')
@@ -94,7 +94,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     let thrown: unknown
     let hostileResult: unknown
     try {
-      hostileResult = foldLog(did, [icp, wire])
+      hostileResult = foldLog(did, { chain: [icp, wire], events: [] })
     } catch (error) {
       thrown = error
     }
@@ -105,7 +105,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     // reason, so the rejection above is the non-finite member and not the junk signature bytes or
     // the type: the chain carries no `rev`, so the tame body reaches the unknown-type path.
     const tame = fromWire(raw.replace('JUNK', '1')) as SignedEvent
-    const control = foldLog(did, [icp, tame])
+    const control = foldLog(did, { chain: [icp, tame], events: [] })
     expect(control).toEqual({ ok: false, reason: 'unknown critical event type: rev', index: 1 })
     expect(honest.length).toBe(2)
   })
@@ -162,7 +162,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
       ['-1e400', body('-1e400')],
       ['NaN', { event: { ...(body('1').event as object), junk: Number.NaN }, sigs: [] }],
     ] as Array<[string, SignedEvent]>) {
-      const result = foldLog(did, [event])
+      const result = foldLog(did, { chain: [event], events: [] })
       expect(result).toEqual({ ok: false, reason: 'malformed event', index: 0 })
     }
 
@@ -170,7 +170,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     // `invalid inception` rejection rather than the malformed-event one — so the guard above
     // discriminates the non-finite values specifically and does not simply refuse every number.
     for (const junk of ['-0', '9007199254740993', '1e21']) {
-      const result = foldLog(did, [body(junk)])
+      const result = foldLog(did, { chain: [body(junk)], events: [] })
       expect(result).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
     }
   })

@@ -45,9 +45,9 @@ describe('pre-rotation bypass attempts', () => {
     }
     // The signature is VALID over these bytes and matches the key the event publishes — the only
     // thing wrong is that `n` never committed it.
-    expect(foldLog(did, [icp, forged]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, forged], events: [] }).ok).toBe(false)
     // CONTROL: the honest rotate, same position, same shape.
-    expect(foldLog(did, [icp, honest]).ok).toBe(true)
+    expect(foldLog(did, { chain: [icp, honest], events: [] }).ok).toBe(true)
   })
 
   test('a rotate re-revealing the CURRENT key (no rotation at all) is refused', () => {
@@ -64,7 +64,7 @@ describe('pre-rotation bypass attempts', () => {
       event: body,
       sigs: signEvent(body, [current.privateKey]),
     }
-    expect(foldLog(did, [icp, forged]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, forged], events: [] }).ok).toBe(false)
   })
 
   test('the commitment cannot be satisfied by a differently-encoded spelling of the same key', () => {
@@ -98,7 +98,7 @@ describe('pre-rotation bypass attempts', () => {
       event: body,
       sigs: signEvent(body, [revealed.privateKey, thief.privateKey]),
     }
-    expect(foldLog(did, [icp, forged]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, forged], events: [] }).ok).toBe(false)
   })
 })
 
@@ -113,7 +113,7 @@ describe('splicing, truncation, replay', () => {
       prior: b.icp.event,
       options: { snapshot: { members: [], deny: [] } },
     })
-    expect(foldLog(a.did, [a.icp, foreignRotate]).ok).toBe(false)
+    expect(foldLog(a.did, { chain: [a.icp, foreignRotate], events: [] }).ok).toBe(false)
   })
 
   test("another DID's reset, relabelled with our `i`, is refused (anchor + recovery)", () => {
@@ -123,7 +123,7 @@ describe('splicing, truncation, replay', () => {
       ...foreignReset,
       event: { ...foreignReset.event, i: a.did, p: digestOf(a.icp.event) },
     }
-    expect(foldLog(a.did, [a.icp, relabelled]).ok).toBe(false)
+    expect(foldLog(a.did, { chain: [a.icp, relabelled], events: [] }).ok).toBe(false)
   })
 
   test('a rotate replayed at a later position is refused', () => {
@@ -142,9 +142,9 @@ describe('splicing, truncation, replay', () => {
       prior: rot1.event,
       options: { snapshot: { members: [], deny: [victim] } },
     })
-    expect(foldLog(did, [icp, rot1, rot2]).ok).toBe(true)
-    expect(foldLog(did, [icp, rot1, rot1]).ok).toBe(false)
-    expect(foldLog(did, [icp, rot2]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, rot1, rot2], events: [] }).ok).toBe(true)
+    expect(foldLog(did, { chain: [icp, rot1, rot1], events: [] }).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, rot2], events: [] }).ok).toBe(false)
   })
 
   test('reordering two valid events is refused', () => {
@@ -163,8 +163,8 @@ describe('splicing, truncation, replay', () => {
       prior: rot.event,
       options: { snapshot: { members: [], deny: [victim] } },
     })
-    expect(foldLog(did, [icp, rot, next]).ok).toBe(true)
-    expect(foldLog(did, [icp, next, rot]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, rot, next], events: [] }).ok).toBe(true)
+    expect(foldLog(did, { chain: [icp, next, rot], events: [] }).ok).toBe(false)
   })
 
   test('a prefix truncation folds (by design) but loses branch selection on (gen, seq)', () => {
@@ -184,7 +184,7 @@ describe('splicing, truncation, replay', () => {
       options: { snapshot: { members: [], deny: [victim] } },
     })
     const honest = [icp, rot, denying]
-    expect(foldLog(did, [icp]).ok).toBe(true)
+    expect(foldLog(did, { chain: [icp], events: [] }).ok).toBe(true)
     const r = resolveBranches(did, [[icp], honest])
     expect(r.ok && r.winner).toBe(honest)
   })
@@ -210,7 +210,7 @@ describe('superseding recovery abuse', () => {
       event: revokeBody,
       sigs: signEvent(revokeBody as never, [current.privateKey]),
     } as unknown as SignedEvent
-    expect(foldLog(did, [icp, thiefRevoke]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, thiefRevoke], events: [] }).ok).toBe(false)
     const ownerRotate = createRotate({
       seed: seedA,
       profile: 0,
@@ -243,7 +243,7 @@ describe('superseding recovery abuse', () => {
     ])
     expect(r.ok && r.winner[1]?.event.g).toBe(2)
     // And replaying the lower reset after the higher one does not fold.
-    expect(foldLog(did, [icp, reset2, reset1]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, reset2, reset1], events: [] }).ok).toBe(false)
   })
 
   test('a reset a non-root forges is refused — the recovery key is unpublished', () => {
@@ -255,9 +255,9 @@ describe('superseding recovery abuse', () => {
       sigs: signEvent(honest.event, [thief.privateKey]),
       recoveryKey: encodeKey(thief.publicKey, 'EdDSA'),
     }
-    expect(foldLog(did, [icp, forged]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, forged], events: [] }).ok).toBe(false)
     // CONTROL: identical body, the real recovery key.
-    expect(foldLog(did, [icp, honest]).ok).toBe(true)
+    expect(foldLog(did, { chain: [icp, honest], events: [] }).ok).toBe(true)
   })
 
   test('a reset revealing the right recovery key but a forged signature is refused', () => {
@@ -270,7 +270,7 @@ describe('superseding recovery abuse', () => {
       sigs: signEvent(honest.event, [thief.privateKey]),
       recoveryKey: honest.recoveryKey,
     }
-    expect(foldLog(did, [icp, forged]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, forged], events: [] }).ok).toBe(false)
   })
 })
 
@@ -278,7 +278,7 @@ describe('self-certification', () => {
   test('a log whose inception is not the one the DID hashes is refused', () => {
     const a = build(seedA)
     const b = build(seedB)
-    expect(foldLog(a.did, [b.icp]).ok).toBe(false)
+    expect(foldLog(a.did, { chain: [b.icp], events: [] }).ok).toBe(false)
   })
 
   test('mutating any inception member changes the DID, so no two bodies share one', () => {

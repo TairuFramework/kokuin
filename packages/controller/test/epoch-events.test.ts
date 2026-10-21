@@ -28,7 +28,7 @@ const inception = createInception(seed, profile)
 const did = didFromInception(inception.event)
 
 function headOf(events: Array<SignedEvent>): KeyState {
-  const result = foldLog(did, events)
+  const result = foldLog(did, { chain: events, events: [] })
   if (!result.ok) {
     throw new Error(`fixture log does not fold: ${result.reason}`)
   }

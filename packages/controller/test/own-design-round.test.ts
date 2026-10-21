@@ -152,7 +152,7 @@ describe('unsigned padding cannot grow a log without limit', () => {
       inception,
       ...Array.from({ length: MAX_SKIPPED_SLACK }, (_, i) => padding(did, inception, i)),
     ]
-    const controlResult = foldLog(did, within)
+    const controlResult = foldLog(did, { chain: within, events: [] })
     expect(controlResult.ok, 'padding within the slack still folds').toBe(true)
 
     // ATTACK — the same events, past the budget. Before this bound, 500 of them folded clean.
@@ -160,7 +160,7 @@ describe('unsigned padding cannot grow a log without limit', () => {
       inception,
       ...Array.from({ length: MAX_SKIPPED_SLACK + 2 }, (_, i) => padding(did, inception, i)),
     ]
-    const attacked = foldLog(did, beyond)
+    const attacked = foldLog(did, { chain: beyond, events: [] })
     expect(attacked.ok).toBe(false)
     if (attacked.ok) return
     expect(attacked.reason).toBe(TOO_MANY_UNKNOWN_EVENTS)
@@ -182,7 +182,7 @@ describe('unsigned padding cannot grow a log without limit', () => {
       rot,
       ...Array.from({ length: MAX_SKIPPED_SLACK + 1 }, (_, i) => padding(did, rot, i)),
     ]
-    expect(foldLog(did, log).ok).toBe(true)
+    expect(foldLog(did, { chain: log, events: [] }).ok).toBe(true)
   })
 })
 
@@ -202,7 +202,7 @@ describe('carrying a state forward cannot silently drop the rest of it', () => {
     }
     const leaked = keyTarget(at(inception.event.k, 0))
     const settled = settle(did, inception.event, [device, leaked], [member])
-    const folded = foldLog(did, [inception, settled])
+    const folded = foldLog(did, { chain: [inception, settled], events: [] })
     expect(folded.ok).toBe(true)
     if (!folded.ok) return
     const state = at(folded.states, 1)
@@ -213,12 +213,12 @@ describe('carrying a state forward cannot silently drop the rest of it', () => {
     // the member and every other denial can: this is a legal event that dismisses the management
     // tier and un-revokes nothing it meant to.
     const byHand = settle(did, settled.event, [leaked])
-    const lost = foldLog(did, [inception, settled, byHand])
+    const lost = foldLog(did, { chain: [inception, settled, byHand], events: [] })
     expect(lost.ok).toBe(true)
     if (!lost.ok) return
     expect(at(lost.states, 2).members.size, 'the member is no longer in the set').toBe(0)
     const forgotten = settle(did, settled.event, [device])
-    expect(foldLog(did, [inception, settled, forgotten])).toMatchObject({
+    expect(foldLog(did, { chain: [inception, settled, forgotten], events: [] })).toMatchObject({
       ok: false,
       reason: 'snapshot drops a retired key denial',
     })
@@ -231,7 +231,7 @@ describe('carrying a state forward cannot silently drop the rest of it', () => {
       prior: settled.event,
       options: { snapshot: snapshotOf(state, { deny: [device] }) },
     })
-    const kept = foldLog(did, [inception, settled, pruned])
+    const kept = foldLog(did, { chain: [inception, settled, pruned], events: [] })
     expect(kept.ok).toBe(true)
     if (!kept.ok) return
     expect(at(kept.states, 2).deny.has(leaked)).toBe(true)

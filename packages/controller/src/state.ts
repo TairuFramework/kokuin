@@ -24,7 +24,7 @@ function lastState(did: string, context: string, result: FoldResult): KeyState {
 
 /** Current state of a log. */
 export function currentState(did: string, events: Array<SignedEvent>, context: string): KeyState {
-  return lastState(did, context, foldLog(did, events))
+  return lastState(did, context, foldLog(did, { chain: events, events: [] }))
 }
 
 /**
@@ -37,5 +37,5 @@ export function allStates(
   events: Array<SignedEvent>,
   context: string,
 ): Array<KeyState> {
-  return foldedStates(did, context, foldLog(did, events))
+  return foldedStates(did, context, foldLog(did, { chain: events, events: [] }))
 }

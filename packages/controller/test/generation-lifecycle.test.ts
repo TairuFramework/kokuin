@@ -294,11 +294,11 @@ const keyAt = (gen: number, seq: number) =>
 
 describe('every event in a rotate/reset interleaving folds', () => {
   test('the whole log folds', () => {
-    expect(foldLog(did, interleaved).ok).toBe(true)
+    expect(foldLog(did, { chain: interleaved, events: [] }).ok).toBe(true)
   })
 
   test('each state names the key the log actually committed', () => {
-    const result = foldLog(did, interleaved)
+    const result = foldLog(did, { chain: interleaved, events: [] })
     if (!result.ok) throw new Error(`did not fold: ${result.reason} at ${result.index}`)
     const seen = result.states.map((state) => ({
       gen: state.gen,
@@ -319,7 +319,7 @@ describe('every event in a rotate/reset interleaving folds', () => {
   })
 
   test('the head deny set is exactly the current generation`s', () => {
-    const result = foldLog(did, interleaved)
+    const result = foldLog(did, { chain: interleaved, events: [] })
     if (!result.ok) throw new Error('no fold')
     expect([...at(result.states, 6).deny]).toEqual([D3])
     // and the pre-reset positions still deny what they denied

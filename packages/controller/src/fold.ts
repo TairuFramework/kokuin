@@ -1,4 +1,5 @@
 import { digestOf, isCanonicalizable } from './canonical.js'
+import { foldEpoch } from './epoch.js'
 import {
   type InceptionEvent,
   keyFromTarget,
@@ -11,6 +12,8 @@ import {
   verifyReset,
   verifyRotate,
 } from './events.js'
+import { MAX_LOG_EVENTS } from './limits.js'
+import { type ControllerLog, isControllerLog, LOG_TOO_LARGE, MALFORMED_LOG } from './log.js'
 import { denialTargetsMember, ROTATE_NEEDS_SNAPSHOT, validateSnapshot } from './members.js'
 
 export {
@@ -89,8 +92,21 @@ export type KeyState = {
   digest: string
 }
 
+/**
+ * `states` is one state per chain event, which is what historic resolution scans. `head` is the last
+ * chain state merged with the current epoch: its `deny`, `members` and `saturated` are the live
+ * answers. `applied`, `pending` and `rejected` account for the epoch events presented -- the digests
+ * that took effect, the well-formed ones still waiting on a parent, and the ones refused.
+ */
 export type FoldResult =
-  | { ok: true; states: Array<KeyState> }
+  | {
+      ok: true
+      states: Array<KeyState>
+      head: KeyState
+      applied: Array<string>
+      pending: number
+      rejected: number
+    }
   | { ok: false; reason: string; index: number }
 
 function fail(reason: string, index: number): FoldResult {
@@ -354,7 +370,7 @@ type FoldInit =
  */
 function initFold(did: string, events: Array<SignedEvent>): FoldInit {
   if (!Array.isArray(events)) {
-    return { ok: false, result: fail('malformed log', 0) }
+    return { ok: false, result: fail(MALFORMED_LOG, 0) }
   }
   if (events.length === 0) {
     return { ok: false, result: fail('empty log', 0) }
@@ -402,17 +418,14 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
   }
 }
 
-/**
- * Fold a controller's log into per-position key state. `states[i]` is the state *after* `events[i]`,
- * which a verifier evaluating at position `i` must use — that is what makes the deny set
- * position-dependent: clearing a DID later never retroactively validates its earlier actions.
- *
- * Synchronous, so it stays usable on an offline verifier's apply path.
- */
-export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
+/** The chain alone: one state per event, or the first event that does not fold. */
+function foldChain(
+  did: string,
+  events: Array<SignedEvent>,
+): { ok: true; states: Array<KeyState> } | { ok: false; result: FoldResult } {
   const init = initFold(did, events)
   if (!init.ok) {
-    return init.result
+    return init
   }
   const { inception, states } = init
   const budget = skipBudget()
@@ -420,16 +433,16 @@ export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
   for (let i = 1; i < events.length; i++) {
     const prior = states[i - 1]
     if (prior === undefined) {
-      return fail(INTERNAL_FOLD_INVARIANT, i)
+      return { ok: false, result: fail(INTERNAL_FOLD_INVARIANT, i) }
     }
     // `events[i]` may be a hole or `undefined`; `stepEvent` reports that as `malformed event`.
     const outcome = stepEvent(did, inception, events[i] as SignedEvent, prior, states)
     if (outcome.status === 'fail') {
-      return fail(outcome.reason, i)
+      return { ok: false, result: fail(outcome.reason, i) }
     }
     if (outcome.skipped) {
       if (!budget.skip()) {
-        return fail(TOO_MANY_UNKNOWN_EVENTS, i)
+        return { ok: false, result: fail(TOO_MANY_UNKNOWN_EVENTS, i) }
       }
     } else {
       budget.understood()
@@ -438,6 +451,41 @@ export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
   }
 
   return { ok: true, states }
+}
+
+/**
+ * Fold a controller's log into per-position key state. `states[i]` is the state *after* `chain[i]`,
+ * which a verifier evaluating at position `i` must use — that is what makes the deny set
+ * position-dependent: clearing a DID later never retroactively validates its earlier actions.
+ *
+ * The epoch events then merge into the chain's last state to give `head` (see `foldEpoch`). Only the
+ * request limit can fail that half: more than {@link MAX_LOG_EVENTS} entries is `LOG_TOO_LARGE`, at
+ * index -1 because it is no event's fault. Past it, nothing in `log.events` can fail the fold --
+ * a bad entry is counted and dropped -- so a relay cannot make a log unfoldable by padding it.
+ *
+ * Synchronous, so it stays usable on an offline verifier's apply path.
+ */
+export function foldLog(did: string, log: ControllerLog): FoldResult {
+  if (!isControllerLog(log)) {
+    return fail(MALFORMED_LOG, 0)
+  }
+  if (log.events.length > MAX_LOG_EVENTS) {
+    return fail(LOG_TOO_LARGE, -1)
+  }
+  const chain = foldChain(did, log.chain)
+  if (!chain.ok) {
+    return chain.result
+  }
+  const { states } = chain
+  const merged = foldEpoch({ did, chainStates: states, events: log.events })
+  return {
+    ok: true,
+    states,
+    head: merged.head,
+    applied: merged.applied,
+    pending: merged.pending,
+    rejected: merged.rejected,
+  }
 }
 
 export function keyStateAt(result: FoldResult, position: number): KeyState | undefined {

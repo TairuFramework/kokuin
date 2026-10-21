@@ -101,7 +101,7 @@ function buildRevokedLog(revokedSeed: Uint8Array) {
 }
 
 function headDeny(did: string, log: Array<SignedEvent>): ReadonlySet<string> {
-  const folded = foldLog(did, log)
+  const folded = foldLog(did, { chain: log, events: [] })
   if (!folded.ok) {
     throw new Error(`log did not fold: ${folded.reason}`)
   }

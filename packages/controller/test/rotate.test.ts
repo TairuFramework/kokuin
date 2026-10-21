@@ -146,7 +146,7 @@ describe('createRotate()', () => {
       log.push(rot)
       prior = rot.event
     }
-    const result = foldLog(did, log)
+    const result = foldLog(did, { chain: log, events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.states.map((state) => state.keySeq)).toEqual([0, 1, 2, 3, 4])
@@ -298,7 +298,7 @@ describe('createRotate() refuses to emit an event the fold would reject', () => 
       prior: inception.event,
       options: { snapshot },
     })
-    expect(foldLog(did, [inception, good]).ok).toBe(true)
+    expect(foldLog(did, { chain: [inception, good], events: [] }).ok).toBe(true)
   })
 
   test('a seed that is not the log`s root is left alone — the fold is that layer', () => {
@@ -317,7 +317,7 @@ describe('createRotate() refuses to emit an event the fold would reject', () => 
       options: { snapshot: { members: [], deny: [] } },
     })
     expect(forged.event.t).toBe('rot')
-    expect(foldLog(did, [inception, forged])).toEqual({
+    expect(foldLog(did, { chain: [inception, forged], events: [] })).toEqual({
       ok: false,
       reason: 'invalid rotate',
       index: 1,
@@ -366,7 +366,7 @@ describe('a rotate`s thresholds and seal are checked', () => {
     test(`a rotate carrying ${JSON.stringify(patch)} is rejected`, () => {
       const { signed, prior, did, inception } = rotateWith(patch)
       expect(verifyRotate(signed, prior)).toBe(false)
-      expect(foldLog(did, [inception, signed])).toEqual({
+      expect(foldLog(did, { chain: [inception, signed], events: [] })).toEqual({
         ok: false,
         reason: 'invalid rotate',
         index: 1,
@@ -380,7 +380,7 @@ describe('a rotate`s thresholds and seal are checked', () => {
     // the digest of a sealless rotate does not depend on the member existing.
     const { signed, prior, did, inception } = rotateWith({ a: 'zSomeExternalDigest' })
     expect(verifyRotate(signed, prior)).toBe(true)
-    expect(foldLog(did, [inception, signed]).ok).toBe(true)
+    expect(foldLog(did, { chain: [inception, signed], events: [] }).ok).toBe(true)
 
     const sealed = createRotate({
       seed,

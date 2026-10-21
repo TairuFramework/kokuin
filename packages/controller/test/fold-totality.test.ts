@@ -248,16 +248,18 @@ const malformed: Array<[string, Array<unknown>, FoldResult]> = [
 describe('foldLog() is total', () => {
   for (const [name, log, expected] of malformed) {
     test(`answers ${name} with a reason`, () => {
-      expect(foldLog(did, log as Array<SignedEvent>)).toEqual(expected)
+      expect(foldLog(did, { chain: log as Array<SignedEvent>, events: [] })).toEqual(expected)
     })
   }
 
   test('answers a log that is not an array with a reason', () => {
-    expect(foldLog(did, undefined as unknown as Array<SignedEvent>)).toEqual({
-      ok: false,
-      reason: 'malformed log',
-      index: 0,
-    })
+    expect(foldLog(did, { chain: undefined as unknown as Array<SignedEvent>, events: [] })).toEqual(
+      {
+        ok: false,
+        reason: 'malformed log',
+        index: 0,
+      },
+    )
   })
 })
 
@@ -448,13 +450,13 @@ describe('a malformed event its own author signed', () => {
 
   for (const [name, log, expected] of cases) {
     test(`${name} is rejected`, () => {
-      expect(foldLog(did, log as Array<SignedEvent>)).toEqual(expected)
+      expect(foldLog(did, { chain: log as Array<SignedEvent>, events: [] })).toEqual(expected)
     })
   }
 
   test('a rotate whose deny snapshot is well formed still folds', () => {
     // The control for the snapshot rows above: the same re-signing machinery with a legal `d`.
-    const result = foldLog(did, [icp, signedRotate('d', [target])])
+    const result = foldLog(did, { chain: [icp, signedRotate('d', [target])], events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 1).deny.has(target)).toBe(true)
@@ -471,7 +473,7 @@ describe('a malformed event its own author signed', () => {
       prior: forged.event,
       options: { snapshot: { members: [], deny: [] } },
     })
-    expect(foldLog(forgedDid, [forged, following])).toEqual({
+    expect(foldLog(forgedDid, { chain: [forged, following], events: [] })).toEqual({
       ok: false,
       reason: 'invalid inception',
       index: 0,
@@ -480,7 +482,7 @@ describe('a malformed event its own author signed', () => {
 
   test('an inception whose recovery commitment is not a string is rejected', () => {
     const [forgedDid, forged] = signedInception('r', 42)
-    expect(foldLog(forgedDid, [forged])).toEqual({
+    expect(foldLog(forgedDid, { chain: [forged], events: [] })).toEqual({
       ok: false,
       reason: 'invalid inception',
       index: 0,
@@ -490,7 +492,7 @@ describe('a malformed event its own author signed', () => {
   test('an unmutated inception still folds', () => {
     // Control for both rows above: the same re-signing path with nothing changed.
     const [forgedDid, forged] = signedInception('kt', 1)
-    expect(foldLog(forgedDid, [forged]).ok).toBe(true)
+    expect(foldLog(forgedDid, { chain: [forged], events: [] }).ok).toBe(true)
   })
 })
 
@@ -544,7 +546,10 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   test(`a body reaching exactly ${MAX_CANONICAL_DEPTH} levels folds`, () => {
     // The control, and the reason the bound is a bound rather than a rejection of nesting: a log
     // this deep is canonicalized, hashed and accepted like any other.
-    const result = foldLog(did, [icp, rotateWithDeepMember(nest(deepestAccepted))])
+    const result = foldLog(did, {
+      chain: [icp, rotateWithDeepMember(nest(deepestAccepted))],
+      events: [],
+    })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 1).keys).toEqual(rot.event.k)
@@ -557,7 +562,11 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
       icp,
       { ...rot, event: { ...rot.event, zz: nest(shallowestRejected) } },
     ] as Array<SignedEvent>
-    expect(foldLog(did, log)).toEqual({ ok: false, reason: 'malformed event', index: 1 })
+    expect(foldLog(did, { chain: log, events: [] })).toEqual({
+      ok: false,
+      reason: 'malformed event',
+      index: 1,
+    })
   })
 
   // 5000 is past the stack, not merely past the bound: before the guard each of these threw a
@@ -592,7 +601,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
     test(`${name} is answered with a reason, not a RangeError`, () => {
       let result: unknown
       expect(() => {
-        result = foldLog(did, log)
+        result = foldLog(did, { chain: log, events: [] })
       }).not.toThrow()
       expect(result).toEqual(expected)
     })

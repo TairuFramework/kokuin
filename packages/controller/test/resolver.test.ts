@@ -210,7 +210,7 @@ describe('createControllerResolver() and a revoked key', () => {
     // the revoke, which is the whole class of attack the `aud` rule already closes.
     const { did, leaked, revoked } = revokedKeyLog()
     const resolver = createControllerResolver({ loadLog: async () => revoked })
-    const folded = foldLog(did, revoked)
+    const folded = foldLog(did, { chain: revoked, events: [] })
     if (!folded.ok) throw new Error('did not fold')
     expect(at(folded.states, 0).keys).toContain(leaked)
     expect(at(folded.states, 0).deny.size).toBe(0)
@@ -417,7 +417,7 @@ describe('createStateResolver()', () => {
       prior: icp.event,
       options: { snapshot: { members: [], deny: [] } },
     })
-    const result = foldLog(did, [icp, rot])
+    const result = foldLog(did, { chain: [icp, rot], events: [] })
     if (!result.ok) throw new Error('did not fold')
     const resolver = createStateResolver(did, result.states)
 
@@ -450,7 +450,7 @@ describe('createStateResolver()', () => {
   // party's fold, or a cached snapshot, can produce one.
   test('refuses a head key the state it was handed also denies', async () => {
     const { icp, did } = build()
-    const result = foldLog(did, [icp])
+    const result = foldLog(did, { chain: [icp], events: [] })
     if (!result.ok) throw new Error('did not fold')
     const head = at(result.states, 0)
     const target = `#${at(head.keys, 0)}`
@@ -470,7 +470,7 @@ describe('createStateResolver()', () => {
 
   test('drops an agreement key the state it was handed denies', async () => {
     const { icp, did } = build()
-    const result = foldLog(did, [icp])
+    const result = foldLog(did, { chain: [icp], events: [] })
     if (!result.ok) throw new Error('did not fold')
     const head = at(result.states, 0)
 
@@ -492,7 +492,7 @@ describe('createStateResolver()', () => {
       prior: icp.event,
       options: { snapshot: { members: [], deny: [device] } },
     })
-    const result = foldLog(did, [icp, rev])
+    const result = foldLog(did, { chain: [icp, rev], events: [] })
     if (!result.ok) throw new Error('did not fold')
 
     // Position 0 — before the denying rotate — and position 1, from the same fold.

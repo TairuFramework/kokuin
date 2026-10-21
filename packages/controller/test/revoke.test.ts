@@ -51,7 +51,7 @@ describe('the root chain carries no revoke', () => {
     const revoke = { v: 1, t: 'rev', i: did, g: 0, s: 1, p: priorDigest, crit: true, x: stolen }
     for (const event of [revoke, { ...revoke, cap: 'x' }]) {
       const signed = { event, sigs: ['AAAA'] } as unknown as SignedEvent
-      expect(foldLog(did, [inception, signed])).toEqual({
+      expect(foldLog(did, { chain: [inception, signed], events: [] })).toEqual({
         ok: false,
         reason: 'unknown critical event type: rev',
         index: 1,

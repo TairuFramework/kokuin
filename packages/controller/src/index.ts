@@ -114,6 +114,12 @@ export {
   MAX_EVENT_SIGNATURES,
   MAX_LOG_EVENTS,
 } from './limits.js'
+export {
+  type ControllerLog,
+  isControllerLog,
+  LOG_TOO_LARGE,
+  MALFORMED_LOG,
+} from './log.js'
 export { enumerateProfiles, handleForDID, type ProfileEntry } from './profiles.js'
 export { type ControllerResolverOptions, createControllerResolver } from './resolver.js'
 export {

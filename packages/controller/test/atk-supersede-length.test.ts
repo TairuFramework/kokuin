@@ -53,8 +53,8 @@ describe('superseding is not decided by branch LENGTH', () => {
 
   test('ROW 2 (control: both runs are valid, not incidentally malformed)', () => {
     const { icp, did } = build()
-    expect(foldLog(did, rotateRun(did, icp, 5, 'a')).ok).toBe(true)
-    expect(foldLog(did, rotateRun(did, icp, 1, 'b')).ok).toBe(true)
+    expect(foldLog(did, { chain: rotateRun(did, icp, 5, 'a'), events: [] }).ok).toBe(true)
+    expect(foldLog(did, { chain: rotateRun(did, icp, 1, 'b'), events: [] }).ok).toBe(true)
   })
 
   test('ROW 3: the answer is the same in every presentation order and at every length', () => {

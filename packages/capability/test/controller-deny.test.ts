@@ -129,7 +129,7 @@ describe('a capability whose audience the profile has revoked', () => {
     // answer (`snapshotOf`) and must not quietly re-admit a revoked device.
     const cap = await mintFor(delegate)
     const revoke = revokeOf(delegate.id)
-    const folded = foldLog(did, [inception, revoke])
+    const folded = foldLog(did, { chain: [inception, revoke], events: [] })
     if (!folded.ok) throw new Error('did not fold')
     log = [
       inception,

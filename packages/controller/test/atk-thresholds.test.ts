@@ -58,19 +58,19 @@ function twoKeyInception(kt: unknown, nt: unknown, signers: 'both' | 'first') {
 describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', () => {
   test('ROW 1: a 2-key set declaring `kt: 1` still demands BOTH signatures (fail-closed)', () => {
     const { signed, did } = twoKeyInception(1, 1, 'first')
-    const r = foldLog(did, [signed])
+    const r = foldLog(did, { chain: [signed], events: [] })
     expect(r.ok).toBe(false)
   })
 
   test('ROW 2 (closed): both signatures are not enough — `kt: 1` over 2 keys is a lie', () => {
     const { signed, did } = twoKeyInception(1, 1, 'both')
-    const r = foldLog(did, [signed])
+    const r = foldLog(did, { chain: [signed], events: [] })
     expect(r).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
 
     // ROW 2 control: the identical body with the truthful thresholds, signed the same way. It
     // folds — so what ROW 1 and ROW 2 reject is the declaration, not the two-key shape.
     const truthful = twoKeyInception(2, 2, 'both')
-    const ok = foldLog(truthful.did, [truthful.signed])
+    const ok = foldLog(truthful.did, { chain: [truthful.signed], events: [] })
     expect(ok.ok).toBe(true)
     if (!ok.ok) return
     const state = ok.states[0]
@@ -87,14 +87,14 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
       [null, null],
     ] as Array<[unknown, unknown]>) {
       const { signed, did } = twoKeyInception(kt, nt, 'both')
-      const r = foldLog(did, [signed])
+      const r = foldLog(did, { chain: [signed], events: [] })
       expect(r).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
     }
     // ROW 3 control: an absent member is refused too — the check is `===` against the set size, so
     // `undefined` is not quietly coerced, and neither is the string `"2"`.
     for (const kt of [undefined, '2'] as Array<unknown>) {
       const { signed, did } = twoKeyInception(kt, 2, 'both')
-      const r = foldLog(did, [signed])
+      const r = foldLog(did, { chain: [signed], events: [] })
       expect(r.ok).toBe(false)
     }
   })
@@ -107,7 +107,7 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
       ...signed,
       event: { ...signed.event, k: [firstKey] },
     }
-    const r = foldLog(did, [tampered])
+    const r = foldLog(did, { chain: [tampered], events: [] })
     expect(r.ok).toBe(false)
   })
 })

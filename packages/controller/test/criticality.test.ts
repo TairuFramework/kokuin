@@ -25,8 +25,15 @@ function unknownEvent(did: string, prior: ReturnType<typeof createInception>, cr
       i: did,
       g: 0,
       s: 1,
-      p: at((foldLog(did, [prior]) as { ok: true; states: Array<{ digest: string }> }).states, 0)
-        .digest,
+      p: at(
+        (
+          foldLog(did, { chain: [prior], events: [] }) as {
+            ok: true
+            states: Array<{ digest: string }>
+          }
+        ).states,
+        0,
+      ).digest,
       crit,
     },
     sigs: [],
@@ -36,7 +43,7 @@ function unknownEvent(did: string, prior: ReturnType<typeof createInception>, cr
 describe('criticality', () => {
   test('an unknown critical event fails the fold closed', () => {
     const { icp, did } = build()
-    const result = foldLog(did, [icp, unknownEvent(did, icp, true)])
+    const result = foldLog(did, { chain: [icp, unknownEvent(did, icp, true)], events: [] })
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.reason).toMatch(/unknown critical event/)
@@ -44,7 +51,7 @@ describe('criticality', () => {
 
   test('an unknown non-critical event is skipped and the fold continues', () => {
     const { icp, did } = build()
-    const result = foldLog(did, [icp, unknownEvent(did, icp, false)])
+    const result = foldLog(did, { chain: [icp, unknownEvent(did, icp, false)], events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     // Skipped events do not advance state, so the position maps to the last applied state.
@@ -58,7 +65,10 @@ describe('criticality', () => {
     const { icp, did } = build()
     const { event } = unknownEvent(did, icp, false)
     const { crit: _crit, ...withoutCrit } = event
-    const result = foldLog(did, [icp, { event: withoutCrit as typeof event, sigs: [] }])
+    const result = foldLog(did, {
+      chain: [icp, { event: withoutCrit as typeof event, sigs: [] }],
+      events: [],
+    })
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.reason).toMatch(/no criticality flag/)
@@ -78,11 +88,14 @@ describe('criticality', () => {
       [0, 2],
     ]
     for (const [g, s] of positions) {
-      const result = foldLog(did, [icp, { ...skipped, event: { ...skipped.event, g, s } }])
+      const result = foldLog(did, {
+        chain: [icp, { ...skipped, event: { ...skipped.event, g, s } }],
+        events: [],
+      })
       expect(result).toEqual({ ok: false, reason: 'sequence gap', index: 1 })
     }
     // The truthful position still folds.
-    expect(foldLog(did, [icp, skipped]).ok).toBe(true)
+    expect(foldLog(did, { chain: [icp, skipped], events: [] }).ok).toBe(true)
   })
 
   test('a revoke is critical, so a verifier that cannot read it never accepts the device', () => {
@@ -91,6 +104,6 @@ describe('criticality', () => {
       event: { ...unknownEvent(did, icp, true).event, t: 'rev' as never, x: stolen },
       sigs: [],
     }
-    expect(foldLog(did, [icp, forged]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, forged], events: [] }).ok).toBe(false)
   })
 })

@@ -9,7 +9,7 @@ const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 function build() {
   const icp = createInception(seed, 0)
   const did = didFromInception(icp.event)
-  const r = foldLog(did, [icp])
+  const r = foldLog(did, { chain: [icp], events: [] })
   if (!r.ok) throw new Error('fixture')
   const head = r.states[0]
   if (head === undefined) throw new Error('fixture')
@@ -26,7 +26,7 @@ describe('wire types the fold never checks', () => {
       event: { v: 1, t: 'nop', i: did, g: 0, s: 1, p: digest },
       sigs: [],
     } as unknown as SignedEvent
-    const r = foldLog(did, [icp, noCrit])
+    const r = foldLog(did, { chain: [icp, noCrit], events: [] })
     expect(r.ok).toBe(false)
   })
 
@@ -35,7 +35,10 @@ describe('wire types the fold never checks', () => {
     const skipped: Array<string> = []
     for (const crit of [false, 0, '', null, undefined, 'false', 'no', 1, {}, []]) {
       const event = { v: 1, t: 'nop', i: did, g: 0, s: 1, p: digest, crit }
-      const r = foldLog(did, [icp, { event, sigs: [] } as unknown as SignedEvent])
+      const r = foldLog(did, {
+        chain: [icp, { event, sigs: [] } as unknown as SignedEvent],
+        events: [],
+      })
       if (r.ok) skipped.push(JSON.stringify(crit))
     }
     // Every falsy spelling — `0`, `''`, `null`, an omitted member — used to reach the skip path
@@ -50,7 +53,12 @@ describe('wire types the fold never checks', () => {
     const { icp, did, digest } = build()
     const rev = { v: 1, t: 'rev', i: did, g: 0, s: 1, p: digest, crit: true, x: target }
     for (const event of [rev, { ...rev, cap: 'header.payload.signature' }]) {
-      expect(foldLog(did, [icp, { event, sigs: ['AAAA'] } as unknown as SignedEvent])).toEqual({
+      expect(
+        foldLog(did, {
+          chain: [icp, { event, sigs: ['AAAA'] } as unknown as SignedEvent],
+          events: [],
+        }),
+      ).toEqual({
         ok: false,
         reason: 'unknown critical event type: rev',
         index: 1,
