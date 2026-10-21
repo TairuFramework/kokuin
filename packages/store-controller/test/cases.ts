@@ -1,6 +1,7 @@
 import type { Adapter } from '@hozon/adapter'
 import { HozonDB } from '@hozon/db'
 import {
+  type ControllerLog,
   createControllerResolver,
   createInception,
   createRotate,
@@ -100,6 +101,10 @@ function buildRevokedLog(revokedSeed: Uint8Array) {
   }
 }
 
+function chainOnly(chain: Array<SignedEvent>): ControllerLog {
+  return { chain, events: [] }
+}
+
 function headDeny(did: string, log: Array<SignedEvent>): ReadonlySet<string> {
   const folded = foldLog(did, { chain: log, events: [] })
   if (!folded.ok) {
@@ -130,6 +135,11 @@ export function controllerStoreCases(
   let db: HozonDB
   let store: ControllerStoreAPI
 
+  // Write a chain as the whole stored log, bypassing arbitration: the store writes what `update` returns.
+  async function put(did: string, chain: Array<SignedEvent>): Promise<void> {
+    await store.merge(did, async () => chainOnly(chain))
+  }
+
   beforeAll(async () => {
     db = new HozonDB({ adapter: await harness.createAdapter(), tablePrefix })
     db.register(controllerStoreDefinition)
@@ -143,16 +153,16 @@ export function controllerStoreCases(
 
   test('registers and round-trips a stored log', async () => {
     const { did, log } = buildRotatedLog()
-    await store.set(did, log)
-    expect(await store.get(did)).toEqual(log)
+    await put(did, log)
+    expect(await store.get(did)).toEqual(chainOnly(log))
   })
 
   test('resolves the head signing key through the store', async () => {
     const { did, log, headKey, inceptionKey } = buildRotatedLog()
-    await store.set(did, log)
+    await put(did, log)
 
     const resolver = createControllerResolver({
-      loadLog: (loadDID) => store.get(loadDID),
+      loadLog: async (loadDID) => (await store.get(loadDID))?.chain,
       history: store,
     })
     const resolved = await resolver.resolve(did, {})
@@ -168,7 +178,7 @@ export function controllerStoreCases(
     expect(await store.get('did:kokuin:unknown')).toBeUndefined()
   })
 
-  test('set is plain last-writer-wins: a shorter later log overwrites a longer stored one', async () => {
+  test('merge writes what the update returns: a shorter later log overwrites a longer stored one', async () => {
     // Distinct seed so this DID does not collide with the other tests in the
     // shared store.
     const icp = createInception(OVERWRITE_SEED, 0)
@@ -183,20 +193,20 @@ export function controllerStoreCases(
     const long = [icp, rot] as Array<SignedEvent>
     const short = [icp] as Array<SignedEvent>
 
-    await store.set(did, long)
-    expect(await store.get(did)).toEqual(long)
+    await put(did, long)
+    expect(await store.get(did)).toEqual(chainOnly(long))
 
     // The store never blocks a "backwards" write: supersession (e.g. a recovery
     // rotate at a low sequence) legitimately lowers length, so a high-water-mark
     // store would brick a rescue. Arbitration is the resolver's job, not the
     // store's -- this is the store's defining behavior.
-    await store.set(did, short)
-    expect(await store.get(did)).toEqual(short)
+    await put(did, short)
+    expect(await store.get(did)).toEqual(chainOnly(short))
   })
 
   test('resolve rejects an unknown DID', async () => {
     const resolver = createControllerResolver({
-      loadLog: (loadDID) => store.get(loadDID),
+      loadLog: async (loadDID) => (await store.get(loadDID))?.chain,
       history: store,
     })
     await expect(resolver.resolve('did:kokuin:unknown', {})).rejects.toThrow(/Unknown DID/)
@@ -206,12 +216,12 @@ export function controllerStoreCases(
     const { did, log } = buildRotatedLog(OBSERVED_SEED)
     expect(await store.getObservedAt(did)).toBeUndefined()
 
-    await store.set(did, log)
+    await put(did, log)
     const first = await store.getObservedAt(did)
     expect(first).toBeInstanceOf(Date)
     expect(Math.abs((first as Date).getTime() - Date.now())).toBeLessThan(5_000)
 
-    await store.set(did, log.slice(0, 1))
+    await put(did, log.slice(0, 1))
     const second = await store.getObservedAt(did)
     expect(second).toBeInstanceOf(Date)
     expect((second as Date).getTime()).toBeGreaterThanOrEqual((first as Date).getTime())
@@ -236,14 +246,14 @@ export function controllerStoreCases(
 
       // Accept once: the resolver folds the full log and writes it to the store itself.
       expect([...(await denySet(resolver, did))]).toEqual([denyEntry])
-      expect(await store.get(did)).toEqual(full)
+      expect(await store.get(did)).toEqual(chainOnly(full))
 
       // Attack: the peer now serves the prefix stopping just before the revoke. It folds and verifies,
       // but loses to the log already seen, so it is refused rather than answered from.
       served = truncated
       await expect(denySet(resolver, did)).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
       // The refusal is the proof it never answered a deny set missing K; the store did not move back.
-      expect(await store.get(did)).toEqual(full)
+      expect(await store.get(did)).toEqual(chainOnly(full))
     })
 
     test('DANGEROUS BASELINE -- with no history the same prefix is answered, K missing from the deny set', async () => {
@@ -280,11 +290,11 @@ export function controllerStoreCases(
       })
 
       await denySet(resolver, did)
-      expect(await store.get(did)).toEqual(full)
+      expect(await store.get(did)).toEqual(chainOnly(full))
 
       served = fork
       await expect(denySet(resolver, did)).rejects.toThrow(LOG_FORKED)
-      expect(await store.get(did)).toEqual(full)
+      expect(await store.get(did)).toEqual(chainOnly(full))
     })
   })
 }

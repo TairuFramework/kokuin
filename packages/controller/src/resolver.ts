@@ -7,7 +7,7 @@ import type {
 
 import { DID_PREFIX, type SignedEvent } from './events.js'
 import type { KeyState } from './fold.js'
-import { authoritativeStates, type LogStore } from './history.js'
+import { authoritativeLog, type LogStore } from './history.js'
 import { allStates } from './state.js'
 import { agreementKeysFrom, DID_METHOD, signingKeyFrom } from './state-resolver.js'
 
@@ -71,16 +71,19 @@ export function createControllerResolver(options: ControllerResolverOptions): DI
     }
     // Compared against what this party last accepted, so a truncated log — folding cleanly, missing
     // the revoke that matters — is refused. See `LogStore`.
-    const seen = await options.history.get(did)
-    const { log, states } = await authoritativeStates({
-      did,
-      loaded: events,
-      seen,
-      context: CONTEXT,
+    // Inside the store's merge, so two resolutions of one DID never lose each other's events. A log
+    // that lost throws out of the update, so nothing is written and the store never moves backwards.
+    let states: Array<KeyState> = []
+    await options.history.merge(did, async (seen) => {
+      const settled = authoritativeLog({
+        did,
+        loaded: { chain: events, events: [] },
+        seen,
+        context: CONTEXT,
+      })
+      states = settled.result.states
+      return settled.log
     })
-    // Only after it has folded, and only in the memory-keeping direction: a log that lost never
-    // reaches here, so the store never moves backwards.
-    await options.history.set(did, log)
     return states
   }
 

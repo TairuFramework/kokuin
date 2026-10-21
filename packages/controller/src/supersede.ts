@@ -280,29 +280,32 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
 }
 
 /**
- * Pick the authoritative branch. Two rules, in order:
+ * Pick the authoritative root chain among `chains` â chains only: epoch events never fork the log, so
+ * they are never a branch to choose between (see `mergeLogs` in `log.ts`). Two rules, in order:
  *
  * 1. The highest folded generation wins outright. Only a reset raises the generation, and only the
- *    committed recovery key can author a reset — the root's override, unreachable by a thief.
- * 2. Within that generation, branches are compared **at the point they diverge**, not at their heads:
- *    a rotate signed by the pre-committed next keys supersedes the current-key event it forked from
- *    and everything that branch accumulated. Two diverging events with no rotate to settle them are
- *    duplicity, surfaced rather than merged.
+ *    committed recovery key can author a reset â the root's override, unreachable by a thief.
+ * 2. Within that generation, chains are compared **at the point they diverge**, not at their heads. A
+ *    chain that ends at the divergence point is a prefix of the other and loses to it; two chains
+ *    that each carry an event there are duplicity, surfaced rather than merged.
  *
- * Comparing heads instead would make branch *length* decisive below the top generation — the one
- * resource a thief has in abundance (a stolen current key cannot rotate but can sign unlimited
- * current-key events). A longer branch still wins when it is the same history carried further, which the
- * divergence walk sees as a prefix.
+ * With root adds and root revokes moved into epochs, the chain holds only `icp` and `rot`, so the
+ * second case is always two rotates, or two resets at one generation â both signed by keys only the
+ * controller holds, neither outranking the other, and settled only by a reset at a higher generation.
+ * The current-key event a cold rotate outranks still exists, but in the epoch that rotate closes,
+ * where the fold gives it no effect; branch selection never sees it. That is also why chain length
+ * never decides anything here: the one resource a thief holding a current key has in abundance is
+ * current-key events, and none of them is on the chain. A longer chain still wins when it is the same
+ * history carried further, which the divergence walk sees as a prefix.
  *
- * `superseded` counts the state-advancing events discarded from losing branches (what a cache must
- * invalidate — folded state is not append-only under supersession); skipped events are not counted.
- * Branches that do not fold are filtered out before comparison, so a thief who cannot produce a valid
+ * `superseded` counts the state-advancing events discarded from losing chains (what a cache must
+ * invalidate â folded state is not append-only under supersession); skipped events are not counted.
+ * Chains that do not fold are filtered out before comparison, so a thief who cannot produce a valid
  * event cannot create a duplicity report.
- *
  */
-export function resolveBranches(did: string, branches: Array<Array<SignedEvent>>): ResolveResult {
+export function resolveBranches(did: string, chains: Array<Array<SignedEvent>>): ResolveResult {
   const valid: Array<FoldedBranch> = []
-  for (const branch of branches) {
+  for (const branch of chains) {
     const folded = branchFrom(branch, foldLog(did, { chain: branch, events: [] }))
     if (folded != null) {
       valid.push(folded)

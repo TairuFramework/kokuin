@@ -40,7 +40,7 @@ describe('provideControllerIdentity', () => {
     expect(isFullIdentity(identity)).toBe(true)
     // The generate path persisted the inception.
     const stored = await logStore.get(expectedDID)
-    expect(stored).toHaveLength(1)
+    expect(stored?.chain).toHaveLength(1)
   })
 
   test('restores the same identity from an existing log', async () => {
@@ -79,7 +79,7 @@ describe('provideControllerIdentity', () => {
       prior: inception.event,
       options: { snapshot: { members: [], deny: [] } },
     })
-    await logStore.set(did, [inception, rot])
+    await logStore.merge(did, async () => ({ chain: [inception, rot], events: [] }))
 
     const identity = await provideControllerIdentity({
       entry: memoryEntry(seed),

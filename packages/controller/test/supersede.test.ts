@@ -255,4 +255,26 @@ describe('resolveBranches()', () => {
       expect(resolveBranches(did, order)).toEqual(first)
     }
   })
+
+  // Two blind resets at one generation are the same bytes, so they never fork. A snapshot reset and a
+  // blind one do: both are the recovery key's, neither outranks the other, and only a reset at a
+  // higher generation settles it. Every root-chain divergence is now one of these two shapes â two
+  // rotates, or two resets â since the chain carries no current-key event for a rotate to supersede.
+  test('a snapshot reset and a blind one at one generation are duplicity until a higher reset', () => {
+    const { did, icp } = build()
+    const snapshot = [icp, createReset(seed, 0, 1, { members: [], deny: [victim] })]
+    const blind = [icp, createReset(seed, 0, 1)]
+    const higher = [icp, createReset(seed, 0, 2)]
+    const forked = resolveBranches(did, [snapshot, blind])
+    expect(forked).toEqual(resolveBranches(did, [blind, snapshot]))
+    expect(forked.ok).toBe(false)
+    if (forked.ok) return
+    expect(forked.failure).toBe('duplicity')
+    expect([forked.duplicity.gen, forked.duplicity.seq]).toEqual([1, 0])
+    // CONTROL â the same blind reset twice is one history.
+    expect(resolveBranches(did, [blind, [icp, createReset(seed, 0, 1)]]).ok).toBe(true)
+
+    const settled = resolveBranches(did, [snapshot, higher, blind])
+    expect(settled.ok && settled.winner).toEqual(higher)
+  })
 })

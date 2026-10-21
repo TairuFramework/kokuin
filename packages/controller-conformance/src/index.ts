@@ -593,6 +593,50 @@ export function runControllerConformance(
           expect(impl.resolveBranches(did, order)).toEqual(first)
         }
       })
+
+      // The root chain holds no current-key events any more: root revokes and adds live in epochs.
+      // So the event a cold rotate outranks is a current-key one in the epoch that rotate closes —
+      // the precedence is unchanged, only where the loser sits. A thief holding the current key can
+      // sign such events without limit; none of them survives the owner's rotate, which does not
+      // carry them, and none can stop it, since none is on the chain.
+      test('a cold rotate beats a current-key root event in the epoch it closes', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const atInception = impl.foldLog(did, { chain: [icp], events: [] })
+        if (!atInception.ok) {
+          throw new Error('inception does not fold')
+        }
+        const hot = impl.createEpochEvent({
+          signer: { root: { seed: seedA, profile: 0 } },
+          did,
+          head: atInception.head,
+          parents: [atInception.head.epoch],
+          body: { t: 'rev', target: deviceA },
+        })
+        // CONTROL — on the chain it was signed against, the current-key event applies.
+        const before = impl.foldLog(did, { chain: [icp], events: [hot] })
+        expect(before.ok && before.head.deny.has(deviceA)).toBe(true)
+
+        const rot = rotate(seedA, did, icp.event)
+        for (const order of [
+          [[icp], [icp, rot]],
+          [[icp, rot], [icp]],
+        ]) {
+          const resolved = impl.resolveBranches(did, order)
+          expect(resolved.ok).toBe(true)
+          if (!resolved.ok) {
+            continue
+          }
+          expect(resolved.winner).toEqual([icp, rot])
+          const after = impl.foldLog(did, { chain: resolved.winner, events: [hot] })
+          expect(after.ok).toBe(true)
+          if (!after.ok) {
+            continue
+          }
+          expect(after.head.deny.has(deviceA)).toBe(false)
+          expect(after.applied).toHaveLength(0)
+        }
+      })
     })
 
     // 8. Idempotence — identical re-derived branches are not duplicity.
@@ -610,7 +654,8 @@ export function runControllerConformance(
       })
     })
 
-    // 9. Duplicity — two distinct rotates at one position are surfaced, not merged.
+    // 9. Duplicity — two distinct rotates, or two differing resets, at one position are surfaced, not
+    // merged.
     describe('duplicity', () => {
       test('two distinct rotates at one position are surfaced', () => {
         const icp = impl.createInception(seedA, 0)
@@ -625,6 +670,42 @@ export function runControllerConformance(
         }
         expect(result.duplicity.gen).toBe(0)
         expect(result.duplicity.seq).toBe(1)
+      })
+
+      // Only the recovery-key holder can sign a reset, so two that differ at one generation (a
+      // snapshot reset, then a blind retry) are root's own fork — a relay can reveal both but forge
+      // neither. Nothing at that generation settles it; a reset at a higher one does.
+      test('two differing resets at one generation are duplicity, resolved by a higher one', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const withSnapshot = [icp, impl.createReset(seedA, 0, 1, { members: [], deny: [deviceA] })]
+        const blind = [icp, impl.createReset(seedA, 0, 1)]
+        const higher = [icp, impl.createReset(seedA, 0, 2)]
+        for (const order of [
+          [withSnapshot, blind],
+          [blind, withSnapshot],
+        ]) {
+          const result = impl.resolveBranches(did, order)
+          expect(result.ok).toBe(false)
+          if (result.ok) {
+            continue
+          }
+          expect(result.failure).toBe('duplicity')
+          expect(result.duplicity.gen).toBe(1)
+          expect(result.duplicity.seq).toBe(0)
+        }
+        for (const order of [
+          [withSnapshot, blind, higher],
+          [higher, blind, withSnapshot],
+          [blind, higher, withSnapshot],
+        ]) {
+          const result = impl.resolveBranches(did, order)
+          expect(result.ok).toBe(true)
+          if (!result.ok) {
+            continue
+          }
+          expect(result.winner).toEqual(higher)
+        }
       })
     })
 

@@ -1,6 +1,6 @@
 import type { Adapter } from '@hozon/adapter'
-import type { Kysely } from '@hozon/db'
-import type { LogStore, SignedEvent } from '@kokuin/controller'
+import { type Kysely, withStoreTransaction } from '@hozon/db'
+import type { ControllerLog, LogStore, SignedEvent } from '@kokuin/controller'
 
 import type { ControllerStoreTables } from './tables.js'
 
@@ -12,9 +12,14 @@ export type ControllerStoreAPI = LogStore & {
 }
 
 // ParseJSONResultsPlugin usually parses the JSON column back to an object, but a
-// value can still arrive as a string (adapter/driver dependent). Handle both.
-function decodeLog(value: unknown): Array<SignedEvent> {
-  return (typeof value === 'string' ? JSON.parse(value) : value) as Array<SignedEvent>
+// value can still arrive as a string (adapter/driver dependent). Handle both. A
+// row written before the log split into chain and epoch events is a bare event
+// array: it is that chain, with no epoch events.
+function decodeLog(value: unknown): ControllerLog {
+  const parsed = (typeof value === 'string' ? JSON.parse(value) : value) as
+    | ControllerLog
+    | Array<SignedEvent>
+  return Array.isArray(parsed) ? { chain: parsed, events: [] } : parsed
 }
 
 export function createControllerStore(
@@ -22,7 +27,7 @@ export function createControllerStore(
   adapter: Adapter,
 ): ControllerStoreAPI {
   const api: ControllerStoreAPI = {
-    async get(did: string): Promise<Array<SignedEvent> | undefined> {
+    async get(did: string): Promise<ControllerLog | undefined> {
       const row = await db
         .selectFrom('controller_logs')
         .select('log')
@@ -41,25 +46,38 @@ export function createControllerStore(
       return adapter.decodeTimestamp(row.updated_at ?? row.created_at)
     },
 
-    // Plain last-writer-wins: `set` is called only after the log has folded, so
-    // arbitration lives in the resolver, never here. See `@kokuin/controller`.
-    // A caller ingesting an UNTRUSTED log (e.g. one pulled from a peer) must run
-    // it through the resolver's `authoritativeStates`/`history` guard first — this
-    // store will not refuse a truncated or forked log on its own, so a direct
-    // `set` of peer bytes would bypass the anti-truncation guarantee.
-    async set(did: string, log: Array<SignedEvent>): Promise<void> {
-      const encoded = adapter.encodeJSON(log) as Array<SignedEvent>
-      const observedAt = adapter.encodeTimestamp(new Date()) as number
-      await db
-        .insertInto('controller_logs')
-        .values({ did, log: encoded, updated_at: observedAt })
-        .onConflict((oc) =>
-          oc.column('did').doUpdateSet((eb) => ({
-            log: eb.ref('excluded.log'),
-            updated_at: observedAt,
-          })),
-        )
-        .execute()
+    // Writes whatever `update` returns: arbitration lives in the resolver
+    // (`authoritativeLog`), never here. A caller ingesting an UNTRUSTED log (e.g.
+    // one pulled from a peer) must build the update from `authoritativeLog` —
+    // this store will not refuse a truncated or forked log on its own, so
+    // writing peer bytes directly would bypass the anti-truncation guarantee.
+    // The read and the upsert share a store transaction, which joins an
+    // enclosing one.
+    async merge(
+      did: string,
+      update: (current: ControllerLog | undefined) => Promise<ControllerLog>,
+    ): Promise<ControllerLog> {
+      return await withStoreTransaction(db, async (trx) => {
+        const row = await trx
+          .selectFrom('controller_logs')
+          .select('log')
+          .where('did', '=', did)
+          .executeTakeFirst()
+        const next = await update(row == null ? undefined : decodeLog(row.log))
+        const encoded = adapter.encodeJSON(next) as ControllerLog
+        const observedAt = adapter.encodeTimestamp(new Date()) as number
+        await trx
+          .insertInto('controller_logs')
+          .values({ did, log: encoded, updated_at: observedAt })
+          .onConflict((oc) =>
+            oc.column('did').doUpdateSet((eb) => ({
+              log: eb.ref('excluded.log'),
+              updated_at: observedAt,
+            })),
+          )
+          .execute()
+        return next
+      })
     },
   }
 

@@ -85,7 +85,7 @@ export {
   TOO_MANY_UNKNOWN_EVENTS,
 } from './fold.js'
 export {
-  authoritativeStates,
+  authoritativeLog,
   createMemoryLogStore,
   LOG_FORKED,
   LOG_NOT_AUTHORITATIVE,
@@ -118,7 +118,10 @@ export {
   type ControllerLog,
   isControllerLog,
   LOG_TOO_LARGE,
+  LOG_UNFOLDABLE,
   MALFORMED_LOG,
+  mergeLogs,
+  pruneLog,
 } from './log.js'
 export { enumerateProfiles, handleForDID, type ProfileEntry } from './profiles.js'
 export { type ControllerResolverOptions, createControllerResolver } from './resolver.js'

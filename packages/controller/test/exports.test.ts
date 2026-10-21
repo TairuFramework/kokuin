@@ -65,6 +65,15 @@ describe('public surface', () => {
       'MAX_EVENT_SIGNATURES',
       'DEFAULT_LEASE_SECONDS',
       'resolveBranches',
+      // Remembering what was seen, and combining or trimming logs: what a consumer persisting
+      // controller logs builds its store on.
+      'authoritativeLog',
+      'createMemoryLogStore',
+      'mergeLogs',
+      'pruneLog',
+      'LOG_FORKED',
+      'LOG_NOT_AUTHORITATIVE',
+      'LOG_UNFOLDABLE',
       'enumerateProfiles',
       'handleForDID',
       'createControllerResolver',
