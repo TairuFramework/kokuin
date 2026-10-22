@@ -95,6 +95,5 @@ won anti-truncation.
 
 ## Follow-ons
 
-`backlog/2026-10-21-management-tier-follow-ons.md`, and
-`backlog/2026-10-21-enkaku-frozen-controller-view.md` (enkaku adopting the frozen view). Adoption by
-kubun and kumiai is out of scope and needs its own plans.
+`backlog/2026-10-21-management-tier-follow-ons.md`. Enkaku adopting the frozen view is tracked in
+enkaku's backlog. Adoption by kubun and kumiai is out of scope and needs its own plans.
