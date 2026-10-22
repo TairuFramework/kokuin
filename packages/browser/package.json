@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/browser",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Key store for browser",
   "keywords": [
     "cryptography",

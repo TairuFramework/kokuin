@@ -228,8 +228,8 @@ catalogs:
       specifier: ^0.4.0
       version: 0.4.0
     '@sozai/otel':
-      specifier: ^0.3.4
-      version: 0.3.4
+      specifier: ^0.4.0
+      version: 0.4.0
     '@sozai/runtime':
       specifier: ^0.1.0
       version: 0.1.0
@@ -336,7 +336,7 @@ importers:
         version: 0.4.0(@logtape/logtape@2.4.2)
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.3.4(@logtape/logtape@2.4.2)
+        version: 0.4.0(@logtape/logtape@2.4.2)
     devDependencies:
       '@kokuin/jwe':
         specifier: workspace:^
@@ -404,7 +404,7 @@ importers:
         version: 0.4.0(@logtape/logtape@2.4.2)
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.3.4(@logtape/logtape@2.4.2)
+        version: 0.4.0(@logtape/logtape@2.4.2)
       micro-key-producer:
         specifier: 'catalog:'
         version: 0.10.2
@@ -432,7 +432,7 @@ importers:
         version: 0.4.0(@logtape/logtape@2.4.2)
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.3.4(@logtape/logtape@2.4.2)
+        version: 0.4.0(@logtape/logtape@2.4.2)
       electron-store:
         specifier: 'catalog:'
         version: 12.0.0
@@ -460,7 +460,7 @@ importers:
         version: 0.4.0(@logtape/logtape@2.4.2)
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.3.4(@logtape/logtape@2.4.2)
+        version: 0.4.0(@logtape/logtape@2.4.2)
       expo-crypto:
         specifier: 'catalog:'
         version: 58.0.7(expo@58.0.16(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.3.0(react@19.3.0))(react-native-web@0.21.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)(supports-color@8.1.1)(typescript@6.0.3))
@@ -512,7 +512,7 @@ importers:
         version: 0.4.0(@logtape/logtape@2.4.2)
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.3.4(@logtape/logtape@2.4.2)
+        version: 0.4.0(@logtape/logtape@2.4.2)
     devDependencies:
       '@kokuin/deterministic':
         specifier: workspace:^
@@ -546,7 +546,7 @@ importers:
         version: 0.4.0(@logtape/logtape@2.4.2)
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.3.4(@logtape/logtape@2.4.2)
+        version: 0.4.0(@logtape/logtape@2.4.2)
     devDependencies:
       '@kokuin/keystore-conformance':
         specifier: workspace:^
@@ -571,7 +571,7 @@ importers:
         version: 1.10.0
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.3.4(@logtape/logtape@2.4.2)
+        version: 0.4.0(@logtape/logtape@2.4.2)
 
   packages/store-controller:
     dependencies:
@@ -639,7 +639,7 @@ importers:
         version: 0.4.3
       '@sozai/otel':
         specifier: 'catalog:'
-        version: 0.3.4(@logtape/logtape@2.4.2)
+        version: 0.4.0(@logtape/logtape@2.4.2)
       '@sozai/schema':
         specifier: 'catalog:'
         version: 0.1.6
@@ -2349,8 +2349,8 @@ packages:
     peerDependencies:
       '@logtape/logtape': ^2.3.11
 
-  '@sozai/otel@0.3.4':
-    resolution: {integrity: sha512-qnX2hMqHYRIKMADURHNXxfAuSzyNoyMbtz9/zNDhULsPTr2neuEOgx8BH8svRem2pJHEUb0qIISd6EOmBTOUYw==}
+  '@sozai/otel@0.4.0':
+    resolution: {integrity: sha512-IJJQDJO6QwlvkfOJa5f0OGde68qMzZg9RpxzV71NSh6CTa3qqH05NlSg4nHcDbDBNFbrJti4k+BwIKrOcOUQIw==}
 
   '@sozai/runtime-expo@0.3.0':
     resolution: {integrity: sha512-g0313ystL22vJvVTN/v22GJIIl9WcTKptZBTfmzcDE8WrCT3Z02iAEiJ7PmOmn/2kxDUFr59aFbnmgNW1DnEJw==}
@@ -7048,7 +7048,7 @@ snapshots:
     dependencies:
       '@logtape/logtape': 2.4.2
 
-  '@sozai/otel@0.3.4(@logtape/logtape@2.4.2)':
+  '@sozai/otel@0.4.0(@logtape/logtape@2.4.2)':
     dependencies:
       '@opentelemetry/api': 1.10.0
       '@opentelemetry/api-logs': 0.223.0

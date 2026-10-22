@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/capability",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Capability delegation and verification for JWTs",
   "keywords": [
     "jwt",

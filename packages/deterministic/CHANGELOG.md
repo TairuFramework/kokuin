@@ -1,5 +1,11 @@
 # @kokuin/deterministic
 
+## 0.2.4
+
+### Patch Changes
+
+- Requires `@sozai/otel` `^0.4.0` (was `^0.3.4`), for OpenTelemetry SDK v3.
+
 ## 0.2.3
 
 ### Patch Changes

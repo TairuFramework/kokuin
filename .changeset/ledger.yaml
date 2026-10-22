@@ -1,3 +1,7 @@
+"@kokuin/browser@0.2.4":
+  dir: packages/browser
+  intents:
+    - fresh-crabs-flow
 "@kokuin/capability@0.2.2":
   dir: packages/capability
   intents:
@@ -30,10 +34,34 @@
   dir: packages/controller
   intents:
     - kind-ducks-bake
+"@kokuin/deterministic@0.2.4":
+  dir: packages/deterministic
+  intents:
+    - fresh-crabs-flow
+"@kokuin/electron@0.4.4":
+  dir: packages/electron
+  intents:
+    - fresh-crabs-flow
+"@kokuin/expo@0.4.2":
+  dir: packages/expo
+  intents:
+    - fresh-crabs-flow
+"@kokuin/ledger-device@0.2.5":
+  dir: packages/ledger-device
+  intents:
+    - fresh-crabs-flow
 "@kokuin/node@0.4.0":
   dir: packages/node
   intents:
     - quiet-keys-throw
+"@kokuin/node@0.4.2":
+  dir: packages/node
+  intents:
+    - fresh-crabs-flow
+"@kokuin/otel@0.3.1":
+  dir: packages/otel
+  intents:
+    - fresh-crabs-flow
 "@kokuin/store-controller@0.2.0":
   dir: packages/store-controller
   intents:
@@ -60,3 +88,7 @@
   dir: packages/token
   intents:
     - sweet-ducks-shake
+"@kokuin/token@0.6.1":
+  dir: packages/token
+  intents:
+    - fresh-crabs-flow

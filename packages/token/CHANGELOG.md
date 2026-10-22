@@ -1,5 +1,11 @@
 # @kokuin/token
 
+## 0.6.1
+
+### Patch Changes
+
+- Requires `@sozai/otel` `^0.4.0` (was `^0.3.4`), for OpenTelemetry SDK v3.
+
 ## 0.6.0
 
 ### Minor Changes
