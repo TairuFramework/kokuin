@@ -443,6 +443,18 @@ describe('checkDelegationChain()', () => {
         [],
       )
     }).rejects.toThrow('Invalid token: expired')
+    // Same three time claims as the member arm beside it and the subject arm of `checkCapability`.
+    await expect(
+      checkDelegationChain(
+        // `CapabilityPayload` does not declare `nbf`; the source reads it the same way.
+        {
+          iss: 'did:test:123',
+          sub: 'did:test:123',
+          nbf: now() + 1000,
+        } as unknown as CapabilityPayload,
+        [],
+      ),
+    ).rejects.toThrow('Invalid token: not yet valid')
     await expect(async () => {
       await checkDelegationChain(
         { iss: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,

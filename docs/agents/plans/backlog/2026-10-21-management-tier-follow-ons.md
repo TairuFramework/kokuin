@@ -2,6 +2,9 @@
 
 **Origin:** `completed/2026-10-21-management-tier-on-log.complete.md`.
 
+**Reviewed 2026-10-22** as release cleanup. The three smaller gaps were settled; the rest stay here
+deliberately, each with the trigger that should reopen it.
+
 ## 1. A `LogStore` is trusted for signatures (medium)
 
 `authoritativeLog` does not re-verify the current epoch's stored events. It only re-authorises them.
@@ -22,12 +25,19 @@ enough:
 
 Reverting to re-verify every time costs about 4 s per resolution of a held 4000-event epoch.
 
+**Kept as documented trust.** No writer outside `authoritativeLog` exists today, and every option
+costs re-verification or a MAC key that nothing needs yet. Reopen when a sync or replication path
+writes peer bytes into a `LogStore`.
+
 ## 2. Held re-resolution still grows with the epoch (low)
 
 A held 4000-event epoch re-resolves in about 0.57 s with nothing new. The cost is the causal parent
 joins and the denial matcher, both linear-or-worse in epoch size. Measured worst shape: joins about
 1.4 s. Candidates are an incremental fold over held state, or caching the folded `after` states per
 digest.
+
+**Deferred.** The cost appears only near the `MAX_EPOCH_EVENTS` ceiling, which in practice means a
+flood that root then settles. Reopen if a real deployment holds large epochs between settlements.
 
 ## 3. A held event keeps its first valid signature copy (low)
 
@@ -36,12 +46,18 @@ verifier keeps whichever it stored first. Two verifiers may hold different bytes
 folded head is the same. This is documented on `FoldEpochParams.trusted`. Decide whether convergence
 of stored bytes matters, for example for log hashing across peers.
 
-## 4. Smaller gaps
+**Kept.** Nothing hashes stored bytes across peers. Converging would mean verifying a second copy
+of a held event, which the failed-signature budget deliberately skips. Reopen if anything starts
+comparing stored logs byte for byte.
 
-- **The Postgres existing-row lock (`forUpdate`) is not test-proven.** Removing it still passes the
-  stored-DID concurrent test; only the first-merge race test discriminates. Needs a test where two
-  merges on an existing row interleave.
-- **`NOT_MEMBER` conflates saturation.** A saturated epoch reports `NOT_MEMBER`, and only `cause`
-  distinguishes it. Consider a distinct reason.
-- **Subject-signed root grants skip `nbf` (pre-existing).** Check whether this is intended and
-  matches member grants.
+## 4. Smaller gaps (settled 2026-10-22)
+
+- **Postgres existing-row lock (`forUpdate`).** Now test-proven: `tests/integration` races merges
+  on an existing row from two connections, and fails (one event lost) with the lock removed.
+- **Subject-signed root grants skipped `nbf`.** Only on the empty-chain subject arm of
+  `checkDelegationChain`; links reached through the walk had `nbf` checked by `verifyToken`. Fixed:
+  the arm now checks the same three time claims as the member arm beside it.
+- **`NOT_MEMBER` conflates saturation.** Kept. `@kokuin/capability` depends only on the
+  method-agnostic `@kokuin/token` contract, so telling saturation apart would mean matching a
+  controller-only error string. The `cause` carries `EPOCH_SATURATED`, as `capability.md`
+  documents. Reopen if the token contract grows a typed "subject unavailable" error.

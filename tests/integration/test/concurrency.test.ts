@@ -1,4 +1,10 @@
 import { HozonDB } from '@hozon/db'
+import type { ControllerLog, EpochEvent, SignedEvent } from '@kokuin/controller'
+import {
+  type ControllerStoreAPI,
+  controllerStoreDefinition,
+  getControllerStore,
+} from '@kokuin/store-controller'
 import {
   type DelegationStoreAPI,
   delegationStoreDefinition,
@@ -89,6 +95,52 @@ describe.each(postgresBackends)('$name', (b) => {
       await race(round, (store, counter) => stores[store].addRevocation(revocation(counter)))
       const row = await stores[0].getRevocationByIssuer(jti, revokerDID)
       expect([row?.revocation_token, row?.hlc]).toEqual([`revocation-${round}-2`, hlc(2)])
+    }
+  })
+})
+
+describe.each(postgresBackends)('$name controller log merges', (b) => {
+  let first: HozonDB
+  let second: HozonDB
+  let stores: [ControllerStoreAPI, ControllerStoreAPI]
+
+  beforeAll(async () => {
+    first = new HozonDB({ adapter: await b.createAdapter() })
+    first.register(controllerStoreDefinition)
+    const firstStore = await getControllerStore(first)
+    second = new HozonDB({ adapter: await b.reopen() })
+    second.register(controllerStoreDefinition)
+    stores = [firstStore, await getControllerStore(second)]
+  }, 120_000)
+
+  afterAll(async () => {
+    await first?.close()
+    await second?.close()
+    await b.cleanup()
+  })
+
+  // The store checks only the log's shape, so a marker stands in for a signed event.
+  const marker = (name: string) =>
+    ({ event: { name }, sigs: [] }) as unknown as SignedEvent<EpochEvent>
+
+  // Holds the row between reading it and writing, so a merge that does not lock the existing row
+  // lets the other connection read the same one and the later write drops the earlier event.
+  function append(name: string) {
+    return async (current: ControllerLog | undefined): Promise<ControllerLog> => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { chain: current?.chain ?? [], events: [...(current?.events ?? []), marker(name)] }
+    }
+  }
+
+  test('concurrent merges on an existing row from two connections both land', async () => {
+    for (let round = 0; round < ROUNDS; round++) {
+      const did = `did:kokuin:merge-race-${round}`
+      await stores[0].merge(did, async () => ({ chain: [], events: [] }))
+      await race(round, (store, counter) => stores[store].merge(did, append(`event-${counter}`)))
+      const names = (await stores[0].get(did))?.events.map(
+        (signed) => (signed.event as unknown as { name: string }).name,
+      )
+      expect(names?.sort()).toEqual(['event-1', 'event-2'])
     }
   })
 })

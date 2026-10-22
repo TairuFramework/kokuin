@@ -200,6 +200,7 @@ export async function checkDelegationChain(
     }
     await assertAudienceNotRevoked(payload, options)
     assertNonExpired(payload, atTime)
+    assertValidNotBefore(payload as { nbf?: number }, atTime)
     assertValidIssuedAt(payload, atTime)
     return
   }
