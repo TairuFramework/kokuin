@@ -39,7 +39,7 @@ const rootCapStr = stringifyToken(rootCap)
 ```
 
 **Key points**:
-- `act` and `res` follow `/`-separated path patterns; a trailing `*` is the only wildcard form (`docs/*` is valid; `docs/*/edit` is not). A component may hold letters, digits, `_ - . : #` — `#` because a `did:kokuin:` revoke target may be a key fragment, and the revoke permission is `{ act: 'revoke', res: <target> }`
+- `act` and `res` follow `/`-separated path patterns; a trailing `*` is the only wildcard form (`docs/*` is valid; `docs/*/edit` is not). A component may hold letters, digits, `_ - . : #` — `#` because a resource may be a key fragment (`#<key>`)
 - `sub` is the resource owner (root DID); `aud` is who may present or re-delegate this capability
 - `exp` is recommended — capabilities without expiry must be revoked explicitly
 
@@ -79,7 +79,7 @@ const delegatedCapStr = stringifyToken(delegatedCap)
 
 ### Pattern 3: Check a Capability
 
-Use `checkCapability` as the top-level entry point. It verifies that a signed payload grants a requested permission, following the `cap` delegation chain back to a self-issued root.
+Use `checkCapability` as the top-level entry point. It verifies that a signed payload grants a requested permission, following the `cap` delegation chain back to a self-issued or member-issued root (Pattern 3b).
 
 ```typescript
 import { checkCapability, checkDelegationChain } from '@kokuin/capability'
@@ -105,6 +105,34 @@ await checkDelegationChain(consumerPayload, [delegatedCapStr, rootCapStr], {
 - `checkDelegationChain` takes the `capabilities` array explicitly — head is the immediate parent, tail leads toward the root
 - `DEFAULT_MAX_DELEGATION_DEPTH` is 4; override via `options.maxDepth`
 - `assertNonExpired` and `assertValidIssuedAt` are called automatically on every link
+
+### Pattern 3b: Grants Issued by a Management Member
+
+A `did:kokuin:` profile's management members (devices its log admits by a root add, each pinning one Ed25519 key with a lease) mint edge grants for the profile without its root key: `sub` is the profile, `iss` the member, and `mbr: { add, g }` names the membership.
+
+```typescript
+import { checkCapability, createCapability } from '@kokuin/capability'
+
+const now = Math.floor(Date.now() / 1000)
+const grant = await createCapability(
+  memberIdentity, // a did:key, or the LONG form of a did:peer:4 — never the short form
+  { sub: profileDID, aud: agentDID, act: 'read', res: 'docs/*', iat: now, exp: now + 3600 },
+  undefined,
+  { member: { add: memberAddDigest, g: head.gen } },
+)
+
+// Verifier: one frozen view of the controller resolver per verification.
+await checkCapability(requested, invocationPayload, { methods: [controllerResolver.frozen()] })
+```
+
+**Key points**:
+- `member` writes `mbr: { add, g }` — the digest of the add event that admitted the issuer, and the log generation. `createCapability` requires numeric `exp` and `iat` with `exp >= iat` and a well-formed claim (exactly `add` and `g`); it does not ask the log
+- Verification (`assertMemberRoot`, run by `checkCapability` and `checkDelegationChain` for a root with `mbr` and `iss !== sub`), in order: well-formed `mbr` (`MEMBER_GRANT_NOT_MEMBER`); the subject's method has `resolveMember` (`MEMBER_GRANT_NO_RESOLVER`); the issuer is an effective member under that incarnation and the current generation (`MEMBER_GRANT_NOT_MEMBER`, original error as `cause` — removed, denied, reset, saturated and unresolvable all land here); `iss` carries exactly the pinned key (`MEMBER_GRANT_KEY_MISMATCH`); `exp <= lease` (`MEMBER_GRANT_PAST_LEASE`); `iat` present (`MEMBER_GRANT_NO_IAT`); `exp - iat <= maxMemberGrantLifetime` (`MEMBER_GRANT_TOO_LONG`); then time claims and the audience deny set. Match reasons with `startsWith`
+- **Bounded at mint**: a grant past the issuer's lease, or longer than `maxMemberGrantLifetime` (default `DEFAULT_MEMBER_GRANT_LIFETIME`, 43200 s = 12 h, set per verification in `DelegationChainOptions`), is refused, not trimmed. The lifetime bounds how late an offline verifier learns an edge holder was revoked; the lease bounds a stolen member that verifier never sees removed
+- A reset kills every member grant of the old generation, carried members' included: `g` must equal the log's current generation
+- **Pass `resolver.frozen()`, fresh per verification**, never the live resolver: membership, lease and every audience denial must come from one state of the log. One frozen view folds the log once for the whole chain
+- **Direct path**: `checkCapability(permission, grantPayload)` with a member grant as the payload trusts the caller to have verified its signature, exactly like the `iss === sub` arm. Inside a `cap` chain the walk verifies each link before asking about membership
+- A member grant is a chain root with the profile's own power over resources, and no management power: membership comes only from a root add in the log
 
 ### Pattern 4: Revocation
 
@@ -170,9 +198,8 @@ await checkCapability(requested, consumerPayload, {
 - "Unresolvable" includes a resolver that throws, one that returns nothing, and one whose answer is unusable — an oversized document, or a document that does not hash to the DID requested. A broken or lying resolver must not be able to suppress a revocation by reading as "not revoked"
 - Because of that, omitting a resolution input turns every affected capability with a stored revocation record into a hard verification failure — it does not silently pass
 - **A second, independent revocation path exists for `did:kokuin:` subjects, and it needs no hook.** `checkCapability` / `checkDelegationChain` reject any capability whose `aud` is in the deny set its `sub` publishes in its controller log — every link in the chain, not only the leaf. The rejection is `Invalid capability: audience is revoked by the subject: <aud>` (`AUDIENCE_REVOKED`). It reads `DIDMethodResolver.resolveDenySet` off the `methods` registry you already pass for resolution, so there is nothing extra to wire *at the call site*; it is evaluated against the log's current head, never against a position the capability names. **Omitting `methods` entirely is now refused rather than silently skipped** — `Invalid capability: no resolver for the subject, so its deny set cannot be checked: <sub>` (`DENY_SET_UNAVAILABLE`) — unless the subject's identifier carries its own keys (`did:key`, `did:peer`), which have no deny set to miss. The old silence was justified by "a subject that needs a registry could not have been resolved either", which holds for a chain and not for the `iss === sub` arm, where the caller verified the payload themselves. There is one more thing to get right, and it is not at the call site: **`resolveDenySet` is optional on `DIDMethodResolver`, and a registry entry that omits it disables the rule silently** rather than having nothing to enforce. `createControllerResolver` implements it, so the shipped path is covered — but a hand-written entry, and in particular a *wrapper* around a real resolver that forwards `resolve` and stops there (caching, metrics, tracing), type-checks with the member missing and turns every denial into a pass. If you write or wrap a `DIDMethodResolver` for a method that can revoke, forward `resolveDenySet` with it — and forward `resolveHistoric` too, for the same reason in the other direction: every capability and revocation record this package verifies is checked with `historic: true`, and an entry that omits the member is *refused* rather than answered from `resolve`, so a wrapper missing it makes every capability unverifiable. `jti` revocation records and the deny set answer different questions — "this grant" versus "this device" — and both apply
-- **A third question the same deny set answers: "this signing key".** `historic: true` is what lets an already-issued capability survive the subject's routine rotation, and the price is that a leaked, since-rotated authority key would otherwise go on minting *fresh* capabilities that verify. The remedy is an explicit `rev` naming the key (`keyTarget(key)` in `@kokuin/controller` — `#<the multibase key exactly as it appears in `k`>`), after which `verifyToken` refuses it under both `resolve` and `resolveHistoric`, and every capability it ever signed stops verifying. It needs nothing here: the rejection comes out of `verifyToken` on whichever chain link the key signed, as `Controller <did> kid names a key the controller has revoked: #<key>`. Those `#`-prefixed entries share the set `resolveDenySet` answers with, and cannot be mistaken for a DID — so **match against the set, never enumerate it**
+- **A third question the same deny set answers: "this signing key".** `historic: true` is what lets an already-issued capability survive the subject's routine rotation, and the price is that a leaked, since-rotated authority key would otherwise go on minting *fresh* capabilities that verify. The remedy is an explicit revoke naming the key (`keyTarget(key)` in `@kokuin/controller` — `#<the multibase key exactly as it appears in `k`>`), after which `verifyToken` refuses it under both `resolve` and `resolveHistoric`, and every capability it ever signed stops verifying. It needs nothing here: the rejection comes out of `verifyToken` on whichever chain link the key signed, as `Controller <did> kid names a key the controller has revoked: #<key>`. Those `#`-prefixed entries share the set `resolveDenySet` answers with, and cannot be mistaken for a DID — so **match against the set, never enumerate it**
 - **Revoking a key does not un-revoke what that key's revocation records had revoked.** A `jti` revocation record is an artefact signed by a key, so denying the key stops the record verifying — and the checker's general rule is to *ignore* a record it cannot verify, which would have made the remedy for a compromise silently resurrect every capability that key had revoked. The checker therefore separates two cases that look identical at the point of failure. A record naming a key the log **never published** is a forgery and is still ignored: anyone can mint one for any `jti`, and honouring it is the plant-a-record denial of service the rule exists to stop. A record naming a key the log **published and has since denied** is honoured, and revokes as it always did — producing it required the private half of a key the DID itself published, so only the issuer or whoever compromised it could have written it, and honouring a revocation can only subtract authority, never grant any. The residual, stated plainly: a thief holding the leaked key can plant revocations for `jti`s they know, and those survive the owner's remedy — bounded harm next to the owner's own revocations lapsing the moment they act. Both directions are pinned by `packages/capability/test/zzown-key-denial-check.test.ts`
-- **A capability that authorises a `did:kokuin:` revoke has two extra requirements, both refused at verification and both checkable at mint.** It must carry `exp` — an omitted one is not a long grant but a permanent one, and `createControllerCapabilityVerifier` rejects it with `REVOKE_UNBOUNDED_LIFETIME`; the length is yours to choose, with `maxLifetimeSeconds` available if you have a policy. And it must pin its audience's key in `cnf` (`audienceConfirmation(key)`) where the audience is a `did:key` or a `did:peer:4` **long form** — an audience whose identifier carries no key cannot be tied to its pin without resolving it, which is the bug `cnf` exists to remove, so it is refused with `REVOKE_AUDIENCE_KEY_MISMATCH`. Call `assertRevokeCapabilityAudience(payload)` at mint: the same rule, where the cost of getting it wrong is an error rather than an unfoldable log and a DID that stops resolving
 
 ## Persisting delegations and revocations (`@kokuin/store-delegation`)
 

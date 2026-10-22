@@ -2,7 +2,7 @@ import {
   createControllerIdentity,
   createControllerResolver,
   createInception,
-  createRevoke,
+  createRotate,
   didFromInception,
   foldLog,
   type SignedEvent,
@@ -22,22 +22,27 @@ import { checkCapability, createCapability, now } from '../src/index.js'
 const seed = new Uint8Array(32).fill(31)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity({ seed, profile: 0, log: [inception] })
-const inceptionKeyPosition = { gen: 0, seq: 0 }
+const controller = createControllerIdentity({
+  seed,
+  profile: 0,
+  log: { chain: [inception], events: [] },
+})
 
 let log: Array<SignedEvent> = [inception]
 const methods: MethodRegistry = [
-  createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) }),
+  createControllerResolver({
+    loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
+  }),
 ]
 
+/** A rotate on the inception whose snapshot denies `target`. */
 function revokeOf(target: string): SignedEvent {
-  return createRevoke({
+  return createRotate({
     seed,
     profile: 0,
     did,
     prior: inception.event,
-    target,
-    keyPosition: inceptionKeyPosition,
+    snapshot: { members: [], deny: [target] },
   })
 }
 
@@ -75,7 +80,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     expect(before).toBe('accepted')
 
     log = [inception, revokeOf(delegate.id)]
-    expect(foldLog(did, log).ok).toBe(true)
+    expect(foldLog(did, { chain: log, events: [] }).ok).toBe(true)
     let after: unknown = 'accepted'
     await invoke(delegate, cap).catch((e) => {
       after = e
@@ -105,7 +110,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     log = [inception]
     const cap = await mintFor(delegate.id)
     const revoke = revokeOf(delegate.id)
-    const base = foldLog(did, [inception, revoke])
+    const base = foldLog(did, { chain: [inception, revoke], events: [] })
     if (!base.ok) throw new Error('fixture')
     const priorState = base.states[1]
     if (priorState === undefined) throw new Error('fixture')
@@ -123,7 +128,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
       sigs: [],
     } as unknown as SignedEvent
     log = [inception, revoke, forged]
-    const folded = foldLog(did, log)
+    const folded = foldLog(did, { chain: log, events: [] })
     let outcome: unknown = 'accepted'
     await invoke(delegate, cap).catch((e) => {
       outcome = e

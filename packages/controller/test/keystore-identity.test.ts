@@ -4,9 +4,10 @@ import type { KeyEntry } from '@kokuin/token'
 import { isFullIdentity } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
-import { agreementPath, authorityPath, deriveKeyPair } from '../src/derivation.js'
-import { createInception, createRevoke, createRotate, didFromInception } from '../src/events.js'
-import type { CapabilityAuthorisation } from '../src/fold.js'
+import { agreementPath, deriveKeyPair } from '../src/derivation.js'
+import { createRevoke } from '../src/epoch-events.js'
+import { createInception, createRotate, didFromInception } from '../src/events.js'
+import { foldLog } from '../src/fold.js'
 import { createMemoryLogStore } from '../src/history.js'
 import { provideControllerIdentity } from '../src/keystore-identity.js'
 
@@ -41,7 +42,7 @@ describe('provideControllerIdentity', () => {
     expect(isFullIdentity(identity)).toBe(true)
     // The generate path persisted the inception.
     const stored = await logStore.get(expectedDID)
-    expect(stored).toHaveLength(1)
+    expect(stored?.chain).toHaveLength(1)
   })
 
   test('restores the same identity from an existing log', async () => {
@@ -73,8 +74,14 @@ describe('provideControllerIdentity', () => {
     const logStore = createMemoryLogStore()
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rot = createRotate({ seed, profile: 0, did, prior: inception.event })
-    await logStore.set(did, [inception, rot])
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      snapshot: { members: [], deny: [] },
+    })
+    await logStore.merge(did, async () => ({ chain: [inception, rot], events: [] }))
 
     const identity = await provideControllerIdentity({
       entry: memoryEntry(seed),
@@ -87,20 +94,21 @@ describe('provideControllerIdentity', () => {
     expect(token.header.kid).toBe(`#${rot.event.k[0]}`)
   })
 
-  test('resolves the pre-revoke key after a revoke', async () => {
+  test('restores from a stored log carrying epoch events, and keeps them', async () => {
     const seed = new Uint8Array(32).fill(7)
     const logStore = createMemoryLogStore()
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
+    const folded = foldLog(did, { chain: [inception], events: [] })
+    if (!folded.ok) throw new Error('did not fold')
     const revoke = createRevoke({
-      seed,
-      profile: 0,
+      signer: { root: { seed, profile: 0 } },
       did,
-      prior: inception.event,
-      target: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK',
-      keyPosition: { gen: 0, seq: 0 },
+      head: folded.head,
+      parents: [folded.head.epoch],
+      target: 'did:key:zDevice',
     })
-    await logStore.set(did, [inception, revoke])
+    await logStore.merge(did, async () => ({ chain: [inception], events: [revoke] }))
 
     const identity = await provideControllerIdentity({
       entry: memoryEntry(seed),
@@ -108,51 +116,8 @@ describe('provideControllerIdentity', () => {
       logStore,
     })
     expect(identity.id).toBe(did)
-    const token = await identity.signToken({ sub: 'x' })
-    // The revoke established no key, so the authority key is still the inception's.
-    expect(token.header.kid).toBe(`#${inception.event.k[0]}`)
-  })
-
-  test('forwards options.verifyCapability to the fold for a capability-authorised revoke', async () => {
-    const seed = new Uint8Array(32).fill(7)
-    // Not the controller's seed: the revoke is signed by a delegate, so only the capability it
-    // carries can authorise it — a log this shape folds only when `options` reaches the fold.
-    const delegateSeed = new Uint8Array(32).fill(3)
-    const cap = 'eyJ.delegated.revoke'
-    const authorised: CapabilityAuthorisation = {
-      authorised: true,
-      audienceKey: {
-        alg: 'EdDSA',
-        publicKey: deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
-      },
-    }
-
-    const logStore = createMemoryLogStore()
-    const inception = createInception(seed, 0)
-    const did = didFromInception(inception.event)
-    const revoke = createRevoke({
-      seed: delegateSeed,
-      profile: 0,
-      did,
-      prior: inception.event,
-      target: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK',
-      keyPosition: { gen: 0, seq: 0 },
-      cap,
-    })
-    await logStore.set(did, [inception, revoke])
-
-    const identity = await provideControllerIdentity({
-      entry: memoryEntry(seed),
-      profile: 0,
-      logStore,
-      options: { verifyCapability: async () => authorised },
-    })
-    expect(identity.id).toBe(did)
-
-    // Without the forwarded options the same log has no verifier to ask, so the fold fails closed.
-    await expect(
-      provideControllerIdentity({ entry: memoryEntry(seed), profile: 0, logStore }),
-    ).rejects.toThrow(/needs a verifier/)
+    // Restoring reads; it never rewrites the stored epoch away.
+    expect((await logStore.get(did))?.events).toEqual([revoke])
   })
 })
 

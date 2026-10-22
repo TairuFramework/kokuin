@@ -23,6 +23,15 @@ export type ConformanceSigned = {
   recoveryKey?: string
 }
 
+/** One management member as a snapshot carries it. Mirrors `@kokuin/controller`'s `MemberEntry`. */
+export type ConformanceMemberEntry = { did: string; key: string; add: string; lease: number }
+
+/** The whole state a root-chain event leaves behind. Mirrors `StateSnapshot`. */
+export type ConformanceStateSnapshot = {
+  members: Array<ConformanceMemberEntry>
+  deny: Array<string>
+}
+
 /** Per-position folded state. Mirrors `@kokuin/controller`'s `KeyState`. */
 export type ConformanceKeyState = {
   gen: number
@@ -30,16 +39,35 @@ export type ConformanceKeyState = {
   keyGen: number
   keySeq: number
   keys: Array<string>
-  /** Key agreement keys — an OR set. Established by icp/rot, carried forward across rev. */
+  /** Key agreement keys — an OR set, established by the same icp/rot as `keys`. */
   agreement: Array<string>
   next: Array<string>
   recovery: string
   deny: ReadonlySet<string>
+  /** The management set, keyed by each member's `add` digest. */
+  members: ReadonlyMap<string, ConformanceMemberEntry & { removed: boolean; effective: boolean }>
+  /** Digest of the chain event opening this state's epoch — a chain state's own `digest`. */
+  epoch: string
+  saturated: boolean
   digest: string
 }
 
+/** A controller's whole log: the root chain and the epoch events built on its last event. */
+export type ConformanceLog = {
+  chain: Array<ConformanceSigned>
+  events: Array<ConformanceEpochSigned>
+}
+
 export type ConformanceFoldResult =
-  | { ok: true; states: Array<ConformanceKeyState> }
+  | {
+      ok: true
+      states: Array<ConformanceKeyState>
+      /** The last chain state merged with the current epoch. */
+      head: ConformanceKeyState
+      applied: Array<string>
+      pending: number
+      rejected: number
+    }
   | { ok: false; reason: string; index: number }
 
 export type ConformanceDuplicity = {
@@ -50,39 +78,12 @@ export type ConformanceDuplicity = {
 
 /**
  * Why branch selection could not name a winner.
- *
- * `needs-capability-verification` is the one that has to be its own answer rather than a filtered
- * branch: a capability-authorised revoke is the management tier working as designed, and an
- * implementation that folds such a branch away as invalid reports "no valid history" for a healthy
- * profile — duplicity detection silently off for every profile that uses the tier.
  */
-export type ConformanceResolveFailure =
-  | 'duplicity'
-  | 'no-valid-branch'
-  | 'needs-capability-verification'
+export type ConformanceResolveFailure = 'duplicity' | 'no-valid-branch'
 
 export type ConformanceResolveResult =
-  | { ok: true; winner: Array<ConformanceSigned>; superseded: number; unverified: number }
-  | {
-      ok: false
-      failure: ConformanceResolveFailure
-      duplicity: ConformanceDuplicity
-      unverified: number
-    }
-
-/** What a capability verifier answers a cap-bearing revoke with. */
-export type ConformanceCapabilityAuthorisation =
-  | { authorised: true; audienceKey: { alg: string; publicKey: Uint8Array } }
-  | { authorised: false; reason: string }
-
-export type ConformanceFoldOptions = {
-  verifyCapability?: (
-    cap: string,
-    subject: string,
-    target: string,
-    subjectAtPosition: unknown,
-  ) => Promise<ConformanceCapabilityAuthorisation>
-}
+  | { ok: true; winner: Array<ConformanceSigned>; superseded: number }
+  | { ok: false; failure: ConformanceResolveFailure; duplicity: ConformanceDuplicity }
 
 export type ConformanceProfileEntry = {
   index: number
@@ -90,23 +91,28 @@ export type ConformanceProfileEntry = {
   handle: string
 }
 
-export type CreateRotateOptions = {
-  seal?: string
-  /**
-   * The complete deny set the rotate leaves behind — a **replacement**, not an addition. Named for
-   * that, because a caller who reads it as "also deny this" silently drops every entry the log had
-   * accumulated, un-revoking devices and un-retiring leaked keys with nothing in the log to say so.
-   */
-  denySnapshot?: Array<string>
-  /**
-   * Where the currently-active authority key lives — the last `icp`/`rot` position, i.e. the fold's
-   * `keyGen`/`keySeq`. Required once a revoke has intervened; see the `rotate after a revoke` case.
-   */
-  keyPosition?: { gen: number; seq: number }
-}
+/** A signed management-tier event: an epoch event has no root-chain `s`, so it is not a {@link ConformanceSigned}. */
+export type ConformanceEpochSigned = { event: Record<string, unknown>; sigs: Array<string> }
 
-export type CreateRevokeOptions = {
-  cap?: string
+/** Who signs an epoch event: the root, from its seed, or a member, from its pinned key's private half. */
+export type ConformanceEpochSigner =
+  | { root: { seed: Uint8Array; profile: number } }
+  | { member: { privateKey: Uint8Array; add: string } }
+
+/** The fields an epoch event adds to its envelope, by type. An add is root-only. */
+export type ConformanceEpochBody =
+  | { t: 'add'; member: { did: string; key: string; lease: number } }
+  | { t: 'ren'; add: string; lease: number }
+  | { t: 'rmv'; add: string }
+  | { t: 'rev'; target: string }
+
+export type ConformanceEpochEventParams = {
+  signer: ConformanceEpochSigner
+  did: string
+  /** The folded head the event builds on, naming the generation, the epoch and the signing key. */
+  head: ConformanceKeyState
+  parents: Array<string>
+  body: ConformanceEpochBody
 }
 
 /**
@@ -122,35 +128,25 @@ export type ControllerImplementation = {
     profile: number,
     did: string,
     prior: ConformanceEvent,
-    options?: CreateRotateOptions,
+    /**
+     * The complete state the rotate leaves behind — a **replacement**, not an addition. Required:
+     * every rotate is a settlement, and the state after it is its snapshot and nothing before it.
+     */
+    snapshot: ConformanceStateSnapshot,
   ) => ConformanceSigned
-  createReset: (seed: Uint8Array, profile: number, gen: number) => ConformanceSigned
-  createRevoke: (
+  /** A blind reset without `snapshot`; with one, the reset carries the whole state. */
+  createReset: (
     seed: Uint8Array,
     profile: number,
-    did: string,
-    prior: ConformanceEvent,
-    target: string,
-    keyPosition: { gen: number; seq: number },
-    options?: CreateRevokeOptions,
+    gen: number,
+    snapshot?: ConformanceStateSnapshot,
   ) => ConformanceSigned
   didFromInception: (event: ConformanceEvent) => string
-  foldLog: (did: string, events: Array<ConformanceSigned>) => ConformanceFoldResult
+  foldLog: (did: string, log: ConformanceLog) => ConformanceFoldResult
   resolveBranches: (
     did: string,
     branches: Array<Array<ConformanceSigned>>,
   ) => ConformanceResolveResult
-  /**
-   * Branch selection that can verify a capability-authorised revoke.
-   *
-   * Required, not optional: the sync form cannot check a capability, so without this an
-   * implementation has no duplicity detection at all for a profile using the management tier.
-   */
-  resolveBranchesAsync: (
-    did: string,
-    branches: Array<Array<ConformanceSigned>>,
-    options?: ConformanceFoldOptions,
-  ) => Promise<ConformanceResolveResult>
   enumerateProfiles: (seed: Uint8Array, count: number) => Array<ConformanceProfileEntry>
   /** Self-addressing digest of a canonicalized value. Several assertions need to compute one. */
   digestOf: (value: unknown) => string
@@ -166,12 +162,15 @@ export type ControllerImplementation = {
    * declares an empty `ka`, isolating that check like `recoveryPrivateKey` does the root-override one.
    */
   authorityPrivateKey: (seed: Uint8Array, profile: number, gen: number, seq: number) => Uint8Array
+  /** Builds and signs one epoch event; throws on what the real builders refuse. */
+  createEpochEvent: (params: ConformanceEpochEventParams) => ConformanceEpochSigned
+  /** Test-support only: a fresh Ed25519 member key pair and the `did:key` that carries it. */
+  memberKeyPair: () => { privateKey: Uint8Array; key: string; did: string }
   /**
-   * Test-support only: the *public* half of the same key. The capability group needs it to answer as
-   * a verifier would (a capability pins its audience's signing key, and the fold checks the revoke's
-   * signature against it), else the suite could only exercise the rejecting direction.
+   * Test-support only: a long-form `did:peer:4` carrying exactly `key` as its one signing key -- the
+   * other DID form a member may take, so one key can be admitted under two DIDs.
    */
-  authorityPublicKey: (seed: Uint8Array, profile: number, gen: number, seq: number) => Uint8Array
+  memberPeerDID: (key: string) => string
   /** Test-support only: sign an event with arbitrary private keys. Used only for the forgeries above. */
   signEvent: (event: ConformanceEvent, privateKeys: Array<Uint8Array>) => Array<string>
 }
@@ -222,9 +221,30 @@ export function runControllerConformance(
   const seedB = new Uint8Array(32).fill(2)
   const seedC = new Uint8Array(32).fill(9)
 
+  // Real Ed25519 `did:key` identifiers, so the ones a snapshot carries as members decode.
   const deviceA = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-  const deviceB = 'did:key:z6MkAnotherStolenDeviceDidHere111111111111'
-  const deviceC = 'did:key:z6MkAThirdStolenDeviceDidHereForGoodMeasure0'
+  const deviceB = 'did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
+  const deviceC = 'did:key:z6MkfriQZgZXhtFA6kFHzuvhLHGRDDNzGRxeLnpKmZzHwUXR'
+
+  /** A member pinned to the key its `did:key` carries. */
+  function memberOf(did: string, add: string): ConformanceMemberEntry {
+    return { did, key: did.slice('did:key:'.length), add, lease: 1_900_000_000 }
+  }
+
+  /** A rotate on `prior` whose snapshot is `snapshot` (empty by default), signed by `seed`. */
+  function rotate(
+    seed: Uint8Array,
+    did: string,
+    prior: ConformanceEvent,
+    snapshot: ConformanceStateSnapshot = { members: [], deny: [] },
+  ): ConformanceSigned {
+    return impl.createRotate(seed, 0, did, prior, snapshot)
+  }
+
+  /** A rotate on `prior` denying `deny` and carrying no members. */
+  function denying(did: string, prior: ConformanceEvent, deny: Array<string>): ConformanceSigned {
+    return rotate(seedA, did, prior, { members: [], deny })
+  }
 
   describe(`${impl.name} controller conformance`, () => {
     // 1. Determinism — same seed and index reproduce byte-identical inception and the same DID.
@@ -278,8 +298,8 @@ export function runControllerConformance(
       test('a rotate signed by the pre-committed next keys folds successfully', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const result = impl.foldLog(did, [icp, rot])
+        const rot = rotate(seedA, did, icp.event)
+        const result = impl.foldLog(did, { chain: [icp, rot], events: [] })
         expect(result.ok).toBe(true)
       })
 
@@ -288,8 +308,8 @@ export function runControllerConformance(
         const did = impl.didFromInception(icp.event)
         // seedC derives an unrelated key pair — the revealed keys will not match the digests the
         // inception pre-committed to.
-        const forged = impl.createRotate(seedC, 0, did, icp.event)
-        const result = impl.foldLog(did, [icp, forged])
+        const forged = rotate(seedC, did, icp.event)
+        const result = impl.foldLog(did, { chain: [icp, forged], events: [] })
         expect(result.ok).toBe(false)
       })
     })
@@ -309,7 +329,7 @@ export function runControllerConformance(
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
         const reset = impl.createReset(seedA, 0, 1)
-        const result = impl.foldLog(did, [icp, reset])
+        const result = impl.foldLog(did, { chain: [icp, reset], events: [] })
         expect(result.ok).toBe(true)
       })
 
@@ -327,7 +347,7 @@ export function runControllerConformance(
           sigs: impl.signEvent(legitimate.event, [thiefRecoveryPrivateKey]),
           recoveryKey: thiefReset.recoveryKey,
         }
-        const result = impl.foldLog(did, [icp, forged])
+        const result = impl.foldLog(did, { chain: [icp, forged], events: [] })
         expect(result.ok).toBe(false)
       })
     })
@@ -339,9 +359,9 @@ export function runControllerConformance(
       test('a device denied at sequence N is not denied at N-1', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const rev = impl.createRevoke(seedA, 0, did, rot.event, deviceA, { gen: 0, seq: 1 })
-        const result = impl.foldLog(did, [icp, rot, rev])
+        const rot = rotate(seedA, did, icp.event)
+        const denied = denying(did, rot.event, [deviceA])
+        const result = impl.foldLog(did, { chain: [icp, rot, denied], events: [] })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -351,100 +371,141 @@ export function runControllerConformance(
       })
     })
 
-    // 5a. A `rev` target may name a KEY instead of a DID, spelled `#<the multibase key exactly as
-    // it appears in `k`>` — the same spelling a token's `kid` uses, which is what makes the two
-    // forms tellable apart on sight and needs no second field. It is what retires a leaked key for
-    // material it has *already* signed: a rotate retires a key for new issuance only, because
-    // historic resolution is designed to survive one, so retirement has to be an explicit event.
-    //
-    // Two properties, and the second is the one an implementation is most likely to skip. Denying a
-    // key the profile still publishes is refused rather than applied: it would leave a head whose
-    // own key set the resolver must turn away, and since a `rev` may be capability-authorised it
-    // would let a management-tier device stop the root tier from signing with one event.
-    describe('key revocation', () => {
-      test('a `#<key>` target lands in the deny set under that spelling', () => {
+    // 5a. Every rotate is a settlement: it carries the whole state — members and denials — and the
+    // state after it is that snapshot, nothing before it. A rotate missing either half does not
+    // fold; that case is a re-signed copy of a valid rotate with both halves removed, so the
+    // signature genuinely verifies and only the snapshot rule can reject it.
+    describe('state snapshots', () => {
+      test('the state after a rotate is its snapshot', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const before = impl.foldLog(did, [icp, rot])
-        expect(before.ok).toBe(true)
-        if (!before.ok) {
-          return
-        }
-        // The inception's key, which the rotate has since retired.
-        const retired = `#${at(at(before.states, 0).keys, 0)}`
-        const rev = impl.createRevoke(seedA, 0, did, rot.event, retired, { gen: 0, seq: 1 })
-        const result = impl.foldLog(did, [icp, rot, rev])
+        const member = memberOf(deviceB, impl.digestOf('the add that admitted it'))
+        const first = rotate(seedA, did, icp.event, { members: [member], deny: [deviceA] })
+        const second = rotate(seedA, did, first.event)
+        const result = impl.foldLog(did, { chain: [icp, first, second], events: [] })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
         }
-        // Position-dependent like every other entry, and read at the same two positions.
+        expect([...at(result.states, 1).deny]).toEqual([deviceA])
+        expect(at(result.states, 1).members.get(member.add)).toEqual({
+          ...member,
+          removed: false,
+          effective: true,
+        })
+        // The next settlement replaces the state outright.
+        expect(at(result.states, 2).deny.size).toBe(0)
+        expect(at(result.states, 2).members.size).toBe(0)
+        // Every chain state opens its own epoch.
+        expect(at(result.states, 1).epoch).toBe(at(result.states, 1).digest)
+        expect(at(result.states, 1).saturated).toBe(false)
+      })
+
+      test('a rotate carrying no snapshot does not fold', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const valid = rotate(seedA, did, icp.event)
+        const { m: _m, d: _d, ...bare } = valid.event
+        const revealed = impl.authorityPrivateKey(seedA, 0, 0, 1)
+        const resign = (event: ConformanceEvent): ConformanceSigned => ({
+          event,
+          sigs: impl.signEvent(event, [revealed]),
+        })
+        expect(impl.foldLog(did, { chain: [icp, resign({ ...valid.event })], events: [] }).ok).toBe(
+          true,
+        )
+        expect(
+          impl.foldLog(did, { chain: [icp, resign(bare as ConformanceEvent)], events: [] }).ok,
+        ).toBe(false)
+      })
+
+      test('a snapshot member may not pin a root key', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        // The inception's own key, as a `did:key` member: everything else about it is valid.
+        const rootKey = at(icp.event.k as Array<string>, 0)
+        const root = memberOf(`did:key:${rootKey}`, impl.digestOf('root as a member'))
+        const other = memberOf(deviceB, impl.digestOf('root as a member'))
+        const refused = rotate(seedA, did, icp.event, { members: [root], deny: [] })
+        expect(impl.foldLog(did, { chain: [icp, refused], events: [] }).ok).toBe(false)
+        const control = rotate(seedA, did, icp.event, { members: [other], deny: [] })
+        expect(impl.foldLog(did, { chain: [icp, control], events: [] }).ok).toBe(true)
+      })
+    })
+
+    // 5b. A deny entry may name a KEY instead of a DID, spelled `#<the multibase key exactly as it
+    // appears in `k`>` — the same spelling a token's `kid` uses, which is what makes the two forms
+    // tellable apart on sight. It is what retires a leaked key for material it has *already*
+    // signed: a rotate retires a key for new issuance only, because historic resolution is designed
+    // to survive one, so retirement has to be an explicit denial.
+    //
+    // Two properties an implementation is most likely to skip: a rotate may not establish a key its
+    // own snapshot denies, and once a rotate has denied a key of the generation's chain (a
+    // checkpointed retirement) no later rotate in the generation may drop it.
+    describe('key denial', () => {
+      test('a `#<key>` entry lands in the deny set under that spelling', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const rot = rotate(seedA, did, icp.event)
+        // The inception's key, which the rotate has since retired.
+        const retired = `#${at(icp.event.k as Array<string>, 0)}`
+        const denied = denying(did, rot.event, [retired])
+        const result = impl.foldLog(did, { chain: [icp, rot, denied], events: [] })
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
         expect(at(result.states, 1).deny.has(retired)).toBe(false)
         expect(at(result.states, 2).deny.has(retired)).toBe(true)
-        // It denies a key, not a holder: the published key set is untouched.
-        expect(at(result.states, 2).keys).toEqual(at(result.states, 1).keys)
       })
 
-      test('a key the profile currently publishes cannot be denied', () => {
+      test('a rotate cannot establish a key its own snapshot denies', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const before = impl.foldLog(did, [icp, rot])
-        expect(before.ok).toBe(true)
-        if (!before.ok) {
-          return
-        }
-        // The rotate's own key — the head's `k` at the position this revoke sits at. Everything
-        // else about the event is identical to the accepted one above, so an implementation that
-        // fails this one is failing on the target and nothing else.
-        const current = `#${at(at(before.states, 1).keys, 0)}`
-        const rev = impl.createRevoke(seedA, 0, did, rot.event, current, { gen: 0, seq: 1 })
-        expect(impl.foldLog(did, [icp, rot, rev]).ok).toBe(false)
+        // The key this rotate reveals, read off an identical rotate with an empty snapshot.
+        const own = `#${at(rotate(seedA, did, icp.event).event.k as Array<string>, 0)}`
+        expect(
+          impl.foldLog(did, { chain: [icp, denying(did, icp.event, [own])], events: [] }).ok,
+        ).toBe(false)
+        const retired = `#${at(icp.event.k as Array<string>, 0)}`
+        expect(
+          impl.foldLog(did, { chain: [icp, denying(did, icp.event, [retired])], events: [] }).ok,
+        ).toBe(true)
+      })
+
+      test('a later rotate may not drop a checkpointed retired key', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const retired = `#${at(icp.event.k as Array<string>, 0)}`
+        const first = denying(did, icp.event, [retired])
+        expect(
+          impl.foldLog(did, { chain: [icp, first, denying(did, first.event, [])], events: [] }).ok,
+        ).toBe(false)
+        expect(
+          impl.foldLog(did, {
+            chain: [icp, first, denying(did, first.event, [retired])],
+            events: [],
+          }).ok,
+        ).toBe(true)
+        // A holder DID carries no such rule: dropping one is a deliberate re-authorisation.
+        const holder = denying(did, icp.event, [deviceA])
+        expect(
+          impl.foldLog(did, { chain: [icp, holder, denying(did, holder.event, [])], events: [] })
+            .ok,
+        ).toBe(true)
       })
     })
 
-    // 5b. A revoke advances `seq` without establishing a key, so the log position and the
-    // pre-rotation derivation index diverge from that point on. An implementation that conflates
-    // them cannot rotate after a revoke at all — which also puts the deny-set snapshot, the only
-    // way to clear a denial short of a reset, out of reach.
-    describe('rotate after a revoke', () => {
-      test('folds, and its deny snapshot clears the accumulated set', () => {
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const rev = impl.createRevoke(seedA, 0, did, icp.event, deviceA, { gen: 0, seq: 0 })
-        const denied = impl.foldLog(did, [icp, rev])
-        expect(denied.ok).toBe(true)
-        if (!denied.ok) {
-          return
-        }
-        expect(at(denied.states, 1).deny.has(deviceA)).toBe(true)
-
-        const rot = impl.createRotate(seedA, 0, did, rev.event, {
-          keyPosition: { gen: at(denied.states, 1).keyGen, seq: at(denied.states, 1).keySeq },
-          denySnapshot: [],
-        })
-        const result = impl.foldLog(did, [icp, rev, rot])
-        expect(result.ok).toBe(true)
-        if (!result.ok) {
-          return
-        }
-        expect(at(result.states, 2).deny.has(deviceA)).toBe(false)
-        // The rotate established a key, so the derivation index advanced while `seq` ran ahead.
-        expect(at(result.states, 2).seq).toBe(2)
-        expect(at(result.states, 2).keySeq).toBe(1)
-      })
-    })
-
-    // 6. Reset clears the deny set and increments the generation.
+    // 6. Reset clears the state and increments the generation; a blind reset is a pure function of
+    // `(seed, profile, gen)`, and a reset carrying a snapshot folds to it.
     describe('reset', () => {
       test('clears the deny set and increments the generation', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const rev = impl.createRevoke(seedA, 0, did, rot.event, deviceA, { gen: 0, seq: 1 })
+        const rot = rotate(seedA, did, icp.event)
+        const denied = denying(did, rot.event, [deviceA])
         const reset = impl.createReset(seedA, 0, 1)
-        const result = impl.foldLog(did, [icp, rot, rev, reset])
+        const result = impl.foldLog(did, { chain: [icp, rot, denied, reset], events: [] })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -454,16 +515,37 @@ export function runControllerConformance(
         expect(state.seq).toBe(0)
         expect(state.deny.has(deviceA)).toBe(false)
       })
+
+      test('a blind reset is byte-identical per seed, profile and generation', () => {
+        expect(impl.createReset(seedA, 0, 1)).toEqual(impl.createReset(seedA, 0, 1))
+        expect(impl.createReset(seedA, 0, 1)).not.toEqual(impl.createReset(seedA, 0, 2))
+      })
+
+      test('a reset with a snapshot folds to that snapshot', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const member = memberOf(deviceB, impl.digestOf('carried across the reset'))
+        const reset = impl.createReset(seedA, 0, 1, { members: [member], deny: [deviceA] })
+        const result = impl.foldLog(did, { chain: [icp, reset], events: [] })
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
+        expect(at(result.states, 1).gen).toBe(1)
+        expect([...at(result.states, 1).deny]).toEqual([deviceA])
+        expect(at(result.states, 1).members.get(member.add)?.effective).toBe(true)
+      })
     })
 
-    // 7. Precedence — higher (gen, seq) wins; at an equal position a superseding rotate beats a
-    // current-key event. Includes the three-branch tie regression: a pairwise reduction can bury
-    // the legitimate winner between two losing branches, which order-dependence would hide.
+    // 7. Precedence — higher (gen, seq) wins when one branch extends the other; two rotates that
+    // contradict each other at one position are duplicity however far one branch runs ahead, and
+    // the report does not depend on presentation order. The root chain carries only `icp`/`rot`,
+    // so any two valid branches diverge on two rotates, neither superseding the other.
     describe('precedence', () => {
       test('a higher sequence at the same generation wins', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
+        const rot = rotate(seedA, did, icp.event)
         const result = impl.resolveBranches(did, [[icp], [icp, rot]])
         expect(result.ok).toBe(true)
         if (!result.ok) {
@@ -472,220 +554,117 @@ export function runControllerConformance(
         expect(result.winner).toHaveLength(2)
       })
 
-      test('at an equal position, a superseding rotate beats a current-key event', () => {
+      test('a longer branch does not outrank a rotate it contradicts', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const thiefRevoke = impl.createRevoke(seedA, 0, did, icp.event, deviceA, {
-          gen: 0,
-          seq: 0,
-        })
-        const ownerRotate = impl.createRotate(seedA, 0, did, icp.event)
-        const result = impl.resolveBranches(did, [
-          [icp, thiefRevoke],
-          [icp, ownerRotate],
-        ])
-        expect(result.ok).toBe(true)
-        if (!result.ok) {
-          return
-        }
-        expect(at(result.winner, 1).event.t).toBe('rot')
-        expect(result.superseded).toBe(1)
-      })
-
-      // The property above only ever presents branches of equal length, which is exactly the blind
-      // spot that let an implementation pass while deciding supersession by head position: a stolen
-      // current key cannot rotate, but it can sign an unlimited run of revokes, each advancing the
-      // sequence, until the owner's recovering rotate sits behind. Supersession is a claim about
-      // the divergence point — KERI's rule is that a rotation supersedes a non-establishment event
-      // at its sequence number *and every event after it on that branch* — so the losing branch
-      // here is longer than the winner, and its whole tail must be discarded.
-      test('a superseding rotate beats a longer run of current-key events', () => {
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const first = impl.createRevoke(seedA, 0, did, icp.event, deviceA, { gen: 0, seq: 0 })
-        const second = impl.createRevoke(seedA, 0, did, first.event, deviceB, { gen: 0, seq: 0 })
-        const third = impl.createRevoke(seedA, 0, did, second.event, deviceC, { gen: 0, seq: 0 })
-        const thief = [icp, first, second, third]
-        expect(impl.foldLog(did, thief).ok).toBe(true)
-
-        const owner = [icp, impl.createRotate(seedA, 0, did, icp.event)]
+        const first = denying(did, icp.event, [deviceA])
+        const longer = [icp, first, denying(did, first.event, [deviceB])]
+        const shorter = [icp, denying(did, icp.event, [deviceC])]
         for (const order of [
-          [thief, owner],
-          [owner, thief],
+          [longer, shorter],
+          [shorter, longer],
         ]) {
           const result = impl.resolveBranches(did, order)
-          expect(result.ok).toBe(true)
-          if (!result.ok) {
+          expect(result.ok).toBe(false)
+          if (result.ok) {
             continue
           }
-          expect(result.winner).toHaveLength(2)
-          expect(at(result.winner, 1).event.t).toBe('rot')
-          expect(result.superseded).toBe(3)
-          // Nothing the stolen key denied survives into the authoritative history.
-          const folded = impl.foldLog(did, result.winner)
-          expect(folded.ok && at(folded.states, folded.states.length - 1).deny.size).toBe(0)
+          expect(result.duplicity.seq).toBe(1)
         }
       })
 
-      test('a superseding rotate wins a three-way tie regardless of presentation order', () => {
+      test('a three-way fork reports the same duplicity regardless of presentation order', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const thiefA = impl.createRevoke(seedA, 0, did, icp.event, deviceA, { gen: 0, seq: 0 })
-        const thiefB = impl.createRevoke(seedA, 0, did, icp.event, deviceB, { gen: 0, seq: 0 })
-        const owner = impl.createRotate(seedA, 0, did, icp.event)
-        const branchA = [icp, thiefA]
-        const branchB = [icp, thiefB]
-        const branchOwner = [icp, owner]
-        const orderings = [
-          [branchA, branchB, branchOwner],
-          [branchA, branchOwner, branchB],
-          [branchOwner, branchA, branchB],
-        ]
-        for (const order of orderings) {
-          const result = impl.resolveBranches(did, order)
-          expect(result.ok).toBe(true)
-          if (!result.ok) {
+        const branchA = [icp, denying(did, icp.event, [deviceA])]
+        const branchB = [icp, denying(did, icp.event, [deviceB])]
+        const branchC = [icp, denying(did, icp.event, [deviceC])]
+        const first = impl.resolveBranches(did, [branchA, branchB, branchC])
+        expect(first.ok).toBe(false)
+        for (const order of [
+          [branchA, branchC, branchB],
+          [branchC, branchA, branchB],
+        ]) {
+          expect(impl.resolveBranches(did, order)).toEqual(first)
+        }
+      })
+
+      // A reset chains to the inception, so the same reset can sit on different prefixes: appended to a
+      // generation-0 chain, or straight after the inception in a pruned copy carried further. What
+      // precedes the top generation's reset cannot change the winner once both contain it.
+      test('a reset re-parented onto a different prefix is one history, not a fork', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        for (const reset of [
+          impl.createReset(seedA, 0, 1),
+          impl.createReset(seedA, 0, 1, { members: [], deny: [deviceA] }),
+        ]) {
+          const appended = [icp, rotate(seedA, did, icp.event), reset]
+          const carried = [icp, reset, rotate(seedA, did, reset.event)]
+          for (const order of [
+            [appended, carried],
+            [carried, appended],
+          ]) {
+            const result = impl.resolveBranches(did, order)
+            expect(result.ok).toBe(true)
+            if (!result.ok) {
+              continue
+            }
+            expect(result.winner).toEqual(carried)
+          }
+          // CONTROL — a rival rotate after the shared reset is still a fork.
+          const rival = [...appended, denying(did, reset.event, [deviceB])]
+          const forked = impl.resolveBranches(did, [rival, carried])
+          expect(forked.ok).toBe(false)
+          if (!forked.ok) {
+            expect([forked.duplicity.gen, forked.duplicity.seq]).toEqual([1, 1])
+          }
+        }
+      })
+
+      // The spec's "a cold rot beats a current-key root event", in the form it now takes. Root revokes
+      // and adds live in epochs, so no current-key event is ever on the chain for branch selection to
+      // weigh: `resolveBranches` here only sees a prefix and its extension. What makes the rotate win
+      // is the epoch rule — old epochs never count — so this exercises that rule against a
+      // current-key event signed on the chain the rotate closes. A thief holding the current key can
+      // sign such events without limit; none survives the owner's rotate, which does not carry them.
+      test('a current-key root event has no effect once a cold rotate closes its epoch', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const atInception = impl.foldLog(did, { chain: [icp], events: [] })
+        if (!atInception.ok) {
+          throw new Error('inception does not fold')
+        }
+        const hot = impl.createEpochEvent({
+          signer: { root: { seed: seedA, profile: 0 } },
+          did,
+          head: atInception.head,
+          parents: [atInception.head.epoch],
+          body: { t: 'rev', target: deviceA },
+        })
+        // CONTROL — on the chain it was signed against, the current-key event applies.
+        const before = impl.foldLog(did, { chain: [icp], events: [hot] })
+        expect(before.ok && before.head.deny.has(deviceA)).toBe(true)
+
+        const rot = rotate(seedA, did, icp.event)
+        for (const order of [
+          [[icp], [icp, rot]],
+          [[icp, rot], [icp]],
+        ]) {
+          const resolved = impl.resolveBranches(did, order)
+          expect(resolved.ok).toBe(true)
+          if (!resolved.ok) {
             continue
           }
-          expect(at(result.winner, 1).event.t).toBe('rot')
-          expect(result.superseded).toBe(2)
+          expect(resolved.winner).toEqual([icp, rot])
+          const after = impl.foldLog(did, { chain: resolved.winner, events: [hot] })
+          expect(after.ok).toBe(true)
+          if (!after.ok) {
+            continue
+          }
+          expect(after.head.deny.has(deviceA)).toBe(false)
+          expect(after.applied).toHaveLength(0)
         }
-      })
-    })
-
-    // 7b. The management tier. A capability-authorised revoke cannot be checked synchronously — the
-    // capability names the signer, and resolving it is I/O — so the sync fold fails closed on one.
-    // Branch selection folds every branch it is given, which made "the sync fold cannot check this"
-    // indistinguishable from "a thief forged this": every branch of a cap-bearing log was filtered
-    // away as invalid and a healthy profile resolved to the no-valid-history answer. Both
-    // directions are asserted — the sync form must say so, and the async form must actually
-    // resolve — so an implementation cannot pass by refusing every cap-bearing log outright either.
-    describe('capability-authorised revoke', () => {
-      const capability = 'a-serialized-capability'
-
-      function capBranch(did: string, icp: ConformanceSigned) {
-        return [
-          icp,
-          impl.createRevoke(
-            seedC,
-            0,
-            did,
-            icp.event,
-            deviceA,
-            { gen: 0, seq: 0 },
-            { cap: capability },
-          ),
-        ]
-      }
-
-      // The capability's audience: whoever signed the revoke above, which is seedC's authority key.
-      const approve = async () => ({
-        authorised: true as const,
-        audienceKey: { alg: 'EdDSA', publicKey: impl.authorityPublicKey(seedC, 0, 0, 0) },
-      })
-
-      test('the sync form says it could not check the capability, rather than dropping the branch', () => {
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const result = impl.resolveBranches(did, [capBranch(did, icp)])
-        expect(result.ok).toBe(false)
-        if (result.ok) {
-          return
-        }
-        expect(result.failure).toBe('needs-capability-verification')
-      })
-
-      test('the sync form reports a branch it could not check rather than dropping it', () => {
-        // A rival branch is present, so an implementation that filtered the cap-bearing one away
-        // *and said nothing* would answer `ok: true` with the rival as winner — a fork reported as a
-        // clean history. `unverified` is what stops that from being silent, and it is the member
-        // this row exists to require: the count, not the refusal.
-        //
-        // A refusal is not the alternative. A `cap`-bearing revoke reaches the verifier path before
-        // any signature check, since the capability names the signer — so refusing the whole
-        // resolution hands a peer holding no key material at all a way to switch duplicity detection
-        // off for any profile, by presenting the public inception with an unsigned `rev` appended.
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const rival = [
-          icp,
-          impl.createRevoke(seedA, 0, did, icp.event, deviceB, { gen: 0, seq: 0 }),
-        ]
-        const result = impl.resolveBranches(did, [capBranch(did, icp), rival])
-        expect(result.unverified).toBe(1)
-        expect(result.ok).toBe(true)
-        if (!result.ok) {
-          return
-        }
-        expect(result.winner).toEqual(rival)
-      })
-
-      test('the sync form refuses when every branch carries an unverifiable capability', () => {
-        // Nothing left to compare, so there is no answer to give — and "no valid history" would be
-        // the wrong one, since the branch is fine and this call was simply not equipped for it.
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const result = impl.resolveBranches(did, [capBranch(did, icp)])
-        expect(result.ok).toBe(false)
-        if (result.ok) {
-          return
-        }
-        expect(result.failure).toBe('needs-capability-verification')
-        expect(result.unverified).toBe(1)
-      })
-
-      test('the async form resolves a cap-bearing log the verifier approves', async () => {
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const branch = capBranch(did, icp)
-        const result = await impl.resolveBranchesAsync(did, [branch], {
-          verifyCapability: approve,
-        })
-        expect(result.ok).toBe(true)
-        if (!result.ok) {
-          return
-        }
-        expect(result.winner).toHaveLength(2)
-        expect(result.superseded).toBe(0)
-      })
-
-      test('the async form surfaces duplicity on a cap-bearing fork', async () => {
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const rival = [
-          icp,
-          impl.createRevoke(seedA, 0, did, icp.event, deviceB, { gen: 0, seq: 0 }),
-        ]
-        const result = await impl.resolveBranchesAsync(did, [capBranch(did, icp), rival], {
-          verifyCapability: approve,
-        })
-        expect(result.ok).toBe(false)
-        if (result.ok) {
-          return
-        }
-        expect(result.failure).toBe('duplicity')
-        expect(result.duplicity.seq).toBe(1)
-      })
-
-      test('a branch whose capability the verifier declines is filtered, not fatal', async () => {
-        // A cap-bearing revoke reaches the capability path before any signature check — the
-        // capability names the signer — so anyone who can read a log can append one. Rejected, it
-        // must be an invalid branch like any other, or a keyless peer could stop every resolution.
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const honest = [
-          icp,
-          impl.createRevoke(seedA, 0, did, icp.event, deviceB, { gen: 0, seq: 0 }),
-        ]
-        const result = await impl.resolveBranchesAsync(did, [capBranch(did, icp), honest], {
-          verifyCapability: async () => ({ authorised: false, reason: 'no such grant' }),
-        })
-        expect(result.ok).toBe(true)
-        if (!result.ok) {
-          return
-        }
-        expect(result.winner).toHaveLength(2)
-        expect(at(result.winner, 1).event.x).toBe(deviceB)
       })
     })
 
@@ -694,8 +673,8 @@ export function runControllerConformance(
       test('identical re-derived branches are not duplicity', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const a = impl.createRotate(seedA, 0, did, icp.event)
-        const b = impl.createRotate(seedA, 0, did, icp.event)
+        const a = rotate(seedA, did, icp.event)
+        const b = rotate(seedA, did, icp.event)
         const result = impl.resolveBranches(did, [
           [icp, a],
           [icp, b],
@@ -704,16 +683,15 @@ export function runControllerConformance(
       })
     })
 
-    // 9. Duplicity — two distinct current-key events at one position are surfaced, not merged.
+    // 9. Duplicity — two distinct rotates, or two differing resets, at one position are surfaced, not
+    // merged.
     describe('duplicity', () => {
-      test('two distinct current-key events at one position are surfaced', () => {
+      test('two distinct rotates at one position are surfaced', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const revokeA = impl.createRevoke(seedA, 0, did, icp.event, deviceA, { gen: 0, seq: 0 })
-        const revokeB = impl.createRevoke(seedA, 0, did, icp.event, deviceB, { gen: 0, seq: 0 })
         const result = impl.resolveBranches(did, [
-          [icp, revokeA],
-          [icp, revokeB],
+          [icp, denying(did, icp.event, [deviceA])],
+          [icp, denying(did, icp.event, [deviceB])],
         ])
         expect(result.ok).toBe(false)
         if (result.ok) {
@@ -721,6 +699,42 @@ export function runControllerConformance(
         }
         expect(result.duplicity.gen).toBe(0)
         expect(result.duplicity.seq).toBe(1)
+      })
+
+      // Only the recovery-key holder can sign a reset, so two that differ at one generation (a
+      // snapshot reset, then a blind retry) are root's own fork — a relay can reveal both but forge
+      // neither. Nothing at that generation settles it; a reset at a higher one does.
+      test('two differing resets at one generation are duplicity, resolved by a higher one', () => {
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const withSnapshot = [icp, impl.createReset(seedA, 0, 1, { members: [], deny: [deviceA] })]
+        const blind = [icp, impl.createReset(seedA, 0, 1)]
+        const higher = [icp, impl.createReset(seedA, 0, 2)]
+        for (const order of [
+          [withSnapshot, blind],
+          [blind, withSnapshot],
+        ]) {
+          const result = impl.resolveBranches(did, order)
+          expect(result.ok).toBe(false)
+          if (result.ok) {
+            continue
+          }
+          expect(result.failure).toBe('duplicity')
+          expect(result.duplicity.gen).toBe(1)
+          expect(result.duplicity.seq).toBe(0)
+        }
+        for (const order of [
+          [withSnapshot, blind, higher],
+          [higher, blind, withSnapshot],
+          [blind, higher, withSnapshot],
+        ]) {
+          const result = impl.resolveBranches(did, order)
+          expect(result.ok).toBe(true)
+          if (!result.ok) {
+            continue
+          }
+          expect(result.winner).toEqual(higher)
+        }
       })
     })
 
@@ -742,7 +756,7 @@ export function runControllerConformance(
           event: { v: 1, t: 'xyz', i: did, g: 0, s: 1, p: impl.digestOf(icp.event), crit: true },
           sigs: [],
         }
-        const result = impl.foldLog(did, [icp, unknown])
+        const result = impl.foldLog(did, { chain: [icp, unknown], events: [] })
         expect(result.ok).toBe(false)
       })
 
@@ -753,7 +767,7 @@ export function runControllerConformance(
           event: { v: 1, t: 'xyz', i: did, g: 0, s: 1, p: impl.digestOf(icp.event), crit: false },
           sigs: [],
         }
-        const result = impl.foldLog(did, [icp, unknown])
+        const result = impl.foldLog(did, { chain: [icp, unknown], events: [] })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -764,6 +778,27 @@ export function runControllerConformance(
         expect(at(result.states, 1).seq).toBe(0)
       })
 
+      test('a chain revoke is an unknown critical event', () => {
+        // Revokes live in epochs, never on the root chain: one there, from an older log, fails the
+        // fold closed rather than being read as anything.
+        const icp = impl.createInception(seedA, 0)
+        const did = impl.didFromInception(icp.event)
+        const revoke: ConformanceSigned = {
+          event: {
+            v: 1,
+            t: 'rev',
+            i: did,
+            g: 0,
+            s: 1,
+            p: impl.digestOf(icp.event),
+            crit: true,
+            x: deviceA,
+          },
+          sigs: [],
+        }
+        expect(impl.foldLog(did, { chain: [icp, revoke], events: [] }).ok).toBe(false)
+      })
+
       test('an unknown event with no criticality flag fails closed', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
@@ -771,7 +806,7 @@ export function runControllerConformance(
           event: { v: 1, t: 'xyz', i: did, g: 0, s: 1, p: impl.digestOf(icp.event) },
           sigs: [],
         } as unknown as ConformanceSigned
-        const result = impl.foldLog(did, [icp, unknown])
+        const result = impl.foldLog(did, { chain: [icp, unknown], events: [] })
         expect(result.ok).toBe(false)
       })
 
@@ -797,7 +832,7 @@ export function runControllerConformance(
             },
             sigs: [],
           }
-          expect(impl.foldLog(did, [icp, unknown]).ok).toBe(false)
+          expect(impl.foldLog(did, { chain: [icp, unknown], events: [] }).ok).toBe(false)
         }
       })
     })
@@ -826,42 +861,13 @@ export function runControllerConformance(
       })
     })
 
-    // Regression: a revoke chained onto another revoke must sign at the key position carried in
-    // `keyGen`/`keySeq` — the position of the last icp/rot — not at the prior revoke's own
-    // position, which establishes no key at all.
-    describe('revoke chaining', () => {
-      test('a revoke chained onto another revoke folds successfully', () => {
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const rev1 = impl.createRevoke(seedA, 0, did, rot.event, deviceA, { gen: 0, seq: 1 })
-        const afterFirst = impl.foldLog(did, [icp, rot, rev1])
-        expect(afterFirst.ok).toBe(true)
-        if (!afterFirst.ok) {
-          return
-        }
-        const keyState = at(afterFirst.states, 2)
-        const rev2 = impl.createRevoke(seedA, 0, did, rev1.event, deviceC, {
-          gen: keyState.keyGen,
-          seq: keyState.keySeq,
-        })
-        const result = impl.foldLog(did, [icp, rot, rev1, rev2])
-        expect(result.ok).toBe(true)
-        if (!result.ok) {
-          return
-        }
-        expect(at(result.states, 3).deny.has(deviceA)).toBe(true)
-        expect(at(result.states, 3).deny.has(deviceC)).toBe(true)
-      })
-    })
-
-    // 12. Agreement keys — an inception publishes a non-empty key agreement set, a rotate
-    // replaces it, and a revoke leaves it unchanged. Property 2 asserts the post-rotate set
-    // *differs* from the inception's rather than merely being non-empty — an implementation that
-    // carried the inception's `ka` forward on rotate would pass a mere non-empty check. Properties
-    // 1-3 also assert the folded value equals the `ka` the triggering event actually declared, not
-    // just that it changes/holds shape — otherwise an implementation folding an entirely unrelated
-    // (but still non-empty, still-changing, still-stable) value would pass all three. Property 4
+    // 12. Agreement keys — an inception publishes a non-empty key agreement set and a rotate
+    // replaces it. Property 2 asserts the post-rotate set *differs* from the inception's rather than
+    // merely being non-empty — an implementation that carried the inception's `ka` forward on
+    // rotate would pass a mere non-empty check. Properties 1-2 also assert the folded value equals
+    // the `ka` the triggering event actually declared, not just that it changes shape — otherwise an
+    // implementation folding an entirely unrelated (but still non-empty, still-changing) value would
+    // pass both. Property 3
     // forges an inception with a genuinely valid signature and a genuinely matching DID whose only
     // defect is an empty declared `ka` — the same isolation technique as the root-override group
     // above, using `authorityPrivateKey` in place of `recoveryPrivateKey`. A byte-level splice
@@ -876,7 +882,7 @@ export function runControllerConformance(
       test('a folded inception exposes a non-empty agreement set', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const result = impl.foldLog(did, [icp])
+        const result = impl.foldLog(did, { chain: [icp], events: [] })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -888,28 +894,14 @@ export function runControllerConformance(
       test('a rotate replaces the agreement set', () => {
         const icp = impl.createInception(seedA, 0)
         const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const result = impl.foldLog(did, [icp, rot])
+        const rot = rotate(seedA, did, icp.event)
+        const result = impl.foldLog(did, { chain: [icp, rot], events: [] })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
         }
         expect(at(result.states, 1).agreement).not.toEqual(at(result.states, 0).agreement)
         expect(at(result.states, 1).agreement).toEqual(rot.event.ka)
-      })
-
-      test('a revoke leaves the agreement set unchanged', () => {
-        const icp = impl.createInception(seedA, 0)
-        const did = impl.didFromInception(icp.event)
-        const rot = impl.createRotate(seedA, 0, did, icp.event)
-        const rev = impl.createRevoke(seedA, 0, did, rot.event, deviceA, { gen: 0, seq: 1 })
-        const result = impl.foldLog(did, [icp, rot, rev])
-        expect(result.ok).toBe(true)
-        if (!result.ok) {
-          return
-        }
-        expect(at(result.states, 2).agreement).toEqual(at(result.states, 1).agreement)
-        expect(at(result.states, 2).agreement).toEqual(rot.event.ka)
       })
 
       test('an inception with a genuinely valid signature but an empty agreement set is rejected', () => {
@@ -921,8 +913,425 @@ export function runControllerConformance(
           event: forgedEvent,
           sigs: impl.signEvent(forgedEvent, [authorityPrivateKey]),
         }
-        const result = impl.foldLog(did, [forged])
+        const result = impl.foldLog(did, { chain: [forged], events: [] })
         expect(result.ok).toBe(false)
+      })
+    })
+
+    // The epoch is a set of events folded by causal authorisation and union, so what it yields must
+    // be a function of the set alone. Each case below breaks a different way an implementation could
+    // let presentation leak in: its order, a stale epoch, a parent it cannot see.
+    describe('epoch merge', () => {
+      const icp = impl.createInception(seedA, 0)
+      const did = impl.didFromInception(icp.event)
+      const keyA = impl.memberKeyPair()
+      const keyB = impl.memberKeyPair()
+      const entryA = {
+        ...keyA,
+        add: impl.digestOf('the add that admitted A'),
+        lease: 1_900_000_000,
+      }
+      const entryB = {
+        ...keyB,
+        add: impl.digestOf('the add that admitted B'),
+        lease: 1_900_000_000,
+      }
+      const toEntry = ({ did: d, key, add, lease }: typeof entryA) => ({ did: d, key, add, lease })
+      const rot = rotate(seedA, did, icp.event, {
+        members: [toEntry(entryA), toEntry(entryB)],
+        deny: [],
+      })
+      const chain = [icp, rot]
+      const settled = impl.foldLog(did, { chain, events: [] })
+      if (!settled.ok) {
+        throw new Error(`fixture chain does not fold: ${settled.reason}`)
+      }
+      const head = settled.head
+      const root: ConformanceEpochSigner = { root: { seed: seedA, profile: 0 } }
+      const memberA: ConformanceEpochSigner = {
+        member: { privateKey: keyA.privateKey, add: entryA.add },
+      }
+      const memberB: ConformanceEpochSigner = {
+        member: { privateKey: keyB.privateKey, add: entryB.add },
+      }
+
+      function revoke(
+        signer: ConformanceEpochSigner,
+        target: string,
+        parents: Array<string> = [head.epoch],
+        on: ConformanceKeyState = head,
+      ): ConformanceEpochSigned {
+        return impl.createEpochEvent({
+          signer,
+          did,
+          head: on,
+          parents,
+          body: { t: 'rev', target },
+        })
+      }
+
+      const revA = revoke(memberA, 'did:key:zA')
+      const revB = revoke(memberB, 'did:key:zB')
+      const renew = impl.createEpochEvent({
+        signer: root,
+        did,
+        head,
+        parents: [head.epoch],
+        body: { t: 'ren', add: entryA.add, lease: 2_000_000_000 },
+      })
+      const child = revoke(root, 'did:key:zC', [
+        impl.digestOf(revA.event),
+        impl.digestOf(revB.event),
+      ])
+
+      function summary(events: Array<ConformanceEpochSigned>, presented = chain) {
+        const result = impl.foldLog(did, { chain: presented, events })
+        if (!result.ok) {
+          return { ok: false, deny: [], members: [], applied: [], pending: 0, rejected: 0 }
+        }
+        return {
+          ok: true,
+          deny: [...result.head.deny].sort(),
+          members: [...result.head.members.entries()].sort(([x], [y]) => (x < y ? -1 : 1)),
+          applied: result.applied,
+          pending: result.pending,
+          rejected: result.rejected,
+        }
+      }
+
+      function permutations<T>(items: Array<T>): Array<Array<T>> {
+        if (items.length <= 1) {
+          return [items]
+        }
+        return items.flatMap((item, i) =>
+          permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [
+            item,
+            ...rest,
+          ]),
+        )
+      }
+
+      test('concurrent member revokes merge, in every presentation order', () => {
+        const expected = summary([revA, revB, renew, child])
+        expect(expected.ok).toBe(true)
+        expect(expected.deny).toEqual(['did:key:zA', 'did:key:zB', 'did:key:zC'])
+        expect(expected.applied).toHaveLength(4)
+        expect(expected.pending).toBe(0)
+        expect(expected.rejected).toBe(0)
+        for (const order of permutations([revA, revB, renew, child])) {
+          expect(summary(order)).toEqual(expected)
+        }
+      })
+
+      test('an event presented twice applies once', () => {
+        expect(summary([revA, revA, revB])).toEqual(summary([revA, revB]))
+      })
+
+      test('an event naming an older epoch has no effect', () => {
+        const atInception = impl.foldLog(did, { chain: [icp], events: [] })
+        if (!atInception.ok) {
+          throw new Error('inception does not fold')
+        }
+        const stale = revoke(root, 'did:key:zOld', [atInception.head.epoch], atInception.head)
+        expect(summary([stale])).toEqual(summary([]))
+      })
+
+      test('an event with a parent from an older epoch is refused', () => {
+        const crossing = revoke(root, 'did:key:zX', [head.epoch, impl.digestOf(icp.event)])
+        const result = summary([crossing])
+        expect(result).toEqual({ ...summary([]), rejected: 1 })
+        // Control: the same event with only same-epoch parents applies.
+        expect(summary([revoke(root, 'did:key:zX')])).toEqual({
+          ...summary([]),
+          deny: ['did:key:zX'],
+          applied: [impl.digestOf(revoke(root, 'did:key:zX').event)],
+        })
+      })
+
+      test('an event naming a foreign parent beside a genuine one is refused without disturbing it', () => {
+        const parent = revoke(root, 'did:key:zP')
+        const crossing = revoke(root, 'did:key:zC', [
+          impl.digestOf(parent.event),
+          impl.digestOf(icp.event),
+        ])
+        const expected = summary([parent])
+        expect(summary([parent, crossing])).toEqual({ ...expected, rejected: 1 })
+        expect(summary([crossing, parent])).toEqual({ ...expected, rejected: 1 })
+      })
+
+      test('an event whose parent is missing waits, and applies once the parent is presented', () => {
+        const waiting = summary([child])
+        expect(waiting).toEqual({ ...summary([]), pending: 1 })
+        const complete = summary([child, revA, revB])
+        expect(complete).toEqual(summary([revA, revB, child]))
+        expect(complete.pending).toBe(0)
+        expect(complete.applied).toHaveLength(3)
+      })
+    })
+    // Member lifecycle. Every case here is one a merge-not-compete design must get right without a
+    // winner: aliases of one key, removals that point at each other, an honest event replayed into a
+    // hostile context, and a denial racing the add it denies. Rejections are read off the counts and
+    // the head; which rule refused an event is the implementation's business.
+    describe('management members', () => {
+      const icp = impl.createInception(seedA, 0)
+      const did = impl.didFromInception(icp.event)
+      const keys = [impl.memberKeyPair(), impl.memberKeyPair(), impl.memberKeyPair()]
+      const entries = keys.map(({ did: memberDID, key }, i) => ({
+        did: memberDID,
+        key,
+        add: impl.digestOf(`the add that admitted member ${i}`),
+        lease: 1_900_000_000,
+      }))
+      const chain = [icp, rotate(seedA, did, icp.event, { members: entries, deny: [] })]
+      const settled = impl.foldLog(did, { chain, events: [] })
+      if (!settled.ok) {
+        throw new Error(`fixture chain does not fold: ${settled.reason}`)
+      }
+      const head = settled.head
+      const root: ConformanceEpochSigner = { root: { seed: seedA, profile: 0 } }
+      const signers: Array<ConformanceEpochSigner> = keys.map(({ privateKey }, i) => ({
+        member: { privateKey, add: at(entries, i).add },
+      }))
+      const [first, second, third] = [at(signers, 0), at(signers, 1), at(signers, 2)]
+      const [one, two, three] = [at(entries, 0), at(entries, 1), at(entries, 2)]
+
+      function event(
+        signer: ConformanceEpochSigner,
+        body: ConformanceEpochBody,
+        parents: Array<string> = [head.epoch],
+      ): ConformanceEpochSigned {
+        return impl.createEpochEvent({ signer, did, head, parents, body })
+      }
+
+      const digest = (signed: ConformanceEpochSigned) => impl.digestOf(signed.event)
+
+      function folded(events: Array<ConformanceEpochSigned>) {
+        const result = impl.foldLog(did, { chain, events })
+        if (!result.ok) {
+          throw new Error(`log does not fold: ${result.reason}`)
+        }
+        return result
+      }
+
+      function summary(events: Array<ConformanceEpochSigned>) {
+        const result = folded(events)
+        return {
+          deny: [...result.head.deny].sort(),
+          members: [...result.head.members.entries()].sort(([x], [y]) => (x < y ? -1 : 1)),
+          applied: [...result.applied].sort(),
+          pending: result.pending,
+          rejected: result.rejected,
+        }
+      }
+
+      function permutations<T>(items: Array<T>): Array<Array<T>> {
+        if (items.length <= 1) {
+          return [items]
+        }
+        return items.flatMap((item, i) =>
+          permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [
+            item,
+            ...rest,
+          ]),
+        )
+      }
+
+      function sameInEveryOrder(events: Array<ConformanceEpochSigned>) {
+        const expected = summary(events)
+        for (const order of permutations(events)) {
+          expect(summary(order)).toEqual(expected)
+        }
+        return expected
+      }
+
+      test('a member cannot renew itself, even through a second add of the same key', () => {
+        const fresh = impl.memberKeyPair()
+        const member = { key: fresh.key, lease: 1_900_000_000 }
+        // Root admits one key twice, concurrently: as a did:key and as the long-form peer DID.
+        const asKey = event(root, { t: 'add', member: { ...member, did: fresh.did } })
+        const asPeer = event(root, {
+          t: 'add',
+          member: { ...member, did: impl.memberPeerDID(fresh.key) },
+        })
+        const parents = [digest(asKey), digest(asPeer)]
+        const self: ConformanceEpochSigner = {
+          member: { privateKey: fresh.privateKey, add: digest(asKey) },
+        }
+        const renewal = event(
+          self,
+          { t: 'ren', add: digest(asPeer), lease: 2_000_000_000 },
+          parents,
+        )
+        const result = folded([asKey, asPeer, renewal])
+        expect(result.rejected).toBe(1)
+        expect(result.head.members.get(digest(asPeer))?.lease).toBe(1_900_000_000)
+        // Control: another member's renewal of the alias, from the same parents, applies.
+        const other = event(first, { t: 'ren', add: digest(asPeer), lease: 2_000_000_000 }, parents)
+        const control = folded([asKey, asPeer, other])
+        expect(control.rejected).toBe(0)
+        expect(control.head.members.get(digest(asPeer))?.lease).toBe(2_000_000_000)
+        // Control: the same signer, from the same parents, renewing a member it does not pin
+        // applies -- so the refusal above is the self rule, not a refusal of epoch-added signers.
+        const sameSigner = event(self, { t: 'ren', add: one.add, lease: 2_000_000_000 }, parents)
+        const sameSignerControl = folded([asKey, asPeer, sameSigner])
+        expect(sameSignerControl.rejected).toBe(0)
+        expect(sameSignerControl.head.members.get(one.add)?.lease).toBe(2_000_000_000)
+      })
+
+      test('a member cannot add a member', () => {
+        const fresh = impl.memberKeyPair()
+        const rootAdd = event(root, {
+          t: 'add',
+          member: { did: fresh.did, key: fresh.key, lease: 1_900_000_000 },
+        })
+        // The root add with only `by` set, signed by that member instead of root.
+        const claimed = { ...rootAdd.event, by: one.add }
+        const memberAdd = {
+          event: claimed,
+          sigs: impl.signEvent(claimed as unknown as ConformanceEvent, [at(keys, 0).privateKey]),
+        }
+        const refused = folded([memberAdd])
+        expect(refused.rejected).toBe(1)
+        expect(refused.head.members.has(digest(memberAdd))).toBe(false)
+        // Control: the body root signed applies.
+        const control = folded([rootAdd])
+        expect(control.rejected).toBe(0)
+        expect(control.head.members.get(digest(rootAdd))?.effective).toBe(true)
+      })
+
+      test('a member cannot revoke a member of its causal past, even a removed one', () => {
+        const removal = event(second, { t: 'rmv', add: three.add })
+        const cases: Array<[ConformanceEpochSigned | null, string]> = [
+          [null, two.did],
+          [null, `#${two.key}`],
+          [removal, three.did],
+          [removal, `#${three.key}`],
+        ]
+        for (const [before, target] of cases) {
+          const prior = before === null ? [] : [before]
+          const parents = before === null ? [head.epoch] : [digest(before)]
+          const refused = event(first, { t: 'rev', target }, parents)
+          const result = summary([...prior, refused])
+          expect(result.rejected).toBe(1)
+          expect(result.deny).toEqual([])
+          // Control: root may deny the same target from the same parents.
+          const byRoot = summary([...prior, event(root, { t: 'rev', target }, parents)])
+          expect(byRoot.rejected).toBe(0)
+          expect(byRoot.deny).toEqual([target])
+        }
+        // Control: the same member may deny an edge holder.
+        expect(summary([event(first, { t: 'rev', target: 'did:key:zEdge' })]).rejected).toBe(0)
+      })
+
+      test('an add whose DID is not an Ed25519 did:key or long-form peer carrying its pin is refused', () => {
+        const fresh = impl.memberKeyPair()
+        const peer = impl.memberPeerDID(fresh.key)
+        // A P-256 did:key (the did:key method's own example), pinning the key it carries.
+        const p256 = 'did:key:zDnaerDaTF5BXEavCrfRZEk316dpbLsfPDZ3WJ5hRTPFU2169'
+        const cases: Array<[string, { did: string; key: string }]> = [
+          ['a non-Ed25519 key', { did: p256, key: p256.slice('did:key:'.length) }],
+          // The short form is the long form up to its second separator.
+          [
+            'a short-form peer',
+            { did: peer.slice(0, peer.indexOf(':', 'did:peer:4'.length)), key: fresh.key },
+          ],
+        ]
+        for (const [, member] of cases) {
+          const refused = event(root, { t: 'add', member: { ...member, lease: 1_900_000_000 } })
+          expect(summary([refused]).rejected).toBe(1)
+          expect(summary([refused]).members).toEqual(summary([]).members)
+        }
+        // Control: the long form of the same peer DID, and the did:key of the same key, apply.
+        for (const memberDID of [peer, fresh.did]) {
+          const added = event(root, {
+            t: 'add',
+            member: { did: memberDID, key: fresh.key, lease: 1_900_000_000 },
+          })
+          expect(summary([added]).rejected).toBe(0)
+        }
+      })
+
+      test('an add pinning a root key is refused', () => {
+        const retired = at(icp.event.k as Array<string>, 0)
+        for (const key of [at(head.keys, 0), retired]) {
+          const refused = event(root, {
+            t: 'add',
+            member: { did: `did:key:${key}`, key, lease: 1_900_000_000 },
+          })
+          const result = summary([refused])
+          expect(result.rejected).toBe(1)
+          expect(result.members).toEqual(summary([]).members)
+        }
+        // Control: the same add of a key root does not hold applies.
+        const fresh = impl.memberKeyPair()
+        const control = event(root, {
+          t: 'add',
+          member: { did: fresh.did, key: fresh.key, lease: 1_900_000_000 },
+        })
+        expect(summary([control]).rejected).toBe(0)
+      })
+
+      test('mutual removal removes both members, in every order', () => {
+        const expected = sameInEveryOrder([
+          event(first, { t: 'rmv', add: two.add }),
+          event(second, { t: 'rmv', add: one.add }),
+        ])
+        expect(expected.rejected).toBe(0)
+        const members = new Map(expected.members)
+        expect(members.get(one.add)?.removed).toBe(true)
+        expect(members.get(two.add)?.removed).toBe(true)
+        expect(members.get(three.add)?.effective).toBe(true)
+      })
+
+      test('a removal cycle of three removes all three, in every order', () => {
+        const expected = sameInEveryOrder([
+          event(first, { t: 'rmv', add: two.add }),
+          event(second, { t: 'rmv', add: three.add }),
+          event(third, { t: 'rmv', add: one.add }),
+        ])
+        expect(expected.rejected).toBe(0)
+        for (const [, member] of expected.members) {
+          expect(member.removed).toBe(true)
+          expect(member.effective).toBe(false)
+        }
+      })
+
+      test('copying an honest event onto a hostile branch changes nothing', () => {
+        const honest = event(first, { t: 'ren', add: three.add, lease: 2_000_000_000 })
+        const hostile = event(second, { t: 'rmv', add: one.add })
+        const expected = summary([honest, hostile])
+        expect(expected.rejected).toBe(0)
+        // The same body, however presented and under whatever extra signature, is one event.
+        const recopied = { event: { ...honest.event }, sigs: [...honest.sigs] }
+        const resigned = {
+          event: honest.event,
+          sigs: impl.signEvent(honest.event as ConformanceEvent, [at(keys, 1).privateKey]),
+        }
+        for (const order of permutations([honest, hostile, recopied, resigned])) {
+          expect(summary(order)).toEqual(expected)
+        }
+        // Re-parented under the removal it is a body the honest member never signed.
+        const rebased = { event: { ...honest.event, p: [digest(hostile)] }, sigs: honest.sigs }
+        expect(summary([honest, hostile, rebased])).toEqual({ ...expected, rejected: 1 })
+      })
+
+      test('a root add merged with a concurrent revoke of the same key yields no effective member', () => {
+        const fresh = impl.memberKeyPair()
+        for (const signer of [root, first]) {
+          for (const target of [`#${fresh.key}`, fresh.did]) {
+            const added = event(root, {
+              t: 'add',
+              member: { did: fresh.did, key: fresh.key, lease: 1_900_000_000 },
+            })
+            const expected = sameInEveryOrder([added, event(signer, { t: 'rev', target })])
+            // Both kept: neither is refused for arriving second.
+            expect(expected.rejected).toBe(0)
+            expect(expected.applied).toHaveLength(2)
+            const member = new Map(expected.members).get(digest(added))
+            expect(member?.removed).toBe(false)
+            expect(member?.effective).toBe(false)
+          }
+        }
       })
     })
   })

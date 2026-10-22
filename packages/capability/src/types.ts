@@ -18,11 +18,17 @@ export type DelegationChainOptions = {
   /**
    * Optional DID method registry, forwarded to `verifyToken` for every capability in the chain.
    * Required when any link is issued by a method that cannot be resolved from the identifier
-   * alone, such as `did:kokuin:`.
+   * alone, such as `did:kokuin:`. For `did:kokuin:`, pass a per-verification `resolver.frozen()` view.
    */
   methods?: MethodRegistry
   /** Optional signature verifiers, forwarded to `verifyToken` for every capability in the chain. */
   verifiers?: Verifiers
+  /**
+   * Longest `exp - iat` a grant issued by a management member may span, in seconds. Defaults to
+   * `DEFAULT_MEMBER_GRANT_LIFETIME` (12 hours). It bounds how late an offline verifier learns that the
+   * subject revoked an **edge holder**; a stolen member is bounded by its lease instead.
+   */
+  maxMemberGrantLifetime?: number
 }
 
 /** Options for capability creation */
@@ -48,7 +54,22 @@ export type CreateCapabilityOptions = {
   methods?: MethodRegistry
   /** Optional signature verifiers, forwarded to `verifyToken` when verifying the parent capability. */
   verifiers?: Verifiers
+  /**
+   * Mint as a management member of the subject rather than as a delegate: the capability is a chain
+   * root whose authority is the signer's membership in the subject's log, written as the `mbr`
+   * claim, so no `parentCapability` is needed. Requires `exp` and `iat`, since a verifier bounds the
+   * grant by both. Ignored when the signer is the subject.
+   */
+  member?: MemberClaim
 }
+
+/**
+ * The membership a grant issued by a management member names: the incarnation that admitted the
+ * issuer (`add`, the digest of its add event) and the generation of the subject's log it was minted
+ * in (`g`). Both are needed to ask the log about the issuer: a reset keeps `add` references, so only
+ * `g` tells a grant minted before it from one minted after.
+ */
+export type MemberClaim = { add: string; g: number }
 
 export type Permission = {
   act: string | Array<string>
@@ -64,12 +85,15 @@ export type CapabilityPayload = Permission & {
   jti?: string
   /**
    * Proof-of-possession key the audience must hold, pinned at mint time — see
-   * {@link ConfirmationClaim}. Optional in general (a holder proving itself by signing a token needs
-   * nothing here), but **required** by `createControllerCapabilityVerifier`, where the holder signs a
-   * raw key event naming nobody and resolving the audience instead would let its key rotation brick
-   * the profile.
+   * {@link ConfirmationClaim}. Optional: a holder proving itself by signing a token needs nothing
+   * here.
    */
   cnf?: ConfirmationClaim
+  /**
+   * Present on a chain root issued by a management member of `sub` rather than by `sub` itself —
+   * see {@link MemberClaim}.
+   */
+  mbr?: MemberClaim
 }
 
 /**

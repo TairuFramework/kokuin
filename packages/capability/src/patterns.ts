@@ -11,10 +11,9 @@ export function isStringOrStringArray(value: unknown): value is string | Array<s
 }
 
 // Valid component: alphanumeric, `-_.:#`. Components are '/'-separated; '*' wildcards only as a whole
-// last component. `#` is here because a resource may be a key — a `did:kokuin:` `rev` names its
-// target as a DID or `#<key>`, and `{ act: 'revoke', res: <target> }`. Without `#` the only grant
-// that could revoke a key would be `res: '*'`, so "retire this one leaked key" would mean "revoke
-// anything". `#` is inert to the matcher (components compared whole), so widening this set cannot
+// last component. `#` is here because a resource may be a key (`#<key>`). Without `#` the only grant
+// that could name a key would be `res: '*'`, so a grant over one key would mean a grant over
+// anything. `#` is inert to the matcher (components compared whole), so widening this set cannot
 // invalidate an existing capability. Not a licence for arbitrary punctuation: each addition names the
 // vocabulary that needs it.
 const VALID_COMPONENT_RE = /^[a-zA-Z0-9_\-.:#]+$/

@@ -1,6 +1,6 @@
 import type { CreatedAtColumn, UpdatedAtColumn } from '@hozon/adapter'
 import type { ColumnType, Insertable, Selectable } from '@hozon/db'
-import type { SignedEvent } from '@kokuin/controller'
+import type { ControllerLog } from '@kokuin/controller'
 
 // The stored log round-trips through the adapter's JSON column: `encodeJSON`
 // stringifies on SQLite and passes through on Postgres, so the same value
@@ -9,7 +9,7 @@ type JSONValueColumn<T> = ColumnType<T, T, T>
 
 export type ControllerLogTable = {
   did: string
-  log: JSONValueColumn<Array<SignedEvent>>
+  log: JSONValueColumn<ControllerLog>
   created_at: CreatedAtColumn
   updated_at: UpdatedAtColumn
 }

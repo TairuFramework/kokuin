@@ -3,7 +3,6 @@ import { describe, expect, test } from 'vitest'
 import {
   createInception,
   createReset,
-  createRevoke,
   createRotate,
   didFromInception,
   type SignedEvent,
@@ -17,17 +16,22 @@ const deviceX = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 function build() {
   const icp = createInception(seed, 0)
   const did = didFromInception(icp.event)
-  // The honest history: rotate once, then revoke deviceX.
-  const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
-  const rev = createRevoke({
+  // The honest history: rotate once, then rotate again denying deviceX.
+  const rot = createRotate({
+    seed,
+    profile: 0,
+    did,
+    prior: icp.event,
+    snapshot: { members: [], deny: [] },
+  })
+  const denying = createRotate({
     seed,
     profile: 0,
     did,
     prior: rot.event,
-    target: deviceX,
-    keyPosition: { gen: 0, seq: 1 },
+    snapshot: { members: [], deny: [deviceX] },
   })
-  return { icp, did, rot, rev, honest: [icp, rot, rev] }
+  return { icp, did, rot, denying, honest: [icp, rot, denying] }
 }
 
 /**
@@ -53,7 +57,7 @@ function forged(did: string, priorDigest: string, over: Record<string, unknown> 
 }
 
 function digestOfPrefix(did: string, events: Array<SignedEvent>): string {
-  const r = foldLog(did, events)
+  const r = foldLog(did, { chain: events, events: [] })
   if (!r.ok) throw new Error(`prefix does not fold: ${r.reason}`)
   const head = r.states[r.states.length - 1]
   if (head === undefined) throw new Error('prefix has no states')
@@ -73,7 +77,7 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
     // the public log), truncate everything after it, and append one forged event.
     const attackBranch = [icp, forged(did, digestOfPrefix(did, [icp]))]
 
-    const attackFolds = foldLog(did, attackBranch)
+    const attackFolds = foldLog(did, { chain: attackBranch, events: [] })
 
     const result = resolveBranches(did, [honest, attackBranch])
 
@@ -82,7 +86,7 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
     expect(attackFolds.ok).toBe(false)
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(foldLog(did, result.winner).ok).toBe(true)
+    expect(foldLog(did, { chain: result.winner, events: [] }).ok).toBe(true)
     expect(result.winner).toBe(honest)
     expect(result.superseded).toBe(0)
   })
@@ -90,7 +94,7 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
   test('ROW 2 (control: criticality is the lever): the same event with crit:true loses', () => {
     const { icp, did, honest } = build()
     const critBranch = [icp, forged(did, digestOfPrefix(did, [icp]), { crit: true })]
-    const folds = foldLog(did, critBranch)
+    const folds = foldLog(did, { chain: critBranch, events: [] })
 
     const result = resolveBranches(did, [honest, critBranch])
     expect(folds.ok).toBe(false)
@@ -103,7 +107,7 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
     const { icp, did, honest } = build()
     // Byte-for-byte the same forged, unsigned, non-critical event — only `g`/`s` are truthful.
     const tameBranch = [icp, forged(did, digestOfPrefix(did, [icp]), { g: 0, s: 1 })]
-    const folds = foldLog(did, tameBranch)
+    const folds = foldLog(did, { chain: tameBranch, events: [] })
 
     const result = resolveBranches(did, [honest, tameBranch])
     expect(folds.ok).toBe(true)
@@ -114,16 +118,16 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
 
   test('ROW 4 (control: chaining IS enforced): a wrong `p` is rejected', () => {
     const { icp, did } = build()
-    const bad = foldLog(did, [icp, forged(did, 'zNotTheDigest')])
+    const bad = foldLog(did, { chain: [icp, forged(did, 'zNotTheDigest')], events: [] })
     expect(bad.ok).toBe(false)
   })
 
   test('ROW 5 (control: `i` IS enforced): a wrong controller is rejected', () => {
     const { icp, did } = build()
-    const bad = foldLog(did, [
-      icp,
-      forged(did, digestOfPrefix(did, [icp]), { i: 'did:kokuin:zSomeoneElse' }),
-    ])
+    const bad = foldLog(did, {
+      chain: [icp, forged(did, digestOfPrefix(did, [icp]), { i: 'did:kokuin:zSomeoneElse' })],
+      events: [],
+    })
     expect(bad.ok).toBe(false)
   })
 
@@ -138,7 +142,7 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
       ...forged(did, digestOfPrefix(did, [icp]), { g: 0, s: 1 }),
       sigs: ['AAAA', 'not-base64url-at-all', ''],
     } as unknown as SignedEvent
-    const r = foldLog(did, [icp, junkSigs])
+    const r = foldLog(did, { chain: [icp, junkSigs], events: [] })
     expect(r.ok).toBe(true)
 
     // At the fabricated position the same blob is rejected — the position check, not a signature.
@@ -146,17 +150,17 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
       ...forged(did, digestOfPrefix(did, [icp])),
       sigs: ['AAAA', 'not-base64url-at-all', ''],
     } as unknown as SignedEvent
-    const spoofed = foldLog(did, [icp, atFabricatedPosition])
+    const spoofed = foldLog(did, { chain: [icp, atFabricatedPosition], events: [] })
     expect(spoofed.ok).toBe(false)
   })
 
   test('ROW 7: the forged event is also splice-able into the middle of the honest log', () => {
-    const { icp, did, rot, rev, honest } = build()
+    const { icp, did, rot, denying, honest } = build()
     // A skipped event carries `digest: prior.digest` forward, so the *next* honest event still
     // chains. The log grows, every position after the splice shifts, and the fold is still `ok`.
-    const spliced = [icp, forged(did, digestOfPrefix(did, [icp]), { g: 0, s: 1 }), rot, rev]
-    const a = foldLog(did, honest)
-    const b = foldLog(did, spliced)
+    const spliced = [icp, forged(did, digestOfPrefix(did, [icp]), { g: 0, s: 1 }), rot, denying]
+    const a = foldLog(did, { chain: honest, events: [] })
+    const b = foldLog(did, { chain: spliced, events: [] })
     if (a.ok && b.ok) {
     }
     expect(b.ok).toBe(true)

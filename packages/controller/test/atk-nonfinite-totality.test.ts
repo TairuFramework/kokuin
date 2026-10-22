@@ -2,13 +2,12 @@ import { describe, expect, test } from 'vitest'
 
 import {
   createInception,
-  createRevoke,
   createRotate,
   didFromInception,
   type SignedEvent,
   verifySignatures,
 } from '../src/events.js'
-import { foldLog, foldLogAsync } from '../src/fold.js'
+import { foldLog } from '../src/fold.js'
 import { resolveBranches } from '../src/supersede.js'
 
 const seed = new Uint8Array(32).fill(1)
@@ -22,16 +21,14 @@ function fromWire(json: string): unknown {
 function build() {
   const icp = createInception(seed, 0)
   const did = didFromInception(icp.event)
-  const rot = createRotate({ seed, profile: 0, did, prior: icp.event })
-  const rev = createRevoke({
+  const rot = createRotate({
     seed,
     profile: 0,
     did,
-    prior: rot.event,
-    target: deviceX,
-    keyPosition: { gen: 0, seq: 1 },
+    prior: icp.event,
+    snapshot: { members: [], deny: [] },
   })
-  return { icp, did, rot, rev, honest: [icp, rot, rev] }
+  return { icp, did, rot, honest: [icp, rot] }
 }
 
 // CLOSED. The fold's envelope guard now asks `isCanonicalizable` rather than `withinCanonicalDepth`,
@@ -55,7 +52,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     let thrown: unknown
     let returned: unknown
     try {
-      returned = foldLog(did, [hostile])
+      returned = foldLog(did, { chain: [hostile], events: [] })
     } catch (error) {
       thrown = error
     }
@@ -73,7 +70,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     let thrown: unknown
     let returned: unknown
     try {
-      returned = foldLog(did, [tame])
+      returned = foldLog(did, { chain: [tame], events: [] })
     } catch (error) {
       thrown = error
     }
@@ -81,9 +78,9 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     expect(returned).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
   })
 
-  test('ROW 3 (closed): the same trick on a `rev` — answered at any log position', () => {
+  test('ROW 3 (closed): the same trick past the inception — answered at any log position', () => {
     const { icp, did, honest } = build()
-    const good = foldLog(did, [icp])
+    const good = foldLog(did, { chain: [icp], events: [] })
     if (!good.ok) throw new Error('fixture')
     const head = good.states[0]
     if (head === undefined) throw new Error('fixture')
@@ -97,19 +94,20 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     let thrown: unknown
     let hostileResult: unknown
     try {
-      hostileResult = foldLog(did, [icp, wire])
+      hostileResult = foldLog(did, { chain: [icp, wire], events: [] })
     } catch (error) {
       thrown = error
     }
     expect(thrown).toBeUndefined()
     expect(hostileResult).toEqual({ ok: false, reason: 'malformed event', index: 1 })
 
-    // ROW 3 control: identical rev with a finite `junk` -> a returned failure, and a *different*
-    // reason, so the rejection above is the non-finite member and not the junk signature bytes.
+    // ROW 3 control: identical event with a finite `junk` -> a returned failure, and a *different*
+    // reason, so the rejection above is the non-finite member and not the junk signature bytes or
+    // the type: the chain carries no `rev`, so the tame body reaches the unknown-type path.
     const tame = fromWire(raw.replace('JUNK', '1')) as SignedEvent
-    const control = foldLog(did, [icp, tame])
-    expect(control).toEqual({ ok: false, reason: 'invalid revoke', index: 1 })
-    expect(honest.length).toBe(3)
+    const control = foldLog(did, { chain: [icp, tame], events: [] })
+    expect(control).toEqual({ ok: false, reason: 'unknown critical event type: rev', index: 1 })
+    expect(honest.length).toBe(2)
   })
 
   test('ROW 4 (closed): a hostile branch is filtered, and the honest one still wins', () => {
@@ -132,20 +130,6 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     // The hostile branch does not fold, so it is filtered like any other invalid branch and the
     // honest branch wins outright — not a duplicity report, and not "no valid history".
     expect(together).toEqual(aloneOk)
-  })
-
-  test('ROW 5 (closed): `foldLogAsync` resolves to a FoldResult rather than rejecting', async () => {
-    const { did } = build()
-    const hostile = fromWire(
-      '{"event":{"v":1,"t":"icp","g":0,"s":0,"crit":true,"k":["zAbc"],"ka":["zAbc"],"n":["zAbc"],"kt":1,"nt":1,"r":"zAbc","junk":1e400},"sigs":[]}',
-    ) as SignedEvent
-    let rejected: unknown
-    const resolvedWith = await foldLogAsync(did, [hostile]).catch((error) => {
-      rejected = error
-      return undefined
-    })
-    expect(rejected).toBeUndefined()
-    expect(resolvedWith).toEqual({ ok: false, reason: 'malformed event', index: 0 })
   })
 
   test('ROW 6 (closed): the exported `verifySignatures` is documented total and now is', () => {
@@ -178,7 +162,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
       ['-1e400', body('-1e400')],
       ['NaN', { event: { ...(body('1').event as object), junk: Number.NaN }, sigs: [] }],
     ] as Array<[string, SignedEvent]>) {
-      const result = foldLog(did, [event])
+      const result = foldLog(did, { chain: [event], events: [] })
       expect(result).toEqual({ ok: false, reason: 'malformed event', index: 0 })
     }
 
@@ -186,7 +170,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     // `invalid inception` rejection rather than the malformed-event one — so the guard above
     // discriminates the non-finite values specifically and does not simply refuse every number.
     for (const junk of ['-0', '9007199254740993', '1e21']) {
-      const result = foldLog(did, [body(junk)])
+      const result = foldLog(did, { chain: [body(junk)], events: [] })
       expect(result).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
     }
   })

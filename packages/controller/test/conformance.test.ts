@@ -1,17 +1,29 @@
-import type { ConformanceSuite, ControllerImplementation } from '@kokuin/controller-conformance'
+import type {
+  ConformanceEpochBody,
+  ConformanceSuite,
+  ControllerImplementation,
+} from '@kokuin/controller-conformance'
 import { runControllerConformance } from '@kokuin/controller-conformance'
+import { type DIDDoc, encodePeer4 } from '@kokuin/token'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
 import { authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
 import {
-  type CreateRotateOptions,
+  createAdd,
+  createRemove,
+  createRenew,
+  createRevoke,
+  type EpochSigner,
+} from '../src/epoch-events.js'
+import {
   createInception,
   createReset,
-  createRevoke,
   createRotate,
   didFromInception,
   type EventCommon,
+  type StateSnapshot,
   // `signEvent` stays unexported from the package's public barrel (`src/index.ts`) — it is an
   // internal signing primitive, not part of the wire protocol. Importing it directly from
   // `events.js` here is legitimate: this is a test file, not a consumer of the public API, and
@@ -19,9 +31,10 @@ import {
   // key to isolate the recovery-digest check from signature verification.
   signEvent,
 } from '../src/events.js'
-import { foldLog } from '../src/fold.js'
+import { foldLog, type KeyState } from '../src/fold.js'
+import { encodeKey } from '../src/keys.js'
 import { enumerateProfiles } from '../src/profiles.js'
-import { resolveBranches, resolveBranchesAsync } from '../src/supersede.js'
+import { resolveBranches } from '../src/supersede.js'
 
 /** Test-support only: the recovery private key `createReset` derives internally. */
 function recoveryPrivateKey(seed: Uint8Array, profile: number): Uint8Array {
@@ -38,14 +51,51 @@ function authorityPrivateKey(
   return deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA').privateKey
 }
 
-/** Test-support only: the public half, which is what a capability pins as its audience key. */
-function authorityPublicKey(
-  seed: Uint8Array,
-  profile: number,
-  gen: number,
-  seq: number,
-): Uint8Array {
-  return deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA').publicKey
+/** Test-support only: a fresh Ed25519 member key pair and the `did:key` that carries it. */
+function memberKeyPair(): { privateKey: Uint8Array; key: string; did: string } {
+  const privateKey = ed25519.utils.randomSecretKey()
+  const key = encodeKey(ed25519.getPublicKey(privateKey), 'EdDSA')
+  return { privateKey, key, did: `did:key:${key}` }
+}
+
+/** Test-support only: a long-form `did:peer:4` carrying exactly `key` as its one signing key. */
+function memberPeerDID(key: string): string {
+  const doc = {
+    '@context': ['https://www.w3.org/ns/did/v1'],
+    verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase: key }],
+    authentication: ['#key-0'],
+  } as DIDDoc
+  return encodePeer4(doc).longForm
+}
+
+/** The one builder the contract names, over the real per-type ones. */
+function createEpochEvent({
+  signer,
+  did,
+  head,
+  parents,
+  body,
+}: {
+  signer: EpochSigner
+  did: string
+  head: KeyState
+  parents: Array<string>
+  body: ConformanceEpochBody
+}) {
+  const base = { did, head, parents }
+  switch (body.t) {
+    case 'add':
+      if (!('root' in signer)) {
+        throw new Error('an add is root-only')
+      }
+      return createAdd({ ...base, ...signer.root, member: body.member })
+    case 'ren':
+      return createRenew({ ...base, signer, add: body.add, lease: body.lease })
+    case 'rmv':
+      return createRemove({ ...base, signer, add: body.add })
+    case 'rev':
+      return createRevoke({ ...base, signer, target: body.target })
+  }
 }
 
 // vitest's `expect` is structurally wider than the suite's minimal `ConformanceExpectation` —
@@ -58,8 +108,8 @@ const suite: ConformanceSuite = {
   test,
 }
 
-// The conformance contract stays positional; the real functions now take a params object, so the
-// two that changed are bridged here. `createReset`/`createInception` are unchanged and pass through.
+// The conformance contract stays positional; the real `createRotate` takes a params object, so it
+// is bridged here. `createReset`/`createInception` are positional already and pass through.
 const implementation = {
   name: '@kokuin/controller',
   createInception,
@@ -68,31 +118,23 @@ const implementation = {
     profile: number,
     did: string,
     prior: EventCommon,
-    options?: CreateRotateOptions,
-  ) => createRotate({ seed, profile, did, prior, options }),
+    snapshot: StateSnapshot,
+  ) => createRotate({ seed, profile, did, prior, snapshot }),
   createReset,
-  createRevoke: (
-    seed: Uint8Array,
-    profile: number,
-    did: string,
-    prior: EventCommon,
-    target: string,
-    keyPosition: { gen: number; seq: number },
-    options?: { cap?: string },
-  ) => createRevoke({ seed, profile, did, prior, target, keyPosition, cap: options?.cap }),
   didFromInception,
   foldLog,
   resolveBranches,
-  resolveBranchesAsync,
   enumerateProfiles,
   digestOf,
   recoveryPrivateKey,
   authorityPrivateKey,
-  authorityPublicKey,
+  createEpochEvent,
+  memberKeyPair,
+  memberPeerDID,
   signEvent,
 }
 
-// `@kokuin/controller`'s events use a closed `EventType` union ('icp' | 'rot' | 'rev'), while the
+// `@kokuin/controller`'s events use a closed `EventType` union ('icp' | 'rot'), while the
 // suite's `ConformanceEvent` intentionally widens `t` to `string` so its criticality group can
 // construct an event of an unknown type. That widening makes the real functions' parameters
 // contravariantly incompatible with the suite's declared signatures — a genuine variance mismatch

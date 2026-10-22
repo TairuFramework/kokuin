@@ -12,13 +12,19 @@ npm install @kokuin/store-controller
 
 ```typescript
 import { HozonDB } from '@hozon/db'
+import { authoritativeLog } from '@kokuin/controller'
 import { controllerStoreDefinition, getControllerStore } from '@kokuin/store-controller'
 
 const db = new HozonDB({ adapter }) // an @hozon/node-sqlite or @hozon/postgres adapter
 db.register(controllerStoreDefinition)
 const logs = await getControllerStore(db)
 
-await logs.set(did, log) // after the log has folded
+// Merge an untrusted presentation through the same arbitration the resolver uses.
+// Never write peer bytes (or a `mergeLogs` union) directly: stored events of the
+// current epoch are not re-verified, so a forged one would be applied.
+await logs.merge(did, async (seen) =>
+  authoritativeLog({ did, loaded: presented, seen, context: 'sync' }).log,
+)
 const stored = await logs.get(did)
 ```
 

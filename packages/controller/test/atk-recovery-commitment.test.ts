@@ -50,7 +50,13 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
   test('ROW 1 (closed): a rotate carrying `r` is refused, not accepted-and-ignored', () => {
     const icp = createInception(ownerSeed, 0)
     const did = didFromInception(icp.event)
-    const rot = createRotate({ seed: ownerSeed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed: ownerSeed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [], deny: [] },
+    })
 
     const newRecovery = recoveryKeyOf(newRootSeed)
 
@@ -62,13 +68,13 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
     }
     const forgedRot = resign(mutated, ownerSeed, 0, 1)
 
-    const folded = foldLog(did, [icp, forgedRot])
+    const folded = foldLog(did, { chain: [icp, forgedRot], events: [] })
     expect(folded).toEqual({ ok: false, reason: 'invalid rotate', index: 1 })
 
     // ROW 1 control: the same rotate with `r` left alone, re-signed by the same key at the same
     // position — so the rejection above is the `r` member and nothing about the re-signing.
     const control = resign({ ...rot.event }, ownerSeed, 0, 1)
-    const controlFold = foldLog(did, [icp, control])
+    const controlFold = foldLog(did, { chain: [icp, control], events: [] })
     expect(controlFold.ok).toBe(true)
     if (!controlFold.ok) return
     // And the folded recovery is the inception's, which is exactly what `verifyReset` enforces.
@@ -81,7 +87,13 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
   test('ROW 2 (unchanged): a foreign recovery key cannot author a reset — now for one reason', () => {
     const icp = createInception(ownerSeed, 0)
     const did = didFromInception(icp.event)
-    const rot = createRotate({ seed: ownerSeed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed: ownerSeed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [], deny: [] },
+    })
     const newRecovery = recoveryKeyOf(newRootSeed)
     const mutated: RotateWithRecovery = {
       ...rot.event,
@@ -99,7 +111,7 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
       recoveryKey: encodeKey(newRecovery.publicKey, 'EdDSA'),
     }
     expect(verifyReset(signedByNewRoot, icp.event)).toBe(false)
-    const r = foldLog(did, [icp, forgedRot, signedByNewRoot])
+    const r = foldLog(did, { chain: [icp, forgedRot, signedByNewRoot], events: [] })
     expect(r.ok).toBe(false)
 
     // ROW 2 control: the *committed* recovery key authors the same shape of reset against the same
@@ -111,7 +123,13 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
   test('ROW 3 (closed): the original recovery key authors a reset, and nothing claims otherwise', () => {
     const icp = createInception(ownerSeed, 0)
     const did = didFromInception(icp.event)
-    const rot = createRotate({ seed: ownerSeed, profile: 0, did, prior: icp.event })
+    const rot = createRotate({
+      seed: ownerSeed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [], deny: [] },
+    })
     const newRecovery = recoveryKeyOf(newRootSeed)
     const mutated: RotateWithRecovery = {
       ...rot.event,
@@ -121,15 +139,21 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
 
     // The key the owner believes they retired.
     const oldReset = createReset(ownerSeed, 0, 1)
-    const r = foldLog(did, [icp, forgedRot, oldReset])
+    const r = foldLog(did, { chain: [icp, forgedRot, oldReset], events: [] })
     // The r-carrying rotate no longer folds at all, so the log stops there.
     expect(r).toEqual({ ok: false, reason: 'invalid rotate', index: 1 })
 
     // ROW 3 control: the same reset by the same key over a log whose rotate carries no `r`. The
     // original recovery key still authors a reset — that is the property, and it is now the only
     // story the state tells, since `KeyState.recovery` is the inception's commitment throughout.
-    const plainRot = createRotate({ seed: ownerSeed, profile: 0, did, prior: icp.event })
-    const control = foldLog(did, [icp, plainRot, oldReset])
+    const plainRot = createRotate({
+      seed: ownerSeed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [], deny: [] },
+    })
+    const control = foldLog(did, { chain: [icp, plainRot, oldReset], events: [] })
     expect(control.ok).toBe(true)
     if (!control.ok) return
     const resetState = control.states[2]

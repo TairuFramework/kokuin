@@ -1,13 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
-import {
-  createInception,
-  createRevoke,
-  createRotate,
-  didFromInception,
-  type SignedEvent,
-} from '../src/events.js'
+import { createInception, createRotate, didFromInception, type SignedEvent } from '../src/events.js'
 import { foldLog } from '../src/fold.js'
 import { resolveBranches } from '../src/supersede.js'
 
@@ -17,20 +11,22 @@ describe('keyless branch hijack, independent reproduction', () => {
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
 
-    // The honest history: rotate, then revoke a device.
-    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
-    const revoke = createRevoke({
+    // The honest history: rotate, then rotate again denying a device.
+    const rotate = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      snapshot: { members: [], deny: [] },
+    })
+    const denying = createRotate({
       seed,
       profile: 0,
       did,
       prior: rotate.event,
-      target: 'did:key:zVictimDevice',
-      keyPosition: {
-        gen: 0,
-        seq: 1,
-      },
+      snapshot: { members: [], deny: ['did:key:zVictimDevice'] },
     })
-    const honest = [inception, rotate, revoke]
+    const honest = [inception, rotate, denying]
 
     // The attacker holds NO key material. It takes the public inception and appends one
     // unsigned event of an unknown type, with a fabricated position.
@@ -55,8 +51,8 @@ describe('keyless branch hijack, independent reproduction', () => {
     if (resolved.ok) {
       const head = resolved.winner[resolved.winner.length - 1]
       if (head === undefined) throw new Error('expected a winning event')
-      expect(head.event.t).toBe('rev')
-      expect(foldLog(did, resolved.winner).ok).toBe(true)
+      expect(head).toBe(denying)
+      expect(foldLog(did, { chain: resolved.winner, events: [] }).ok).toBe(true)
     }
   })
 })

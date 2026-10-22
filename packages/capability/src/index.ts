@@ -15,31 +15,25 @@
 // the error — the duplication that makes a cross-copy `instanceof` unreliable.
 export { isUnresolvableIssuerError, UnresolvableIssuerError } from '@kokuin/token'
 
-export type {
-  CapabilityAuthorisation,
-  ControllerCapabilityVerifier,
-  ControllerCapabilityVerifierParams,
-} from './controller.js'
+export { AUDIENCE_REVOKED, DENY_SET_UNAVAILABLE } from './audience.js'
+export { audienceConfirmation } from './controller.js'
 export {
-  assertRevokeCapabilityAudience,
-  audienceConfirmation,
-  createControllerCapabilityVerifier,
-  REVOKE_AUDIENCE_KEY_MISMATCH,
-  REVOKE_LIFETIME_TOO_LONG,
-  REVOKE_NO_AUDIENCE_KEY,
-  REVOKE_NO_POSITION,
-  REVOKE_NOT_AUTHORISED,
-  REVOKE_UNBOUNDED_LIFETIME,
-} from './controller.js'
-export {
-  AUDIENCE_REVOKED,
   assertValidDelegation,
   checkCapability,
   checkDelegationChain,
   createCapability,
   DEFAULT_MAX_DELEGATION_DEPTH,
-  DENY_SET_UNAVAILABLE,
 } from './delegation.js'
+export {
+  assertMemberRoot,
+  DEFAULT_MEMBER_GRANT_LIFETIME,
+  MEMBER_GRANT_KEY_MISMATCH,
+  MEMBER_GRANT_NO_IAT,
+  MEMBER_GRANT_NO_RESOLVER,
+  MEMBER_GRANT_NOT_MEMBER,
+  MEMBER_GRANT_PAST_LEASE,
+  MEMBER_GRANT_TOO_LONG,
+} from './member.js'
 export { assertValidPattern, hasPartsMatch, hasPermission, isMatch } from './patterns.js'
 export type {
   RevocationBackend,
@@ -70,6 +64,7 @@ export type {
   ConfirmationClaim,
   CreateCapabilityOptions,
   DelegationChainOptions,
+  MemberClaim,
   Permission,
   SignCapabilityPayload,
   VerifyTokenHook,

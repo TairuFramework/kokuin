@@ -41,7 +41,11 @@ type CapabilityPayload = Permission & {
   exp?: number  // Expiry (seconds since epoch)
   iat?: number  // Issued-at (seconds since epoch)
   jti?: string  // Unique token ID (used for revocation)
+  cnf?: ConfirmationClaim  // Proof-of-possession key the audience must hold (RFC 7800)
+  mbr?: MemberClaim        // Present on a root issued by a management member of `sub`
 }
+
+type MemberClaim = { add: string; g: number }  // the issuer's add digest and the subject's generation
 ```
 
 **`CapabilityToken<Payload, Header>`** — a verified signed token whose payload satisfies `CapabilityPayload`. It is the runtime value returned by `createCapability` and `verifyToken`.
@@ -66,15 +70,21 @@ async function createCapability<Payload extends SignCapabilityPayload>(
 
 **Root capability** (signer DID === `sub` DID): no parent required. The signer is the subject — they are asserting a permission they already own.
 
-**Delegated capability** (signer DID !== `sub` DID): `options.parentCapability` (a stringified `CapabilityToken`) is required. The signer must be the `aud` of the parent, and the delegated permission must not exceed the parent's `act`/`res`.
+**Member-issued capability** (signer is a management member of a `did:kokuin:` `sub`): `options.member` names the signer's membership, and the capability is a chain root with no parent. See [Grants issued by management members](#grants-issued-by-management-members).
+
+**Delegated capability** (signer DID !== `sub` DID, no `member`): `options.parentCapability` (a stringified `CapabilityToken`) is required. The signer must be the `aud` of the parent, and the delegated permission must not exceed the parent's `act`/`res`.
 
 ```typescript
 type CreateCapabilityOptions = {
-  /**
-   * Stringified parent capability token authorizing this delegation.
-   * Required when signer !== sub.
-   */
+  /** Stringified parent capability authorizing this delegation. Required when signer !== sub, unless `member` is given. */
   parentCapability?: string
+  /** Mint as a management member of `sub`: written as the `mbr` claim. Requires `exp` and `iat`, with `exp >= iat`. */
+  member?: MemberClaim
+  /** Resolution inputs forwarded to `verifyToken` when verifying the parent. */
+  cache?: DIDCache
+  resolver?: DIDResolver
+  methods?: MethodRegistry
+  verifiers?: Verifiers
 }
 ```
 
@@ -164,6 +174,12 @@ type DelegationChainOptions = {
   cache?: DIDCache
   /** Optional resolver for did:peer:4 short forms not in cache. */
   resolver?: DIDResolver
+  /** DID method registry: required for `did:kokuin:` links and subjects. Pass one `resolver.frozen()` view per verification. */
+  methods?: MethodRegistry
+  /** Signature verifiers, forwarded to every `verifyToken`. */
+  verifiers?: Verifiers
+  /** Longest `exp - iat` of a member-issued grant, in seconds. Defaults to DEFAULT_MEMBER_GRANT_LIFETIME (43200, 12 hours). */
+  maxMemberGrantLifetime?: number
 }
 ```
 
@@ -173,9 +189,9 @@ type DelegationChainOptions = {
 
 **`assertValidDelegation(from, to, atTime?)`** — validates a single delegation step: `to.iss` must equal `from.aud`, `to.sub` must equal `from.sub`, `from` must be non-expired and have a valid issued-at, and `to`'s permission must be a subset of `from`'s.
 
-**`checkDelegationChain(payload, capabilities, options?)`** — recursively validates a full chain. `capabilities` is the ordered list of stringified parent tokens (head = immediate parent, tail = grandparents toward root). The root token is valid when `iss === sub` (self-issued).
+**`checkDelegationChain(payload, capabilities, options?)`** — recursively validates a full chain. `capabilities` is the ordered list of stringified parent tokens (head = immediate parent, tail = grandparents toward root). The root token is valid when `iss === sub` (self-issued), or when it carries `mbr` and its issuer is an effective management member of `sub` (see below).
 
-**`checkCapability(permission, payload, options?)`** — the top-level entry point. Given a `permission` being requested and a signed `payload` (from the incoming token), it checks that the payload grants the permission either directly (self-issued) or via its `cap` delegation chain.
+**`checkCapability(permission, payload, options?)`** — the top-level entry point. Given a `permission` being requested and a signed `payload` (from the incoming token), it checks that the payload grants the permission directly (self-issued, or a member-issued grant presented on its own) or via its `cap` delegation chain. On both direct arms the caller must already have verified the payload's signature: `checkCapability` does not verify the token it is handed, only the chain behind it.
 
 ```typescript
 async function checkCapability(
@@ -184,6 +200,59 @@ async function checkCapability(
   options?: DelegationChainOptions,
 ): Promise<void>
 ```
+
+---
+
+## Grants issued by management members
+
+A `did:kokuin:` subject keeps a management tier in its own log (see [./controller.md](./controller.md#management-members)): a few devices, each admitted by a root add that pins one Ed25519 key, with a lease end. Any of them can mint **edge grants** for the subject — capabilities with `sub` = the profile DID and `iss` = the member's DID — without the root key. Such a grant is a chain root with the same power as one the profile signs itself. It confers no management power: membership comes only from a root add in the log, never from a capability, so a holder copying `mbr` onto a root of its own is simply not a member.
+
+### Minting
+
+```typescript
+import { createCapability } from '@kokuin/capability'
+
+const now = Math.floor(Date.now() / 1000)
+const grant = await createCapability(
+  memberIdentity,                          // iss: the member's did:key, or its long-form did:peer:4
+  { sub: profileDID, aud: agentDID, act: 'read', res: 'docs/*', iat: now, exp: now + 12 * 3600 },
+  undefined,
+  { member: { add: memberAddDigest, g: head.gen } },   // the incarnation, and the log's generation
+)
+```
+
+`member` writes the `mbr: { add, g }` claim: `add` is the digest of the add event that admitted the issuer (its incarnation), `g` the generation of the subject's log it was minted under. Both are needed — a reset carrying a snapshot keeps add digests, so only `g` tells a grant minted before it from one minted after. `createCapability` refuses a malformed claim (exactly the keys `add` and `g`; a non-empty `add`, a non-negative integer `g`), and a payload without numeric `exp` and `iat`, or with `exp < iat`. It does **not** ask the log: membership, the lease and the lifetime bound are the verifier's, since the maximum lifetime is the verifier's setting and a mint-side default would refuse grants a verifier configured wider accepts.
+
+**The issuer must be a `did:key`, or the long form of a `did:peer:4`.** The verifier checks that `iss` carries exactly the pinned key, which only an identifier that embeds its key can show. A short-form `did:peer:4` is always refused, even for a real member.
+
+### Verification
+
+`checkCapability` and `checkDelegationChain` accept a root that carries `mbr` and whose `iss` is not `sub` through `assertMemberRoot(payload, options, time)`, which checks, in order:
+
+1. `mbr` is well formed — else `MEMBER_GRANT_NOT_MEMBER` (`: malformed mbr claim`);
+2. the subject's method can answer `resolveMember` — else `MEMBER_GRANT_NO_RESOLVER`;
+3. `resolveMember(sub, { did: iss, add, gen: g })` answers: the incarnation is an effective member (present, not removed, its DID and pinned key not denied) in the head's generation, under the issuer's DID — any refusal, including an unresolvable or saturated log, is `MEMBER_GRANT_NOT_MEMBER`, with the original error as `cause`;
+4. `iss` carries exactly the pinned key — one Ed25519 key, byte-equal — else `MEMBER_GRANT_KEY_MISMATCH`;
+5. `exp` is present and `exp <= lease` — else `MEMBER_GRANT_PAST_LEASE`;
+6. `iat` is present — else `MEMBER_GRANT_NO_IAT`;
+7. `exp - iat <= maxMemberGrantLifetime` (default `DEFAULT_MEMBER_GRANT_LIFETIME`, 43200 s) — else `MEMBER_GRANT_TOO_LONG`;
+8. the time claims (`exp`, `nbf`, `iat` not in the future), then the audience against the subject's deny set (`AUDIENCE_REVOKED`).
+
+Each reason is thrown with a `: detail` suffix, so match with `startsWith`.
+
+**Bounded at mint.** The lease and the lifetime are judged against the grant's own claims, so a grant that would outlive either is refused outright, never trimmed. The two bounds answer different questions. The **lifetime** (12 hours by default, configurable per verification) bounds how late an offline verifier learns that an *edge holder* was revoked: a revoke reaches it only with a newer log, expiry reaches it unconditionally. The **lease** (months) bounds a *stolen member*: a removed member keeps its pre-removal log and can mint fresh grants that a verifier which never sees the removal accepts, until its lease end. A removal kills a member's grants for any verifier whose state contains it.
+
+**Signature before membership.** On the chain path the walk verifies each link's signature against `iss` before asking about membership. That order matters: the log compares DIDs canonically, which for a `did:peer:4` reads only the short prefix, so a forged long form sharing a member's prefix gets the real member's pin back. Its document does not hash to the prefix, so `verifyToken` refuses it first, and the exact-key check (step 4) refuses it on any path that skipped the signature. On the **direct** `checkCapability` path a member grant is the payload itself, and — exactly as on the `iss === sub` arm — **the caller must have verified its signature**; `checkCapability` only checks the request is within the grant and runs the steps above.
+
+**One frozen view per verification.** Membership, pin, lease and every audience denial on the chain must come from one state of the subject's log, or a revoke landing between two of the questions gives a verdict no single state supports. With `@kokuin/controller`, put a fresh `resolver.frozen()` view in `methods` for each verification and drop it after:
+
+```typescript
+await checkCapability(requested, payload, { methods: [resolver.frozen()] })
+```
+
+The view folds each DID at most once, so a whole chain — membership, lease, each link's audience — costs one `loadLog`.
+
+**Offline.** A grant travels with the subject's log — the root chain up to the current settlement and the current epoch's events, at least those establishing the issuer's membership and lease (`pruneLog` gives the least of a log that folds to the same head; no narrower proof format is defined). A verifier merges it with the log it holds (`mergeLogs`), folds it, and checks the grant against that view with no network; with a `history` store it never forgets an event it was shown. What it cannot see — a removal or revoke it was never shown — is the gap the lifetime and lease bounds close.
 
 ---
 

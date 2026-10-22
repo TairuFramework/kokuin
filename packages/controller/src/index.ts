@@ -25,13 +25,31 @@ export {
   deriveKeyPair,
   recoveryPath,
 } from './derivation.js'
+export { TOO_MANY_FAILED_SIGNATURES } from './epoch.js'
 export {
-  type CreateRevokeOptions,
-  type CreateRotateOptions,
+  type AddEvent,
+  type CreateAddParams,
+  type CreateRemoveParams,
+  type CreateRenewParams,
+  type CreateRevokeParams,
+  createAdd,
+  createRemove,
+  createRenew,
+  createRevoke,
+  type EpochEvent,
+  type EpochEventCommon,
+  type EpochEventType,
+  type EpochSigner,
+  isEpochEventShape,
+  type RemoveEvent,
+  type RenewEvent,
+  type RevokeEvent,
+  verifyEpochSignature,
+} from './epoch-events.js'
+export {
+  type CreateRotateParams,
   createInception,
   createReset,
-  createRevoke,
-  createRevokeWithKey,
   createRotate,
   DID_PREFIX,
   didFor,
@@ -39,38 +57,38 @@ export {
   type EventCommon,
   type EventType,
   type InceptionEvent,
+  isMemberEntry,
   KEY_TARGET_PREFIX,
   keyFromTarget,
   keyTarget,
-  type RevokeEvent,
+  type MemberEntry,
   type RotateEvent,
   type SignedEvent,
+  type StateSnapshot,
   verifyInception,
   verifyReset,
-  verifyRevoke,
   verifyRotate,
   verifySignatures,
 } from './events.js'
 export {
-  CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD,
-  CAPABILITY_REVOKE_NEEDS_VERIFIER,
-  CAPABILITY_VERIFIER_FAILED,
-  CAPABILITY_VERIFIER_MALFORMED_ANSWER,
-  type CapabilityAuthorisation,
-  type FoldOptions,
   type FoldResult,
   foldLog,
-  foldLogAsync,
   type KeyState,
   keyStateAt,
   MAX_SKIPPED_SLACK,
-  pruneDenySet,
-  REVOKE_NOT_SIGNED_BY_AUDIENCE,
+  type MemberState,
+  ROTATE_NEEDS_SNAPSHOT,
+  SNAPSHOT_DROPS_RETIRED_KEY,
+  SNAPSHOT_MALFORMED,
+  SNAPSHOT_MEMBER_DID_MISMATCH,
+  SNAPSHOT_MEMBER_KEY_IS_ROOT,
+  snapshotOf,
   TOO_MANY_UNKNOWN_EVENTS,
-  type VerifyCapabilityParams,
 } from './fold.js'
 export {
-  authoritativeStates,
+  type AuthoritativeLog,
+  type AuthoritativeLogParams,
+  authoritativeLog,
   createMemoryLogStore,
   LOG_FORKED,
   LOG_NOT_AUTHORITATIVE,
@@ -78,9 +96,7 @@ export {
 } from './history.js'
 export {
   createControllerIdentity,
-  createControllerIdentityAsync,
   createControllerIdentityWithKey,
-  createControllerIdentityWithKeyAsync,
 } from './identity.js'
 export {
   decodeKey,
@@ -93,13 +109,36 @@ export {
   type ProvideControllerIdentityParams,
   provideControllerIdentity,
 } from './keystore-identity.js'
+export {
+  DEFAULT_LEASE_SECONDS,
+  MAX_EPOCH_EVENTS,
+  MAX_EVENT_BYTES,
+  MAX_EVENT_PARENTS,
+  MAX_EVENT_SIGNATURES,
+  MAX_FAILED_SIGNATURES,
+  MAX_LOG_EVENTS,
+} from './limits.js'
+export {
+  type ControllerLog,
+  epochHeads,
+  isControllerLog,
+  LOG_TOO_LARGE,
+  LOG_UNFOLDABLE,
+  MALFORMED_LOG,
+  mergeLogs,
+  pruneLog,
+} from './log.js'
 export { enumerateProfiles, handleForDID, type ProfileEntry } from './profiles.js'
-export { type ControllerResolverOptions, createControllerResolver } from './resolver.js'
+export {
+  type ControllerResolver,
+  type ControllerResolverOptions,
+  createControllerResolver,
+} from './resolver.js'
+export { EPOCH_SATURATED, MEMBER_NOT_EFFECTIVE } from './state-resolver.js'
 export {
   type Duplicity,
   type ResolveFailure,
   type ResolveResult,
   resolveBranches,
-  resolveBranchesAsync,
 } from './supersede.js'
 export { VERSION_TAG } from './version.js'

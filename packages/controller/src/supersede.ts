@@ -1,14 +1,6 @@
 import { digestOf } from './canonical.js'
-import { type RotateEvent, type SignedEvent, verifyRotate } from './events.js'
-import {
-  CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD,
-  CAPABILITY_REVOKE_NEEDS_VERIFIER,
-  type FoldOptions,
-  type FoldResult,
-  foldLog,
-  foldLogAsync,
-  type KeyState,
-} from './fold.js'
+import type { SignedEvent } from './events.js'
+import { type FoldResult, foldLog, type KeyState } from './fold.js'
 
 /** Index into an array whose element is a branch-resolution invariant, throwing rather than reading undefined. */
 function required<T>(items: ReadonlyArray<T>, index: number, what: string): T {
@@ -36,34 +28,15 @@ export type Duplicity = {
  * - `duplicity` — two events the controller cannot both have authored at one position. The only one
  *   that says anything is wrong with the log.
  * - `no-valid-branch` — nothing presented folded at all.
- * - `needs-capability-verification` — **every** branch carries a capability-authorised revoke this
- *   call was not equipped to check, so there is nothing left to compare. The log is fine; use
- *   {@link resolveBranchesAsync} with a `verifyCapability`. A call where only *some* branches are
- *   unverifiable answers with the rest and reports the count as {@link ResolveResult.unverified}.
  *
- * Added rather than swapped in: `duplicity` still carries the `gen: -1` sentinel for the two
- * non-duplicity arms, so a caller written against the previous shape still tells them apart.
+ * `duplicity` still carries the `gen: -1` sentinel for the non-duplicity arm, so a caller tells them
+ * apart.
  */
-export type ResolveFailure = 'duplicity' | 'no-valid-branch' | 'needs-capability-verification'
+export type ResolveFailure = 'duplicity' | 'no-valid-branch'
 
-/**
- * How many presented branches this call could not check, and therefore did not compare.
- *
- * Non-zero means the answer is **provisional**: an unfoldable branch may have superseded the one
- * reported, so a caller acting on a winner must re-resolve through {@link resolveBranchesAsync} with
- * a `verifyCapability` or treat the result as unconfirmed. Zero for every correctly configured call.
- *
- * Reported rather than fatal because the alternative is an unauthenticated DoS on duplicity
- * detection. A cap-bearing revoke reaches the verifier path *before* any signature check (the
- * capability names the signer), so a keyless peer can copy the public inception, append a `rev` with
- * `sigs: []` and arbitrary `cap` bytes, and present it — and refusing the whole resolution on that
- * would turn a genuine duplicity report between two honest branches into a refusal, for every
- * profile. Dropping such a branch cannot hand an attacker a win (a branch that does not fold is not a
- * contender); the only exposure left is a *stale* answer, which this count marks.
- */
 export type ResolveResult =
-  | { ok: true; winner: Array<SignedEvent>; superseded: number; unverified: number }
-  | { ok: false; failure: ResolveFailure; duplicity: Duplicity; unverified: number }
+  | { ok: true; winner: Array<SignedEvent>; superseded: number }
+  | { ok: false; failure: ResolveFailure; duplicity: Duplicity }
 
 /**
  * The position reported for a failure that is not a fork. Real comparisons never reach `gen < 0` and
@@ -85,8 +58,9 @@ type FoldedBranch = {
    * Indices into `branch` of the events that moved the fold — all but the skipped ones. The spine,
    * not the array, is a branch's history: a skipped event establishes nothing and must not contend
    * for a position, else a keyless attacker could append one unsigned unknown event to a copy of the
-   * inception and have it read as a rival history at position 1. `spine[0]` is always 0 (every valid
-   * branch of one log shares the inception whose digest is the DID).
+   * inception and have it read as a rival history at position 1. As built, `spine[0]` is 0, the
+   * inception every branch of one log shares; branch selection compares a copy trimmed to start at
+   * the top generation's first event (see `selectWinner`).
    */
   spine: Array<number>
 }
@@ -99,24 +73,6 @@ function headState({ states }: FoldedBranch): KeyState {
 function spineDigest(folded: FoldedBranch, j: number): string {
   const index = required(folded.spine, j, 'spine index out of range')
   return required(folded.states, index, 'spine points past folded state').digest
-}
-
-/**
- * Whether a branch failed to fold only because this call could not check a capability. Filtering such
- * a branch out as invalid is what switched duplicity detection off for the management tier — a
- * `cap`-bearing revoke is the tier working as designed, not a forgery. Matched by prefix against the
- * fold's exported reasons, the contract those constants exist for.
- */
-export function needsCapabilityVerification(result: FoldResult): boolean {
-  return (
-    !result.ok &&
-    (result.reason.startsWith(CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD) ||
-      result.reason.startsWith(CAPABILITY_REVOKE_NEEDS_VERIFIER))
-  )
-}
-
-function allUnverified(unverified: number): ResolveResult {
-  return { ok: false, failure: 'needs-capability-verification', duplicity: NO_POSITION, unverified }
 }
 
 function branchFrom(branch: Array<SignedEvent>, result: FoldResult): FoldedBranch | undefined {
@@ -150,8 +106,8 @@ function preferred(candidate: FoldedBranch, incumbent: FoldedBranch): boolean {
 }
 
 /**
- * How far two branches agree, in spine entries. Zero is unreachable for branches of one log (they
- * share an inception), so a common prefix of 1 means they forked immediately after it.
+ * How far two branches agree, in spine entries. Zero means they disagree on their first entry: on
+ * spines trimmed to the top generation, two different resets opening it.
  */
 function commonSpine(a: FoldedBranch, b: FoldedBranch): number {
   const shortest = Math.min(a.spine.length, b.spine.length)
@@ -162,46 +118,20 @@ function commonSpine(a: FoldedBranch, b: FoldedBranch): number {
   return j
 }
 
-/**
- * Does `candidate` supersede `incumbent` at the point their branches diverge? Per KERI, a rotate
- * signed by the pre-committed next keys outranks any current-key operation — at the diverging
- * position *and* over everything after it on the losing branch. That is what makes the owner win the
- * race against a thief holding a current key regardless of who published first or how far ahead: a
- * stolen current key cannot rotate but can sign revokes all day, so length must not decide this.
- */
-function supersedes({
-  candidate,
-  incumbent,
-  priorDigest,
-  priorNext,
-}: {
-  candidate: SignedEvent
-  incumbent: SignedEvent
-  priorDigest: string
-  priorNext: Array<string>
-}): boolean {
-  if (candidate.event.t !== 'rot') {
-    return false
-  }
-  if (incumbent.event.t === 'rot') {
-    return false
-  }
-  return verifyRotate(candidate as SignedEvent<RotateEvent>, {
-    digest: priorDigest,
-    n: priorNext,
-  })
-}
-
 type Resolution =
   | { ok: true; winner: FoldedBranch }
   | { ok: false; failure: ResolveFailure; duplicity: Duplicity }
 
 /**
- * Walk the contenders down to one, deciding at each divergence point rather than at the heads. Every
- * step resolves the *whole* surviving group at once: with three or more contenders, a sequential
- * pairwise reduction could compare two losing branches before reaching the one that supersedes both,
- * reporting duplicity between the losers and making the outcome depend on presentation order. The
- * group shrinks strictly each iteration, so this terminates.
+ * Walk the contenders down to one, deciding at each divergence point rather than at the heads. A
+ * contender ending at the divergence point is a prefix of the others and drops out; once every
+ * remaining contender carries an event there, they disagree on it, and nothing on the root chain can
+ * settle that within a generation — the chain holds only `icp` and `rot`, and two rotates at one
+ * position (or two resets at one generation) are both signed by keys only the controller holds,
+ * neither outranking the other. That is duplicity, for a reset at a higher generation to resolve.
+ *
+ * The whole surviving group is judged at once rather than pairwise, so the report is the same in every
+ * presentation order. The group shrinks strictly each iteration, so this terminates.
  */
 function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
   let group = contenders
@@ -228,183 +158,68 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
       continue
     }
 
-    // Group the contenders by the event they diverge on. Branches sharing one are decided further
-    // down.
-    const rivals = new Map<string, Array<FoldedBranch>>()
-    for (const folded of group) {
-      const digest = spineDigest(folded, divergence)
-      const bucket = rivals.get(digest)
-      if (bucket == null) {
-        rivals.set(digest, [folded])
-      } else {
-        bucket.push(folded)
-      }
-    }
-    const groups = [...rivals.values()]
-
-    // The state the diverging events all chain to. Identical across contenders, so any can answer.
-    const first = required(required(groups, 0, 'empty rival groups'), 0, 'empty rival group')
-    const prior = required(
-      first.states,
-      required(first.spine, divergence, 'spine index out of range') - 1,
+    // Every contender carries an event at the divergence point and at least two differ: two events the
+    // controller cannot both have authored. Deterministic regardless of arrival order: sort the
+    // conflicting digests, report from the branch sorted first.
+    const digests = [...new Set(group.map((folded) => spineDigest(folded, divergence)))].sort()
+    const firstDigest = required(digests, 0, 'no diverging digests')
+    const secondDigest = required(digests, 1, 'duplicity needs two digests')
+    const reporter = group.find(
+      (folded) => spineDigest(folded, divergence) === firstDigest,
+    ) as FoldedBranch
+    const at = required(
+      reporter.states,
+      required(reporter.spine, divergence, 'spine index out of range'),
       'divergence points past folded state',
     )
-
-    let dominant = -1
-    for (let i = 0; i < groups.length; i++) {
-      const candidateHead = required(
-        required(groups, i, 'empty rival group'),
-        0,
-        'empty rival group',
-      )
-      const candidate = required(
-        candidateHead.branch,
-        required(candidateHead.spine, divergence, 'spine index out of range'),
-        'divergence points past branch',
-      )
-      const dominatesAll = groups.every((other, j) => {
-        if (j === i) {
-          return true
-        }
-        const otherHead = required(other, 0, 'empty rival group')
-        return supersedes({
-          candidate,
-          incumbent: required(
-            otherHead.branch,
-            required(otherHead.spine, divergence, 'spine index out of range'),
-            'divergence points past branch',
-          ),
-          priorDigest: prior.digest,
-          priorNext: prior.next,
-        })
-      })
-      if (dominatesAll) {
-        if (dominant !== -1) {
-          // More than one branch dominates every other — impossible for a legitimate rotate (two
-          // distinct rotates never both supersede one another), but fall through to duplicity
-          // defensively rather than pick arbitrarily.
-          dominant = -2
-          break
-        }
-        dominant = i
-      }
+    return {
+      ok: false,
+      failure: 'duplicity',
+      duplicity: { gen: at.gen, seq: at.seq, digests: [firstDigest, secondDigest] },
     }
-
-    if (dominant < 0) {
-      // Two events the controller cannot both have authored, no rotate to settle it. Deterministic
-      // regardless of arrival order: sort the conflicting digests, report from the branch sorted
-      // first.
-      const digests = groups
-        .map((members) => spineDigest(required(members, 0, 'empty rival group'), divergence))
-        .sort()
-      const firstDigest = required(digests, 0, 'no diverging digests')
-      const secondDigest = required(digests, 1, 'duplicity needs two digests')
-      const reporter = groups.find(
-        (members) =>
-          spineDigest(required(members, 0, 'empty rival group'), divergence) === firstDigest,
-      ) as Array<FoldedBranch>
-      const reporterHead = required(reporter, 0, 'empty rival group')
-      const at = required(
-        reporterHead.states,
-        required(reporterHead.spine, divergence, 'spine index out of range'),
-        'divergence points past folded state',
-      )
-      return {
-        ok: false,
-        failure: 'duplicity',
-        duplicity: { gen: at.gen, seq: at.seq, digests: [firstDigest, secondDigest] },
-      }
-    }
-
-    group = required(groups, dominant, 'dominant group missing')
   }
 
   return { ok: true, winner: required(group, 0, 'empty contender group') }
 }
 
 /**
- * Pick the authoritative branch. Two rules, in order:
+ * Pick the authoritative root chain among `chains` — chains only: epoch events never fork the log, so
+ * they are never a branch to choose between (see `mergeLogs` in `log.ts`). Two rules, in order:
  *
  * 1. The highest folded generation wins outright. Only a reset raises the generation, and only the
  *    committed recovery key can author a reset — the root's override, unreachable by a thief.
- * 2. Within that generation, branches are compared **at the point they diverge**, not at their heads:
- *    a rotate signed by the pre-committed next keys supersedes the current-key event it forked from
- *    and everything that branch accumulated. Two diverging events with no rotate to settle them are
- *    duplicity, surfaced rather than merged.
+ * 2. Within that generation, chains are compared **at the point they diverge**, not at their heads. A
+ *    chain that ends at the divergence point is a prefix of the other and loses to it; two chains
+ *    that each carry an event there are duplicity, surfaced rather than merged.
  *
- * Comparing heads instead would make branch *length* decisive below the top generation — the one
- * resource a thief has in abundance (a stolen current key cannot rotate but can sign unlimited
- * revokes). A longer branch still wins when it is the same history carried further, which the
- * divergence walk sees as a prefix.
+ * With root adds and root revokes moved into epochs, the chain holds only `icp` and `rot`, so the
+ * second case is always two rotates, or two resets at one generation — both signed by keys only the
+ * controller holds, neither outranking the other, and settled only by a reset at a higher generation.
+ * The current-key event a cold rotate outranks still exists, but in the epoch that rotate closes,
+ * where the fold gives it no effect; branch selection never sees it. That is also why chain length
+ * never decides anything here: the one resource a thief holding a current key has in abundance is
+ * current-key events, and none of them is on the chain. A longer chain still wins when it is the same
+ * history carried further, which the divergence walk sees as a prefix.
  *
- * `superseded` counts the state-advancing events discarded from losing branches (what a cache must
+ * `superseded` counts the state-advancing events discarded from losing chains (what a cache must
  * invalidate — folded state is not append-only under supersession); skipped events are not counted.
- * Branches that do not fold are filtered out before comparison, so a thief who cannot produce a valid
+ * Chains that do not fold are filtered out before comparison, so a thief who cannot produce a valid
  * event cannot create a duplicity report.
- *
- * This form folds synchronously and cannot check a capability-authorised revoke: such a branch is
- * counted in {@link ResolveResult.unverified} and left out, and only a call where *every* branch is
- * one answers `failure: 'needs-capability-verification'`. See {@link ResolveResult.unverified} for
- * why the count is reported rather than fatal; the remedy is {@link resolveBranchesAsync} with a
- * verifier.
  */
-export function resolveBranches(did: string, branches: Array<Array<SignedEvent>>): ResolveResult {
+export function resolveBranches(did: string, chains: Array<Array<SignedEvent>>): ResolveResult {
   const valid: Array<FoldedBranch> = []
-  let unverified = 0
-  for (const branch of branches) {
-    const result = foldLog(did, branch)
-    if (needsCapabilityVerification(result)) {
-      unverified++
-      continue
-    }
-    const folded = branchFrom(branch, result)
+  for (const branch of chains) {
+    const folded = branchFrom(branch, foldLog(did, { chain: branch, events: [] }))
     if (folded != null) {
       valid.push(folded)
     }
   }
-  return selectWinner(valid, unverified)
+  return selectWinner(valid)
 }
 
-/**
- * Async counterpart of {@link resolveBranches}, and the form the management tier needs — the sync
- * fold fails closed on a capability-authorised revoke, so resolving through it would filter every
- * branch of such a log away as invalid and report "no valid history" for a healthy profile.
- *
- * Branches are folded one at a time: `verifyCapability` is caller-supplied code that may do I/O, and
- * branch counts in a duplicity report are small, so there is nothing to win against calling a
- * caller's verifier concurrently.
- */
-export async function resolveBranchesAsync(
-  did: string,
-  branches: Array<Array<SignedEvent>>,
-  options: FoldOptions = {},
-): Promise<ResolveResult> {
-  const valid: Array<FoldedBranch> = []
-  let unverified = 0
-  for (const branch of branches) {
-    const result = await foldLogAsync(did, branch, options)
-    // Reachable only with no `verifyCapability` configured — with one, the verifier's answer decides
-    // and a rejection is an invalid branch. So a correctly configured call always reports
-    // `unverified: 0`.
-    if (needsCapabilityVerification(result)) {
-      unverified++
-      continue
-    }
-    const folded = branchFrom(branch, result)
-    if (folded != null) {
-      valid.push(folded)
-    }
-  }
-  return selectWinner(valid, unverified)
-}
-
-function selectWinner(valid: Array<FoldedBranch>, unverified: number): ResolveResult {
+function selectWinner(valid: Array<FoldedBranch>): ResolveResult {
   if (valid.length === 0) {
-    // Nothing left to compare, and which answer that is depends on *why*: an unchecked branch is not
-    // evidence the log has no history.
-    return unverified > 0
-      ? allUnverified(unverified)
-      : { ok: false, failure: 'no-valid-branch', duplicity: NO_POSITION, unverified }
+    return { ok: false, failure: 'no-valid-branch', duplicity: NO_POSITION }
   }
 
   // Re-derivation is idempotent: branches folding to the same head are one history presented twice.
@@ -423,19 +238,39 @@ function selectWinner(valid: Array<FoldedBranch>, unverified: number): ResolveRe
   const distinct = [...byHead.values()]
 
   const topGen = Math.max(...distinct.map((folded) => headState(folded).gen))
-  const resolved = resolveContenders(distinct.filter((f) => headState(f).gen === topGen))
+  // Compared from the top generation's first event on, not from the inception. A reset chains to the
+  // inception rather than to what preceded it, and its state is a function of the event alone, so one
+  // reset can sit on different prefixes — appended to a generation-0 chain by one party, straight
+  // after the inception in another's pruned copy. Once both contain it, what came before cannot change
+  // the winner; compared from the inception, the two would diverge at position 1 and read as a fork.
+  // At generation 0 the generation starts at the inception, so nothing is dropped.
+  const original = new Map<FoldedBranch, FoldedBranch>()
+  const contenders = distinct
+    .filter((folded) => headState(folded).gen === topGen)
+    .map((folded) => {
+      const start = folded.spine.findIndex(
+        (index) => required(folded.states, index, 'spine points past folded state').gen === topGen,
+      )
+      const trimmed = { ...folded, spine: folded.spine.slice(start) }
+      original.set(trimmed, folded)
+      return trimmed
+    })
+  const resolved = resolveContenders(contenders)
   if (!resolved.ok) {
-    // A duplicity report is provisional the same way a winner is: an unchecked branch might have
-    // superseded both conflicting events.
-    return { ...resolved, unverified }
+    return resolved
   }
 
-  const { winner } = resolved
+  const winner = original.get(resolved.winner) ?? resolved.winner
+  // Discarded: what a loser's spine holds that the winner's does not. Counted by digest rather than
+  // from the common prefix, so a reset both carry on different prefixes is not counted as lost.
+  const kept = new Set(winner.spine.map((_, j) => spineDigest(winner, j)))
   let superseded = 0
   for (const loser of distinct) {
     if (loser !== winner) {
-      superseded += loser.spine.length - commonSpine(winner, loser)
+      for (let j = 0; j < loser.spine.length; j++) {
+        if (!kept.has(spineDigest(loser, j))) superseded++
+      }
     }
   }
-  return { ok: true, winner: winner.branch, superseded, unverified }
+  return { ok: true, winner: winner.branch, superseded }
 }

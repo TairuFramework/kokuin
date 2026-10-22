@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, expectTypeOf, test } from 'vitest'
 
 import * as controller from '../src/index.js'
 
@@ -25,9 +25,7 @@ describe('public surface', () => {
       'createInception',
       'createRotate',
       'createReset',
-      'createRevoke',
-      'createRevokeWithKey',
-      // A `rev` target may name a key instead of a DID. Downstream builds the target and reads it
+      // A deny entry may name a key instead of a DID. Downstream builds the entry and reads it
       // back out of a deny set, and neither should mean hardcoding `#` — the spelling is a wire
       // format, so the one place that knows it publishes it.
       'keyTarget',
@@ -41,39 +39,89 @@ describe('public surface', () => {
       'verifyInception',
       'verifyRotate',
       'verifyReset',
-      'verifyRevoke',
       'verifySignatures',
       'foldLog',
-      'foldLogAsync',
       'keyStateAt',
+      // Carrying a state forward without silently dropping part of it, and the reasons a
+      // snapshot is refused with.
+      'snapshotOf',
+      'isMemberEntry',
+      'ROTATE_NEEDS_SNAPSHOT',
+      'SNAPSHOT_MALFORMED',
+      'SNAPSHOT_MEMBER_KEY_IS_ROOT',
+      'SNAPSHOT_MEMBER_DID_MISMATCH',
+      'SNAPSHOT_DROPS_RETIRED_KEY',
+      // The management tier's events: builders, the shape guard, the signature check, the limits.
+      'createAdd',
+      'createRenew',
+      'createRemove',
+      'createRevoke',
+      'isEpochEventShape',
+      'verifyEpochSignature',
+      'MAX_EPOCH_EVENTS',
+      'MAX_LOG_EVENTS',
+      'MAX_EVENT_PARENTS',
+      'MAX_EVENT_BYTES',
+      'MAX_EVENT_SIGNATURES',
+      // A presentation refused for the signatures it makes a verifier check in vain.
+      'MAX_FAILED_SIGNATURES',
+      'TOO_MANY_FAILED_SIGNATURES',
+      'DEFAULT_LEASE_SECONDS',
       'resolveBranches',
-      // The management tier's form: the sync one cannot verify a capability-authorised revoke, so
-      // a log carrying one has no duplicity detection at all without this.
-      'resolveBranchesAsync',
+      // Remembering what was seen, and combining or trimming logs: what a consumer persisting
+      // controller logs builds its store on.
+      'authoritativeLog',
+      'createMemoryLogStore',
+      'mergeLogs',
+      'pruneLog',
+      'epochHeads',
+      'LOG_FORKED',
+      'LOG_NOT_AUTHORITATIVE',
+      'LOG_UNFOLDABLE',
       'enumerateProfiles',
       'handleForDID',
       'createControllerResolver',
+      // What resolution refuses with when the epoch is saturated or a member is not live.
+      'EPOCH_SATURATED',
+      'MEMBER_NOT_EFFECTIVE',
       'createControllerIdentity',
-      'createControllerIdentityAsync',
-      // The fold's capability-revoke failure reasons. `@kokuin/capability` asserts on these by
-      // string literal across the package boundary, so they are a contract either way.
-      'CAPABILITY_VERIFIER_FAILED',
-      'CAPABILITY_VERIFIER_MALFORMED_ANSWER',
-      'REVOKE_NOT_SIGNED_BY_AUDIENCE',
-      // "This call was not equipped to check a capability" — the fold's answer to a `cap`-bearing
-      // revoke, which a caller has to tell from a log that is actually broken.
-      'CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD',
-      'CAPABILITY_REVOKE_NEEDS_VERIFIER',
     ]) {
       expect(controller).toHaveProperty(name)
     }
   })
 
+  test('exports the types authoritativeLog is written in', () => {
+    // Type-level: a consumer wrapping `authoritativeLog` in its own store names these.
+    expectTypeOf(controller.authoritativeLog)
+      .parameter(0)
+      .toEqualTypeOf<controller.AuthoritativeLogParams>()
+    expectTypeOf(controller.authoritativeLog).returns.toEqualTypeOf<controller.AuthoritativeLog>()
+  })
+
   test('does not leak internal helpers', () => {
     expect(controller).not.toHaveProperty('signEvent')
-    // The audience-signature check the fold performs on a capability-authorised revoke. Only the
-    // fold calls it, and the package's API is already changing here — kept internal rather than
-    // widening the published surface for a helper nothing downstream needs.
-    expect(controller).not.toHaveProperty('verifyEventSignedBy')
+    // Lowers the saturation threshold: a test seam, never a production knob.
+    expect(controller).not.toHaveProperty('createControllerResolverWithin')
+  })
+
+  test('does not export the capability-authorised revoke surface', () => {
+    for (const name of [
+      'foldLogAsync',
+      'resolveBranchesAsync',
+      'createControllerIdentityAsync',
+      'createControllerIdentityWithKeyAsync',
+      'createRevokeWithKey',
+      'verifyEventSignedBy',
+      // The chain revoke left the root chain with it; the epoch `createRevoke` is another function.
+      'verifyRevoke',
+      'pruneDenySet',
+      'CAPABILITY_VERIFIER_FAILED',
+      'CAPABILITY_VERIFIER_MALFORMED_ANSWER',
+      'REVOKE_NOT_SIGNED_BY_AUDIENCE',
+      'CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD',
+      'CAPABILITY_REVOKE_NEEDS_VERIFIER',
+    ]) {
+      expect(controller).not.toHaveProperty(name)
+    }
   })
 })

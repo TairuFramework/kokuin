@@ -40,19 +40,26 @@ transaction instead of opening a nested one. No statement binds more than 500 pa
 | Column | Type | Notes |
 |--------|------|-------|
 | `did` | text | primary key |
-| `log` | json | the signed event array, verbatim |
+| `log` | json | the accepted `ControllerLog` (`{ chain, events }`); a row written before the log split is a bare event array, read back as that chain with no epoch events |
 | `created_at` | timestamp | defaults to now |
-| `updated_at` | timestamp | set on every `set` |
+| `updated_at` | timestamp | set on every `merge` write |
 
 ### API
 
 `ControllerStoreAPI` is `@kokuin/controller`'s `LogStore` plus one method:
 
 - `get(did)`: the stored log, or `undefined`.
-- `set(did, log)`: plain last-writer-wins upsert. The store does not arbitrate. Arbitration lives
-  in the resolver, which calls `set` only after the log has folded. A caller ingesting an
-  **untrusted** log (one pulled from a peer) must run it through the resolver's
-  `authoritativeStates` / `history` guard first: a direct `set` of peer bytes bypasses the
+- `merge(did, update)`: writes what `update` makes of the stored log and returns it, the read and
+  the write in one store transaction (`withStoreTransaction`, joining an enclosing one). Atomic per
+  DID: on Postgres the row is locked on read, and a first insert that loses a race re-reads the
+  winner's row and **runs `update` again** — so `update` must be free of side effects. On SQLite one
+  process's single connection serialises merges; across processes a stale read fails on write with
+  `SQLITE_BUSY` rather than losing an update. When `update` throws, nothing is written; when it
+  returns `current` itself (nothing changed, as `authoritativeLog` answers a resolution that learned
+  nothing new), nothing is written either and `updated_at` does not move. A stored value that is not
+  a log, or not JSON at all, reads as no memory rather than throwing. The store
+  does not arbitrate: a caller ingesting an **untrusted** log (one pulled from a peer) must build the
+  update from `authoritativeLog`, as the resolver does — writing peer bytes directly bypasses the
   anti-truncation guarantee.
 - `getObservedAt(did)`: the time of the last explicit store write (`updated_at`, else
   `created_at`), including a locally seeded log.

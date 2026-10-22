@@ -1,132 +1,260 @@
+import { digestOf, isCanonicalizable } from './canonical.js'
+import type { EpochLimits } from './epoch.js'
 import type { SignedEvent } from './events.js'
-import { type FoldOptions, foldLogAsync, type KeyState } from './fold.js'
-import { allStatesAsync } from './state.js'
-import { needsCapabilityVerification, resolveBranchesAsync } from './supersede.js'
+import { type FoldResult, foldLog, type KeyState } from './fold.js'
+import { MAX_LOG_EVENTS } from './limits.js'
+import {
+  appliedCopies,
+  type ControllerLog,
+  isControllerLog,
+  LOG_FORKED,
+  LOG_NOT_AUTHORITATIVE,
+  LOG_TOO_LARGE,
+  MALFORMED_LOG,
+  withEpoch,
+} from './log.js'
+import { resolveBranches } from './supersede.js'
+
+export { LOG_FORKED, LOG_NOT_AUTHORITATIVE }
 
 /**
- * Where a consumer keeps the last log it accepted for a DID, so the next one can be compared against
- * it.
+ * Where a consumer keeps the log it has accepted for a DID, so the next presentation can be compared
+ * against it and merged into it.
  *
- * A folded log carries no proof it is the *whole* log: a peer serving a prefix — stopping just before
- * the `rev` denying their device — produces one that folds cleanly and yields a deny set missing
- * exactly the entry that matters. Nothing inside a single log distinguishes truncation from a log
- * that is simply short, so the fork-detection limitation does not reach it: there is no second branch,
- * only an honest-looking prefix. Comparing against what this party has already seen supplies the
- * missing second branch — a local guarantee, not a global one (it does nothing on a first encounter),
- * but the difference between a suppression attack that works once and one that works every time.
+ * A folded log carries no proof it is the *whole* log. A peer serving a prefix of the chain —
+ * stopping just before the settlement denying their device — or a full chain with the epoch event
+ * that denies it withheld, produces one that folds cleanly and yields a deny set missing exactly the
+ * entry that matters. Nothing inside a single log distinguishes that from a log that is simply short.
+ * Comparing against what this party has already seen supplies the missing half — a local guarantee,
+ * not a global one (it does nothing on a first encounter), but the difference between a suppression
+ * attack that works once and one that works every time. The two halves are kept differently because
+ * they fold differently: a newer chain replaces the one seen only through the branch rules, and the
+ * current epoch's events are never forgotten, only added to.
  *
- * Deliberately not a high-water mark over `(gen, seq)`. Supersession legitimately *lowers* the
- * sequence: a thief's long current-key branch is beaten by the owner's recovering rotate at a much
- * lower `seq`, which a "never go backwards" mark would reject, bricking the profile as it is rescued.
- * A divergence is settled by {@link resolveBranchesAsync} instead.
+ * Deliberately not a high-water mark over `(gen, seq)`. A reset legitimately replaces a longer
+ * lower-generation chain, which a "never go backwards" mark would reject, bricking the profile as it
+ * is recovered. A chain divergence is settled by {@link resolveBranches} instead.
  */
 export type LogStore = {
-  /** The last accepted log for this DID, or undefined when none has been seen. */
-  get(did: string): Promise<Array<SignedEvent> | undefined>
-  /** Record a log as the last accepted one. Called only after it has folded. */
-  set(did: string, log: Array<SignedEvent>): Promise<void>
+  /** The accepted log for this DID, or undefined when none has been seen. */
+  get(did: string): Promise<ControllerLog | undefined>
+  /**
+   * Replace the log for this DID with what `update` makes of the current one, and return it. Atomic
+   * per DID: no two `update`s for one DID interleave, so two presentations merged concurrently both
+   * land rather than the second overwriting the first with a log built from a stale read. When
+   * `update` throws, nothing is written and the throw propagates. `update` may be invoked more than
+   * once (a persistent store reruns it when it loses a first-insert race), so it must be free of side
+   * effects; only the last result is written. An `update` returning `current` itself (the very object
+   * it was handed) means nothing changed, and the store skips the write: `authoritativeLog` answers
+   * that way whenever a resolution learned nothing new, which is most of them.
+   */
+  merge(
+    did: string,
+    update: (current: ControllerLog | undefined) => Promise<ControllerLog>,
+  ): Promise<ControllerLog>
 }
-
-/** What a resolver answers with when the log it loaded loses to the one already seen. */
-export const LOG_NOT_AUTHORITATIVE = 'the loaded log does not supersede the one already seen'
-
-/** What a resolver answers with when the loaded log and the one already seen are a genuine fork. */
-export const LOG_FORKED = 'the loaded log and the one already seen are a fork'
 
 /**
  * An in-memory {@link LogStore}. Enough for a process that resolves the same DIDs repeatedly, and for
  * tests; a consumer that survives restarts wants a persistent one, since the guarantee is only as
  * durable as the memory of what was seen.
+ *
+ * `merge` is serialised per DID by a promise chain: each update starts only after the previous one for
+ * that DID settled, failed or not. A failed update must not wedge the chain, so the link kept is one
+ * that never rejects; the caller still sees the failure on the promise `merge` returned.
  */
 export function createMemoryLogStore(): LogStore {
-  const logs = new Map<string, Array<SignedEvent>>()
+  const logs = new Map<string, ControllerLog>()
+  const tails = new Map<string, Promise<void>>()
   return {
-    async get(did: string): Promise<Array<SignedEvent> | undefined> {
+    async get(did: string): Promise<ControllerLog | undefined> {
       return logs.get(did)
     },
-    async set(did: string, log: Array<SignedEvent>): Promise<void> {
-      logs.set(did, log)
+    merge(
+      did: string,
+      update: (current: ControllerLog | undefined) => Promise<ControllerLog>,
+    ): Promise<ControllerLog> {
+      const previous = tails.get(did) ?? Promise.resolve()
+      const run = previous.then(async () => {
+        const current = logs.get(did)
+        const next = await update(current)
+        if (next !== current) logs.set(did, next)
+        return next
+      })
+      const tail = run.then(
+        () => undefined,
+        () => undefined,
+      )
+      tails.set(did, tail)
+      // Drop the link once nothing is queued behind it, so the map holds only DIDs mid-merge.
+      void tail.then(() => {
+        if (tails.get(did) === tail) {
+          tails.delete(did)
+        }
+      })
+      return run
     },
   }
 }
 
-/**
- * Fold the loaded log, having established that it is not behind one this party has already seen.
- *
- * The two rejections are throws because a resolver has no other way to say "I will not answer for this
- * DID", and answering from the loser is the failure this prevents: a prefix loses to the log it is a
- * prefix of (truncation refused), and a fork is refused outright (resolving to either side is a
- * guess). The comparison is on the **folded head digest**, never array identity — the same history
- * re-loaded is a different array, and identity would reject the commonest call there is.
- *
- * A stored log that no longer folds is treated as no memory, but only when it *genuinely* no longer
- * folds: local corruption or a tightened fold rule is one round of the guarantee to give up, since
- * only a folded log was ever stored and refusing forever would brick every cached profile. A stored
- * log that fails only because this call has no `verifyCapability` for a cap-authorised revoke it
- * carries is the opposite — nothing changed, the call is simply not equipped — so it fails closed;
- * treating it as no memory would disable the truncation guard for management-tier profiles.
- *
- * The states are returned so the caller does not fold twice; the log travels with them for the store.
- */
-export async function authoritativeStates({
-  did,
-  loaded,
-  seen,
-  context,
-  options,
-}: {
-  did: string
-  loaded: Array<SignedEvent>
-  seen: Array<SignedEvent> | undefined
-  context: string
-  options: FoldOptions
-}): Promise<{ log: Array<SignedEvent>; states: Array<KeyState> }> {
-  const states = await allStatesAsync({ did, events: loaded, context, options: options })
-  if (seen == null || seen.length === 0) {
-    return { log: loaded, states }
+/** The stored log and its chain's fold, or undefined when there is no usable memory. */
+function recall(
+  did: string,
+  seen: ControllerLog | undefined,
+): { log: ControllerLog; head: KeyState } | undefined {
+  if (seen == null || !isControllerLog(seen) || seen.chain.length === 0) {
+    return undefined
   }
-  const previous = await foldLogAsync(did, seen, options)
-  if (!previous.ok) {
-    // "Fold rule tightened" is safe to treat as no memory (only a folded log was stored, so refusing
-    // forever would brick every cached profile). "I remember a management-tier log and got no verifier
-    // for it" is not: accepting the loaded log there disables the truncation guard for exactly those
-    // profiles, letting an attacker's prefix that stops before the cap-authorised `rev` be accepted
-    // because the fuller stored log is the one that could not be folded. Fail closed — what could not
-    // be checked is not evidence its target is absent.
-    if (needsCapabilityVerification(previous)) {
+  const folded = foldLog(did, { chain: seen.chain, events: [] })
+  const head = folded.ok ? folded.states[folded.states.length - 1] : undefined
+  return head === undefined ? undefined : { log: seen, head }
+}
+
+/** A chain or epoch entry, as far as comparing two of them needs. */
+type Entry = Pick<SignedEvent, 'sigs' | 'recoveryKey'> & { event: unknown }
+
+/** One log entry and another hold the same bytes: the same body, signatures and recovery key. */
+function sameEntry(entry: Entry, other: unknown): boolean {
+  if (other == null || typeof other !== 'object') return false
+  const { event, sigs, recoveryKey } = other as Partial<SignedEvent>
+  if (recoveryKey !== entry.recoveryKey || !Array.isArray(sigs)) return false
+  if (sigs.length !== entry.sigs.length || sigs.some((sig, i) => sig !== entry.sigs[i])) {
+    return false
+  }
+  // Digests, not object identity or JSON text: a store hands back a fresh copy, possibly with its
+  // keys reordered (Postgres `jsonb`), and the canonical form is what both sides agree on.
+  return isCanonicalizable(event) && digestOf(event) === digestOf(entry.event)
+}
+
+/** Whether `next` is `seen` again, entry for entry, so remembering it would change nothing. */
+function sameLog(next: ControllerLog, seen: ControllerLog): boolean {
+  const pairs: Array<[Array<Entry>, Array<unknown>]> = [
+    [next.chain, seen.chain],
+    [next.events, seen.events],
+  ]
+  return pairs.every(
+    ([mine, theirs]) =>
+      mine.length === theirs.length && mine.every((entry, i) => sameEntry(entry, theirs[i])),
+  )
+}
+
+/** What {@link authoritativeLog} takes. */
+export type AuthoritativeLogParams = {
+  did: string
+  loaded: ControllerLog
+  seen: ControllerLog | undefined
+  context: string
+}
+
+/**
+ * What {@link authoritativeLog} answers: the log to remember, and the fold to answer from. `log` is
+ * `seen` itself, the same object, when the resolution learned nothing new; see `LogStore.merge`.
+ */
+export type AuthoritativeLog = { log: ControllerLog; result: Extract<FoldResult, { ok: true }> }
+
+/**
+ * Fold the loaded log against the one already seen, and say what to remember.
+ *
+ * **The chain** is settled exactly as before epochs existed. The loaded chain must extend (or be) the
+ * one seen — its fold passes through the seen head — or win against it under
+ * {@link resolveBranches}; a chain that loses is refused ({@link LOG_NOT_AUTHORITATIVE}: truncation),
+ * and a fork is refused outright ({@link LOG_FORKED}: answering from either side is a guess). The
+ * comparison is on folded head digests, never array identity — the same history re-loaded is a
+ * different array, and identity would reject the commonest call there is. These are throws because a
+ * resolver has no other way to say "I will not answer for this DID".
+ *
+ * **The epoch** is the union of what was seen and what was loaded, folded on the settled chain: a
+ * presentation that withholds an event this party has seen cannot make it forget it. The returned
+ * `result` answers for that union, not for the presentation alone.
+ *
+ * **What to remember** is the settled chain and the current epoch's applied events — nothing else.
+ * From `loaded`, an unsigned, forged, malformed or still-pending entry was never authenticated, so it
+ * never reaches the store: a relay flooding a presentation changes nothing remembered (and, counting
+ * only applied events, cannot saturate the epoch either). A pending event is not lost forever by
+ * this, only not vouched for: once its parents are known, presenting it again applies it. Events of
+ * any other epoch are dropped, seen or not: an event naming another epoch has no effect, its effect is
+ * in the newer snapshot or was dropped by it, and a verifier never needs to ingest a superseded epoch
+ * to fold the current one. That is what bounds memory: one epoch, at most `MAX_EPOCH_EVENTS + 1`
+ * events once saturated (see `appliedCopies`), so a held log always passes the request limit when
+ * forwarded, and a flooded epoch is gone the moment a settlement supersedes it. A saturated epoch's
+ * refusal persists through a later presentation of a subset, until that settlement.
+ *
+ * A stored log whose chain no longer folds is treated as no memory: local corruption or a tightened
+ * fold rule is one round of the guarantee to give up, since only a folded log was ever stored and
+ * refusing forever would brick every cached profile. A stored *saturated* epoch is not that case — it
+ * folds, saturated, and is merged like any other memory, so its refusal stands. Stored epoch events are
+ * folded together with the presentation without the request limit, which bounds a single input, not
+ * the union of two inputs that each passed it.
+ *
+ * **What is checked.** Stored epoch events of the settled chain's current epoch are not
+ * authenticated again: they were when they were stored, and a copy that verified under an epoch
+ * verifies under it every time (see `FoldEpochParams.trusted`). They are still authorised afresh,
+ * and a stored event of another epoch is simply ignored. Only what `loaded` adds is checked, and
+ * `loaded` is refused as a whole, memory untouched, once more than `MAX_FAILED_SIGNATURES` of its
+ * signatures fail (`TOO_MANY_FAILED_SIGNATURES`). This trusts the store for signatures, not only
+ * for completeness: whoever can write it can plant an unsigned event of the current epoch and have
+ * it applied (a member added, say), not merely make this party forget. Only ever write what this
+ * function returned for the same DID.
+ */
+export function authoritativeLog(params: AuthoritativeLogParams): AuthoritativeLog {
+  return authoritativeLogWithin(params)
+}
+
+/**
+ * {@link authoritativeLog} under lowered epoch limits. Test-only: saturation is then reachable
+ * without thousands of signatures. Not exported from the package.
+ */
+export function authoritativeLogWithin(
+  { did, loaded, seen, context }: AuthoritativeLogParams,
+  limits?: Partial<EpochLimits>,
+): AuthoritativeLog {
+  const invalid = (reason: string, index: number) =>
+    new Error(`${context}: invalid log for ${did}: ${reason} at event ${index}`)
+  // The request limit, before any work: `loaded` is the one untrusted input here.
+  if (!isControllerLog(loaded)) {
+    throw invalid(MALFORMED_LOG, 0)
+  }
+  if (loaded.events.length > MAX_LOG_EVENTS) {
+    throw invalid(LOG_TOO_LARGE, -1)
+  }
+  const loadedChain = foldLog(did, { chain: loaded.chain, events: [] })
+  if (!loadedChain.ok) {
+    throw invalid(loadedChain.reason, loadedChain.index)
+  }
+  const loadedHead = loadedChain.states[loadedChain.states.length - 1]
+  if (loadedHead === undefined) {
+    throw invalid('no state produced', 0)
+  }
+
+  let chain = loaded.chain
+  let states = loadedChain.states
+  const memory = recall(did, seen)
+  if (memory !== undefined && !states.some((state) => state.digest === memory.head.digest)) {
+    // They diverge. Which is authoritative is what branch resolution answers: a higher generation (a
+    // reset) wins outright, a chain that only repeats the seen one's prefix loses, and two rotates at
+    // one position are a fork.
+    const resolved = resolveBranches(did, [memory.log.chain, loaded.chain])
+    if (!resolved.ok) {
+      throw new Error(
+        `${resolved.failure === 'duplicity' ? LOG_FORKED : LOG_NOT_AUTHORITATIVE}: ${did}`,
+      )
+    }
+    const winner = foldLog(did, { chain: resolved.winner, events: [] })
+    const winnerHead = winner.ok ? winner.states[winner.states.length - 1] : undefined
+    if (!winner.ok || winnerHead === undefined || winnerHead.digest !== loadedHead.digest) {
       throw new Error(`${LOG_NOT_AUTHORITATIVE}: ${did}`)
     }
-    return { log: loaded, states }
+    chain = resolved.winner
+    states = winner.states
   }
 
-  const headState = states[states.length - 1]
-  const previousHeadState = previous.states[previous.states.length - 1]
-  if (headState === undefined || previousHeadState === undefined) {
-    throw new Error(`${LOG_NOT_AUTHORITATIVE}: ${did}`)
+  const held = withEpoch(did, states, loaded.events, limits, memory?.log.events)
+  if (!('result' in held)) {
+    throw invalid(held.reason, held.index)
   }
-  const head = headState.digest
-  // The loaded log extends, or is, the history seen: its fold passed through that head. Ordinary path.
-  if (states.some((state) => state.digest === previousHeadState.digest)) {
-    return { log: loaded, states }
+  const log = { chain, events: appliedCopies(held, limits) }
+  return {
+    log: memory !== undefined && sameLog(log, memory.log) ? memory.log : log,
+    result: held.result,
   }
-
-  // They diverge. Which is authoritative is what branch resolution answers, and the only thing that
-  // knows a superseding rotate outranks a longer branch of current-key events.
-  const resolved = await resolveBranchesAsync(did, [seen, loaded], options)
-  if (!resolved.ok) {
-    throw new Error(
-      `${resolved.failure === 'duplicity' ? LOG_FORKED : LOG_NOT_AUTHORITATIVE}: ${did}`,
-    )
-  }
-  // A comparison that did not happen is a refusal, not a pass: `unverified` means one side could not
-  // be folded for want of a verifier. Always zero with one configured.
-  if (resolved.unverified > 0) {
-    throw new Error(`${LOG_NOT_AUTHORITATIVE}: ${did}`)
-  }
-  const winner = await foldLogAsync(did, resolved.winner, options)
-  const winnerHead = winner.ok ? winner.states[winner.states.length - 1] : undefined
-  if (winnerHead === undefined || winnerHead.digest !== head) {
-    throw new Error(`${LOG_NOT_AUTHORITATIVE}: ${did}`)
-  }
-  return { log: loaded, states }
 }

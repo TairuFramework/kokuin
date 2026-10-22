@@ -13,7 +13,6 @@ import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
   createReset,
-  createRevoke,
   createRotate,
   didFromInception,
   type SignedEvent,
@@ -50,18 +49,30 @@ const D3 = 'did:key:z6MkfriQZgZXhtFA6kFHzuvhLHGRDDNzGRxeLnpKmZzHwUXR'
 
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
-const rotateAgain = createRotate({ seed, profile: 0, did, prior: rotate.event })
+const rotate = createRotate({
+  seed,
+  profile: 0,
+  did,
+  prior: inception.event,
+  snapshot: { members: [], deny: [] },
+})
+const rotateAgain = createRotate({
+  seed,
+  profile: 0,
+  did,
+  prior: rotate.event,
+  snapshot: { members: [], deny: [] },
+})
 const reset = createReset(seed, 0, 1)
 
 function resolverFor(log: Array<SignedEvent>) {
-  return createControllerResolver({ loadLog: async () => log })
+  return createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
 }
 
 /** A token signed by the identity the given log's head establishes. */
 async function tokenFrom(log: Array<SignedEvent>) {
   return await signToken(
-    createControllerIdentity({ seed, profile: 0, log }),
+    createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
     createUnsignedToken({ n: 1 }),
   )
 }
@@ -102,14 +113,13 @@ describe('a rotate keeps everything the profile has issued verifiable — under 
     ).resolves.toMatchObject({ payload: { iss: did } })
   })
 
-  test('a revoke does not disturb it either', async () => {
-    const revoke = createRevoke({
+  test('a rotate denying a holder DID does not disturb it either', async () => {
+    const revoke = createRotate({
       seed,
       profile: 0,
       did,
       prior: rotate.event,
-      target: device,
-      keyPosition: { gen: 0, seq: 1 },
+      snapshot: { members: [], deny: [device] },
     })
     const token = await tokenFrom([inception])
 
@@ -248,64 +258,19 @@ describe('a kid naming a key this profile never published', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
-// A log where the generation boundary is *not* where a naive reading puts it: rotates, then two
-// revokes (which advance `s` without establishing a key), then a rotate, then a reset, then more
-// events on the far side of the boundary. The two-rotate logs above only approach this.
+// A log that crosses a generation boundary with settlements on both sides: rotates whose snapshots
+// accumulate denials, then a reset, then more rotates on the far side of the boundary. The
+// two-rotate logs above only approach this.
 
-const rot1 = createRotate({ seed, profile: 0, did, prior: inception.event }) //      gen0 s1  keySeq 1
-const rot2 = createRotate({ seed, profile: 0, did, prior: rot1.event }) //           gen0 s2  keySeq 2
-const rev1 = createRevoke({
-  seed,
-  profile: 0,
-  did,
-  prior: rot2.event,
-  target: D1,
-  keyPosition: { gen: 0, seq: 2 },
-}) // gen0 s3
-const rev2 = createRevoke({
-  seed,
-  profile: 0,
-  did,
-  prior: rev1.event,
-  target: D2,
-  keyPosition: { gen: 0, seq: 2 },
-}) // gen0 s4
-const rot3 = createRotate({
-  seed,
-  profile: 0,
-  did,
-  prior: rev2.event,
-  options: { keyPosition: { gen: 0, seq: 2 } },
-}) // s5 kS3
-const rot4 = createRotate({ seed, profile: 0, did, prior: reset.event }) //          gen1 s1  keySeq 1
-const rev3 = createRevoke({
-  seed,
-  profile: 0,
-  did,
-  prior: rot4.event,
-  target: D3,
-  keyPosition: { gen: 1, seq: 1 },
-}) // gen1 s2
-const rot5 = createRotate({
-  seed,
-  profile: 0,
-  did,
-  prior: rev3.event,
-  options: { keyPosition: { gen: 1, seq: 1 } },
-}) // s3 kS2
+const settle = (prior: SignedEvent['event'], deny: Array<string>) =>
+  createRotate({ seed, profile: 0, did, prior, snapshot: { members: [], deny } })
+const rot1 = settle(inception.event, []) //   gen0 s1
+const rot2 = settle(rot1.event, [D1]) //      gen0 s2
+const rot3 = settle(rot2.event, [D1, D2]) //  gen0 s3
+const rot4 = settle(reset.event, []) //       gen1 s1
+const rot5 = settle(rot4.event, [D3]) //      gen1 s2
 
-const interleaved: Array<SignedEvent> = [
-  inception,
-  rot1,
-  rot2,
-  rev1,
-  rev2,
-  rot3,
-  reset,
-  rot4,
-  rev3,
-  rot5,
-]
+const interleaved: Array<SignedEvent> = [inception, rot1, rot2, rot3, reset, rot4, rot5]
 const interleavedResolver = resolverFor(interleaved)
 
 /**
@@ -327,13 +292,13 @@ const resolveHistoric = historicOf(interleavedResolver)
 const keyAt = (gen: number, seq: number) =>
   encodeKey(deriveKeyPair(seed, authorityPath(0, gen, seq), 'EdDSA').publicKey, 'EdDSA')
 
-describe('every event in a revoke/rotate/reset interleaving folds', () => {
+describe('every event in a rotate/reset interleaving folds', () => {
   test('the whole log folds', () => {
-    expect(foldLog(did, interleaved).ok).toBe(true)
+    expect(foldLog(did, { chain: interleaved, events: [] }).ok).toBe(true)
   })
 
   test('each state names the key the log actually committed', () => {
-    const result = foldLog(did, interleaved)
+    const result = foldLog(did, { chain: interleaved, events: [] })
     if (!result.ok) throw new Error(`did not fold: ${result.reason} at ${result.index}`)
     const seen = result.states.map((state) => ({
       gen: state.gen,
@@ -346,70 +311,19 @@ describe('every event in a revoke/rotate/reset interleaving folds', () => {
       { gen: 0, seq: 0, keyGen: 0, keySeq: 0, key: keyAt(0, 0) },
       { gen: 0, seq: 1, keyGen: 0, keySeq: 1, key: keyAt(0, 1) },
       { gen: 0, seq: 2, keyGen: 0, keySeq: 2, key: keyAt(0, 2) },
-      { gen: 0, seq: 3, keyGen: 0, keySeq: 2, key: keyAt(0, 2) },
-      { gen: 0, seq: 4, keyGen: 0, keySeq: 2, key: keyAt(0, 2) },
-      { gen: 0, seq: 5, keyGen: 0, keySeq: 3, key: keyAt(0, 3) },
+      { gen: 0, seq: 3, keyGen: 0, keySeq: 3, key: keyAt(0, 3) },
       { gen: 1, seq: 0, keyGen: 1, keySeq: 0, key: keyAt(1, 0) },
       { gen: 1, seq: 1, keyGen: 1, keySeq: 1, key: keyAt(1, 1) },
-      { gen: 1, seq: 2, keyGen: 1, keySeq: 1, key: keyAt(1, 1) },
-      { gen: 1, seq: 3, keyGen: 1, keySeq: 2, key: keyAt(1, 2) },
+      { gen: 1, seq: 2, keyGen: 1, keySeq: 2, key: keyAt(1, 2) },
     ])
   })
 
   test('the head deny set is exactly the current generation`s', () => {
-    const result = foldLog(did, interleaved)
+    const result = foldLog(did, { chain: interleaved, events: [] })
     if (!result.ok) throw new Error('no fold')
-    expect([...at(result.states, 9).deny]).toEqual([D3])
+    expect([...at(result.states, 6).deny]).toEqual([D3])
     // and the pre-reset positions still deny what they denied
-    expect([...at(result.states, 4).deny].sort()).toEqual([D1, D2].sort())
-  })
-
-  test('a revoke twice, a rotate, a revoke, a rotate all inside one generation folds', () => {
-    // The same shape without a reset in the way — the case F-1 names.
-    const a = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: inception.event,
-      target: D1,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const b = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: a.event,
-      target: D2,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const c = createRotate({
-      seed,
-      profile: 0,
-      did,
-      prior: b.event,
-      options: { keyPosition: { gen: 0, seq: 0 } },
-    })
-    const d = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: c.event,
-      target: D3,
-      keyPosition: { gen: 0, seq: 1 },
-    })
-    const e = createRotate({
-      seed,
-      profile: 0,
-      did,
-      prior: d.event,
-      options: { keyPosition: { gen: 0, seq: 1 } },
-    })
-    const result = foldLog(did, [inception, a, b, c, d, e])
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.states.map((state) => state.keySeq)).toEqual([0, 0, 0, 1, 1, 2])
-    expect(at(result.states, 5).keys[0]).toBe(keyAt(0, 2))
-    expect([...at(result.states, 5).deny].sort()).toEqual([D1, D2, D3].sort())
+    expect([...at(result.states, 3).deny].sort()).toEqual([D1, D2].sort())
   })
 })
 
@@ -472,7 +386,7 @@ describe('the accepted key set is exactly the current generation`s', () => {
 
 describe('real tokens across the boundary', () => {
   test('a token minted at every pre-reset position fails with IssuerKeyNotFound, not Unresolvable', async () => {
-    for (const cut of [1, 2, 3, 4, 5, 6]) {
+    for (const cut of [1, 2, 3, 4]) {
       const token = await tokenFrom(interleaved.slice(0, cut))
       const error = await verifyToken(token, {
         methods: [interleavedResolver],
@@ -487,7 +401,7 @@ describe('real tokens across the boundary', () => {
   })
 
   test('a token minted at every post-reset position still verifies historically', async () => {
-    for (const cut of [7, 8, 9, 10]) {
+    for (const cut of [5, 6, 7]) {
       const token = await tokenFrom(interleaved.slice(0, cut))
       await expect(
         verifyToken(token, { methods: [interleavedResolver], historic: true }),
@@ -497,9 +411,9 @@ describe('real tokens across the boundary', () => {
   })
 
   test('by default only the head`s own position verifies', async () => {
-    // cut 10 is the whole log, so its identity signs with the head key; every earlier cut names a
+    // cut 7 is the whole log, so its identity signs with the head key; every earlier cut names a
     // key the log has rotated away.
-    for (const cut of [7, 8, 9]) {
+    for (const cut of [5, 6]) {
       const token = await tokenFrom(interleaved.slice(0, cut))
       const error = await verifyToken(token, { methods: [interleavedResolver] }).then(
         () => undefined,

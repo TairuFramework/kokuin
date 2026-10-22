@@ -1,21 +1,12 @@
-import type { SignedEvent } from './events.js'
-import { type FoldOptions, type FoldResult, foldLog, foldLogAsync, type KeyState } from './fold.js'
+import { type FoldResult, foldLog, type KeyState } from './fold.js'
+import { type ControllerLog, isControllerLog, MALFORMED_LOG } from './log.js'
 
-/**
- * Fold results to states, turning a fold failure into a throw. The identity and the resolver both
- * need the same fold-reject-take-last sequence, sync and async, so it lives here once. `context`
- * names the caller so its diagnostics survive the factoring.
- */
-function foldedStates(did: string, context: string, result: FoldResult): Array<KeyState> {
+/** The fold's last state, turning a fold failure into a throw. `context` names the caller. */
+function lastState(did: string, context: string, result: FoldResult): KeyState {
   if (!result.ok) {
     throw new Error(`${context}: invalid log for ${did}: ${result.reason} at event ${result.index}`)
   }
-  return result.states
-}
-
-function lastState(did: string, context: string, result: FoldResult): KeyState {
-  const states = foldedStates(did, context, result)
-  const last = states[states.length - 1]
+  const last = result.states[result.states.length - 1]
   if (last === undefined) {
     throw new Error(`${context}: no state produced for ${did}`)
   }
@@ -23,46 +14,17 @@ function lastState(did: string, context: string, result: FoldResult): KeyState {
 }
 
 /**
- * Current state via the synchronous {@link foldLog}. A capability-authorised revoke fails closed
- * here — see {@link currentStateAsync}.
+ * The root key state a log establishes: the chain's last state.
+ *
+ * The chain alone, deliberately. Epoch events never change a root key (`k`, `ka`, `n` and the
+ * derivation indices live on the chain only), so folding them would buy an identity nothing but up
+ * to `MAX_EPOCH_EVENTS` signature checks on a path that must stay synchronous and cheap. The returned
+ * state's `deny`, `members` and `saturated` are therefore the chain's, not the live ones; nothing
+ * that builds an identity reads them.
  */
-export function currentState(did: string, events: Array<SignedEvent>, context: string): KeyState {
-  return lastState(did, context, foldLog(did, events))
-}
-
-/**
- * Every per-position state, via {@link foldLogAsync}. What the resolver needs and the identity does
- * not: a verifier has to answer about keys the log has since rotated away, since a token outlives the
- * state that gave its `kid` meaning.
- */
-export async function allStatesAsync({
-  did,
-  events,
-  context,
-  options,
-}: {
-  did: string
-  events: Array<SignedEvent>
-  context: string
-  options?: FoldOptions
-}): Promise<Array<KeyState>> {
-  return foldedStates(did, context, await foldLogAsync(did, events, options))
-}
-
-/**
- * Current state via {@link foldLogAsync}, which can await `options.verifyCapability` for a
- * capability-authorised revoke instead of failing closed on it.
- */
-export async function currentStateAsync({
-  did,
-  events,
-  context,
-  options,
-}: {
-  did: string
-  events: Array<SignedEvent>
-  context: string
-  options?: FoldOptions
-}): Promise<KeyState> {
-  return lastState(did, context, await foldLogAsync(did, events, options))
+export function currentState(did: string, log: ControllerLog, context: string): KeyState {
+  if (!isControllerLog(log)) {
+    throw new Error(`${context}: invalid log for ${did}: ${MALFORMED_LOG} at event 0`)
+  }
+  return lastState(did, context, foldLog(did, { chain: log.chain, events: [] }))
 }

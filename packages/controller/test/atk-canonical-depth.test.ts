@@ -59,7 +59,7 @@ describe('MAX_CANONICAL_DEPTH: both directions', () => {
       event,
       sigs: signEvent(event, [authorityPrivateKey]),
     }
-    const r = foldLog(did, [signed])
+    const r = foldLog(did, { chain: [signed], events: [] })
     expect(r.ok).toBe(true)
   })
 
@@ -71,7 +71,7 @@ describe('MAX_CANONICAL_DEPTH: both directions', () => {
     let thrown: unknown
     let result: unknown
     try {
-      result = foldLog(did, [signed])
+      result = foldLog(did, { chain: [signed], events: [] })
     } catch (error) {
       thrown = error
     }
@@ -85,7 +85,7 @@ describe('MAX_CANONICAL_DEPTH: both directions', () => {
     let thrown: unknown
     let result: unknown
     try {
-      result = foldLog(did, [parsed])
+      result = foldLog(did, { chain: [parsed], events: [] })
     } catch (error) {
       thrown = error
     }

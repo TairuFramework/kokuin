@@ -2,7 +2,6 @@ import {
   createControllerIdentity,
   createControllerResolver,
   createInception,
-  createRevoke,
   createRotate,
   didFromInception,
   keyTarget,
@@ -58,27 +57,42 @@ describe('TokenRevokedError', () => {
     const seed = new Uint8Array(32).fill(53)
     const inception = createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const rotate = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      snapshot: { members: [], deny: [] },
+    })
     const leaked = inception.event.k[0]
     if (leaked === undefined) throw new Error('expected inception key')
     const rotated: Array<SignedEvent> = [inception, rotate]
     const revoked: Array<SignedEvent> = [
       inception,
       rotate,
-      createRevoke({
+      createRotate({
         seed,
         profile: 0,
         did,
         prior: rotate.event,
-        target: keyTarget(leaked),
-        keyPosition: { gen: 0, seq: 1 },
+        snapshot: { members: [], deny: [keyTarget(leaked)] },
       }),
     ]
     const registry = (log: Array<SignedEvent>): MethodRegistry => [
-      createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) }),
+      createControllerResolver({
+        loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
+      }),
     ]
-    const thief = createControllerIdentity({ seed, profile: 0, log: [inception] })
-    const owner = createControllerIdentity({ seed, profile: 0, log: revoked })
+    const thief = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [inception], events: [] },
+    })
+    const owner = createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: revoked, events: [] },
+    })
     const holder = createSigningIdentity(new Uint8Array(32).fill(61))
 
     const capability = await createCapability(owner, {

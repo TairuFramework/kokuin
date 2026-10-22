@@ -3,12 +3,11 @@ import {
   createControllerResolver,
   createInception,
   createReset,
-  createRevoke,
-  createRevokeWithKey,
   createRotate,
   didFromInception,
-  foldLogAsync,
+  foldLog,
   type SignedEvent,
+  snapshotOf,
 } from '@kokuin/controller'
 import {
   createIdentity,
@@ -25,15 +24,11 @@ import {
 import { beforeEach, describe, expect, test } from 'vitest'
 
 import {
-  audienceConfirmation,
-  type ControllerCapabilityVerifierParams,
   checkCapability,
   createCapability,
-  createControllerCapabilityVerifier,
   DEFAULT_MAX_DELEGATION_DEPTH,
   DENY_SET_UNAVAILABLE,
   now,
-  REVOKE_NO_POSITION,
 } from '../src/index.js'
 
 const at = <T>(items: ReadonlyArray<T>, i: number): T => {
@@ -42,19 +37,20 @@ const at = <T>(items: ReadonlyArray<T>, i: number): T => {
   return v
 }
 
-// The spec's definition of `revoke`: "Adds a DID to the profile's deny set: no capability whose
-// `aud` is that DID is valid from this position onward." Everything here is real — a real inception,
-// a real revoke signed by the profile's authority key, a real `createCapability`, and a real
-// delegate holding its own key. A stub deny set would agree with an implementation that enforces
-// nothing, which is what this file exists to stop.
+// A deny entry naming a DID: "no capability whose `aud` is that DID is valid from this position
+// onward." Everything here is real — a real inception, a real rotate whose snapshot denies the DID,
+// signed by the profile's pre-committed key, a real `createCapability`, and a real delegate holding
+// its own key. A stub deny set would agree with an implementation that enforces nothing, which is
+// what this file exists to stop.
 
 const seed = new Uint8Array(32).fill(31)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity({ seed, profile: 0, log: [inception] })
-
-/** The authority key the inception establishes lives at gen 0 / seq 0. */
-const inceptionKeyPosition = { gen: 0, seq: 0 }
+const controller = createControllerIdentity({
+  seed,
+  profile: 0,
+  log: { chain: [inception], events: [] },
+})
 
 const delegate = createSigningIdentity(new Uint8Array(32).fill(41))
 const bystander = createSigningIdentity(new Uint8Array(32).fill(43))
@@ -62,19 +58,25 @@ const bystander = createSigningIdentity(new Uint8Array(32).fill(43))
 /** The log the resolver folds, rebuilt per test. */
 let log: Array<SignedEvent> = [inception]
 const methods: MethodRegistry = [
-  createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) }),
+  createControllerResolver({
+    loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
+  }),
 ]
 
-/** A revoke denying `target`, chained onto the inception and signed by the profile. */
-function revokeOf(target: string): SignedEvent {
-  return createRevoke({
+/** A rotate on `prior` whose snapshot is exactly `deny`, signed by the profile. */
+function settle(prior: SignedEvent['event'], deny: Array<string>): SignedEvent {
+  return createRotate({
     seed,
     profile: 0,
     did,
-    prior: inception.event,
-    target,
-    keyPosition: inceptionKeyPosition,
+    prior,
+    snapshot: { members: [], deny },
   })
+}
+
+/** A rotate denying `target`, chained onto the inception. */
+function revokeOf(target: string): SignedEvent {
+  return settle(inception.event, [target])
 }
 
 async function mintFor(audience: SigningIdentity, signer = controller): Promise<string> {
@@ -102,34 +104,6 @@ async function invoke(holder: SigningIdentity, ...chain: Array<string>): Promise
   )
 }
 
-const deviceX = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-const deviceY = 'did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
-
-/** The management capability: revoke anything, pinned to `holder`'s key. */
-async function manageCap(holder: { id: string; publicKey: Uint8Array }): Promise<string> {
-  const capability = await createCapability(
-    controller,
-    {
-      sub: did,
-      aud: holder.id,
-      act: 'revoke',
-      res: '*',
-      exp: now() + 3600,
-      cnf: audienceConfirmation({ alg: 'EdDSA', publicKey: holder.publicKey }),
-    },
-    undefined,
-    { methods },
-  )
-  return stringifyToken(capability)
-}
-
-/** A registry answering with a fixed log, whatever the fold is doing. */
-function registryFor(fixed: Array<SignedEvent>): MethodRegistry {
-  return [
-    createControllerResolver({ loadLog: async (asked) => (asked === did ? fixed : undefined) }),
-  ]
-}
-
 beforeEach(() => {
   log = [inception]
 })
@@ -147,7 +121,7 @@ describe('a capability whose audience the profile has revoked', () => {
 
   test('a capability to an audience that was not revoked still verifies', async () => {
     // The control row. Without it this file passes against an implementation that rejects every
-    // capability the moment a log carries any revoke at all.
+    // capability the moment a log carries any denial at all.
     const denied = await mintFor(delegate)
     const allowed = await mintFor(bystander)
     log = [inception, revokeOf(delegate.id)]
@@ -156,11 +130,13 @@ describe('a capability whose audience the profile has revoked', () => {
     await expect(invoke(bystander, allowed)).resolves.toBeUndefined()
   })
 
-  test('the denial survives a rotation', async () => {
-    // A rotate carries the accumulated deny set forward unless it publishes a snapshot, so routine
-    // key hygiene must not quietly re-admit a revoked device.
+  test('the denial survives a rotation that carries the state forward', async () => {
+    // A rotate's snapshot replaces the state, so routine key hygiene builds it from the fold's own
+    // answer (`snapshotOf`) and must not quietly re-admit a revoked device.
     const cap = await mintFor(delegate)
     const revoke = revokeOf(delegate.id)
+    const folded = foldLog(did, { chain: [inception, revoke], events: [] })
+    if (!folded.ok) throw new Error('did not fold')
     log = [
       inception,
       revoke,
@@ -169,32 +145,19 @@ describe('a capability whose audience the profile has revoked', () => {
         profile: 0,
         did,
         prior: revoke.event,
-        options: { keyPosition: inceptionKeyPosition },
+        snapshot: snapshotOf(at(folded.states, 1)),
       }),
     ]
 
     await expect(invoke(delegate, cap)).rejects.toThrow(/audience is revoked/)
   })
 
-  test('a deny-set snapshot clears it', async () => {
-    // `d` replaces the accumulated set rather than adding to it — the "cold rotate clearing the
-    // deny set" the spec's remedy ladder names.
+  test('a snapshot leaving it out clears it', async () => {
+    // `d` replaces the prior set rather than adding to it — the "cold rotate clearing the deny set"
+    // the spec's remedy ladder names. A holder DID, unlike a retired key, may be dropped.
     const cap = await mintFor(delegate)
     const revoke = revokeOf(delegate.id)
-    log = [
-      inception,
-      revoke,
-      createRotate({
-        seed,
-        profile: 0,
-        did,
-        prior: revoke.event,
-        options: {
-          keyPosition: inceptionKeyPosition,
-          denySnapshot: [],
-        },
-      }),
-    ]
+    log = [inception, revoke, settle(revoke.event, [])]
 
     await expect(invoke(delegate, cap)).resolves.toBeUndefined()
   })
@@ -206,7 +169,10 @@ describe('a capability whose audience the profile has revoked', () => {
 
     // The capability has to be re-minted: a reset discards the prior generation, so one signed
     // under it no longer resolves at all. What this asserts is that the denial itself is gone.
-    const regranted = await mintFor(delegate, createControllerIdentity({ seed, profile: 0, log }))
+    const regranted = await mintFor(
+      delegate,
+      createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
+    )
     await expect(invoke(delegate, regranted)).resolves.toBeUndefined()
   })
 
@@ -307,7 +273,7 @@ describe('a revoked link in a delegation chain', () => {
     const rootRaw = stringifyToken(root)
     const leaf = await createCapability(
       manager,
-      { sub: did, aud: delegate.id, act: 'write', res: 'doc/1', exp: now() + 3600, cap: [rootRaw] },
+      { sub: did, aud: delegate.id, act: 'write', res: 'doc/1', exp: now() + 1800, cap: [rootRaw] },
       undefined,
       { parentCapability: rootRaw, methods },
     )
@@ -325,8 +291,7 @@ describe('a revoked link in a delegation chain', () => {
 
 describe('a capability presented directly, without an invocation', () => {
   test('is rejected once its audience is revoked', async () => {
-    // The self-issued branch of `checkCapability`, which is the shape
-    // `createControllerCapabilityVerifier` takes: the capability's own `iss` is its `sub`, so
+    // The self-issued branch of `checkCapability`: the capability's own `iss` is its `sub`, so
     // there is no chain to walk and the audience check has to happen on this path too.
     const cap = await createCapability(
       controller,
@@ -359,7 +324,7 @@ describe('a capability presented directly, without an invocation', () => {
     )
     const leaf = await createCapability(
       manager,
-      { sub: did, aud: delegate.id, act: 'revoke', res: '*', exp: now() + 3600, cap: [rootRaw] },
+      { sub: did, aud: delegate.id, act: 'revoke', res: '*', exp: now() + 1800, cap: [rootRaw] },
       undefined,
       { parentCapability: rootRaw, methods },
     )
@@ -401,7 +366,7 @@ describe('a capability presented directly, without an invocation', () => {
         aud: delegate.id,
         act: 'revoke',
         res: 'doc/1',
-        exp: now() + 3600,
+        exp: now() + 1800,
         cap: [rootRaw],
       },
       undefined,
@@ -417,286 +382,6 @@ describe('a capability presented directly, without an invocation', () => {
   })
 })
 
-describe('the deny set inside the fold: who may author a capability-authorised revoke', () => {
-  // The management tier of the spec's authority ladder: a device holding a capability whose `act`
-  // is `revoke` authors `rev` events for the profile. What stops a revoked manager from carrying on
-  // is the deny set at the position of its own event — which nothing outside the fold can name, so
-  // the fold hands the verifier a resolver for exactly that position.
-
-  test('a revoked manager cannot author one — at every prefix a caller could supply', async () => {
-    const manager = randomIdentity()
-    const cap = await manageCap(manager)
-    const revokeManager = revokeOf(manager.id)
-    const attack = createRevokeWithKey({
-      privateKey: manager.privateKey,
-      did,
-      prior: revokeManager.event,
-      target: deviceX,
-      cap,
-    })
-    const attacked = [inception, revokeManager, attack]
-    const rejected = {
-      ok: false,
-      reason: 'capability does not authorise this revoke',
-      index: 2,
-    }
-
-    // The caller's registry decides nothing here, which is the fix: the fold resolves the subject
-    // from its own prefix. Both answers a `loadLog(did)` could give — and no registry at all — are
-    // the same rejection.
-    for (const [name, configured] of [
-      ['no registry', undefined],
-      ['the earliest prefix', registryFor([inception])],
-      ['the prefix before the attack', registryFor([inception, revokeManager])],
-      ['the whole log', registryFor(attacked)],
-    ] as Array<[string, MethodRegistry | undefined]>) {
-      const result = await foldLogAsync(did, attacked, {
-        verifyCapability: createControllerCapabilityVerifier({ methods: configured }),
-      })
-      expect(result, name).toEqual(rejected)
-    }
-
-    // Control: the same manager, the same capability, the same revoke of X — with the manager not
-    // revoked. So what fails above is the denial and not the grant.
-    const clean = createRevokeWithKey({
-      privateKey: manager.privateKey,
-      did,
-      prior: inception.event,
-      target: deviceX,
-      cap,
-    })
-    const folded = await foldLogAsync(did, [inception, clean], {
-      verifyCapability: createControllerCapabilityVerifier(),
-    })
-    expect(folded.ok).toBe(true)
-    if (!folded.ok) return
-    expect(at(folded.states, 1).deny.has(deviceX)).toBe(true)
-  })
-
-  test('two capability-authorised revokes in one log fold through one ordinary resolver', async () => {
-    // The shape that had no working wiring: with a single `loadLog(did)` and two events asking, the
-    // only prefix that keeps the profile resolvable is the earliest one — which is precisely the
-    // prefix at which the row above is bypassed. Nothing here is hand-nested: one resolver, one
-    // `loadLog` answering with the whole log, one verifier.
-    const manager = randomIdentity()
-    const cap = await manageCap(manager)
-    const first = createRevokeWithKey({
-      privateKey: manager.privateKey,
-      did,
-      prior: inception.event,
-      target: deviceX,
-      cap,
-    })
-    const second = createRevokeWithKey({
-      privateKey: manager.privateKey,
-      did,
-      prior: first.event,
-      target: deviceY,
-      cap,
-    })
-    log = [inception, first, second]
-
-    const resolver = createControllerResolver({
-      loadLog: async (asked) => (asked === did ? log : undefined),
-      verifyCapability: createControllerCapabilityVerifier(),
-    })
-    expect([...((await resolver.resolveDenySet?.(did)) ?? [])].sort()).toEqual(
-      [deviceX, deviceY].sort(),
-    )
-    // And the profile still resolves, which is the half a wedged instance loses.
-    await expect(resolver.resolve(did, {})).resolves.toMatchObject({ alg: 'EdDSA' })
-
-    // A third revoke, of the manager, and the manager's own next attempt after it.
-    const third = revokeOf(manager.id)
-    expect(
-      await foldLogAsync(did, [inception, third], {
-        verifyCapability: createControllerCapabilityVerifier(),
-      }),
-    ).toMatchObject({ ok: true })
-  })
-
-  test('a verifier called without the position refuses, whatever the caller configured', async () => {
-    // The three-argument call: an older `@kokuin/controller` whose `foldLogAsync` predates the
-    // fourth argument, or a caller invoking the verifier directly. `@kokuin/capability` has no
-    // runtime dependency on the controller, so nothing ties the two versions together and the type
-    // cannot police the call. Falling back to the caller's registry — which is what this did — is
-    // the R-2 bypass verbatim: with a registry answering the earliest prefix, a manager the log
-    // revoked at event 1 was authorised to revoke `deviceX` at event 2.
-    const manager = randomIdentity()
-    const cap = await manageCap(manager)
-    const revokeManager = revokeOf(manager.id)
-
-    for (const [name, configured] of [
-      ['the earliest prefix', registryFor([inception])],
-      ['the whole log', registryFor([inception, revokeManager])],
-      ['no registry', undefined],
-    ] as Array<[string, MethodRegistry | undefined]>) {
-      const verify = createControllerCapabilityVerifier({ methods: configured })
-      // A caller that omits the required `subjectAtPosition` (a stale build, say): its absence is
-      // REVOKE_NO_POSITION, not a worked-around fallback. Cast because the type forbids omitting it.
-      await expect(
-        verify({
-          cap,
-          subject: did,
-          target: deviceX,
-        } as unknown as ControllerCapabilityVerifierParams),
-        name,
-      ).resolves.toEqual({
-        authorised: false,
-        reason: REVOKE_NO_POSITION,
-      })
-    }
-
-    // Unconditional rather than a denial that happens to coincide with this manager's revocation:
-    // the same capability, held by a manager nothing has revoked, refuses the same way with no
-    // `subjectAtPosition` and folds through the four-argument fold path.
-    const clean = createRevokeWithKey({
-      privateKey: manager.privateKey,
-      did,
-      prior: inception.event,
-      target: deviceX,
-      cap,
-    })
-    const verify = createControllerCapabilityVerifier()
-    await expect(
-      verify({
-        cap,
-        subject: did,
-        target: deviceX,
-      } as unknown as ControllerCapabilityVerifierParams),
-    ).resolves.toEqual({
-      authorised: false,
-      reason: REVOKE_NO_POSITION,
-    })
-    await expect(
-      foldLogAsync(did, [inception, clean], { verifyCapability: verify }),
-    ).resolves.toMatchObject({ ok: true })
-  })
-
-  test('a position resolver that publishes no deny set refuses, rather than answering "nobody"', async () => {
-    // The fourth argument is the one place the fold cannot police: a third-party fold builds its
-    // own, and the plausible way to lose `resolveDenySet` is a wrapper — caching, metrics, tracing
-    // — forwarding only the member its author knew about. Inside the fold an absent member cannot
-    // mean the empty set: that reads as "nobody is revoked" and hands a denied manager an
-    // authorisation, which is this package's rule switched off from outside it.
-    const manager = randomIdentity()
-    const cap = await manageCap(manager)
-    const revokeManager = revokeOf(manager.id)
-    const attack = createRevokeWithKey({
-      privateKey: manager.privateKey,
-      did,
-      prior: revokeManager.event,
-      target: deviceX,
-      cap,
-    })
-    const verify = createControllerCapabilityVerifier({ methods: registryFor([inception]) })
-
-    // The real resolver the fold builds, captured from a fold rather than hand-made — a stub would
-    // agree with an implementation that consults nothing.
-    let atPosition: DIDMethodResolver | undefined
-    await foldLogAsync(did, [inception, revokeManager, attack], {
-      verifyCapability: async ({ cap: c, subject, target, subjectAtPosition: position }) => {
-        atPosition = position
-        return await verify({ cap: c, subject, target, subjectAtPosition: position })
-      },
-    })
-    if (atPosition == null) throw new Error('the fold supplied no position resolver')
-    const stripped: DIDMethodResolver = {
-      method: atPosition.method,
-      resolve: (asked, header) => (atPosition as DIDMethodResolver).resolve(asked, header),
-      // resolveDenySet deliberately not forwarded.
-    }
-
-    // Control: the wrapper is not broken. It resolves the profile's key at this position exactly as
-    // the real one does, so a refusal below is the missing deny set and nothing else.
-    expect(await stripped.resolve(did, {})).toEqual(await atPosition.resolve(did, {}))
-
-    expect(
-      await verify({ cap, subject: did, target: deviceX, subjectAtPosition: atPosition }),
-    ).toEqual({
-      authorised: false,
-      reason: 'capability does not authorise this revoke',
-    })
-    expect(
-      await verify({ cap, subject: did, target: deviceX, subjectAtPosition: stripped }),
-    ).toEqual({
-      authorised: false,
-      reason: 'capability does not authorise this revoke',
-    })
-
-    // Control: at a position where nobody is revoked, the real resolver authorises — so the refusal
-    // above is not this capability being rejected everywhere.
-    let cleanPosition: DIDMethodResolver | undefined
-    const clean = createRevokeWithKey({
-      privateKey: manager.privateKey,
-      did,
-      prior: inception.event,
-      target: deviceX,
-      cap,
-    })
-    await foldLogAsync(did, [inception, clean], {
-      verifyCapability: async ({ cap: c, subject, target, subjectAtPosition: position }) => {
-        cleanPosition = position
-        return await verify({ cap: c, subject, target, subjectAtPosition: position })
-      },
-    })
-    if (cleanPosition == null) throw new Error('the fold supplied no position resolver')
-    expect(
-      await verify({ cap, subject: did, target: deviceX, subjectAtPosition: cleanPosition }),
-    ).toMatchObject({ authorised: true })
-    // And stripped of its deny set, the same clean position refuses too: with nothing to decide
-    // from, "unknown" is a refusal. That is the cost of the rule, paid by a broken caller only.
-    expect(
-      await verify({ cap, subject: did, target: deviceX, subjectAtPosition: stripped }),
-    ).toMatchObject({ authorised: false })
-  })
-
-  test('a capability minted for one profile cannot revoke on another', async () => {
-    // The subject binding, re-checked now that the registry the verifier uses is assembled rather
-    // than supplied: the fold's resolver answers for its own profile only.
-    const otherSeed = new Uint8Array(32).fill(61)
-    const otherInception = createInception(otherSeed, 0)
-    const otherDid = didFromInception(otherInception.event)
-    const manager = randomIdentity()
-    const foreign = await createCapability(
-      createControllerIdentity({ seed: otherSeed, profile: 0, log: [otherInception] }),
-      {
-        sub: otherDid,
-        aud: manager.id,
-        act: 'revoke',
-        res: '*',
-        exp: now() + 3600,
-        cnf: audienceConfirmation({ alg: 'EdDSA', publicKey: manager.publicKey }),
-      },
-      undefined,
-      { methods: registryFor([otherInception]) },
-    )
-    const revoke = createRevokeWithKey({
-      privateKey: manager.privateKey,
-      did,
-      prior: inception.event,
-      target: deviceX,
-      cap: stringifyToken(foreign),
-    })
-
-    await expect(
-      foldLogAsync(did, [inception, revoke], {
-        verifyCapability: createControllerCapabilityVerifier({
-          methods: [
-            createControllerResolver({
-              loadLog: async (asked) => (asked === otherDid ? [otherInception] : undefined),
-            }),
-          ],
-        }),
-      }),
-    ).resolves.toEqual({
-      ok: false,
-      reason: 'capability does not authorise this revoke',
-      index: 1,
-    })
-  })
-})
-
 describe('what the deny lookup costs a caller-supplied chain', () => {
   test('an over-long chain throws the depth error before any deny set is folded', async () => {
     // The lookup folds a log, so it has to sit *after* the depth bound: otherwise the length of an
@@ -704,7 +389,10 @@ describe('what the deny lookup costs a caller-supplied chain', () => {
     // it. Exactly zero, not "at most maxDepth" — moving the lookup back above the bound yields one
     // call, which every looser assertion admits.
     let denyCalls = 0
-    const inner = createControllerResolver({ loadLog: async (asked) => (asked === did ? log : []) })
+    const inner = createControllerResolver({
+      loadLog: async (asked) =>
+        asked === did ? { chain: log, events: [] } : { chain: [], events: [] },
+    })
     const counting: DIDMethodResolver = {
       method: 'kokuin',
       resolve: (asked, header) => inner.resolve(asked, header),
@@ -750,7 +438,10 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
     // Making the member required would break every implementation of a published interface, so the
     // obligation is documented (`method.ts`, `capability.skill.md`) rather than enforced.
     log = [inception, revokeOf(delegate.id)]
-    const real = createControllerResolver({ loadLog: async (asked) => (asked === did ? log : []) })
+    const real = createControllerResolver({
+      loadLog: async (asked) =>
+        asked === did ? { chain: log, events: [] } : { chain: [], events: [] },
+    })
     const wrapped: DIDMethodResolver = {
       method: 'kokuin',
       resolve: (asked, header) => real.resolve(asked, header),
@@ -784,85 +475,17 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
       payload: { iss: device.id },
     })
   })
-
-  test('a verifyToken hook that resolves this profile through this resolver wedges it', async () => {
-    // The one re-entry the R-2 fix does not remove. The fold no longer resolves the DID it is
-    // folding, so the hazard is now entirely in caller code — a revocation checker built over the
-    // same registry is the realistic shape — and it is a *quiet* deadlock rather than a spin: the
-    // hook joins the in-flight fold, which is waiting on the hook. Diagnosing it from inside would
-    // need chain identity across three packages, so it is documented
-    // (`ControllerResolverOptions.loadLog`, `auth.skill.md`) and pinned here.
-    const manager = randomIdentity()
-    const cap = await manageCap(manager)
-    log = [
-      inception,
-      createRevokeWithKey({
-        privateKey: manager.privateKey,
-        did,
-        prior: inception.event,
-        target: deviceX,
-        cap,
-      }),
-    ]
-
-    let hookCalls = 0
-    let wedged: DIDMethodResolver | undefined
-    wedged = createControllerResolver({
-      loadLog: async (asked) => (asked === did ? log : undefined),
-      verifyCapability: createControllerCapabilityVerifier({
-        verifyToken: async () => {
-          hookCalls++
-          // Re-entry: the profile this hook is being called *inside* the fold of.
-          await wedged?.resolve(did, {})
-        },
-      }),
-    })
-
-    const timeout = (label: string) =>
-      new Promise<string>((resolve) => setTimeout(() => resolve(label), 150))
-    expect(
-      await Promise.race([wedged.resolve(did, {}).then(() => 'settled'), timeout('wedged')]),
-    ).toBe('wedged')
-    expect(hookCalls).toBe(1)
-    // The instance is finished for that DID: a second resolution joins the fold that cannot settle,
-    // without calling `loadLog` or the hook again.
-    expect(
-      await Promise.race([wedged.resolve(did, {}).then(() => 'settled'), timeout('wedged')]),
-    ).toBe('wedged')
-    expect(hookCalls).toBe(1)
-    // The timer queue stayed live throughout — that is what makes a caller-side timeout the
-    // remedy — and the documented fix works: a hook with a resolver of its own settles.
-    const own = createControllerResolver({ loadLog: async () => [inception] })
-    const fine = createControllerResolver({
-      loadLog: async (asked) => (asked === did ? log : undefined),
-      verifyCapability: createControllerCapabilityVerifier({
-        verifyToken: async () => {
-          await own.resolve(did, {})
-        },
-      }),
-    })
-    expect(
-      await Promise.race([fine.resolve(did, {}).then(() => 'settled'), timeout('wedged')]),
-    ).toBe('settled')
-  })
 })
 
 describe('the deny set the resolver exposes', () => {
-  test('is the head state, and carries every revoke in the current generation', async () => {
+  test('is the head state: the latest snapshot, not an accumulation', async () => {
     const first = revokeOf(delegate.id)
-    const second = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: first.event,
-      target: bystander.id,
-      keyPosition: inceptionKeyPosition,
-    })
+    const second = settle(first.event, [bystander.id])
     log = [inception, first, second]
 
     const denied = await at(methods, 0).resolveDenySet?.(did)
     expect(denied).toBeDefined()
-    expect([...(denied ?? [])].sort()).toEqual([delegate.id, bystander.id].sort())
+    expect([...(denied ?? [])]).toEqual([bystander.id])
   })
 
   test('is empty for a log that revokes nothing', async () => {

@@ -5,7 +5,6 @@ import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
   createReset,
-  createRevoke,
   createRotate,
   didFromInception,
   type RotateEvent,
@@ -31,7 +30,13 @@ describe('pre-rotation bypass attempts', () => {
   const { icp, did } = build(seedA)
 
   test('a rotate revealing a key that was never committed is refused', () => {
-    const honest = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
+    const honest = createRotate({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [], deny: [] },
+    })
     const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 1), 'EdDSA')
     const body: RotateEvent = { ...honest.event, k: [encodeKey(thief.publicKey, 'EdDSA')] }
     const forged: SignedEvent<RotateEvent> = {
@@ -40,25 +45,37 @@ describe('pre-rotation bypass attempts', () => {
     }
     // The signature is VALID over these bytes and matches the key the event publishes — the only
     // thing wrong is that `n` never committed it.
-    expect(foldLog(did, [icp, forged]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, forged], events: [] }).ok).toBe(false)
     // CONTROL: the honest rotate, same position, same shape.
-    expect(foldLog(did, [icp, honest]).ok).toBe(true)
+    expect(foldLog(did, { chain: [icp, honest], events: [] }).ok).toBe(true)
   })
 
   test('a rotate re-revealing the CURRENT key (no rotation at all) is refused', () => {
-    const honest = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
+    const honest = createRotate({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [], deny: [] },
+    })
     const current = deriveKeyPair(seedA, authorityPath(0, 0, 0), 'EdDSA')
     const body: RotateEvent = { ...honest.event, k: [...icp.event.k] }
     const forged: SignedEvent<RotateEvent> = {
       event: body,
       sigs: signEvent(body, [current.privateKey]),
     }
-    expect(foldLog(did, [icp, forged]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, forged], events: [] }).ok).toBe(false)
   })
 
   test('the commitment cannot be satisfied by a differently-encoded spelling of the same key', () => {
     // `n` commits `digestOf(<the multibase string>)`, so the encoding is part of the commitment.
-    const honest = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
+    const honest = createRotate({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [], deny: [] },
+    })
     const spelled = honest.event.k[0]
     if (spelled === undefined) throw new Error('expected a rotated key')
     expect(digestOf(spelled)).toBe(icp.event.n[0])
@@ -66,7 +83,13 @@ describe('pre-rotation bypass attempts', () => {
   })
 
   test('a rotate padding `k`/`n` to smuggle an extra key in is refused', () => {
-    const honest = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
+    const honest = createRotate({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [], deny: [] },
+    })
     const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 0), 'EdDSA')
     const thiefKey = encodeKey(thief.publicKey, 'EdDSA')
     const body: RotateEvent = { ...honest.event, k: [...honest.event.k, thiefKey] }
@@ -75,7 +98,7 @@ describe('pre-rotation bypass attempts', () => {
       event: body,
       sigs: signEvent(body, [revealed.privateKey, thief.privateKey]),
     }
-    expect(foldLog(did, [icp, forged]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, forged], events: [] }).ok).toBe(false)
   })
 })
 
@@ -83,8 +106,14 @@ describe('splicing, truncation, replay', () => {
   test("an event from another DID's log is refused by the `i` check", () => {
     const a = build(seedA)
     const b = build(seedB)
-    const foreignRotate = createRotate({ seed: seedB, profile: 0, did: b.did, prior: b.icp.event })
-    expect(foldLog(a.did, [a.icp, foreignRotate]).ok).toBe(false)
+    const foreignRotate = createRotate({
+      seed: seedB,
+      profile: 0,
+      did: b.did,
+      prior: b.icp.event,
+      snapshot: { members: [], deny: [] },
+    })
+    expect(foldLog(a.did, { chain: [a.icp, foreignRotate], events: [] }).ok).toBe(false)
   })
 
   test("another DID's reset, relabelled with our `i`, is refused (anchor + recovery)", () => {
@@ -94,113 +123,113 @@ describe('splicing, truncation, replay', () => {
       ...foreignReset,
       event: { ...foreignReset.event, i: a.did, p: digestOf(a.icp.event) },
     }
-    expect(foldLog(a.did, [a.icp, relabelled]).ok).toBe(false)
+    expect(foldLog(a.did, { chain: [a.icp, relabelled], events: [] }).ok).toBe(false)
   })
 
   test('a rotate replayed at a later position is refused', () => {
     const { icp, did } = build(seedA)
-    const rot1 = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
+    const rot1 = createRotate({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [], deny: [] },
+    })
     const rot2 = createRotate({
       seed: seedA,
       profile: 0,
       did,
       prior: rot1.event,
-      options: { keyPosition: { gen: 0, seq: 1 } },
+      snapshot: { members: [], deny: [victim] },
     })
-    expect(foldLog(did, [icp, rot1, rot2]).ok).toBe(true)
-    expect(foldLog(did, [icp, rot1, rot1]).ok).toBe(false)
-    expect(foldLog(did, [icp, rot2]).ok).toBe(false)
-  })
-
-  test('a revoke replayed at a later position is refused', () => {
-    const { icp, did } = build(seedA)
-    const rev = createRevoke({
-      seed: seedA,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    expect(foldLog(did, [icp, rev]).ok).toBe(true)
-    expect(foldLog(did, [icp, rev, rev]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, rot1, rot2], events: [] }).ok).toBe(true)
+    expect(foldLog(did, { chain: [icp, rot1, rot1], events: [] }).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, rot2], events: [] }).ok).toBe(false)
   })
 
   test('reordering two valid events is refused', () => {
     const { icp, did } = build(seedA)
-    const rot = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
-    const rev = createRevoke({
+    const rot = createRotate({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [], deny: [] },
+    })
+    const next = createRotate({
       seed: seedA,
       profile: 0,
       did,
       prior: rot.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 1 },
+      snapshot: { members: [], deny: [victim] },
     })
-    expect(foldLog(did, [icp, rot, rev]).ok).toBe(true)
-    expect(foldLog(did, [icp, rev, rot]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, rot, next], events: [] }).ok).toBe(true)
+    expect(foldLog(did, { chain: [icp, next, rot], events: [] }).ok).toBe(false)
   })
 
   test('a prefix truncation folds (by design) but loses branch selection on (gen, seq)', () => {
     const { icp, did } = build(seedA)
-    const rot = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
-    const rev = createRevoke({
+    const rot = createRotate({
+      seed: seedA,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [], deny: [] },
+    })
+    const denying = createRotate({
       seed: seedA,
       profile: 0,
       did,
       prior: rot.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 1 },
+      snapshot: { members: [], deny: [victim] },
     })
-    const honest = [icp, rot, rev]
-    expect(foldLog(did, [icp]).ok).toBe(true)
+    const honest = [icp, rot, denying]
+    expect(foldLog(did, { chain: [icp], events: [] }).ok).toBe(true)
     const r = resolveBranches(did, [[icp], honest])
     expect(r.ok && r.winner).toBe(honest)
   })
 })
 
 describe('superseding recovery abuse', () => {
-  test('a stolen CURRENT key cannot outrank the owner rotate at the same position', () => {
+  test('a stolen CURRENT key extends the root chain with nothing, so the owner rotate wins outright', () => {
     const { icp, did } = build(seedA)
-    const thiefRevoke = createRevoke({
+    // The chain holds only `icp`/`rot`, and a rotate must reveal the pre-committed key: the only
+    // other thing a current-key holder can sign is an event of a type the chain does not carry.
+    const current = deriveKeyPair(seedA, authorityPath(0, 0, 0), 'EdDSA')
+    const revokeBody = {
+      v: 1,
+      t: 'rev',
+      i: did,
+      g: 0,
+      s: 1,
+      p: digestOf(icp.event),
+      crit: true,
+      x: victim,
+    }
+    const thiefRevoke = {
+      event: revokeBody,
+      sigs: signEvent(revokeBody as never, [current.privateKey]),
+    } as unknown as SignedEvent
+    expect(foldLog(did, { chain: [icp, thiefRevoke], events: [] }).ok).toBe(false)
+    const ownerRotate = createRotate({
       seed: seedA,
       profile: 0,
       did,
       prior: icp.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 0 },
+      snapshot: { members: [], deny: [] },
     })
-    const ownerRotate = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
-    const r = resolveBranches(did, [
-      [icp, thiefRevoke],
-      [icp, ownerRotate],
-    ])
-    expect(r.ok && r.winner[1]?.event.t).toBe('rot')
-  })
-
-  test('a revoke can never supersede a rotate, in either presentation order', () => {
-    const { icp, did } = build(seedA)
-    const rev = createRevoke({
-      seed: seedA,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: victim,
-      keyPosition: { gen: 0, seq: 0 },
-    })
-    const rot = createRotate({ seed: seedA, profile: 0, did, prior: icp.event })
     for (const order of [
       [
-        [icp, rev],
-        [icp, rot],
+        [icp, thiefRevoke],
+        [icp, ownerRotate],
       ],
       [
-        [icp, rot],
-        [icp, rev],
+        [icp, ownerRotate],
+        [icp, thiefRevoke],
       ],
     ]) {
       const r = resolveBranches(did, order)
-      expect(r.ok && r.winner[1]?.event.t).toBe('rot')
+      expect(r.ok && r.winner[1]).toBe(ownerRotate)
     }
   })
 
@@ -214,7 +243,7 @@ describe('superseding recovery abuse', () => {
     ])
     expect(r.ok && r.winner[1]?.event.g).toBe(2)
     // And replaying the lower reset after the higher one does not fold.
-    expect(foldLog(did, [icp, reset2, reset1]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, reset2, reset1], events: [] }).ok).toBe(false)
   })
 
   test('a reset a non-root forges is refused — the recovery key is unpublished', () => {
@@ -226,9 +255,9 @@ describe('superseding recovery abuse', () => {
       sigs: signEvent(honest.event, [thief.privateKey]),
       recoveryKey: encodeKey(thief.publicKey, 'EdDSA'),
     }
-    expect(foldLog(did, [icp, forged]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, forged], events: [] }).ok).toBe(false)
     // CONTROL: identical body, the real recovery key.
-    expect(foldLog(did, [icp, honest]).ok).toBe(true)
+    expect(foldLog(did, { chain: [icp, honest], events: [] }).ok).toBe(true)
   })
 
   test('a reset revealing the right recovery key but a forged signature is refused', () => {
@@ -241,7 +270,7 @@ describe('superseding recovery abuse', () => {
       sigs: signEvent(honest.event, [thief.privateKey]),
       recoveryKey: honest.recoveryKey,
     }
-    expect(foldLog(did, [icp, forged]).ok).toBe(false)
+    expect(foldLog(did, { chain: [icp, forged], events: [] }).ok).toBe(false)
   })
 })
 
@@ -249,7 +278,7 @@ describe('self-certification', () => {
   test('a log whose inception is not the one the DID hashes is refused', () => {
     const a = build(seedA)
     const b = build(seedB)
-    expect(foldLog(a.did, [b.icp]).ok).toBe(false)
+    expect(foldLog(a.did, { chain: [b.icp], events: [] }).ok).toBe(false)
   })
 
   test('mutating any inception member changes the DID, so no two bodies share one', () => {

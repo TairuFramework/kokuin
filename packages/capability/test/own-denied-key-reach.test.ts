@@ -1,13 +1,9 @@
 import {
-  authorityPath,
   createControllerIdentity,
   createControllerResolver,
   createInception,
-  createRevoke,
   createRotate,
-  deriveKeyPair,
   didFromInception,
-  foldLogAsync,
   keyTarget,
   type SignedEvent,
 } from '@kokuin/controller'
@@ -21,15 +17,12 @@ import {
 import { describe, expect, test } from 'vitest'
 
 import {
-  audienceConfirmation,
   checkCapability,
   createCapability,
-  createControllerCapabilityVerifier,
   createMemoryRevocationBackend,
   createRevocationChecker,
   createRevocationRecord,
   now,
-  REVOKE_NOT_AUTHORISED,
 } from '../src/index.js'
 
 // A denied key must not be usable ANYWHERE a signature is checked against a resolved key — not only
@@ -44,34 +37,51 @@ import {
 const seed = new Uint8Array(32).fill(53)
 const inception = createInception(seed, 0)
 const did = didFromInception(inception.event)
-const rotate = createRotate({ seed, profile: 0, did, prior: inception.event })
-/** The key the inception established, which the rotate retired and the revoke below denies. */
+const rotate = createRotate({
+  seed,
+  profile: 0,
+  did,
+  prior: inception.event,
+  snapshot: { members: [], deny: [] },
+})
+/** The key the inception established, which the rotate retired and the second rotate below denies. */
 const leaked = inception.event.k[0]
 if (leaked === undefined) throw new Error('expected inception key')
 /** icp → rot: the leaked key is retired for new issuance, and nothing more. */
 const rotated: Array<SignedEvent> = [inception, rotate]
-/** icp → rot → rev(#leaked): the leaked key denied outright. */
+/** icp → rot → rot denying #leaked: the leaked key denied outright. */
 const revoked: Array<SignedEvent> = [
   inception,
   rotate,
-  createRevoke({
+  createRotate({
     seed,
     profile: 0,
     did,
     prior: rotate.event,
-    target: keyTarget(leaked),
-    keyPosition: { gen: 0, seq: 1 },
+    snapshot: { members: [], deny: [keyTarget(leaked)] },
   }),
 ]
 
 function registry(log: Array<SignedEvent>): MethodRegistry {
-  return [createControllerResolver({ loadLog: async (asked) => (asked === did ? log : undefined) })]
+  return [
+    createControllerResolver({
+      loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
+    }),
+  ]
 }
 
 /** Signs as the profile with the leaked key — what holding a since-rotated key gives you. */
-const thief = createControllerIdentity({ seed, profile: 0, log: [inception] })
-/** Signs as the profile with the key it currently holds. */
-const owner = createControllerIdentity({ seed, profile: 0, log: revoked })
+const thief = createControllerIdentity({
+  seed,
+  profile: 0,
+  log: { chain: [inception], events: [] },
+})
+/**
+ * Signs as the profile with the key the first rotate established: published on both logs, never
+ * denied, so it differs from `thief` only in which key signed. (The denying rotate establishes a key
+ * of its own, which `rotated` has never published.)
+ */
+const owner = createControllerIdentity({ seed, profile: 0, log: { chain: rotated, events: [] } })
 
 const holder = createSigningIdentity(new Uint8Array(32).fill(61))
 
@@ -106,7 +116,7 @@ describe('a key the profile has revoked', () => {
     // key is never in the head's `k` — `headSigningKey` turns it away before the deny check is
     // reached. The deny check's head arm is therefore a guard for a `states` array a caller built
     // or a third party folded, not a live path; `controller/test/resolver.test.ts` reaches it
-    // through `createStateResolver`. Recorded here so a future reader does not chase the "wrong"
+    // through `resolverOver` over a hand-built head. Recorded here so a future reader does not chase the "wrong"
     // message, and so that losing the invariant shows up as this row changing.
     expect(before).toMatch(/not current/)
     expect(after).toMatch(/not current/)
@@ -141,67 +151,6 @@ describe('a key the profile has revoked', () => {
     const control = await outcome(() => invoke(honest))
     expect(denied).toMatch(/has revoked/)
     expect(control).toBe('ACCEPTED')
-  })
-
-  test('ROW 4 — the fold: a capability-authorised revoke it signed does not fold', async () => {
-    // The path the fold answers for itself, through `createStateResolver` over its own prefix. The
-    // delegate's revoke rides a management capability; the question is which key minted that
-    // capability, and the prefix's head is what answers it.
-    const delegateSeed = new Uint8Array(32).fill(71)
-    const cnf = audienceConfirmation({
-      alg: 'EdDSA',
-      publicKey: deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
-    })
-    const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-
-    const grant = async (signer: SigningIdentity) =>
-      stringifyToken(
-        await createCapability(signer, {
-          sub: did,
-          aud: createSigningIdentity(
-            deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').privateKey,
-          ).id,
-          act: 'revoke',
-          res: '*',
-          exp: now() + 3600,
-          cnf,
-        }),
-      )
-
-    const foldWith = async (cap: string) => {
-      // The position here selects which key is derived from `delegateSeed` — the delegate's own,
-      // the one the `cnf` above pins — not a position in the profile's key schedule.
-      const priorEvent = revoked[2]
-      if (priorEvent === undefined) throw new Error('fixture')
-      const rev = createRevoke({
-        seed: delegateSeed,
-        profile: 0,
-        did,
-        prior: priorEvent.event,
-        target,
-        keyPosition: { gen: 0, seq: 0 },
-        cap,
-      })
-      // The verifier's own registry deliberately answers from the inception only — the fold's
-      // prefix resolver is what must decide, and it shadows this one for the subject.
-      return await foldLogAsync(did, [...revoked, rev], {
-        verifyCapability: createControllerCapabilityVerifier({
-          methods: [createControllerResolver({ loadLog: async () => [inception] })],
-        }),
-      })
-    }
-
-    const stolen = await foldWith(await grant(thief))
-    const honest = await foldWith(await grant(owner))
-    expect(stolen.ok).toBe(false)
-    if (stolen.ok) return
-    // `createControllerCapabilityVerifier` collapses every verification failure into one reason on
-    // purpose — see the catch in `src/controller.ts` — so the reason cannot name the denial, and
-    // the control below is the whole of the evidence that the denial is what rejected it.
-    expect(stolen.reason).toBe(REVOKE_NOT_AUTHORISED)
-    // Control: the identical event, the identical grant shape, minted by the live key — so what
-    // the fold rejected is the minting key and not the management tier itself.
-    expect(honest.ok).toBe(true)
   })
 
   test('a revocation record the denied key signed keeps revoking', async () => {

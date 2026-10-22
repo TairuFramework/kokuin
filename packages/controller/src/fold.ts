@@ -1,20 +1,36 @@
-import type { DIDMethodResolver, ResolvedSigningKey } from '@kokuin/token'
-
 import { digestOf, isCanonicalizable } from './canonical.js'
+import { foldEpoch } from './epoch.js'
 import {
   type InceptionEvent,
   keyFromTarget,
   keyTarget,
-  type RevokeEvent,
+  type MemberEntry,
   type RotateEvent,
   type SignedEvent,
-  verifyEventSignedBy,
+  type StateSnapshot,
   verifyInception,
   verifyReset,
-  verifyRevoke,
   verifyRotate,
 } from './events.js'
-import { createStateResolver } from './state-resolver.js'
+import { MAX_LOG_EVENTS } from './limits.js'
+import { type ControllerLog, isControllerLog, LOG_TOO_LARGE, MALFORMED_LOG } from './log.js'
+import { denialTargetsMember, ROTATE_NEEDS_SNAPSHOT, validateSnapshot } from './members.js'
+
+export {
+  ROTATE_NEEDS_SNAPSHOT,
+  SNAPSHOT_DROPS_RETIRED_KEY,
+  SNAPSHOT_MALFORMED,
+  SNAPSHOT_MEMBER_DID_MISMATCH,
+  SNAPSHOT_MEMBER_KEY_IS_ROOT,
+} from './members.js'
+
+/**
+ * One management member as a state holds it: the snapshot entry, plus whether a removal has ended
+ * it (`removed`) and whether it may act at all (`effective`: present, not removed, and not targeted
+ * by any entry of the same state's deny set — see `denialTargetsMember`). A chain state's members are
+ * its snapshot's, so none is removed; removal is an epoch effect.
+ */
+export type MemberState = MemberEntry & { removed: boolean; effective: boolean }
 
 export type KeyState = {
   did: string
@@ -24,14 +40,13 @@ export type KeyState = {
   keyGen: number
   /**
    * Derivation index of the current `keys`: key-establishing events this generation, counting the
-   * `icp`/`rot` that opened it as 0. Equal to `seq` until a revoke intervenes, and deliberately not
-   * the same thing — a revoke advances `seq` while establishing no key, so the pre-rotation chain
-   * (which commits the *next* key's digest, one index on) stops tracking `seq` there. Deriving at
-   * `seq` after a revoke produces a key the log never committed.
+   * `icp`/`rot` that opened it as 0. The root chain holds only key-establishing events, so this is
+   * `seq`; it is named apart because it answers a different question — where to derive the key, not
+   * where the event sits — and an inception's `s` is wire data this package does not derive from.
    */
   keySeq: number
   keys: Array<string>
-  /** Key agreement keys — an OR set. Established by icp/rot, carried forward across rev. */
+  /** Key agreement keys — an OR set, established by the same icp/rot as `keys`. */
   agreement: Array<string>
   next: Array<string>
   /**
@@ -42,97 +57,58 @@ export type KeyState = {
    */
   recovery: string
   /**
-   * What this position denies, in the two spellings a `rev` target may take — see `RevokeEvent.x`. A
-   * `did:…` entry denies a *holder* (`@kokuin/capability` refuses a capability whose `aud` it names);
-   * a `#<multibase key>` entry denies a *signer* (`signingKeyFrom` refuses that key, `agreementKeysFrom`
-   * drops it).
+   * What this position denies, in two spellings. A `did:…` entry denies a *holder*
+   * (`@kokuin/capability` refuses a capability whose `aud` it names); a `#<multibase key>` entry
+   * ({@link keyTarget}) denies a *signer* (`signingKeyFrom` refuses that key, `agreementKeysFrom` drops
+   * it). A chain state's set is exactly its event's snapshot `d` (empty after an inception or a blind
+   * reset).
    *
    * One heterogeneous set rather than two fields: the spellings cannot collide, and every mechanism
-   * the set already has (position-dependence, the `d` snapshot, a reset's clear, `resolveDenySet`,
-   * the `@kokuin/capability` wrapper that forwards it) then covers keys with nothing new to wire or
+   * the set already has (position-dependence, the snapshot, a reset's clear, `resolveDenySet`, the
+   * `@kokuin/capability` wrapper that forwards it) then covers keys with nothing new to wire or
    * forget. A second optional resolver member is a second thing a wrapper can drop, and dropping it
    * fails open.
    *
-   * **Invariant, enforced by both branches of `stepEvent`: no key in this state's `keys` or
+   * **Invariant, enforced by the rotate branch of `stepEvent`: no key in this state's `keys` or
    * `agreement` is denied here.** So every reader may take a folded head's key set at face value.
    */
   deny: ReadonlySet<string>
+  /**
+   * The management set, keyed by each member's `add` digest (its incarnation). A chain state's is its
+   * event's snapshot `m`, in snapshot order.
+   */
+  members: ReadonlyMap<string, MemberState>
+  /**
+   * Digest of the chain event that opened the epoch this state belongs to. Every chain event opens
+   * one, so for a chain state this is its own `digest`; epoch events name it as their `e`.
+   */
+  epoch: string
+  /**
+   * Whether the epoch holds more authenticated events than a verifier will evaluate, failing it
+   * closed until root settles. A chain state has seen no epoch events, so it is never saturated.
+   */
+  saturated: boolean
   /** Digest of the event that produced this state — the `p` any successor must carry. */
   digest: string
 }
 
+/**
+ * `states` is one state per chain event, which is what historic resolution scans. `head` is the last
+ * chain state merged with the current epoch: its `deny`, `members` and `saturated` are the live
+ * answers. `applied`, `pending` and `rejected` account for the epoch events presented -- the digests
+ * that took effect, the well-formed ones still waiting on a parent, and the ones refused (see
+ * `FoldEpochResult` for how refusals are counted).
+ */
 export type FoldResult =
-  | { ok: true; states: Array<KeyState> }
+  | {
+      ok: true
+      states: Array<KeyState>
+      head: KeyState
+      applied: Array<string>
+      pending: number
+      rejected: number
+    }
   | { ok: false; reason: string; index: number }
-
-/**
- * What a capability verifier answers a cap-bearing revoke with.
- *
- * `audienceKey` is the key the capability pins as its audience at mint time, never resolved at
- * verification time; the fold checks the event's own signature against it, binding the grant to the
- * party it was issued to.
- *
- * A key rather than a boolean because the fold, not the verifier, must tie the answer to the event
- * in hand. The log is public, so the serialized capability inside a revoke is readable by everyone
- * who can resolve the profile; with a boolean, any such reader could lift it out and chain a revoke
- * of their own with any bytes in `sigs`, covering whatever the capability's `res` covers — a
- * wildcard, for a management capability, so every device. Among divisions keeping a *single*
- * callback, this is the only one where neither side can leave the binding out.
- */
-export type CapabilityAuthorisation =
-  | { authorised: true; audienceKey: ResolvedSigningKey }
-  /** `reason` becomes the fold's failure reason verbatim, so it must describe this rejection. */
-  | { authorised: false; reason: string }
-
-export type FoldOptions = {
-  /**
-   * Verify a capability authorising a non-authority signer to revoke. Injected rather than imported
-   * so the sync path stays free of a capability dependency.
-   *
-   * Receives the serialized capability, the controller DID (which must be the capability `sub`), the
-   * DID being denied, and a resolver for the controller **at the position being verified**. That
-   * fourth argument makes the position contract keepable: the capability is issued by the very
-   * profile whose log carries the revoke, and the state to resolve it against is the prefix before
-   * this event — not the head (which would let a device revoked at event 1 keep authoring at event 2,
-   * the deny set being position-dependent only inside the fold) and not the whole log (which would
-   * recurse into the asking fold). Nothing outside the fold knows which position is being verified,
-   * so the fold answers rather than asks: this resolver holds exactly `states[0..i-1]`, is complete
-   * for the profile, and answers `Unknown DID` for anything else so a verifier can merge it into a
-   * wider registry for a chain's delegates. See {@link CapabilityAuthorisation}.
-   */
-  verifyCapability?: (params: VerifyCapabilityParams) => Promise<CapabilityAuthorisation>
-}
-
-/** What the fold hands {@link FoldOptions.verifyCapability} — see that member for each field. */
-export type VerifyCapabilityParams = {
-  cap: string
-  subject: string
-  target: string
-  subjectAtPosition: DIDMethodResolver
-}
-
-/**
- * Whether a verifier's answer is one this fold can act on. Total, and strict about both arms: an
- * `authorised: true` with no usable key would reach `verifyEventSignedBy` and throw, an
- * `authorised: false` with no reason would produce a non-string `FoldResult.reason`. Neither is
- * reachable from typed code, both from a stale build.
- *
- * The discriminant is compared against the literals, so a `'true'` string is malformed rather than
- * authorising. The key bytes go through `ArrayBuffer.isView`, not `instanceof Uint8Array`, which is
- * per-realm and would reject a correct answer built in a worker, a `vm` context, or across an
- * Electron bridge — the one way this guard could turn away a good answer.
- */
-function isCapabilityAuthorisation(value: unknown): value is CapabilityAuthorisation {
-  if (value == null || typeof value !== 'object') {
-    return false
-  }
-  const answer = value as Partial<CapabilityAuthorisation & { audienceKey: unknown }>
-  if (answer.authorised === true) {
-    const key = answer.audienceKey as ResolvedSigningKey | undefined
-    return key != null && typeof key.alg === 'string' && ArrayBuffer.isView(key.publicKey)
-  }
-  return answer.authorised === false && typeof answer.reason === 'string'
-}
 
 function fail(reason: string, index: number): FoldResult {
   return { ok: false, reason, index }
@@ -140,37 +116,6 @@ function fail(reason: string, index: number): FoldResult {
 
 /** What a log entry that is not a {@link SignedEvent} at all fails with. */
 const MALFORMED_EVENT = 'malformed event'
-
-// The fold's capability-revoke failure reasons. Exported because they already are a contract:
-// `@kokuin/capability` asserts on them by string literal across a package boundary. `FoldResult.reason`
-// stays a plain string, so these name values rather than widening the type.
-
-/** A verifier threw. The thrown message is appended after `: `, so match with `startsWith`. */
-export const CAPABILITY_VERIFIER_FAILED = 'capability verifier failed'
-
-/** A verifier answered with something that is not a {@link CapabilityAuthorisation}. */
-export const CAPABILITY_VERIFIER_MALFORMED_ANSWER =
-  'capability verifier returned a malformed answer'
-
-/**
- * The capability authorised the revoke and pinned an audience key, and somebody else signed the
- * event. Distinct from a rejected grant: the delegation is sound and the signature is not.
- */
-export const REVOKE_NOT_SIGNED_BY_AUDIENCE = 'revoke is not signed by the capability audience'
-
-/**
- * The sync fold met a capability-authorised revoke, which it cannot verify by construction — the
- * management tier working as designed, answered by `foldLogAsync`. The capability follows after `: `,
- * so match with `startsWith`. Exported so speculative folders (`resolveBranches`) can tell it from a
- * genuinely broken log.
- */
-export const CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD = 'capability-authorised revoke needs an async fold'
-
-/**
- * The async fold met a capability-authorised revoke with no `verifyCapability` configured. Same
- * shape: the log is fine and the call was not equipped for it.
- */
-export const CAPABILITY_REVOKE_NEEDS_VERIFIER = 'capability-authorised revoke needs a verifier'
 
 /**
  * Whether a log entry has the envelope shape everything downstream reads without checking. The
@@ -206,29 +151,19 @@ function isSignedEventShape(value: unknown): value is SignedEvent {
 type StepOutcome =
   | { status: 'ok'; state: KeyState; skipped?: boolean }
   | { status: 'fail'; reason: string }
-  /**
-   * A cap-bearing revoke: `state` is what to apply *if* the capability verifies, and `signed` is the
-   * event, whose signature must be checked against the key the capability authorises.
-   */
-  | {
-      status: 'capability'
-      cap: string
-      target: string
-      state: KeyState
-      signed: SignedEvent<RevokeEvent>
-    }
 
 /**
  * Validate one event against the state so far and produce the next state. Pure and total — every
- * rejection is a returned reason, never a throw. Criticality is decided here so both entry points
- * inherit it: an unknown critical event fails closed, an unknown `crit: false` event at the next
- * position is skipped (prior state carried forward unchanged), and anything else fails closed.
+ * rejection is a returned reason, never a throw. Criticality is decided here: an unknown critical
+ * event fails closed, an unknown `crit: false` event at the next position is skipped (prior state
+ * carried forward unchanged), and anything else fails closed.
  */
 function stepEvent(
   did: string,
   inception: InceptionEvent,
   signed: SignedEvent,
   prior: KeyState,
+  chain: ReadonlyArray<KeyState>,
 ): StepOutcome {
   if (!isSignedEventShape(signed)) {
     return { status: 'fail', reason: MALFORMED_EVENT }
@@ -266,13 +201,55 @@ function stepEvent(
       }
     }
 
-    // The deny set this rotate leaves behind: its own snapshot when it carries one (validated by
-    // `isPublishedRotate`), else the accumulated set carried forward.
-    const denyAfter = rot.event.d == null ? prior.deny : new Set(rot.event.d)
-    // A key this event *establishes* must not be one it denies. `d` and the carried-forward set are
-    // both attacker-influenced, so without this a single rotate could publish a key and deny it in
-    // one breath, and the `KeyState.deny` invariant would hold only by good manners. Failing the fold
-    // is the only answer: applying it leaves a head whose `k` resolves to nothing.
+    // Every rotate is a settlement: the state after it is its snapshot. A non-reset rotate must carry
+    // both halves — there is no "carry the prior state forward", since the prior state may hold epoch
+    // effects a chain-only verifier cannot reproduce, and half a snapshot would read as "no members"
+    // or "no denials" when its author meant neither. A reset without `m` is blind — `verifyReset`
+    // admits one only with `d` exactly `[]` — and a blind reset's state is empty.
+    if (!isReset && (rot.event.m == null || rot.event.d == null)) {
+      return { status: 'fail', reason: ROTATE_NEEDS_SNAPSHOT }
+    }
+    const snapshot: StateSnapshot =
+      rot.event.m == null
+        ? { members: [], deny: [] }
+        : { members: rot.event.m, deny: rot.event.d ?? [] }
+
+    // The generation's root keys and commitments, this event's included: a reset opens a new
+    // generation and is judged against its own keys alone; a rotate against every chain state of its
+    // generation. Skipped states repeat their prior, which the sets absorb.
+    const generation = isReset ? [] : chain.filter((state) => state.gen === prior.gen)
+    const generationKeys = new Set([...rot.event.k, ...rot.event.ka])
+    const generationCommitments = new Set(rot.event.n)
+    for (const state of generation) {
+      for (const key of [...state.keys, ...state.agreement]) generationKeys.add(key)
+      for (const commitment of state.next) generationCommitments.add(commitment)
+    }
+    // Tombstones: the retirements the prior state checkpointed — its key-target denials naming a key
+    // this generation's chain established. They must survive every later snapshot in the generation;
+    // read off the chain alone, so a pruned and a full store agree. Only a reset clears them.
+    const tombstones = new Set<string>()
+    if (!isReset) {
+      for (const entry of prior.deny) {
+        const key = keyFromTarget(entry)
+        if (key != null && generationKeys.has(key)) tombstones.add(entry)
+      }
+    }
+    const invalid = validateSnapshot({
+      snapshot,
+      generationKeys: [...generationKeys],
+      generationCommitments: [...generationCommitments],
+      recovery: prior.recovery,
+      tombstones,
+    })
+    if (invalid != null) {
+      return { status: 'fail', reason: invalid }
+    }
+
+    const denyAfter = new Set(snapshot.deny)
+    // A key this event *establishes* must not be one it denies. `d` is attacker-influenced wire data,
+    // so without this a single rotate could publish a key and deny it in one breath, and the
+    // `KeyState.deny` invariant would hold only by good manners. Failing the fold is the only answer:
+    // applying it leaves a head whose `k` resolves to nothing.
     const establishedButDenied = [...rot.event.k, ...rot.event.ka].find((key) =>
       denyAfter.has(keyTarget(key)),
     )
@@ -280,15 +257,24 @@ function stepEvent(
       return { status: 'fail', reason: `rotate establishes a denied key: ${establishedButDenied}` }
     }
 
+    // Only the fields a member carries: a snapshot entry is wire data and may hold anything else,
+    // which has no meaning to the fold and must not ride into the state as if it had.
+    const members = new Map<string, MemberState>()
+    for (const { did: memberDID, key, add, lease } of snapshot.members) {
+      const entry: MemberEntry = { did: memberDID, key, add, lease }
+      const denied = snapshot.deny.some((denial) => denialTargetsMember(denial, entry))
+      members.set(add, { ...entry, removed: false, effective: !denied })
+    }
+
+    const digest = digestOf(rot.event)
     return {
       status: 'ok',
       state: {
         did,
         gen: rot.event.g,
         seq: rot.event.s,
-        // New keys are one derivation index on from the last that established one — not at `s`, which
-        // any intervening revoke advanced. A reset opens a fresh generation, so its index restarts at
-        // 0 (also its `s`).
+        // New keys are one derivation index on from the last that established one. A reset opens a
+        // fresh generation, so its index restarts at 0 (also its `s`).
         keyGen: rot.event.g,
         keySeq: isReset ? 0 : prior.keySeq + 1,
         keys: rot.event.k,
@@ -297,7 +283,10 @@ function stepEvent(
         // Carried, never replaced — including across a reset. See `KeyState.recovery`.
         recovery: prior.recovery,
         deny: denyAfter,
-        digest: digestOf(rot.event),
+        members,
+        epoch: digest,
+        saturated: false,
+        digest,
       },
     }
   }
@@ -306,54 +295,12 @@ function stepEvent(
     return { status: 'fail', reason: 'event does not chain to the previous digest' }
   }
 
-  if (event.t === 'rev') {
-    const rev = signed as SignedEvent<RevokeEvent>
-    if (rev.event.g !== prior.gen || rev.event.s !== prior.seq + 1) {
-      return { status: 'fail', reason: 'sequence gap' }
-    }
-    // `x` goes into the deny set and, for a cap-authorised revoke, into the verifier as the resource
-    // asked for — where a wildcard grant would happily authorise denying `undefined`.
-    if (typeof rev.event.x !== 'string') {
-      return { status: 'fail', reason: 'revoke names no target' }
-    }
-    // `cap` crosses a callback boundary into caller-supplied code, the one place a wire value is
-    // handed to something that cannot have checked it. `x` above was checked and this was not.
-    if (rev.event.cap !== undefined && typeof rev.event.cap !== 'string') {
-      return { status: 'fail', reason: 'revoke capability is not a serialized token' }
-    }
-    // A key target may not name a key this position currently publishes. `resolve` is head-only, so
-    // a key still in `k` is one the profile asserts it signs with *now*; the event that stops that is
-    // `rotate` (whose pre-rotation commitment the leaked-key holder cannot forge), and denial is for
-    // what the rotate leaves behind — the historic path, which survives a rotate. So: rotate-then-deny.
-    // Allowing it would let one cap-authorised revoke (wildcard `res`) from a device that never held
-    // the sub-seed disable the root tier, and leave a head whose own `k` the resolver must refuse.
-    const deniedKey = keyFromTarget(rev.event.x)
-    if (
-      deniedKey != null &&
-      (prior.keys.includes(deniedKey) || prior.agreement.includes(deniedKey))
-    ) {
-      return { status: 'fail', reason: `revoke names a key the profile publishes: ${rev.event.x}` }
-    }
-    const deny = new Set(prior.deny)
-    deny.add(rev.event.x)
-    // `keyGen`/`keySeq` ride along in the spread: a revoke establishes no key, so the active position
-    // is still wherever the last icp/rot put it.
-    const state: KeyState = { ...prior, seq: rev.event.s, deny, digest: digestOf(rev.event) }
-
-    if (rev.event.cap != null) {
-      return { status: 'capability', cap: rev.event.cap, target: rev.event.x, state, signed: rev }
-    }
-    if (!verifyRevoke(rev, { digest: prior.digest, keys: prior.keys })) {
-      return { status: 'fail', reason: 'invalid revoke' }
-    }
-    return { status: 'ok', state }
-  }
-
-  // Unknown type. Criticality lives in the envelope so this decision needs no understanding of `t`;
-  // failing closed on a critical event stops a verifier that does not understand `rev` accepting a
-  // revoked device. Only an explicit `crit: false` skips: `crit` is wire data, an absent member is
-  // falsy, so a truthiness test would let an attacker claim the skip path by *omitting* the flag. The
-  // two reasons separate "declared critical" from "declared nothing".
+  // Unknown type — a `rev`, which the chain no longer carries, included. Criticality lives in the
+  // envelope so this decision needs no understanding of `t`; failing closed on a critical event stops
+  // a verifier that does not understand a type accepting what that type would have refused. Only an
+  // explicit `crit: false` skips: `crit` is wire data, an absent member is falsy, so a truthiness test
+  // would let an attacker claim the skip path by *omitting* the flag. The two reasons separate
+  // "declared critical" from "declared nothing".
   if (event.crit !== false) {
     return {
       status: 'fail',
@@ -397,10 +344,9 @@ export const TOO_MANY_UNKNOWN_EVENTS = 'too many unknown events'
 export const INTERNAL_FOLD_INVARIANT = 'internal fold invariant: missing event or prior state'
 
 /**
- * The running budget for skipped events, shared by both fold entry points so the two cannot drift.
- * `understood` counts validated events (the inception is the first), `skipped` the ones carried past.
- * Checked as each skipped event arrives, so a padded log stops folding at the point it exceeds the
- * budget rather than after.
+ * The running budget for skipped events. `understood` counts validated events (the inception is the
+ * first), `skipped` the ones carried past. Checked as each skipped event arrives, so a padded log
+ * stops folding at the point it exceeds the budget rather than after.
  */
 function skipBudget(): { understood(): void; skip(): boolean } {
   let understood = 1
@@ -421,12 +367,11 @@ type FoldInit =
   | { ok: false; result: FoldResult }
 
 /**
- * Validate the inception and seed the state array both fold entry points start from. Shared so the
- * sync/async split begins only where the two loops differ.
+ * Validate the inception and seed the state array the fold starts from.
  */
 function initFold(did: string, events: Array<SignedEvent>): FoldInit {
   if (!Array.isArray(events)) {
-    return { ok: false, result: fail('malformed log', 0) }
+    return { ok: false, result: fail(MALFORMED_LOG, 0) }
   }
   if (events.length === 0) {
     return { ok: false, result: fail('empty log', 0) }
@@ -464,25 +409,24 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
         next: first.event.n,
         recovery: first.event.r,
         deny: new Set<string>(),
+        // The inception opens the first epoch with an empty management set.
+        members: new Map<string, MemberState>(),
+        epoch: digestOf(first.event),
+        saturated: false,
         digest: digestOf(first.event),
       },
     ],
   }
 }
 
-/**
- * Fold a controller's log into per-position key state. `states[i]` is the state *after* `events[i]`,
- * which a verifier evaluating at position `i` must use — that is what makes the deny set
- * position-dependent: clearing a DID later never retroactively validates its earlier actions.
- *
- * Synchronous, so it stays usable on an offline verifier's apply path. A capability-authorised revoke
- * needs async verification, so it fails closed here rather than trusting an unchecked capability — use
- * `foldLogAsync` when one may be present.
- */
-export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
+/** The chain alone: one state per event, or the first event that does not fold. */
+function foldChain(
+  did: string,
+  events: Array<SignedEvent>,
+): { ok: true; states: Array<KeyState> } | { ok: false; result: FoldResult } {
   const init = initFold(did, events)
   if (!init.ok) {
-    return init.result
+    return init
   }
   const { inception, states } = init
   const budget = skipBudget()
@@ -490,19 +434,16 @@ export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
   for (let i = 1; i < events.length; i++) {
     const prior = states[i - 1]
     if (prior === undefined) {
-      return fail(INTERNAL_FOLD_INVARIANT, i)
+      return { ok: false, result: fail(INTERNAL_FOLD_INVARIANT, i) }
     }
     // `events[i]` may be a hole or `undefined`; `stepEvent` reports that as `malformed event`.
-    const outcome = stepEvent(did, inception, events[i] as SignedEvent, prior)
+    const outcome = stepEvent(did, inception, events[i] as SignedEvent, prior, states)
     if (outcome.status === 'fail') {
-      return fail(outcome.reason, i)
-    }
-    if (outcome.status === 'capability') {
-      return fail(`${CAPABILITY_REVOKE_NEEDS_ASYNC_FOLD}: ${outcome.cap}`, i)
+      return { ok: false, result: fail(outcome.reason, i) }
     }
     if (outcome.skipped) {
       if (!budget.skip()) {
-        return fail(TOO_MANY_UNKNOWN_EVENTS, i)
+        return { ok: false, result: fail(TOO_MANY_UNKNOWN_EVENTS, i) }
       }
     } else {
       budget.understood()
@@ -514,81 +455,43 @@ export function foldLog(did: string, events: Array<SignedEvent>): FoldResult {
 }
 
 /**
- * Async counterpart of {@link foldLog}. Shares {@link stepEvent}, so the only difference is a
- * capability-authorised revoke: this entry point awaits `options.verifyCapability` instead of failing
- * closed.
+ * Fold a controller's log into per-position key state. `states[i]` is the state *after* `chain[i]`,
+ * which a verifier evaluating at position `i` must use — that is what makes the deny set
+ * position-dependent: clearing a DID later never retroactively validates its earlier actions.
+ *
+ * The epoch events then merge into the chain's last state to give `head` (see `foldEpoch`). Only request
+ * limits can fail that half: more than {@link MAX_LOG_EVENTS} entries is `LOG_TOO_LARGE`, at
+ * index -1 because it is no event's fault, and so is more than `MAX_FAILED_SIGNATURES` signatures
+ * failing to verify (`TOO_MANY_FAILED_SIGNATURES`). Short of those, nothing in `log.events` can fail
+ * the fold -- a bad entry is counted and dropped -- so a relay cannot make a log unfoldable by padding
+ * it, only refused by forging past the limit, which no honest relay does.
+ *
+ * Synchronous, so it stays usable on an offline verifier's apply path.
  */
-export async function foldLogAsync(
-  did: string,
-  events: Array<SignedEvent>,
-  options: FoldOptions = {},
-): Promise<FoldResult> {
-  const init = initFold(did, events)
-  if (!init.ok) {
-    return init.result
+export function foldLog(did: string, log: ControllerLog): FoldResult {
+  if (!isControllerLog(log)) {
+    return fail(MALFORMED_LOG, 0)
   }
-  const { inception, states } = init
-  const budget = skipBudget()
-
-  for (let i = 1; i < events.length; i++) {
-    const prior = states[i - 1]
-    if (prior === undefined) {
-      return fail(INTERNAL_FOLD_INVARIANT, i)
-    }
-    // `events[i]` may be a hole or `undefined`; `stepEvent` reports that as `malformed event`.
-    const outcome = stepEvent(did, inception, events[i] as SignedEvent, prior)
-    if (outcome.status === 'fail') {
-      return fail(outcome.reason, i)
-    }
-    if (outcome.status === 'capability') {
-      if (options.verifyCapability == null) {
-        return fail(`${CAPABILITY_REVOKE_NEEDS_VERIFIER}: ${outcome.cap}`, i)
-      }
-      // The fold is total by contract; a verifier is caller-supplied code TypeScript cannot police
-      // across a package boundary or a stale build. Both ways it can break the contract — throwing,
-      // and answering with the wrong shape — come back as a `FoldResult` with a real reason, never an
-      // escaping exception or an `undefined` reason. Our adapter never throws; a third party's need
-      // not, and a throw is not evidence the capability authorises anything.
-      let authorisation: CapabilityAuthorisation
-      try {
-        authorisation = await options.verifyCapability({
-          cap: outcome.cap,
-          subject: did,
-          target: outcome.target,
-          // A copy: `states` keeps growing, and this resolver must keep answering for the position it
-          // was built at even if the verifier holds on to it.
-          subjectAtPosition: createStateResolver(did, [...states]),
-        })
-      } catch (cause) {
-        return fail(
-          `${CAPABILITY_VERIFIER_FAILED}: ${cause instanceof Error ? cause.message : String(cause)}`,
-          i,
-        )
-      }
-      if (!isCapabilityAuthorisation(authorisation)) {
-        return fail(CAPABILITY_VERIFIER_MALFORMED_ANSWER, i)
-      }
-      if (!authorisation.authorised) {
-        return fail(authorisation.reason, i)
-      }
-      // The capability authorises its audience, not its bearer. Checked here rather than left to the
-      // verifier so a verifier that simply forgot cannot make the fold accept a revoke from anyone
-      // who read the log — see `CapabilityAuthorisation`.
-      if (!verifyEventSignedBy(outcome.signed, authorisation.audienceKey)) {
-        return fail(REVOKE_NOT_SIGNED_BY_AUDIENCE, i)
-      }
-    }
-    if (outcome.status === 'ok' && outcome.skipped) {
-      if (!budget.skip()) {
-        return fail(TOO_MANY_UNKNOWN_EVENTS, i)
-      }
-    } else {
-      budget.understood()
-    }
-    states.push(outcome.state)
+  if (log.events.length > MAX_LOG_EVENTS) {
+    return fail(LOG_TOO_LARGE, -1)
   }
-
-  return { ok: true, states }
+  const chain = foldChain(did, log.chain)
+  if (!chain.ok) {
+    return chain.result
+  }
+  const { states } = chain
+  const merged = foldEpoch({ did, chainStates: states, events: log.events })
+  if (!merged.ok) {
+    return fail(merged.reason, -1)
+  }
+  return {
+    ok: true,
+    states,
+    head: merged.head,
+    applied: merged.applied,
+    pending: merged.pending,
+    rejected: merged.rejected,
+  }
 }
 
 export function keyStateAt(result: FoldResult, position: number): KeyState | undefined {
@@ -596,13 +499,28 @@ export function keyStateAt(result: FoldResult, position: number): KeyState | und
 }
 
 /**
- * The deny set of `state` with `drop` removed — what to pass as a rotate's `denySnapshot` to prune a
- * few entries rather than replace the set. A rotate's `d` replaces the accumulated set outright, so
- * pruning by hand means writing out everything that stays; miss one and the profile silently
- * un-revokes a device or un-retires a leaked key. This builds it from the fold's own answer instead.
- * Entries in `drop` the state does not carry are ignored.
+ * The state snapshot `state` holds, minus `drop` — what to pass as a rotate's `snapshot` to carry the
+ * state forward, pruning a few entries rather than replacing it. A rotate's snapshot replaces the
+ * state outright, so writing one by hand means writing out everything that stays; miss one and the
+ * profile silently un-revokes a device, un-retires a leaked key or dismisses a management member.
+ * This builds it from the fold's own answer instead: every member not removed (`drop.members` names
+ * members by `add` digest) and every deny entry (`drop.deny`). Entries in `drop` the state does not
+ * carry are ignored.
+ *
+ * Root's tooling owes its user the warnings the fold cannot give: dropping a holder DID denial
+ * re-authorises it, safe only once every authority that could have minted it a grant has ended; and
+ * a retired root key the chain shows but this deny set lacks is one to add, not to leave out.
  */
-export function pruneDenySet(state: KeyState, drop: Iterable<string>): Array<string> {
-  const dropped = new Set(drop)
-  return [...state.deny].filter((entry) => !dropped.has(entry))
+export function snapshotOf(
+  state: KeyState,
+  drop: { deny?: Iterable<string>; members?: Iterable<string> } = {},
+): StateSnapshot {
+  const droppedDeny = new Set(drop.deny ?? [])
+  const droppedMembers = new Set(drop.members ?? [])
+  const members: Array<MemberEntry> = []
+  for (const member of state.members.values()) {
+    if (member.removed || droppedMembers.has(member.add)) continue
+    members.push({ did: member.did, key: member.key, add: member.add, lease: member.lease })
+  }
+  return { members, deny: [...state.deny].filter((entry) => !droppedDeny.has(entry)) }
 }

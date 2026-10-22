@@ -5,11 +5,11 @@ already works. See `completed/2026-08-11-controller-key-events.complete.md` for 
 **Origin:** the `did:kokuin:` controller work, 2026-08-11 — items raised in review and adjudicated
 as accepted limits rather than defects.
 
-## A revoke signer callback, for the Ledger
+## A member signer callback, for non-extractable keys
 
-`createRevokeWithKey(privateKey, …)` lets a device holding a management capability author a revoke
-with its own signing identity rather than the profile seed. That was the point of the tier: the
-actor the capability-authorised revoke exists for is a hot device, not the cold root.
+A management member signs its epoch events (`createRenew`, `createRemove`, `createRevoke`) with
+`EpochSigner`'s `{ member: { privateKey, add } }`. That was the point of the tier: the actor that
+manages edge devices is a hot device, not the cold root.
 
 It takes a **private key**, so any signer that never exposes one cannot use it — the Ledger, and any
 WebCrypto non-extractable key. That shape was chosen because nothing in the stack can sign raw
@@ -21,17 +21,6 @@ Worth noting for whoever takes it: **the firmware can already do this.** `INS.SI
 raw bytes on-device; only the host-side `@kokuin/ledger-device` withholds it, exposing `signToken`
 alone. So this is a host-side overload plus an exposed instruction, not a firmware change. Additive
 either way — the private-key form keeps working.
-
-## Two anchors hold the position-refusal guard
-
-The capability verifier refuses a capability-authorised revoke that arrives without a log position,
-rather than falling back to the caller's registry — which was the position bypass verbatim, and is
-reachable by version skew as well as by direct call.
-
-The guard is unreachable from typed code by design, so no type-honest mutation can kill it; only the
-cast its test uses. It is pinned by exactly two things: that test, and the row in the reason-string
-test that writes the refusal sentence out longhand. Deleting both together would go unnoticed. If a
-cheaper structural anchor exists, it is worth adding.
 
 ## The guard rule has a blind spot
 

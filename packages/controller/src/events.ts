@@ -1,14 +1,21 @@
-import type { DIDString, ResolvedSigningKey } from '@kokuin/token'
+import type { DIDString } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { base64urlnopad } from '@scure/base'
 
 import { canonicalBytes, digestOf, isCanonicalizable } from './canonical.js'
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from './derivation.js'
+import type { EpochEventCommon } from './epoch-events.js'
 import { encodeKey, tryDecodeKey } from './keys.js'
 
 export const DID_PREFIX = 'did:kokuin:'
 
-export type EventType = 'icp' | 'rot' | 'rev'
+/**
+ * The root chain's event types, and only those: it holds the key-establishing events. Management
+ * actions — member adds, renewals, removals and revokes — live in the epoch a chain event opens,
+ * never on the chain. A chain entry of any other `t`, a `rev` from an older log included, takes the
+ * fold's unknown-type path, so a critical one fails the fold closed.
+ */
+export type EventType = 'icp' | 'rot'
 
 // Guard rule this file applies throughout: a total guard stays when the shape it rejects can reach
 // it from `JSON.parse` (a log arrives from a peer or untrusted store, so TypeScript rules nothing
@@ -57,7 +64,11 @@ export type InceptionEvent = EventCommon & {
   r: string
 }
 
-export type SignedEvent<E extends EventCommon = EventCommon> = {
+/**
+ * Generic over both tiers: a root-chain event and an epoch event share the envelope and signatures
+ * over canonical bytes, and nothing else.
+ */
+export type SignedEvent<E extends EventCommon | EpochEventCommon = EventCommon> = {
   event: E
   /** base64url ed25519 signatures over the canonical event bytes, positional against `event.k`. */
   sigs: Array<string>
@@ -68,7 +79,10 @@ export type SignedEvent<E extends EventCommon = EventCommon> = {
   recoveryKey?: string
 }
 
-export function signEvent(event: EventCommon, privateKeys: Array<Uint8Array>): Array<string> {
+export function signEvent(
+  event: EventCommon | EpochEventCommon,
+  privateKeys: Array<Uint8Array>,
+): Array<string> {
   const bytes = canonicalBytes(event)
   return privateKeys.map((key) => base64urlnopad.encode(ed25519.sign(bytes, key)))
 }
@@ -93,7 +107,7 @@ function isEnforcedThreshold(threshold: unknown, keys: Array<string>): boolean {
  * it is next read (a non-array `n` would throw in the *next* rotate; a non-array `k` is a `KeyState`
  * whose type lies).
  */
-function isKeyList(value: unknown): value is Array<string> {
+export function isKeyList(value: unknown): value is Array<string> {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
 }
 
@@ -124,7 +138,7 @@ function verifyAgreementKeys(ka: Array<string>): boolean {
  * canonical encoding has no bytes for a signature to be over.
  */
 export function verifySignatures(
-  event: EventCommon,
+  event: EventCommon | EpochEventCommon,
   sigs: Array<string>,
   keys: Array<string>,
 ): boolean {
@@ -156,35 +170,6 @@ export function verifySignatures(
     }
   }
   return true
-}
-
-/**
- * Whether one of an event's signatures was made by `key` — the counterpart of
- * {@link verifySignatures} for a signer the *event* does not name (resolved from a DID elsewhere). A
- * capability-authorised revoke needs exactly this: its author is the capability's `aud`, which the
- * fold cannot resolve, so it is handed the key and checks the signature itself.
- *
- * Total, EdDSA only — all {@link signEvent} produces. An ES256 audience therefore cannot author a
- * revoke, which fails closed until events grow a second signature algorithm.
- */
-export function verifyEventSignedBy(signed: SignedEvent, key: ResolvedSigningKey): boolean {
-  // Both arms are unkillable through the fold (`isSignedEventShape` already established `sigs` is a
-  // string array; a non-EdDSA key would fail `ed25519.verify`; `[].some()` is `false`) and both stay
-  // by the file's guard rule: a direct caller reaches this with a parsed body.
-  if (key.alg !== 'EdDSA' || signed.sigs.length === 0) {
-    return false
-  }
-  if (!isCanonicalizable(signed.event)) {
-    return false
-  }
-  const bytes = canonicalBytes(signed.event)
-  return signed.sigs.some((sig) => {
-    try {
-      return ed25519.verify(base64urlnopad.decode(sig), bytes, key.publicKey)
-    } catch {
-      return false
-    }
-  })
 }
 
 /**
@@ -263,6 +248,44 @@ export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string
   return verifySignatures(signed.event, signed.sigs, signed.event.k)
 }
 
+/**
+ * One management member as a snapshot carries it: the DID it acts as, the Ed25519 key that DID is
+ * pinned to (in the spelling `k` uses), the digest of the `add` that admitted it — its incarnation,
+ * which renewals and removals name — and its lease end in unix seconds.
+ *
+ * The fold never reads `lease` against a clock: it bounds the grants the member mints, nothing on the
+ * log. Only a removal ends a member's log authority.
+ */
+export type MemberEntry = { did: string; key: string; add: string; lease: number }
+
+/**
+ * The whole management state a root-chain event leaves behind: the member set and the deny set. The
+ * state after the event **is** this snapshot — nothing before it contributes — so it is root's
+ * chosen replacement state, not a proven merge of everything that happened before it.
+ */
+export type StateSnapshot = { members: Array<MemberEntry>; deny: Array<string> }
+
+/**
+ * The shape of one snapshot member, nothing more: whether the DID carries the key, whether the key
+ * is Ed25519, and whether it collides with a root key are rules over the whole snapshot and its chain,
+ * checked by the fold. `lease` must be a non-negative safe integer — unix seconds — because grants
+ * compare `exp` against it, and a fraction, a negative or an unsafe integer has no single reading.
+ */
+export function isMemberEntry(value: unknown): value is MemberEntry {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const entry = value as Record<string, unknown>
+  return (
+    typeof entry.did === 'string' &&
+    typeof entry.key === 'string' &&
+    typeof entry.add === 'string' &&
+    typeof entry.lease === 'number' &&
+    Number.isSafeInteger(entry.lease) &&
+    entry.lease >= 0
+  )
+}
+
 export type RotateEvent = EventCommon & {
   t: 'rot'
   /** Keys the prior event pre-committed, now revealed, multicodec-tagged and multibase-encoded. */
@@ -282,34 +305,13 @@ export type RotateEvent = EventCommon & {
    * {@link isPublishedRotate}). Not surfaced in `KeyState`: it belongs to a position, not the keys.
    */
   a?: string
-  /** Deny-set snapshot. Replaces the accumulated set, pruning it. */
+  /**
+   * Member half of the state snapshot — see {@link StateSnapshot}. Required, with `d`, on every
+   * rotate that is not a reset: every rotate is a settlement. A reset carries both or neither.
+   */
+  m?: Array<MemberEntry>
+  /** Deny half of the state snapshot. Replaces the set the prior state held outright. */
   d?: Array<string>
-}
-
-export type CreateRotateOptions = {
-  seal?: string
-  /**
-   * The complete deny set this rotate leaves behind — **a replacement, not an addition**. `d` present
-   * replaces the accumulated set, `d` absent carries it forward. A caller writing one entry meaning
-   * "also deny this" silently drops every accumulated entry — un-revoking devices and un-retiring
-   * leaked keys — with no error and nothing in the log saying anything was lost. Build it from the
-   * folded state with {@link pruneDenySet}. `[]` is the deliberate "clear everything" a cold rotate
-   * does to recover from a bad management tier. A rotate cannot establish a key its own snapshot
-   * denies; the fold refuses such an event.
-   */
-  denySnapshot?: Array<string>
-  /**
-   * Where the currently-active authority key lives — the position of the last `icp`/`rot`, i.e. the
-   * fold's `keyGen`/`keySeq`.
-   *
-   * Defaults to `prior`'s position, right only while sequence and derivation index still coincide: a
-   * `rev` advances `s` and establishes no key, so after the first revoke of a generation the two part
-   * company **and never rejoin**. Every rotate after a revoke needs this, not just the one directly
-   * on it. Optional rather than required because {@link createRotate} verifies the key it reveals
-   * against `prior`'s commitment and throws on disagreement — provably right where omitted, an error
-   * (not an unfoldable event) where not. Take it from `KeyState.keyGen`/`keySeq`.
-   */
-  keyPosition?: { gen: number; seq: number }
 }
 
 export type CreateRotateParams = {
@@ -317,32 +319,46 @@ export type CreateRotateParams = {
   profile: number
   did: string
   prior: EventCommon
-  options?: CreateRotateOptions
+  /**
+   * The complete state this rotate leaves behind — **a replacement, not an addition**. The state
+   * after a rotate is its snapshot and nothing before it, so a caller writing one deny entry meaning
+   * "also deny this" silently drops every other entry and every member — un-revoking devices and
+   * dismissing the management tier — with nothing in the log saying anything was lost. Build it from
+   * the folded state with {@link snapshotOf}, which also carries every member forward.
+   *
+   * Required: there is no "carry the prior state forward" rotate, because the prior state may hold
+   * epoch effects a verifier holding only the chain cannot reproduce. Two rules the fold enforces
+   * here: a member may not pin a key on, or committed by, this generation's root chain; and a
+   * retired-key denial an earlier rotate in the generation carried may not be dropped.
+   */
+  snapshot: StateSnapshot
+  /** Seal: an anchored external digest — see {@link RotateEvent.a}. */
+  seal?: string
 }
 
 /**
  * A rotate reveals the keys the prior event pre-committed and commits the next set, signed by the
  * newly revealed keys (per KERI — what makes a stolen current key unable to rotate). Reproducible
- * from the seed alone unless it carries a seal or deny snapshot.
+ * from the seed and the snapshot unless it carries a seal.
+ *
+ * The root chain holds only key-establishing events, so a rotate's sequence and its derivation index
+ * are the same number: the key it reveals sits one past `prior`'s position.
  *
  * **Throws rather than emitting an event the fold will reject.** The revealed key must be the one
- * `prior` committed in `n`, and `options.keyPosition` decides which key gets derived — so a wrong
- * position used to produce a well-formed, signed event no fold would accept. The two are checked
- * against each other here. When `prior` carries no commitment (a `rev`), `keyPosition` is required:
- * the default would derive a key one past the *revoke*, which nothing committed, and this is the one
- * case unverifiable from `prior` alone.
+ * `prior` committed in `n`, which a prior not built from this chain's own events need not be.
  */
 export function createRotate({
   seed,
   profile,
   did,
   prior,
-  options = {},
+  snapshot,
+  seal,
 }: CreateRotateParams): SignedEvent<RotateEvent> {
   const gen = prior.g
   const seq = prior.s + 1
-  // The commitment the revealed key must match, when `prior` carries one. An `icp`/`rot` does; a
-  // `rev` and any hand-built prior of another shape does not.
+  // The commitment the revealed key must match. Every `icp`/`rot` carries one; a hand-built prior of
+  // another shape does not.
   const commitment = (prior as { n?: unknown }).n
   const committed = isKeyList(commitment) && commitment.length > 0 ? commitment : undefined
   // The checks below only have an answer when this seed *is* the log's root — otherwise the
@@ -350,20 +366,14 @@ export function createRotate({
   // there would stop this generator building a foreign rotate at all (which the conformance suite
   // legitimately does); the fold is the layer that rejects it.
   const root = didFromInception(inceptionEvent(seed, profile)) === did
-  if (root && committed == null && options.keyPosition == null) {
-    throw new Error(
-      'createRotate: prior event pre-commits no key, so keyPosition is required — pass the fold`s ' +
-        'KeyState.keyGen / keySeq for the position the last icp/rot established',
-    )
+  if (root && committed == null) {
+    throw new Error('createRotate: prior event pre-commits no key, so there is nothing to reveal')
   }
-  // The key this rotate reveals is the one the last icp/rot committed, one past *its* position; the
-  // agreement key lands at the same index so `KeyState.keyGen`/`keySeq` names it for a recipient
-  // re-deriving from the seed. See `CreateRotateOptions.keyPosition` for why these diverge from `s`.
-  const keyGen = options.keyPosition?.gen ?? gen
-  const keySeq = (options.keyPosition?.seq ?? prior.s) + 1
-  const current = deriveKeyPair(seed, authorityPath(profile, keyGen, keySeq), 'EdDSA')
-  const next = deriveKeyPair(seed, authorityPath(profile, keyGen, keySeq + 1), 'EdDSA')
-  const agreement = deriveKeyPair(seed, agreementPath(profile, keyGen, keySeq), 'X25519')
+  // The agreement key lands at the same index as the authority key, so `KeyState.keyGen`/`keySeq`
+  // names both for a recipient re-deriving from the seed.
+  const current = deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA')
+  const next = deriveKeyPair(seed, authorityPath(profile, gen, seq + 1), 'EdDSA')
+  const agreement = deriveKeyPair(seed, agreementPath(profile, gen, seq), 'X25519')
 
   if (root && committed != null) {
     // Exactly what `verifyRotate` checks, checked here where the caller can still act. Arity first:
@@ -371,11 +381,8 @@ export function createRotate({
     const revealed = encodeKey(current.publicKey, 'EdDSA')
     if (committed.length !== 1 || digestOf(revealed) !== committed[0]) {
       throw new Error(
-        `createRotate: the key at (gen ${keyGen}, seq ${keySeq}) is not the one the prior event ` +
-          'pre-committed — pass options.keyPosition naming where the last icp/rot established a ' +
-          'key (the fold`s KeyState.keyGen / keySeq). A revoke advances `s` without establishing ' +
-          'one, so `s` and the derivation index part company at the first revoke of a generation ' +
-          'and stay apart.',
+        `createRotate: the key at (gen ${gen}, seq ${seq}) is not the one the prior event ` +
+          'pre-committed — the prior is not an event of this log',
       )
     }
   }
@@ -393,8 +400,9 @@ export function createRotate({
     n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
     kt: 1,
     nt: 1,
-    a: options.seal,
-    d: options.denySnapshot,
+    a: seal,
+    m: snapshot.members,
+    d: snapshot.deny,
   }
 
   return { event, sigs: signEvent(event, [current.privateKey]) }
@@ -402,9 +410,14 @@ export function createRotate({
 
 /**
  * Whether the members a rotate publishes into the folded state have the shape the fold will carry.
- * Shared by {@link verifyRotate} and {@link verifyReset}: both hand `k`/`n`/`d` to the next
- * `KeyState`, and a reset verifies against the recovery key not `k`, so without this it could publish
- * a key set of any shape.
+ * Shared by {@link verifyRotate} and {@link verifyReset}: both hand `k`/`n` to the next `KeyState`,
+ * and a reset verifies against the recovery key not `k`, so without this it could publish a key set
+ * of any shape.
+ *
+ * The snapshot (`m`/`d`) is not judged here: whether it is well formed, disjoint from the root keys
+ * and keeps the generation's retired keys depends on the chain it lands on, so the fold judges it
+ * with a reason of its own (see `validateSnapshot`). These verifiers answer only whether the event
+ * is signed by, and chains to, what it claims.
  *
  * `r` is refused outright — the runtime half of removing it from {@link RotateEvent}. A member the
  * fold silently ignored would be the field-that-lies this removal is about: a reader seeing `r` on a
@@ -419,10 +432,7 @@ function isPublishedRotate(event: RotateEvent): boolean {
     // A seal is opaque but still a digest string on the wire (see `RotateEvent.a`); a non-string one
     // is a member a reader would have to guess at.
     (event.a == null || typeof event.a === 'string') &&
-    (event as { r?: unknown }).r === undefined &&
-    // The snapshot replaces the accumulated set, so the fold builds a `Set` from it: a scalar `d`
-    // throws, a string `d` would silently become a set of characters.
-    (event.d == null || isKeyList(event.d))
+    (event as { r?: unknown }).r === undefined
   )
 }
 
@@ -461,9 +471,19 @@ export function verifyRotate(
  *
  * Anchored to the inception, not the log head: the recovery key lives on the root-retained
  * derivation branch and its digest is committed in the deterministic inception, so a restored
- * mnemonic can author one with no log knowledge or availability. Carries no options — no seal, `d`
- * always `[]` — so a reset is a pure function of `(seed, profile, gen)`, and two blind resets at one
- * generation produce identical bytes that resolve as idempotent re-derivation, not duplicity.
+ * mnemonic can author one with no log knowledge or availability.
+ *
+ * **Blind** (no `snapshot`): no seal, `d: []` and no `m`, so a blind reset is a pure function of
+ * `(seed, profile, gen)` and two blind resets at one generation produce identical bytes that resolve
+ * as idempotent re-derivation, not duplicity. The new epoch starts empty and root re-adds members.
+ * This is the path for a root that does not know the log's state.
+ *
+ * **With a snapshot**: the same reset carries the member and deny sets, so one recovery-key
+ * signature is the whole recovery. Two resets at one generation with different bytes are then
+ * duplicity — which only the recovery-key holder can cause, and a reset at a higher generation
+ * resolves. Members keep their `add` references, but every grant names its generation, so every
+ * grant minted under the prior one still dies. The snapshot is checked against the **new**
+ * generation's keys, and no retired-key denial of the old one need carry over.
  *
  * The root need not know the current generation, only eventually exceed it (no attacker can author a
  * competing reset at any generation): a blind root starts at `gen = 1` and retries higher if it
@@ -473,6 +493,7 @@ export function createReset(
   seed: Uint8Array,
   profile: number,
   gen: number,
+  snapshot?: StateSnapshot,
 ): SignedEvent<RotateEvent> {
   if (gen < 1) {
     throw new Error(`Reset: gen must be >= 1, got ${gen}`)
@@ -498,8 +519,16 @@ export function createReset(
     n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
     kt: 1,
     nt: 1,
-    // A reset clears the deny set: every capability under the prior generation is gone anyway.
-    d: [],
+  }
+  if (snapshot == null || (snapshot.members.length === 0 && snapshot.deny.length === 0)) {
+    // A blind reset clears the deny set: every capability under the prior generation is gone anyway.
+    // Written as `d: []` rather than omitted so a blind reset keeps the bytes it always had. An empty
+    // snapshot is the same state and is written the same way, so a retry with one is byte-identical
+    // to a blind reset rather than a second encoding of it.
+    event.d = []
+  } else {
+    event.m = snapshot.members
+    event.d = snapshot.deny
   }
 
   return {
@@ -526,11 +555,23 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
   if (!isPublishedRotate(event)) {
     return false
   }
-  // A reset carries an empty deny set and no seal (see {@link createReset}) — the idempotency the
-  // branch selector relies on. Only the recovery-key holder can sign one, so this is not an
-  // attacker's event; it is the rule that makes "blind reset" mean the same bytes for every holder of
-  // the seed. Enforced here too so a reset carrying a non-empty `d` or a seal cannot fold as valid.
-  if (event.a !== undefined || event.d == null || event.d.length !== 0) {
+  // A reset carries no seal, and either a whole snapshot (`m` and `d` together) or none. Without `m`
+  // it is blind, and a blind reset's `d` is exactly the `[]` {@link createReset} writes: one encoding,
+  // so "blind reset" means the same bytes for every holder of the seed — the idempotency the branch
+  // selector relies on. For the same reason an empty snapshot (`m: []` with `d: []`) is refused: it is
+  // the blind state spelled a second way. Only the recovery-key holder can sign one, so this is not an
+  // attacker's event; it is the rule that keeps one state from having two resets at a generation,
+  // and half a snapshot (`d` with no `m`, or `m` with no `d`) from folding as a reset that silently
+  // dismissed every member or cleared every denial. The snapshot's contents are the fold's to judge,
+  // against the new generation's keys.
+  if (event.a !== undefined) {
+    return false
+  }
+  const emptyDeny = isKeyList(event.d) && event.d.length === 0
+  if (event.m == null ? !emptyDeny : event.d == null) {
+    return false
+  }
+  if (Array.isArray(event.m) && event.m.length === 0 && emptyDeny) {
     return false
   }
   if (!Array.isArray(sigs) || sigs.length !== 1) {
@@ -549,153 +590,24 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
 }
 
 /**
- * How a `rev` target names a **key** rather than a DID: `#<the multibase key exactly as it appears in
+ * How a deny entry names a **key** rather than a DID: `#<the multibase key exactly as it appears in
  * `k`>`, the same spelling a token's `kid` uses. One spelling for one thing — unambiguous against
  * `did:…` on sight, so a bare multibase string is not a second accepted encoding, any more than for
  * `kid`.
  */
 export const KEY_TARGET_PREFIX = '#'
 
-/** The deny-set spelling of `key` — what {@link createRevoke} takes as its target to deny it. */
+/** The deny-set spelling of `key` — what a snapshot's `d` carries to deny it. */
 export function keyTarget(key: string): string {
   return `${KEY_TARGET_PREFIX}${key}`
 }
 
 /**
- * The key a `rev` target names, or `null` when it names a DID instead. Total on any string: a target
- * of neither form lands in the deny set as the opaque identifier it is. The body is not validated
+ * The key a deny entry names, or `null` when it names a DID instead. Total on any string: an entry of
+ * neither form lands in the deny set as the opaque identifier it is. The body is not validated
  * against multibase — a `#` naming nothing denies nothing, exactly as a `did:` naming nobody does,
  * and rejecting it would only add a way for a well-formed log to stop folding.
  */
 export function keyFromTarget(target: string): string | null {
   return target.startsWith(KEY_TARGET_PREFIX) ? target.slice(KEY_TARGET_PREFIX.length) : null
-}
-
-export type RevokeEvent = EventCommon & {
-  t: 'rev'
-  /**
-   * What to deny, in one of two spellings, never a capability `jti`.
-   *
-   * A **DID** (`did:…`) denies a holder: no capability whose `aud` is that DID is valid from this
-   * position onward — one entry covers a device's life. A **key** ({@link keyTarget}) denies a
-   * signer: nothing this profile signed with that key verifies from this position onward, and it
-   * names a key of *this* profile (the deny set is the subject's own).
-   *
-   * One field carries both because they are enforced at opposite ends of the same set: the DID form
-   * by `@kokuin/capability` against a capability's `aud`, the key form by the resolver against the
-   * key a `kid` selects. Neither spelling can be mistaken for the other.
-   */
-  x: string
-  /** A serialized capability authorising a non-authority signer. Verified in the fold. */
-  cap?: string
-}
-
-export type CreateRevokeParams = {
-  seed: Uint8Array
-  profile: number
-  did: string
-  prior: EventCommon
-  target: string
-  keyPosition: { gen: number; seq: number }
-  /** A serialized capability authorising this signer, when the signer is not an authority key. */
-  cap?: string
-}
-
-/**
- * Revoke a DID or a key — see {@link RevokeEvent.x} for the two spellings.
- *
- * Naming the device DID rather than a `jti` makes this one entry per device for its life — covering
- * capabilities the verifier has never seen and future re-mints, where per-`jti` revocation would grow
- * with every renewal. A key target retires a leaked key for material it *already* signed: `rotate`
- * only retires it for new issuance (`resolve` is head-only), but already-issued material verifies
- * through `resolveHistoric`, which survives a rotate by design, so a thief holding a rotated-away key
- * could still mint one that verified. Retirement is therefore explicit, keeping the promise that a
- * routine rotate does not invalidate already-issued material intact.
- *
- * **A key the profile currently publishes cannot be denied** — the fold rejects it (see the `rev`
- * branch of `stepEvent`). Rotate first, then deny the key the rotate retired.
- *
- * `prior` answers "next sequence, what to chain to"; `keyPosition` separately answers "where the
- * active authority key lives". They coincide only for an `icp`/`rot` prior — a `rev` establishes no
- * key, so a revoke on a revoke still points at the last `icp`/`rot` position.
- */
-export function createRevoke({
-  seed,
-  profile,
-  did,
-  prior,
-  target,
-  keyPosition,
-  cap,
-}: CreateRevokeParams): SignedEvent<RevokeEvent> {
-  const current = deriveKeyPair(
-    seed,
-    authorityPath(profile, keyPosition.gen, keyPosition.seq),
-    'EdDSA',
-  )
-  return createRevokeWithKey({ privateKey: current.privateKey, did, prior, target, cap })
-}
-
-export type CreateRevokeOptions = {
-  /** A serialized capability authorising this signer, when the signer is not an authority key. */
-  cap?: string
-}
-
-export type CreateRevokeWithKeyParams = {
-  privateKey: Uint8Array
-  did: string
-  prior: EventCommon
-  target: string
-  /** A serialized capability authorising this signer, when the signer is not an authority key. */
-  cap?: string
-}
-
-/**
- * Revoke a DID, signing with an Ed25519 key the caller already holds rather than deriving one from
- * the profile seed.
- *
- * The builder for the actor a capability-authorised revoke exists for: a device holding a management
- * capability, which by design never receives the profile sub-seed. `createRevoke` can only sign as
- * the profile itself, so without this the feature had no API but re-implementing the signing
- * convention per consumer — the duplication `createControllerCapabilityVerifier` prevents on the
- * verifying side.
- *
- * The key is the audience key the capability pins in `cnf`, and the fold checks the event's signature
- * against exactly that, so the two must match. Ed25519 only. Takes the private key rather than an
- * identity because no identity type here signs raw bytes — a `KeyStore` entry hands back exactly this
- * shape. Byte-identical to {@link createRevoke} given the same key; no `keyPosition`, which exists
- * only to derive a key from a seed.
- */
-export function createRevokeWithKey({
-  privateKey,
-  did,
-  prior,
-  target,
-  cap,
-}: CreateRevokeWithKeyParams): SignedEvent<RevokeEvent> {
-  const event: RevokeEvent = {
-    v: 1,
-    t: 'rev',
-    i: did,
-    g: prior.g,
-    s: prior.s + 1,
-    p: digestOf(prior),
-    crit: true,
-    x: target,
-    cap,
-  }
-
-  return { event, sigs: signEvent(event, [privateKey]) }
-}
-
-/** Authority-signed revoke. Capability-authorised revokes are checked in the fold. */
-export function verifyRevoke(
-  signed: SignedEvent<RevokeEvent>,
-  prior: { digest: string; keys: Array<string> },
-): boolean {
-  const { event, sigs } = signed
-  if (event.t !== 'rev' || event.p !== prior.digest) {
-    return false
-  }
-  return verifySignatures(event, sigs, prior.keys)
 }

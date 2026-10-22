@@ -5,15 +5,16 @@ import { digestOf } from '../src/canonical.js'
 import { authorityPath, deriveKeyPair } from '../src/derivation.js'
 import {
   createInception,
-  createRevoke,
   createRotate,
   didFromInception,
   keyTarget,
+  type MemberEntry,
   type SignedEvent,
 } from '../src/events.js'
-import { foldLog, MAX_SKIPPED_SLACK, pruneDenySet, TOO_MANY_UNKNOWN_EVENTS } from '../src/fold.js'
+import { foldLog, MAX_SKIPPED_SLACK, snapshotOf, TOO_MANY_UNKNOWN_EVENTS } from '../src/fold.js'
 import { createMemoryLogStore, LOG_NOT_AUTHORITATIVE } from '../src/history.js'
 import { createControllerIdentityWithKey } from '../src/identity.js'
+import { encodeKey } from '../src/keys.js'
 import { createControllerResolver } from '../src/resolver.js'
 import { resolveBranches } from '../src/supersede.js'
 
@@ -45,6 +46,16 @@ function build() {
   return { inception, did: didFromInception(inception.event) }
 }
 
+/** A rotate on `prior` whose snapshot denies `deny` and carries `members`. */
+function settle(
+  did: string,
+  prior: SignedEvent['event'],
+  deny: Array<string>,
+  members: Array<MemberEntry> = [],
+): SignedEvent {
+  return createRotate({ seed, profile: 0, did, prior, snapshot: { members, deny } })
+}
+
 /** An event of a type no version understands, unsigned, declaring itself skippable. */
 function padding(did: string, prior: SignedEvent, index: number): SignedEvent {
   return {
@@ -62,32 +73,13 @@ function padding(did: string, prior: SignedEvent, index: number): SignedEvent {
 }
 
 describe('a keyless peer cannot switch duplicity detection off', () => {
-  test('a forged cap-bearing branch is counted, not fatal', () => {
+  test('a forged unsigned branch is filtered, not fatal', () => {
     const { inception, did } = build()
-    // Two honest, conflicting revokes at position 1: a genuine fork, and the finding that matters.
+    // Two honest, conflicting settlements at position 1: a genuine fork, and the finding that
+    // matters.
     const honest = [
-      [
-        inception,
-        createRevoke({
-          seed,
-          profile: 0,
-          did,
-          prior: inception.event,
-          target: 'did:key:zA',
-          keyPosition: { gen: 0, seq: 0 },
-        }),
-      ],
-      [
-        inception,
-        createRevoke({
-          seed,
-          profile: 0,
-          did,
-          prior: inception.event,
-          target: 'did:key:zB',
-          keyPosition: { gen: 0, seq: 0 },
-        }),
-      ],
+      [inception, settle(did, inception.event, ['did:key:zA'])],
+      [inception, settle(did, inception.event, ['did:key:zB'])],
     ]
 
     // CONTROL — the fork alone. This is what must survive the attacker's presence.
@@ -95,10 +87,9 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
     expect(control.ok).toBe(false)
     if (control.ok) return
     expect(control.failure).toBe('duplicity')
-    expect(control.unverified).toBe(0)
 
-    // ATTACK — no key material at all. The inception is public, and a `cap`-bearing revoke reaches
-    // the verifier path before any signature check, so `sigs` can be empty and `cap` arbitrary.
+    // ATTACK — no key material at all. The inception is public, so a peer can append an event with
+    // no signatures to a copy of it and present the result as a branch.
     const forged: SignedEvent = {
       event: {
         v: 1,
@@ -109,7 +100,6 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
         p: digestOf(inception.event),
         crit: true,
         x: 'did:key:zC',
-        cap: 'not-even-a-token',
       } as never,
       sigs: [],
     }
@@ -118,13 +108,20 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
     if (attacked.ok) return
     expect(attacked.failure, 'the fork is still reported').toBe('duplicity')
     expect(attacked.duplicity).toEqual(control.duplicity)
-    // And the branch nobody signed is declared rather than dropped in silence.
-    expect(attacked.unverified).toBe(1)
   })
 
   test('the forged branch cannot become the winner', () => {
     const { inception, did } = build()
-    const honest = [inception, createRotate({ seed, profile: 0, did, prior: inception.event })]
+    const honest = [
+      inception,
+      createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: inception.event,
+        snapshot: { members: [], deny: [] },
+      }),
+    ]
     const forged: SignedEvent = {
       event: {
         v: 1,
@@ -135,7 +132,6 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
         p: digestOf(inception.event),
         crit: true,
         x: 'did:key:zC',
-        cap: 'not-even-a-token',
       } as never,
       sigs: [],
     }
@@ -143,7 +139,6 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.winner).toBe(honest)
-    expect(result.unverified).toBe(1)
   })
 })
 
@@ -157,7 +152,7 @@ describe('unsigned padding cannot grow a log without limit', () => {
       inception,
       ...Array.from({ length: MAX_SKIPPED_SLACK }, (_, i) => padding(did, inception, i)),
     ]
-    const controlResult = foldLog(did, within)
+    const controlResult = foldLog(did, { chain: within, events: [] })
     expect(controlResult.ok, 'padding within the slack still folds').toBe(true)
 
     // ATTACK — the same events, past the budget. Before this bound, 500 of them folded clean.
@@ -165,7 +160,7 @@ describe('unsigned padding cannot grow a log without limit', () => {
       inception,
       ...Array.from({ length: MAX_SKIPPED_SLACK + 2 }, (_, i) => padding(did, inception, i)),
     ]
-    const attacked = foldLog(did, beyond)
+    const attacked = foldLog(did, { chain: beyond, events: [] })
     expect(attacked.ok).toBe(false)
     if (attacked.ok) return
     expect(attacked.reason).toBe(TOO_MANY_UNKNOWN_EVENTS)
@@ -175,105 +170,114 @@ describe('unsigned padding cannot grow a log without limit', () => {
     // The ceiling is proportional to work the verifier was going to do anyway, so a long honest log
     // is not held to the same absolute count as a two-event one.
     const { inception, did } = build()
-    const rot = createRotate({ seed, profile: 0, did, prior: inception.event })
+    const rot = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: inception.event,
+      snapshot: { members: [], deny: [] },
+    })
     const log = [
       inception,
       rot,
       ...Array.from({ length: MAX_SKIPPED_SLACK + 1 }, (_, i) => padding(did, rot, i)),
     ]
-    expect(foldLog(did, log).ok).toBe(true)
+    expect(foldLog(did, { chain: log, events: [] }).ok).toBe(true)
   })
 })
 
-describe('pruning a deny set cannot silently drop the rest of it', () => {
-  test('pruneDenySet keeps what a hand-written snapshot loses', () => {
+describe('carrying a state forward cannot silently drop the rest of it', () => {
+  test('snapshotOf keeps what a hand-written snapshot loses', () => {
     const { inception, did } = build()
     const device = 'did:key:zDevice'
-    const revoked = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: inception.event,
-      target: device,
-      keyPosition: { gen: 0, seq: 0 },
-    })
+    const memberKey = encodeKey(
+      deriveKeyPair(new Uint8Array(32).fill(12), authorityPath(0, 0, 0), 'EdDSA').publicKey,
+      'EdDSA',
+    )
+    const member: MemberEntry = {
+      did: `did:key:${memberKey}`,
+      key: memberKey,
+      add: digestOf('the add that admitted it'),
+      lease: 1_900_000_000,
+    }
     const leaked = keyTarget(at(inception.event.k, 0))
-    const rot = createRotate({
-      seed,
-      profile: 0,
-      did,
-      prior: revoked.event,
-      options: { keyPosition: { gen: 0, seq: 0 } },
-    })
-    const denied = createRevoke({
-      seed,
-      profile: 0,
-      did,
-      prior: rot.event,
-      target: leaked,
-      keyPosition: { gen: 0, seq: 1 },
-    })
-    const folded = foldLog(did, [inception, revoked, rot, denied])
+    const settled = settle(did, inception.event, [device, leaked], [member])
+    const folded = foldLog(did, { chain: [inception, settled], events: [] })
     expect(folded.ok).toBe(true)
     if (!folded.ok) return
-    const state = at(folded.states, 3)
+    const state = at(folded.states, 1)
     expect([...state.deny].sort()).toEqual([device, leaked].sort())
 
-    // THE HAZARD — a caller who reads `denySnapshot` as "also deny this" writes one entry and
-    // silently un-retires the leaked key. Nothing rejects it: this is a legal event.
-    const byHand = createRotate({
-      seed,
-      profile: 0,
-      did,
-      prior: denied.event,
-      options: {
-        keyPosition: { gen: state.keyGen, seq: state.keySeq },
-        denySnapshot: [device],
-      },
-    })
-    const lost = foldLog(did, [inception, revoked, rot, denied, byHand])
+    // THE HAZARD — a caller who reads the snapshot as "also do this" writes only what they mean to
+    // change. The checkpointed retirement cannot be lost that way (the fold refuses the rotate), but
+    // the member and every other denial can: this is a legal event that dismisses the management
+    // tier and un-revokes nothing it meant to.
+    const byHand = settle(did, settled.event, [leaked])
+    const lost = foldLog(did, { chain: [inception, settled, byHand], events: [] })
     expect(lost.ok).toBe(true)
     if (!lost.ok) return
-    expect(at(lost.states, 4).deny.has(leaked), 'the leaked key is no longer denied').toBe(false)
+    expect(at(lost.states, 2).members.size, 'the member is no longer in the set').toBe(0)
+    const forgotten = settle(did, settled.event, [device])
+    expect(foldLog(did, { chain: [inception, settled, forgotten], events: [] })).toMatchObject({
+      ok: false,
+      reason: 'snapshot drops a retired key denial',
+    })
 
     // THE FIX — built from the fold's own answer, so only what was named is dropped.
     const pruned = createRotate({
       seed,
       profile: 0,
       did,
-      prior: denied.event,
-      options: {
-        keyPosition: { gen: state.keyGen, seq: state.keySeq },
-        denySnapshot: pruneDenySet(state, [device]),
-      },
+      prior: settled.event,
+      snapshot: snapshotOf(state, { deny: [device] }),
     })
-    const kept = foldLog(did, [inception, revoked, rot, denied, pruned])
+    const kept = foldLog(did, { chain: [inception, settled, pruned], events: [] })
     expect(kept.ok).toBe(true)
     if (!kept.ok) return
-    expect(at(kept.states, 4).deny.has(leaked)).toBe(true)
-    expect(at(kept.states, 4).deny.has(device)).toBe(false)
+    expect(at(kept.states, 2).deny.has(leaked)).toBe(true)
+    expect(at(kept.states, 2).deny.has(device)).toBe(false)
+    expect(at(kept.states, 2).members.get(member.add)).toEqual({
+      ...member,
+      removed: false,
+      effective: true,
+    })
   })
 })
 
 describe('signing as the profile without the root seed', () => {
   test('the current authority key alone produces a verifiable token', async () => {
     const { inception, did } = build()
-    const log = [inception, createRotate({ seed, profile: 0, did, prior: inception.event })]
+    const log = [
+      inception,
+      createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: inception.event,
+        snapshot: { members: [], deny: [] },
+      }),
+    ]
     // What a device is given: one private key, no seed, no profile index.
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
 
-    const identity = createControllerIdentityWithKey({ privateKey: current.privateKey, log })
+    const identity = createControllerIdentityWithKey({
+      privateKey: current.privateKey,
+      log: { chain: log, events: [] },
+    })
     expect(identity.id).toBe(did)
     const token = stringifyToken(await identity.signToken({ hello: 'world' }))
-    const resolver = createControllerResolver({ loadLog: async () => log })
+    const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
     const verified = await verifyToken(token, { methods: [resolver] })
     expect(verified.payload.iss).toBe(did)
 
     // CONTROL — a key the head does not publish is refused at construction, not at verification.
     const retired = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
-    expect(() => createControllerIdentityWithKey({ privateKey: retired.privateKey, log })).toThrow(
-      /not one of the current authority keys/,
-    )
+    expect(() =>
+      createControllerIdentityWithKey({
+        privateKey: retired.privateKey,
+        log: { chain: log, events: [] },
+      }),
+    ).toThrow(/not one of the current authority keys/)
   })
 })
 
@@ -282,29 +286,22 @@ describe('a truncated log is refused when one further along has been seen', () =
     let call = 0
     return createControllerResolver({
       history: createMemoryLogStore(),
-      loadLog: async () => logs[Math.min(call++, logs.length - 1)],
+      loadLog: async () => {
+        const chain = logs[Math.min(call++, logs.length - 1)]
+        return chain === undefined ? undefined : { chain, events: [] }
+      },
     })
   }
 
   test('a prefix served after the full log is refused', async () => {
     const { inception, did } = build()
     const device = 'did:key:zThief'
-    const full = [
-      inception,
-      createRevoke({
-        seed,
-        profile: 0,
-        did,
-        prior: inception.event,
-        target: device,
-        keyPosition: { gen: 0, seq: 0 },
-      }),
-    ]
+    const full = [inception, settle(did, inception.event, [device])]
     const truncated = [inception]
 
     const resolver = await resolverOver([full, truncated])
     expect([...(await denySet(resolver, did))].includes(device)).toBe(true)
-    // The peer now serves the prefix that stops just before the revoke. It folds, it verifies, and
+    // The peer now serves the prefix that stops just before the denying rotate. It folds, it verifies, and
     // its deny set is missing exactly the entry that matters.
     await expect(resolver.resolveDenySet?.(did)).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
   })
@@ -313,17 +310,7 @@ describe('a truncated log is refused when one further along has been seen', () =
     // The commonest call there is. Comparing by array identity rather than by folded head would
     // reject this, which is a resolver that stops working after its first answer.
     const { inception, did } = build()
-    const full = [
-      inception,
-      createRevoke({
-        seed,
-        profile: 0,
-        did,
-        prior: inception.event,
-        target: 'did:key:zThief',
-        keyPosition: { gen: 0, seq: 0 },
-      }),
-    ]
+    const full = [inception, settle(did, inception.event, ['did:key:zThief'])]
     const resolver = await resolverOver([full, [...full]])
     await resolver.resolveDenySet?.(did)
     expect([...(await denySet(resolver, did))]).toEqual(['did:key:zThief'])
@@ -332,131 +319,9 @@ describe('a truncated log is refused when one further along has been seen', () =
   test('CONTROL — a log carried further is accepted', async () => {
     const { inception, did } = build()
     const first = [inception]
-    const later = [
-      inception,
-      createRevoke({
-        seed,
-        profile: 0,
-        did,
-        prior: inception.event,
-        target: 'did:key:zThief',
-        keyPosition: { gen: 0, seq: 0 },
-      }),
-    ]
+    const later = [inception, settle(did, inception.event, ['did:key:zThief'])]
     const resolver = await resolverOver([first, later])
     await resolver.resolveDenySet?.(did)
     expect([...(await denySet(resolver, did))]).toEqual(['did:key:zThief'])
-  })
-
-  test('CONTROL — a superseding rotate is accepted although its sequence is lower', async () => {
-    // The case a high-water mark over `(gen, seq)` would have rejected, and the reason this guard
-    // is a branch comparison instead: a thief holding a current key appends revokes until their
-    // branch is long, and the owner's recovering rotate — which supersedes all of it — sits far
-    // behind it in sequence. Refusing that would brick the profile at the moment it is rescued.
-    const { inception, did } = build()
-    let thiefBranch: Array<SignedEvent> = [inception]
-    let prior: SignedEvent = inception
-    for (let i = 0; i < 5; i++) {
-      const rev: SignedEvent = createRevoke({
-        seed,
-        profile: 0,
-        did,
-        prior: prior.event,
-        target: `did:key:zVictim${i}`,
-        keyPosition: {
-          gen: 0,
-          seq: 0,
-        },
-      })
-      thiefBranch = [...thiefBranch, rev]
-      prior = rev
-    }
-    const recovery = [inception, createRotate({ seed, profile: 0, did, prior: inception.event })]
-
-    const resolver = await resolverOver([thiefBranch, recovery])
-    const first = await resolver.resolveDenySet?.(did)
-    expect(first?.size).toBe(5)
-    // The recovering rotate is at seq 1 against a seen head at seq 5, and it wins.
-    expect((await resolver.resolveDenySet?.(did))?.size).toBe(0)
-  })
-})
-
-describe('the truncation guard fails closed when the stored log needs a verifier', () => {
-  // A management-tier log folds only with a `verifyCapability`. If a later resolution has no verifier
-  // configured, the stored (full) log fails to fold — for want of the verifier, not because anything
-  // about it changed. Treating that as "no memory" accepted whatever prefix was served next, which
-  // disables the truncation guard for exactly the profiles that use the management tier: a peer
-  // serving a prefix that stops before the cap-authorised `rev` denying their device wins, because
-  // the fuller log this party already holds is the one that could not be folded.
-  const cSeed = new Uint8Array(32).fill(7)
-  const delegateSeed = new Uint8Array(32).fill(3)
-  const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
-  const cap = 'eyJ.delegated.revoke'
-  const authorised = {
-    authorised: true as const,
-    audienceKey: {
-      alg: 'EdDSA' as const,
-      publicKey: deriveKeyPair(delegateSeed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
-    },
-  }
-
-  function capLog() {
-    const icp = createInception(cSeed, 0)
-    const did = didFromInception(icp.event)
-    // Signed by the delegate, so only the capability it carries authorises it — foldable only async
-    // and only with a verifier.
-    const rev = createRevoke({
-      seed: delegateSeed,
-      profile: 0,
-      did,
-      prior: icp.event,
-      target: device,
-      keyPosition: { gen: 0, seq: 0 },
-      cap,
-    })
-    return { icp, did, full: [icp, rev] as Array<SignedEvent> }
-  }
-
-  test('a prefix served to a verifier-less reader is refused, not accepted as no memory', async () => {
-    const { icp, did, full } = capLog()
-    const store = createMemoryLogStore()
-
-    // Stored while a verifier was configured: the management-tier log folds and is remembered.
-    const configured = createControllerResolver({
-      loadLog: async () => full,
-      history: store,
-      verifyCapability: async () => authorised,
-    })
-    expect([...(await denySet(configured, did))]).toEqual([device])
-
-    // Same store, a reader with no verifier now, served the prefix that stops before the cap-revoke.
-    // The prefix folds cleanly without a verifier; the fuller stored log does not.
-    const unconfigured = createControllerResolver({
-      loadLog: async () => [icp],
-      history: store,
-    })
-    await expect(unconfigured.resolveDenySet?.(did)).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
-  })
-
-  test('CONTROL — the same truncation is refused with a verifier too, so the fix only aligns the two', async () => {
-    const { icp, did, full } = capLog()
-    const store = createMemoryLogStore()
-    const verifyCapability = async () => authorised
-
-    const first = createControllerResolver({
-      loadLog: async () => full,
-      history: store,
-      verifyCapability,
-    })
-    expect([...(await denySet(first, did))]).toEqual([device])
-
-    // A reader that still has the verifier refuses the same prefix — the branch comparison, not the
-    // missing verifier, is what rejects it. The no-verifier path now matches this.
-    const second = createControllerResolver({
-      loadLog: async () => [icp],
-      history: store,
-      verifyCapability,
-    })
-    await expect(second.resolveDenySet?.(did)).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
   })
 })

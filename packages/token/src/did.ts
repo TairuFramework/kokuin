@@ -450,3 +450,45 @@ export function getAgreementKey(doc: DIDDoc): Uint8Array | null {
   }
   return null
 }
+
+/** As long as `resolveKidFromDoc` allows: base58 decoding is O(n^2). */
+const MAX_KEY_ENCODED = 64
+
+/**
+ * The signing keys a DID carries in its identifier, or `null` when it carries none. `did:key` is its
+ * key; a `did:peer:4` long form embeds the document, so its `authentication` keys (signing is what
+ * a pin or a membership is for) are readable from the string. Anything network-backed -- a
+ * short-form `did:peer:4`, `did:kokuin:` -- answers `null` rather than looking up.
+ *
+ * Throws on an identifier that claims to carry a key and does not; the caller treats that as no
+ * match.
+ */
+export function signingKeysOf(did: string): Array<ResolvedSigningKey> | null {
+  if (did.startsWith('did:key:')) {
+    const [alg, publicKey] = getSignatureInfo(did)
+    return [{ alg, publicKey }]
+  }
+  if (!isPeer4(did) || did === getPeer4ShortForm(did)) {
+    return null
+  }
+  const { doc } = decodePeer4(did)
+  const keys: Array<ResolvedSigningKey> = []
+  for (const id of doc.authentication ?? []) {
+    const method = doc.verificationMethod.find((entry) => entry.id === id)
+    if (method == null || method.publicKeyMultibase.length > MAX_KEY_ENCODED) {
+      continue
+    }
+    let info: [ResolvedSigningKey['alg'], Uint8Array] | null = null
+    try {
+      info = getAlgorithmAndPublicKey(decodeMultibase(method.publicKeyMultibase))
+    } catch {
+      // Legal-but-unsupported multibase, or another key kind: not the pin either way, and one
+      // unreadable entry must not hide a readable one below.
+      continue
+    }
+    if (info != null) {
+      keys.push({ alg: info[0], publicKey: info[1] })
+    }
+  }
+  return keys
+}
