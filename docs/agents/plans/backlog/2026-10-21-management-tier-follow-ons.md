@@ -2,8 +2,9 @@
 
 **Origin:** `completed/2026-10-21-management-tier-on-log.complete.md`.
 
-**Reviewed 2026-10-22** as release cleanup. The three smaller gaps were settled; the rest stay here
-deliberately, each with the trigger that should reopen it.
+**Reviewed 2026-10-22** as release cleanup (`completed/2026-10-22-management-tier-follow-ons.complete.md`).
+The smaller gaps were settled there. What is left here stays deliberately, each item with the
+trigger that should reopen it.
 
 ## 1. A `LogStore` is trusted for signatures (medium)
 
@@ -49,15 +50,3 @@ of stored bytes matters, for example for log hashing across peers.
 **Kept.** Nothing hashes stored bytes across peers. Converging would mean verifying a second copy
 of a held event, which the failed-signature budget deliberately skips. Reopen if anything starts
 comparing stored logs byte for byte.
-
-## 4. Smaller gaps (settled 2026-10-22)
-
-- **Postgres existing-row lock (`forUpdate`).** Now test-proven: `tests/integration` races merges
-  on an existing row from two connections, and fails (one event lost) with the lock removed.
-- **Subject-signed root grants skipped `nbf`.** Only on the empty-chain subject arm of
-  `checkDelegationChain`; links reached through the walk had `nbf` checked by `verifyToken`. Fixed:
-  the arm now checks the same three time claims as the member arm beside it.
-- **`NOT_MEMBER` conflates saturation.** Kept. `@kokuin/capability` depends only on the
-  method-agnostic `@kokuin/token` contract, so telling saturation apart would mean matching a
-  controller-only error string. The `cause` carries `EPOCH_SATURATED`, as `capability.md`
-  documents. Reopen if the token contract grows a typed "subject unavailable" error.
