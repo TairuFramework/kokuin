@@ -17,7 +17,6 @@ WebKit breaks that for X25519 specifically: storing a record containing an X2551
 (extractable **or** non-extractable) in IndexedDB — `put()` reports success, `get()` returns
 `null`. So on Safari every page reload minted a fresh identity (new DID), breaking durability.
 Confirmed with isolated probes:
-
 - non-extractable Ed25519 `CryptoKey` → persists fine
 - non-extractable AES-GCM `CryptoKey` → persists fine
 - X25519 `CryptoKey`, extractable or not → `get()` returns `null`

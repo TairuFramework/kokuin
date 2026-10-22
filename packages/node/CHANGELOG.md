@@ -1,5 +1,12 @@
 # @kokuin/node
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies:
+  - @kokuin/token@0.6.0
+
 ## 0.4.0
 
 ### Minor Changes
@@ -37,7 +44,6 @@
   `ElectronKeyStore.open({ name, allowInsecureStorage, lockPath })`,
   `BrowserKeyStore.open({ name })` — matching the shape `deterministic` already used
   (`HDKeyStore.fromSeed`/`fromMnemonic` keep their name-paired positional primary).
-
   - **token**: adds the `MutableKeyEntry` / `KeyStore` / `IdentityProvider` contract. The
     framework-agnostic conformance suite every backend runs lives in the private
     `@kokuin/keystore-conformance` package (not published — it is test-only). Fixes `did:peer:4`
@@ -74,7 +80,6 @@
 ### Minor Changes
 
 - 7eec1ce: Fix keystore correctness issues around data loss, concurrency and unsafe defaults:
-
   - `BrowserKeyEntry` now resolves `setAsync` / `removeAsync` on transaction completion rather than on request success, so a write that is later aborted no longer reports success. `provideAsync` performs its get-or-generate inside a single IndexedDB transaction instead of two, closing a race where concurrent calls could each generate a key and the last write would win.
   - `NodeKeyEntry.provideAsync` serializes its get-or-generate within the process. A cross-process race on the OS keyring remains possible: `@napi-rs/keyring` exposes no compare-and-set. `NodeKeyStore.list()` no longer decodes credentials eagerly, so one corrupt entry cannot make the whole listing throw.
   - `ElectronKeyStore.open` accepts an `allowInsecureStorage` option (default `false`). Falling back to unencrypted storage when the OS keychain is unavailable is now opt-in, and reopening a cached store with a conflicting value throws instead of silently reusing the first one.

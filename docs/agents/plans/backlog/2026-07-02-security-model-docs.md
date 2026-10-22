@@ -24,7 +24,6 @@ opt-out. Nothing behaviour-changing is outstanding, so the prose can be written.
 ### Write the security model
 
 All READMEs are install-only stubs. Document, per package where relevant:
-
 - Non-extractable P-256 (browser) vs raw Ed25519 in the OS keyring (node) — different threat
   models for the same keyID.
 - The `alg:none` pitfall and the requirement to check `isVerifiedToken` after `verifyToken`.

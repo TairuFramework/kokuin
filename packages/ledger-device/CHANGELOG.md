@@ -1,5 +1,12 @@
 # @kokuin/ledger-device
 
+## 0.2.4
+
+### Patch Changes
+
+- Updated dependencies:
+  - @kokuin/token@0.6.0
+
 ## 0.2.3
 
 ### Patch Changes
@@ -31,7 +38,6 @@
   `ElectronKeyStore.open({ name, allowInsecureStorage, lockPath })`,
   `BrowserKeyStore.open({ name })` — matching the shape `deterministic` already used
   (`HDKeyStore.fromSeed`/`fromMnemonic` keep their name-paired positional primary).
-
   - **token**: adds the `MutableKeyEntry` / `KeyStore` / `IdentityProvider` contract. The
     framework-agnostic conformance suite every backend runs lives in the private
     `@kokuin/keystore-conformance` package (not published — it is test-only). Fixes `did:peer:4`

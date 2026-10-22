@@ -10,7 +10,6 @@ filing time.
 
 Resolving a recipient DID to the X25519 public key you encrypt to has two branches, and
 picking the wrong one produces a key that encrypts cleanly and silently never decrypts:
-
 - A **peer:4** identity carries an independent agreement key in its document, and the sender
   MUST use the published key. `getAgreementKey` (`did.ts:210`) reads it.
 - A **did:key** EdDSA identity publishes none — `getAgreementKey` returns `null` — and the
@@ -46,7 +45,6 @@ That works and kubun is not blocked. The cost is a JWE (~200 bytes and a second 
 
 Export something that yields a recipient's agreement key, or a shared secret with it, without
 going through a JWE. Any of these would do:
-
 - `resolveX25519Key` itself, or a narrower `getRecipientAgreementKey(did): Uint8Array` — same
   two branches, same refusal on a peer:4 short form.
 - A `deriveSharedSecret(did, ephemeralPrivateKey)` that keeps the branch choice inside this

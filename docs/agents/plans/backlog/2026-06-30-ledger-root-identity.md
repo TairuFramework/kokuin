@@ -15,7 +15,6 @@ one.
 The original plan covered a root-identity story spanning framework primitives and kumiai
 integration. The primitives are done and now live here as `@kokuin/ledger-device`,
 `@kokuin/capability` and `@kokuin/token`:
-
 - Capability delegation via `createCapability`.
 - Revocation: `RevocationRecord`, `RevocationBackend`, `createRevocationChecker` as a
   `VerifyTokenHook`.
@@ -35,7 +34,6 @@ done" now holds for `did:peer:4` identities too.
 
 Allow personal and organisational root identities on separate Ledger devices.
 `@kokuin/ledger-device` assumes one connected device. Surface area:
-
 - Multiple `LedgerIdentity` instances against distinct transports and sessions.
 - Identity selection UX is deferred to consumer apps. The framework only needs to stop assuming
   a single device.
@@ -65,7 +63,6 @@ at catalog submission, which this item owns.
 `apps/ledger/icons/kokuin_app_14px.gif` is the LedgerHQ boilerplate glyph, copied in when the
 NBGL UI landed — the Nano home screen and every review screen need an icon to render. It is not
 Kokuin branding. Non-blocking: the firmware builds, boots and reviews correctly with it.
-
 - Draw a real 14px Kokuin glyph (刻印 / seal motif) and replace the placeholder.
 - The Makefile already declares `ICON_NANOX` and `ICON_NANOSP`; both point at the same
   placeholder. Supply whatever per-device sizes the catalog requires.

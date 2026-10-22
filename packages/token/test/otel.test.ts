@@ -1,23 +1,24 @@
-import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
-import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
+import { trace } from '@opentelemetry/api'
+import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 
 import { randomIdentity } from '../src/identity.js'
 import { verifyToken } from '../src/token.js'
 
 let exporter: InMemorySpanExporter
-let provider: NodeTracerProvider
+let provider: TracerProvider
 
 beforeAll(() => {
   exporter = new InMemorySpanExporter()
-  provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
-  provider.register()
+  provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] })
+  trace.setGlobalTracerProvider(provider)
 })
 beforeEach(() => {
   exporter.reset()
 })
 afterAll(async () => {
   await provider.shutdown()
+  trace.disable()
 })
 
 test('token sign + verify emit kokuin-prefixed spans with auth attrs', async () => {

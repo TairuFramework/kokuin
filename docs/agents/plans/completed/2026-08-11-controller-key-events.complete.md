@@ -41,7 +41,6 @@ JSON/JOSE instead of CESR, MLS groups plus proof-carrying verification instead o
 and a deny set instead of a separate revocation registry.
 
 Key decisions worth keeping:
-
 - **One authority key per generation. No quorum, no thresholds** — the seed is the root, so a
   threshold over seed-derived keys is theatre. The wire format carries `kt` and `nt` anyway, and
   they are **checked against what the fold enforces**: n-of-n, so `kt` must equal `k.length` and
@@ -74,11 +73,11 @@ Key decisions worth keeping:
   versions produce different bytes at the same index — a genuine fork, not an idempotent
   re-derivation. The consequence is accepted instead: a profile that has performed a
   non-reproducible rotation needs its 32-byte head digest alongside the mnemonic.
-- **Two recovery guarantees, kept distinct.** *Control* recovery (can this profile keep signing and
+- **Two recovery guarantees, kept distinct.** _Control_ recovery (can this profile keep signing and
   rotating?) needs the mnemonic plus, where the log holds non-reproducible events, the head digest
   and `seq`; it survives total device loss, because the recovery-key commitment lives in the
   deterministic inception and the root can always author a superseding `reset` with no log at all.
-  *Provability* recovery (can it prove its key history to a stranger, offline?) needs the full log
+  _Provability_ recovery (can it prove its key history to a stranger, offline?) needs the full log
   and does not survive total device loss. Retrieval is not a recovery path: a user who lost every
   device holds no MLS leaf and is authorised to retrieve nothing.
 - **Delegation depth capped at 4**, down from 20 — three links (management → device → connector)
@@ -107,7 +106,6 @@ resolver-backed methods. `@kokuin/token` — `iss` resolved through the injected
 
 Amendments made during execution, each because the DID had to work for a purpose the spec had not
 fully carried:
-
 - A reset anchors to the **inception**, not the log head, so two blind resets at one generation are
   idempotent rather than duplicity.
 - `DecryptingIdentity` narrowed to `KeyAgreementIdentity`; the `decrypt` sugar caused a
@@ -132,7 +130,7 @@ fully carried:
   revocation records — opt in with `verifyToken({ historic: true })`; everything else gets the safe
   answer without asking for it.
   Originally one permissive scan on `resolve()`, which read the remedy ladder's "already issued
-  artefacts survive a rotate" as licence to let a compromised key keep issuing *new* ones. The
+  artefacts survive a rotate" as licence to let a compromised key keep issuing _new_ ones. The
   implementation could not tell the two apart, so it granted both; splitting the surface is what
   tells them apart.
 - **A `rev` may name a key, and that is what retires one for material it has already signed.** The
@@ -141,7 +139,7 @@ fully carried:
   and would make a revocation record signed by a since-rotated key raise `IssuerKeyNotFoundError` —
   which the revocation checker swallows, silently un-revoking, on the one path that must never fail
   open. The cost, demonstrated in `packages/capability/test/zzown-historic-mint.test.ts`, was that a
-  leaked, since-rotated authority key could mint a *fresh* `act: '*', res: '*'` capability naming a
+  leaked, since-rotated authority key could mint a _fresh_ `act: '*', res: '*'` capability naming a
   device the thief controlled. Rotation cannot be the fix without breaking the promise that a rotate
   does not invalidate already-issued material, so retirement is explicit: a `rev` target spelled
   `#<the multibase key exactly as it appears in `k`>` — the `kid` spelling, in the same deny set,
@@ -151,7 +149,7 @@ fully carried:
   revoke; `agreementKeysFrom` drops a denied key so the other half of what a profile publishes is
   not left inert. Read at the **head**, unlike a DID denial, which is read at the position being
   verified: a key denial is a statement about the key, and the position an artefact carries is
-  author-supplied. Denying a key the profile *currently* publishes is refused — `rotate` is the
+  author-supplied. Denying a key the profile _currently_ publishes is refused — `rotate` is the
   event a live compromise calls for, and a capability-authorised `rev` with a wildcard `res` would
   otherwise let the management tier stop the root tier from signing with one event.
 - A capability-authorised revoke is verified **at the log position it sits at**. The fold hands the
@@ -184,7 +182,7 @@ fully carried:
   `inception.r` regardless, and `KeyState.recovery` reported a key that could not author a reset.
   A field written, digested, and read by nothing is a trap in an effectively frozen wire format, so
   it was removed and a rotate carrying one is now refused rather than ignored.
-  Moving the commitment is also not merely unimplemented but *unwanted*: a reset anchors to the
+  Moving the commitment is also not merely unimplemented but _unwanted_: a reset anchors to the
   inception so a root holding nothing but its seed can author one with no log knowledge and no log
   availability, and a movable commitment makes the root read the log first. `recoveryPath(profile)`
   carries no index for the same reason. Adoption, if it ever lands, needs a new event type or a
@@ -195,7 +193,7 @@ fully carried:
   device DID is enforced by `@kokuin/capability` on every capability whose `aud` it names; a plain
   token signed by a device's own `did:key`/`did:peer` resolves through that method, which knows
   nothing of any profile, so nothing consults the profile's deny set. That is by design, not a gap: a
-  device's authority under a profile *is* the capability the profile issued or the roster membership
+  device's authority under a profile _is_ the capability the profile issued or the roster membership
   its group maintains, never a bare signature — enkaku authorizes through `checkCapability`, kumiai
   through MLS roster removal. There is deliberately no bare-token-under-a-profile path, so revocation
   has nothing to miss; adding one would need a subject supplied to `verifyToken` and an
@@ -221,7 +219,6 @@ fully carried:
 ## What the execution actually cost, and why
 
 Six real defects, every one found by **building the attack** and none by reading a diff:
-
 - An unsigned forged revocation record, whose only attacker-chosen fields were the issuer DID and a
   bogus `kid`, denied any `did:kokuin:` capability — because resolvability had moved from a property
   of the DID to a property of an unauthenticated header field.
@@ -237,7 +234,7 @@ Six real defects, every one found by **building the attack** and none by reading
 - The capability verifier's documented 3-argument form was the position bypass verbatim, reachable
   both by direct call and by version skew.
 
-Three of those were opened *by* a fix to a security boundary. The patterns that caught them are
+Three of those were opened _by_ a fix to a security boundary. The patterns that caught them are
 recorded because they generalise: a stub agrees with an implementation that checks nothing; deleting
 a whole options object proves nothing about its fields; and a forgery that breaks two things at once
 certifies neither.
@@ -247,21 +244,20 @@ certifies neither.
 A full-branch review — one design pass and two adversarial passes, 152 constructed rows — found
 **five more Criticals** on a branch that had already been through per-task review, a whole-branch
 review, and `kigu:complete`. Everything above was already true when they were found.
-
 - **A keyless attacker owned the identifier, permanently.** An unknown non-critical event was
   accepted with no signature check and no validation of `g`/`s`, and branch precedence read the
-  *raw event* rather than the folded state. One unsigned `nop` at `g = s = MAX_SAFE_INTEGER` beat
+  _raw event_ rather than the folded state. One unsigned `nop` at `g = s = MAX_SAFE_INTEGER` beat
   every honest branch, and no reset the root could ever author outranked it.
 - **A stolen current key beat the owner's recovering rotate.** Precedence compared heads, and
   supersession ran only on an exact tie, so a thief who could not rotate simply appended cheap
   revokes until its branch was longer.
 - **Attenuation at the last hop was a no-op.** `checkCapability` was handed a capability but treated
   it as an invocation, spreading the request over its own `act`/`res` and checking it against the
-  *parent*. A narrowed sub-capability wielded the full parent grant.
+  _parent_. A narrowed sub-capability wielded the full parent grant.
 - **The presented capability's `aud` never reached the deny set**, so a revoked device kept
   authoring capability-authorised revokes through one level of delegation.
 - **Duplicity detection was off for the management tier.** `resolveBranches` filtered branches
-  through the *sync* fold, which fails closed on a `cap`-bearing revoke, so any profile that used
+  through the _sync_ fold, which fails closed on a `cap`-bearing revoke, so any profile that used
   the feature reported "no valid history" for a healthy log.
 
 Two more were opened by these fixes, keeping the pattern intact: comparing raw branch arrays would
@@ -272,7 +268,7 @@ Three lessons this round adds. **The conformance suite passed all five** — it 
 equal-length, cap-free branches, so the properties it certified were never the ones under attack.
 **A completed plan is not evidence**; this round ran after the work had been summarised, the
 ephemeral plan deleted, and the branch parked at QA. And **probe direction is not uniform**: a probe
-written to characterise a suspected hole *passes* while the hole is open, so reading "all green" as
+written to characterise a suspected hole _passes_ while the hole is open, so reading "all green" as
 "no findings" inverts the result.
 
 ### The design pass before the docs
@@ -280,14 +276,13 @@ written to characterise a suspected hole *passes* while the hole is open, so rea
 A fourth round, run when the reference documentation was commissioned and it became necessary to
 write down what the design actually guarantees. Four more defects, two of them confirmed by
 construction, all pinned in `packages/controller/test/zzown-design-round.test.ts`.
-
 - **A keyless peer could switch duplicity detection off.** A `cap`-bearing revoke reaches the
-  verifier path *before* any signature check — the capability names the signer — so anyone able to
+  verifier path _before_ any signature check — the capability names the signer — so anyone able to
   read a log could copy the public inception, append a `rev` with no signatures and arbitrary `cap`
   bytes, and make `resolveBranches` refuse the whole resolution. A genuine fork between two honest
   branches came back as `needs-capability-verification`, for any profile, including ones with no
   verifier configured because they never use the management tier. Such a branch is now counted in
-  `ResolveResult.unverified` and left out of the comparison, and only a call where *every* branch is
+  `ResolveResult.unverified` and left out of the comparison, and only a call where _every_ branch is
   unverifiable refuses. Dropping it in silence was the previous round's bug and is not the fix: the
   count is what keeps the answer honest, and the conformance suite now requires it rather than
   requiring the refusal it used to.

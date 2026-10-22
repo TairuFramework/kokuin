@@ -16,7 +16,6 @@ building a JWE and without exposing the branch rule that decides which public ke
 
 Resolving a recipient DID to the X25519 public key you encrypt to has two branches, and picking
 the wrong one produces a key that encrypts cleanly and silently never decrypts:
-
 - A **did:peer:4** identity carries an independent agreement key in its document, and the sender
   MUST use the published key.
 - A **did:key** EdDSA identity publishes none, and the sender derives one from the signing key via
@@ -39,7 +38,7 @@ combines with other factor secrets via HKDF, and paid roughly 200 bytes plus a s
 offered two shapes: export the resolver, or take an ephemeral private key and keep the branch
 choice inside. The shipped API is stricter than either — it generates the ephemeral pair
 internally and returns only the public half, so the caller never holds the resolved recipient key
-*and* never manages ephemeral key material. `resolveX25519Key` stayed module-private and gained a
+_and_ never manages ephemeral key material. `resolveX25519Key` stayed module-private and gained a
 second in-package caller rather than an export. The function itself is two lines; there is nothing
 in it to get wrong.
 

@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/token",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "JWT signing and verification",
   "keywords": [
     "json",
@@ -45,8 +45,8 @@
     "@sozai/schema": "catalog:"
   },
   "devDependencies": {
-    "@opentelemetry/sdk-trace-base": "catalog:",
-    "@opentelemetry/sdk-trace-node": "catalog:",
+    "@opentelemetry/api": "catalog:",
+    "@opentelemetry/sdk-trace": "catalog:",
     "uint8arrays": "catalog:"
   },
   "publishConfig": {

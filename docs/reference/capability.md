@@ -35,17 +35,17 @@ type Permission = {
 
 ```typescript
 type CapabilityPayload = Permission & {
-  iss: string   // Issuer DID (set by the signer)
-  sub: string   // Subject DID (who the capability is for)
-  aud: string   // Audience DID (who may present this capability)
-  exp?: number  // Expiry (seconds since epoch)
-  iat?: number  // Issued-at (seconds since epoch)
-  jti?: string  // Unique token ID (used for revocation)
-  cnf?: ConfirmationClaim  // Proof-of-possession key the audience must hold (RFC 7800)
-  mbr?: MemberClaim        // Present on a root issued by a management member of `sub`
+  iss: string // Issuer DID (set by the signer)
+  sub: string // Subject DID (who the capability is for)
+  aud: string // Audience DID (who may present this capability)
+  exp?: number // Expiry (seconds since epoch)
+  iat?: number // Issued-at (seconds since epoch)
+  jti?: string // Unique token ID (used for revocation)
+  cnf?: ConfirmationClaim // Proof-of-possession key the audience must hold (RFC 7800)
+  mbr?: MemberClaim // Present on a root issued by a management member of `sub`
 }
 
-type MemberClaim = { add: string; g: number }  // the issuer's add digest and the subject's generation
+type MemberClaim = { add: string; g: number } // the issuer's add digest and the subject's generation
 ```
 
 **`CapabilityToken<Payload, Header>`** — a verified signed token whose payload satisfies `CapabilityPayload`. It is the runtime value returned by `createCapability` and `verifyToken`.
@@ -110,20 +110,15 @@ Pattern rules enforced by `assertValidPattern`:
 - No leading/trailing slashes, no double slashes, no path traversal (`../`, `./`).
 
 ```typescript
-import {
-  assertValidPattern,
-  isMatch,
-  hasPartsMatch,
-  hasPermission,
-} from '@kokuin/capability'
+import { assertValidPattern, isMatch, hasPartsMatch, hasPermission } from '@kokuin/capability'
 ```
 
-| Function | Signature | Purpose |
-|---|---|---|
-| `assertValidPattern` | `(value: string \| Array<string>) => void` | Throw if pattern is invalid |
-| `isMatch` | `(expected: string, actual: string) => boolean` | Exact match or `actual === '*'` |
-| `hasPartsMatch` | `(expected: string, actual: string) => boolean` | Path prefix/wildcard match |
-| `hasPermission` | `(expected: Permission, granted: Permission) => boolean` | Full permission subsumption check |
+| Function             | Signature                                                | Purpose                           |
+| -------------------- | -------------------------------------------------------- | --------------------------------- |
+| `assertValidPattern` | `(value: string \| Array<string>) => void`               | Throw if pattern is invalid       |
+| `isMatch`            | `(expected: string, actual: string) => boolean`          | Exact match or `actual === '*'`   |
+| `hasPartsMatch`      | `(expected: string, actual: string) => boolean`          | Path prefix/wildcard match        |
+| `hasPermission`      | `(expected: Permission, granted: Permission) => boolean` | Full permission subsumption check |
 
 `hasPermission(expected, granted)` returns `true` when `granted` covers `expected`: it handles arrays on either side and delegates to `isMatch`/`hasPartsMatch` for the leaf comparison.
 
@@ -196,7 +191,7 @@ type DelegationChainOptions = {
 ```typescript
 async function checkCapability(
   permission: Permission,
-  payload: SignedPayload,     // from @kokuin/token
+  payload: SignedPayload, // from @kokuin/token
   options?: DelegationChainOptions,
 ): Promise<void>
 ```
@@ -214,10 +209,10 @@ import { createCapability } from '@kokuin/capability'
 
 const now = Math.floor(Date.now() / 1000)
 const grant = await createCapability(
-  memberIdentity,                          // iss: the member's did:key, or its long-form did:peer:4
+  memberIdentity, // iss: the member's did:key, or its long-form did:peer:4
   { sub: profileDID, aud: agentDID, act: 'read', res: 'docs/*', iat: now, exp: now + 12 * 3600 },
   undefined,
-  { member: { add: memberAddDigest, g: head.gen } },   // the incarnation, and the log's generation
+  { member: { add: memberAddDigest, g: head.gen } }, // the incarnation, and the log's generation
 )
 ```
 
@@ -228,7 +223,6 @@ const grant = await createCapability(
 ### Verification
 
 `checkCapability` and `checkDelegationChain` accept a root that carries `mbr` and whose `iss` is not `sub` through `assertMemberRoot(payload, options, time)`, which checks, in order:
-
 1. `mbr` is well formed — else `MEMBER_GRANT_NOT_MEMBER` (`: malformed mbr claim`);
 2. the subject's method can answer `resolveMember` — else `MEMBER_GRANT_NO_RESOLVER`;
 3. `resolveMember(sub, { did: iss, add, gen: g })` answers: the incarnation is an effective member (present, not removed, its DID and pinned key not denied) in the head's generation, under the issuer's DID — any refusal, including an unresolvable or saturated log, is `MEMBER_GRANT_NOT_MEMBER`, with the original error as `cause`;
@@ -240,7 +234,7 @@ const grant = await createCapability(
 
 Each reason is thrown with a `: detail` suffix, so match with `startsWith`.
 
-**Bounded at mint.** The lease and the lifetime are judged against the grant's own claims, so a grant that would outlive either is refused outright, never trimmed. The two bounds answer different questions. The **lifetime** (12 hours by default, configurable per verification) bounds how late an offline verifier learns that an *edge holder* was revoked: a revoke reaches it only with a newer log, expiry reaches it unconditionally. The **lease** (months) bounds a *stolen member*: a removed member keeps its pre-removal log and can mint fresh grants that a verifier which never sees the removal accepts, until its lease end. A removal kills a member's grants for any verifier whose state contains it.
+**Bounded at mint.** The lease and the lifetime are judged against the grant's own claims, so a grant that would outlive either is refused outright, never trimmed. The two bounds answer different questions. The **lifetime** (12 hours by default, configurable per verification) bounds how late an offline verifier learns that an _edge holder_ was revoked: a revoke reaches it only with a newer log, expiry reaches it unconditionally. The **lease** (months) bounds a _stolen member_: a removed member keeps its pre-removal log and can mint fresh grants that a verifier which never sees the removal accepts, until its lease end. A removal kills a member's grants for any verifier whose state contains it.
 
 **Signature before membership.** On the chain path the walk verifies each link's signature against `iss` before asking about membership. That order matters: the log compares DIDs canonically, which for a `did:peer:4` reads only the short prefix, so a forged long form sharing a member's prefix gets the real member's pin back. Its document does not hash to the prefix, so `verifyToken` refuses it first, and the exact-key check (step 4) refuses it on any path that skipped the signature. On the **direct** `checkCapability` path a member grant is the payload itself, and — exactly as on the `iss === sub` arm — **the caller must have verified its signature**; `checkCapability` only checks the request is within the grant and runs the steps above.
 
@@ -266,11 +260,7 @@ import {
   createRevocationChecker,
   createRevocationRecord,
 } from '@kokuin/capability'
-import type {
-  RevocationBackend,
-  RevocationRecord,
-  VerifyTokenHook,
-} from '@kokuin/capability'
+import type { RevocationBackend, RevocationRecord, VerifyTokenHook } from '@kokuin/capability'
 ```
 
 **`VerifyTokenHook`**:
@@ -279,15 +269,15 @@ import type {
 type VerifyTokenHook = (token: CapabilityToken, raw: string) => void | Promise<void>
 ```
 
-**`RevocationRecord`** — a **signed token**, not a plain object. The claims below are its *payload*:
+**`RevocationRecord`** — a **signed token**, not a plain object. The claims below are its _payload_:
 
 ```typescript
 type RevocationRecord = SignedToken<RevocationClaims>
 
 type RevocationClaims = {
-  jti: string   // Token ID being revoked
+  jti: string // Token ID being revoked
   rev: true
-  iat: number   // Revocation timestamp (seconds since epoch)
+  iat: number // Revocation timestamp (seconds since epoch)
 }
 ```
 
@@ -302,7 +292,7 @@ type RevocationBackend = {
 }
 ```
 
-It answers with the *record*, not with a boolean: the checker re-verifies the signature at the point of use, because a backend is an extension point and may return something it never verified.
+It answers with the _record_, not with a boolean: the checker re-verifies the signature at the point of use, because a backend is an extension point and may return something it never verified.
 
 `get` is asked for the token's own issuer, already normalized (`normalizeDID`), and a backend **must** scope its records by issuer as well as `jti`. Anyone can sign a valid record for any `jti` — a capability's holder knows it — so a store keyed by `jti` alone lets a foreign record displace the issuer's: overwrite it (last write wins) or pre-empt it (first write wins). The checker ignores a record from any other issuer, so either way the revoked token passes.
 
@@ -313,7 +303,11 @@ It answers with the *record*, not with a boolean: the checker re-verifies the si
 **`createRevocationChecker(backend)`** — wraps a `RevocationBackend` as a `VerifyTokenHook`. Wire it via `DelegationChainOptions.verifyToken`:
 
 ```typescript
-import { createMemoryRevocationBackend, createRevocationChecker, checkCapability } from '@kokuin/capability'
+import {
+  createMemoryRevocationBackend,
+  createRevocationChecker,
+  checkCapability,
+} from '@kokuin/capability'
 
 const backend = createMemoryRevocationBackend()
 const checker = createRevocationChecker(backend)
@@ -348,8 +342,8 @@ import { createSigningIdentity } from '@kokuin/token'
 ```typescript
 import { createLedgerIdentityProvider } from '@kokuin/ledger-device'
 
-const provider = createLedgerIdentityProvider(transport)   // positional LedgerTransport
-const identity = await provider.provideIdentity('0')        // keyID string → FullIdentity
+const provider = createLedgerIdentityProvider(transport) // positional LedgerTransport
+const identity = await provider.provideIdentity('0') // keyID string → FullIdentity
 ```
 
 ---
@@ -368,7 +362,7 @@ const delegateIdentity: SigningIdentity = randomIdentity()
 const consumerIdentity: SigningIdentity = randomIdentity()
 
 const rootCap = await createCapability(rootIdentity, {
-  sub: rootIdentity.id,   // signer === subject → root capability
+  sub: rootIdentity.id, // signer === subject → root capability
   aud: delegateIdentity.id,
   act: 'read',
   res: 'docs/*',
@@ -381,10 +375,10 @@ const rootCapStr = stringifyToken(rootCap)
 const delegatedCap = await createCapability(
   delegateIdentity,
   {
-    sub: rootIdentity.id,          // same subject as root
+    sub: rootIdentity.id, // same subject as root
     aud: consumerIdentity.id,
     act: 'read',
-    res: 'docs/report',            // narrower than 'docs/*'
+    res: 'docs/report', // narrower than 'docs/*'
   },
   undefined,
   { parentCapability: rootCapStr }, // links back to the root
@@ -397,12 +391,15 @@ const delegatedCapStr = stringifyToken(delegatedCap)
 // checkCapability resolves the cap chain and verifies every link.
 const requestedPermission: Permission = { act: 'read', res: 'docs/report' }
 
-const consumerToken = await signToken(consumerIdentity, createUnsignedToken({
-  sub: rootIdentity.id,
-  act: 'read',
-  res: 'docs/report',
-  cap: delegatedCapStr,
-}))
+const consumerToken = await signToken(
+  consumerIdentity,
+  createUnsignedToken({
+    sub: rootIdentity.id,
+    act: 'read',
+    res: 'docs/report',
+    cap: delegatedCapStr,
+  }),
+)
 const consumerPayload = consumerToken.payload
 
 await checkCapability(requestedPermission, consumerPayload, {

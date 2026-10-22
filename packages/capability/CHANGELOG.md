@@ -1,5 +1,18 @@
 # @kokuin/capability
 
+## 0.5.0
+
+### Minor Changes
+
+- The capability-authorised `did:kokuin:` revoke is removed (breaking): `createControllerCapabilityVerifier`, `assertRevokeCapabilityAudience`, the `CapabilityAuthorisation` / `ControllerCapabilityVerifier` / `ControllerCapabilityVerifierParams` types and the `REVOKE_*` reason constants are gone. Management authority now lives in the `did:kokuin:` log as management members (`@kokuin/controller`). `audienceConfirmation` stays.
+
+  Grants issued by `did:kokuin:` management members: a capability whose `iss` is a member of its `did:kokuin:` `sub` and that carries `mbr: { add, g }` is now a chain root, accepted by `checkCapability` and `checkDelegationChain` through `assertMemberRoot`. The issuer must be an effective member under that incarnation and the log's current generation, carry exactly the pinned key (a `did:key` or a long-form `did:peer:4`; a short form is refused), and the grant must satisfy `exp <= lease` and `exp - iat <= maxMemberGrantLifetime` (new `DelegationChainOptions` field, default `DEFAULT_MEMBER_GRANT_LIFETIME`, 12 hours). New reasons `MEMBER_GRANT_NO_RESOLVER`, `MEMBER_GRANT_NOT_MEMBER`, `MEMBER_GRANT_KEY_MISMATCH`, `MEMBER_GRANT_PAST_LEASE`, `MEMBER_GRANT_NO_IAT`, `MEMBER_GRANT_TOO_LONG`; new `MemberClaim` type and `CapabilityPayload.mbr`. `createCapability` takes `member` to mint one (requires `exp` and `iat`, `exp >= iat`). Pass a fresh `resolver.frozen()` in `methods` per verification. The audience deny-set check moved to its own module with no public API change (`AUDIENCE_REVOKED` and `DENY_SET_UNAVAILABLE` are exported as before); a non-subject root without `mbr` now fails with `issuer should be subject` before the deny set is read.
+
+### Patch Changes
+
+- Updated dependencies:
+  - @kokuin/token@0.6.0
+
 ## 0.4.1
 
 ### Patch Changes
@@ -74,7 +87,6 @@
 ### Minor Changes
 
 - bcfb386: Harden the capability/token authorization model:
-
   - Reject permission prefix escalation in `hasPartsMatch` — a grant more specific than the request no longer authorizes the broader request, and there is no implicit descent (use a trailing `*`).
   - Enforce the `authentication` relationship when an explicit `kid` is present, so a key listed only under `assertionMethod` cannot sign tokens.
   - Add an `audience` option to `verifyToken` that validates the invocation token's `aud` (and rejects unsigned/`alg:none` tokens when set).
@@ -85,7 +97,6 @@
 ### Patch Changes
 
 - 1ecca02: Harden token verification against unsigned tokens, nullish input, and base58 decode denial of service:
-
   - `verifyToken` now rejects `alg:none` tokens unless the caller passes `allowUnsigned: true`, and validates `exp` / `nbf` on the unsigned path when it does. Without the option its return type narrows to `VerifiedToken`, so a consumer cannot reach an unverified payload without an explicit opt-in.
   - `isSignedToken`, `isUnsignedToken` and `isVerifiedToken` accept `unknown` and return `false` for nullish input instead of throwing `TypeError`.
   - Bound every attacker-controlled base58 input before it reaches `@scure/base`'s O(n²) decode/encode, on all paths reachable before signature verification:

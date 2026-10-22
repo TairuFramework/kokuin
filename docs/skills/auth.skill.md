@@ -1,4 +1,5 @@
 ---
+
 name: kokuin:auth
 description: Identity & key patterns — token generation, verification, encryption, and per-environment keystores
 ---
@@ -75,16 +76,19 @@ const identity = await store.provideIdentity('user-auth-key')
 console.log('DID:', identity.id)
 
 // Sign a token
-const token = await signToken(identity, createUnsignedToken({
-  sub: 'user-456',
-  aud: 'my-service',
-  exp: Math.floor(Date.now() / 1000) + 86400, // 24 hours
-}))
+const token = await signToken(
+  identity,
+  createUnsignedToken({
+    sub: 'user-456',
+    aud: 'my-service',
+    exp: Math.floor(Date.now() / 1000) + 86400, // 24 hours
+  }),
+)
 const tokenString = stringifyToken(token)
 
 // Manual entry operations
 const entry = store.entry('user-auth-key')
-const key = await entry.getAsync()    // Uint8Array | null
+const key = await entry.getAsync() // Uint8Array | null
 await entry.removeAsync()
 
 // List all keys in store
@@ -119,10 +123,13 @@ const identity = await store.provideIdentity('session-key')
 const signingIdentity = await store.provideSigningIdentity('session-key')
 
 // Sign a token with the browser identity
-const token = await signToken(identity, createUnsignedToken({
-  sub: 'resource:7',
-  exp: Math.floor(Date.now() / 1000) + 3600,
-}))
+const token = await signToken(
+  identity,
+  createUnsignedToken({
+    sub: 'resource:7',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  }),
+)
 const tokenString = stringifyToken(token)
 
 // Clean up when the user logs out
@@ -154,10 +161,13 @@ const identity = await store.provideIdentity('device-identity')
 console.log('DID:', identity.id)
 
 // Sign a token
-const token = await signToken(identity, createUnsignedToken({
-  sub: 'sync-request',
-  exp: Math.floor(Date.now() / 1000) + 300,
-}))
+const token = await signToken(
+  identity,
+  createUnsignedToken({
+    sub: 'sync-request',
+    exp: Math.floor(Date.now() / 1000) + 300,
+  }),
+)
 const tokenString = stringifyToken(token)
 
 // Remove key when needed (e.g. app uninstall or logout)
@@ -188,11 +198,14 @@ const identity = await store.provideIdentity('main-process-key')
 console.log('DID:', identity.id)
 
 // Sign a token (e.g. for IPC verification in the renderer)
-const ipcToken = await signToken(identity, createUnsignedToken({
-  sub: 'renderer-process',
-  aud: 'main-process',
-  exp: Math.floor(Date.now() / 1000) + 300, // 5 minutes
-}))
+const ipcToken = await signToken(
+  identity,
+  createUnsignedToken({
+    sub: 'renderer-process',
+    aud: 'main-process',
+    exp: Math.floor(Date.now() / 1000) + 300, // 5 minutes
+  }),
+)
 
 // Clean up
 const entry = store.entry('main-process-key')
@@ -221,7 +234,7 @@ const identity = await store.provideIdentity('0')
 console.log('DID:', identity.id)
 
 // Standalone derivation — same seed + path always yields the same key pair
-const path = resolveDerivationPath('0')               // numeric keyID → "m/44'/876'/0'"
+const path = resolveDerivationPath('0') // numeric keyID → "m/44'/876'/0'"
 const privateKey = derivePrivateKey(masterSeed, path) // Uint8Array
 const identity2 = createFullIdentity(privateKey)
 ```
@@ -249,10 +262,13 @@ const identity = await provider.provideIdentity('0')
 console.log('Hardware DID:', identity.id)
 
 // Sign a token — private key never leaves the device
-const token = await signToken(identity, createUnsignedToken({
-  sub: 'secure-action',
-  exp: Math.floor(Date.now() / 1000) + 300,
-}))
+const token = await signToken(
+  identity,
+  createUnsignedToken({
+    sub: 'secure-action',
+    exp: Math.floor(Date.now() / 1000) + 300,
+  }),
+)
 ```
 
 **Use case**: High-security environments where private keys must never leave hardware
@@ -292,14 +308,18 @@ new TextDecoder().decode(decrypted) // 'secret message'
 
 // High-level: envelope wrapping (sign, then encrypt — hides sender identity)
 const mode: EnvelopeMode = 'jws-in-jwe'
-const wrapped = await wrapEnvelope(mode, { hello: 'world' }, {
-  signer: sender,
-  encrypter,
-})
+const wrapped = await wrapEnvelope(
+  mode,
+  { hello: 'world' },
+  {
+    signer: sender,
+    encrypter,
+  },
+)
 
 const { payload, mode: unwrappedMode } = await unwrapEnvelope(wrapped, { decrypter: recipient })
 console.log(unwrappedMode) // 'jws-in-jwe'
-console.log(payload)       // { hello: 'world' }
+console.log(payload) // { hello: 'world' }
 ```
 
 **Use case**: End-to-end encryption where intermediaries (proxies, logs) cannot read payloads
@@ -372,7 +392,7 @@ message was addressed
 - Reuse one resolver instance rather than building one per resolution: concurrent resolutions of
   one DID share a single fold, and a fresh instance per hop shares nothing
 - **Pass a `history` `LogStore` if this process will ever resolve the same DID twice.** Without one,
-  a peer serving a *prefix* of the chain, or the chain with the epoch revoke denying their device
+  a peer serving a _prefix_ of the chain, or the chain with the epoch revoke denying their device
   withheld, gives you a log that folds cleanly, chains every digest, verifies every signature, and has a deny
   set missing exactly the entry that matters. With one, a chain that does not supersede the last
   accepted one is refused, and the current epoch's events are merged with what was seen, never
@@ -383,7 +403,7 @@ message was addressed
 - Resolution happens once, inside `createTokenEncrypterAsync` — the resolved agreement key is
   closed over by the returned encrypter, and `encryptToken` itself resolves nothing (it just
   calls `encrypter.encrypt`). So an encrypter snapshots whatever `ka` was current in the folded
-  log *at construction time*: build it after a rotation and it targets the rotated key; keep an
+  log _at construction time_: build it after a rotation and it targets the rotated key; keep an
   encrypter around across a later rotation and it keeps encrypting to the now-superseded key. See
   `packages/controller/test/encrypt-to-profile.test.ts` for the round trip through a rotate
 - The recipient side never touches the resolver: it re-derives the same agreement key pair from
@@ -450,9 +470,9 @@ any claim whose subject is the profile rather than a device
 - It throws when the log does not fold, and when the derived key is not one of the current
   authority keys — a wrong `seed` or a wrong `profile` for that log
 - The key it derives sits at the fold's `keyGen`/`keySeq` — where the current keys were
-  *established* — the derivation index, named apart from the event position `seq`. Both identities
+  _established_ — the derivation index, named apart from the event position `seq`. Both identities
   fold the chain alone: epoch events never change a root key
-- **One re-entry hazard**: a `verifyToken` hook that resolves *this* profile through *this* resolver
+- **One re-entry hazard**: a `verifyToken` hook that resolves _this_ profile through _this_ resolver
   joins the fold that is calling it and waits on a promise that cannot settle. Give such a hook a
   resolver of its own
 - Without `methods`, `verifyToken` fails with `Unknown DID` — the identifier carries no key.
@@ -463,7 +483,7 @@ any claim whose subject is the profile rather than a device
   forward it to every `verifyToken` in the chain, as do `createCapability` (for its
   parent-capability check) and `createRevocationChecker` / `createMemoryRevocationBackend` (for the
   record's issuer). A `did:kokuin:` issuer needs `methods` at each of those call sites: without it
-  delegation fails, and a revocation record whose issuer cannot be resolved *at all* fails the
+  delegation fails, and a revocation record whose issuer cannot be resolved _at all_ fails the
   verification closed. A record the registry can resolve but whose signature or `kid` does not check
   out is ignored instead — it is evidence about the record, not about revocation
 - **The deny set is enforced through the same `methods` registry.** A revoke adds a DID to the
@@ -484,7 +504,7 @@ any claim whose subject is the profile rather than a device
   under **both** `resolve` and `resolveHistoric`, and `resolveAgreementKey` drops a denied agreement
   key. Nothing to wire, and no consumer that has to remember the rule.
 
-  Why it exists: `rotate` retires a key for *new* issuance only, because `resolve` is head-only —
+  Why it exists: `rotate` retires a key for _new_ issuance only, because `resolve` is head-only —
   it deliberately leaves already-issued material verifying, which is what `resolveHistoric` is for
   and what `@kokuin/capability` uses for every capability and every revocation record. So a leaked,
   since-rotated authority key could still mint a fresh capability that verified. The remedy ladder
@@ -519,12 +539,12 @@ any claim whose subject is the profile rather than a device
 
   The error is `Controller <did> kid names a key the controller has revoked: #<key>`, an
   `IssuerKeyNotFoundError` like every other `kid` failure — see the classification note below
-- **Key selection**: a controller's `k` is a *set*. Every token `createControllerIdentity` signs
+- **Key selection**: a controller's `k` is a _set_. Every token `createControllerIdentity` signs
   carries `kid: "#<the multibase key exactly as it appears in `k`>"`, and the resolver matches that
   against the folded key sets by membership. A header with no `kid` still resolves to the head's
   `k[0]`, so single-key profiles are unaffected
 - **Two members, two questions.** `DIDMethodResolver.resolve` answers from the **head's `k` alone**:
-  can this profile sign with this key *now*. That is what `verifyToken` asks by default, and what
+  can this profile sign with this key _now_. That is what `verifyToken` asks by default, and what
   makes a `rotate` actually retire a leaked authority key — a stolen key stops minting verifiable
   tokens at the next rotate, not at the next reset. `resolveHistoric` accepts any key that was
   authoritative at some position **within the current generation**, and is reached only through
@@ -532,16 +552,16 @@ any claim whose subject is the profile rather than a device
   already-issued capability, a revocation record — which a routine rotate must not invalidate,
   including copies held by third parties who cannot know a rotation happened. A `reset` invalidates
   even those: it bumps the generation, and every key from the prior one stops resolving under either
-  member. So does an explicit revoke naming the key, which is the *only* way to stop historic
+  member. So does an explicit revoke naming the key, which is the _only_ way to stop historic
   resolution short of a reset. A `kid` naming a key this profile never published, one outside what
   the member answers for, or one the profile has revoked, is an error — never a fall back to `k[0]`
 - `@kokuin/capability` sets `historic: true` for you on every capability in a chain and on every
   revocation record, so a delegation keeps working across a rotate with nothing to wire. **A
   hand-written `DIDMethodResolver` must publish `resolveHistoric`** for that to work: the member is
-  optional on the interface so existing implementations still typecheck, and its *absence* is
+  optional on the interface so existing implementations still typecheck, and its _absence_ is
   refused (`UnresolvableIssuerError`) rather than answered from `resolve`, because a resolver
   written against the old contract has a permissive `resolve` and falling back to it would be the
-  bug this split removes. A method whose key set never changes aliases it to `resolve`; a *wrapper*
+  bug this split removes. A method whose key set never changes aliases it to `resolve`; a _wrapper_
   around a real resolver must forward it, exactly as it must forward `resolveDenySet`
 - That error is an `IssuerKeyNotFoundError` (`@kokuin/token`, guard `isIssuerKeyNotFoundError`),
   **not** an `UnresolvableIssuerError`: the DID resolved and its log folded; only the key the token

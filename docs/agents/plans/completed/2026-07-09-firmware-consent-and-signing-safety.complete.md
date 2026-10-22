@@ -17,7 +17,6 @@ operation, so a stray continuation chunk could be signed against stale path stat
 
 Both flows now gate on an on-device review; no signature or shared secret leaves the device
 without an Approve press.
-
 1. **SIGN consent gate.** The final chunk (single-chunk and last-continuation alike) computes
    SHA-256 of the fully assembled message, calls `ui_display_sign()`, and returns 0 with **no
    status word**. The review's Approve callback runs the signing crypto and answers the pending

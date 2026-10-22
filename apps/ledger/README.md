@@ -6,12 +6,12 @@ BOLOS application for Ledger Nano S+ providing Ed25519 signing and X25519 ECDH k
 
 **CLA**: `0xE0`
 
-| INS | Command | Input | Output | Confirmation |
-|-----|---------|-------|--------|-------------|
-| `0x01` | `GET_APP_VERSION` | none | 3 bytes (major, minor, patch) | No |
-| `0x02` | `GET_PUBLIC_KEY` | encoded path | 32-byte Ed25519 public key | No |
-| `0x03` | `SIGN_MESSAGE` | encoded path + chunked message | 64-byte Ed25519 signature | Yes |
-| `0x04` | `ECDH_X25519` | encoded path + 32-byte ephemeral key | 32-byte shared secret | Yes |
+| INS    | Command           | Input                                | Output                        | Confirmation |
+| ------ | ----------------- | ------------------------------------ | ----------------------------- | ------------ |
+| `0x01` | `GET_APP_VERSION` | none                                 | 3 bytes (major, minor, patch) | No           |
+| `0x02` | `GET_PUBLIC_KEY`  | encoded path                         | 32-byte Ed25519 public key    | No           |
+| `0x03` | `SIGN_MESSAGE`    | encoded path + chunked message       | 64-byte Ed25519 signature     | Yes          |
+| `0x04` | `ECDH_X25519`     | encoded path + 32-byte ephemeral key | 32-byte shared secret         | Yes          |
 
 ### Derivation Path Encoding
 
@@ -23,25 +23,25 @@ All components must be hardened (SLIP-0010 Ed25519). Example: `m/44'/876'/0'` en
 
 ### SIGN_MESSAGE Chunking
 
-| P1 | P2 | Meaning |
-|----|-----|---------|
-| `0x00` | `0x00` | First and only chunk — includes path + message, triggers signing |
+| P1     | P2     | Meaning                                                                  |
+| ------ | ------ | ------------------------------------------------------------------------ |
+| `0x00` | `0x00` | First and only chunk — includes path + message, triggers signing         |
 | `0x00` | `0x80` | First chunk of multi-chunk — includes path + message start, more to come |
-| `0x80` | `0x80` | Continuation chunk — message data, more to come |
-| `0x80` | `0x00` | Last continuation chunk — triggers signing |
+| `0x80` | `0x80` | Continuation chunk — message data, more to come                          |
+| `0x80` | `0x00` | Last continuation chunk — triggers signing                               |
 
 ### Status Words
 
-| Code | Meaning |
-|------|---------|
-| `0x9000` | Success |
+| Code     | Meaning           |
+| -------- | ----------------- |
+| `0x9000` | Success           |
 | `0x6700` | Wrong data length |
-| `0x6985` | User rejected |
-| `0x6A80` | Invalid data |
-| `0x6A82` | App not open |
-| `0x6D00` | Unknown INS |
-| `0x6E00` | Unknown CLA |
-| `0x6F00` | Internal error |
+| `0x6985` | User rejected     |
+| `0x6A80` | Invalid data      |
+| `0x6A82` | App not open      |
+| `0x6D00` | Unknown INS       |
+| `0x6E00` | Unknown CLA       |
+| `0x6F00` | Internal error    |
 
 ### Approval screens
 
@@ -49,13 +49,13 @@ All components must be hardened (SLIP-0010 Ed25519). Example: `m/44'/876'/0'` en
 shared secret leaves the device without pressing Approve. The confirmation is rendered
 with NBGL (the Nano S+ SDK retired BAGL at this API level).
 
-**Sign message** review: title *"Review message"*, then **Account** (the derivation path,
+**Sign message** review: title _"Review message"_, then **Account** (the derivation path,
 e.g. `44'/876'/0'`), then **Digest** — the full SHA-256 of the message shown as 64 hex
-chars (paginated), then *"Sign message"* (Approve) / *"Reject message"*.
+chars (paginated), then _"Sign message"_ (Approve) / _"Reject message"_.
 
-**Key agreement** review: title *"Review key agreement"*, then **Account**, then
+**Key agreement** review: title _"Review key agreement"_, then **Account**, then
 **Peer key** — the full SHA-256 of the peer's ephemeral X25519 public key (64 hex,
-paginated), then *"Agree key"* (Approve) / *"Reject operation"*.
+paginated), then _"Agree key"_ (Approve) / _"Reject operation"_.
 
 The digest is shown in full rather than truncated — a truncated hash is grindable. It is
 tamper-evidence for a trusted host to compare against; the on-device screen alone is not a
@@ -96,7 +96,6 @@ Speculos exposes port 9999 (configurable via `SPECULOS_PORT`) for its REST API.
 ### What the tests verify
 
 15 integration tests in `tests/ledger/test/speculos.test.ts`:
-
 - **APDU protocol**: version, public key derivation (deterministic, path-dependent)
 - **IdentityProvider**: `provideIdentity()` returns `FullIdentity` with `did:key:z...` DID
 - **Signing**: `signToken()` produces JWTs verifiable by standard Ed25519 verification
@@ -137,10 +136,10 @@ Uses the `cx_x25519` SDK syscall for direct Montgomery scalar multiplication. Th
 
 ### SDK Functions
 
-| Function | Purpose |
-|----------|---------|
-| `bip32_derive_with_seed_init_privkey_256(HDW_ED25519_SLIP10, ...)` | SLIP-10 Ed25519 key derivation |
-| `bip32_derive_with_seed_get_pubkey_256(HDW_ED25519_SLIP10, ...)` | Ed25519 public key (65-byte uncompressed) |
-| `cx_eddsa_sign_no_throw` | Ed25519 signing |
-| `cx_hash_sha512` | SHA-512 for Ed25519→X25519 scalar conversion |
-| `cx_x25519` | X25519 scalar multiplication |
+| Function                                                           | Purpose                                      |
+| ------------------------------------------------------------------ | -------------------------------------------- |
+| `bip32_derive_with_seed_init_privkey_256(HDW_ED25519_SLIP10, ...)` | SLIP-10 Ed25519 key derivation               |
+| `bip32_derive_with_seed_get_pubkey_256(HDW_ED25519_SLIP10, ...)`   | Ed25519 public key (65-byte uncompressed)    |
+| `cx_eddsa_sign_no_throw`                                           | Ed25519 signing                              |
+| `cx_hash_sha512`                                                   | SHA-512 for Ed25519→X25519 scalar conversion |
+| `cx_x25519`                                                        | X25519 scalar multiplication                 |

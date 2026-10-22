@@ -9,7 +9,6 @@ expo, electron, ledger-device). The `KeyEntry` / `KeyStore` contracts live in `@
 as does the `DIDMethodResolver` interface through which a method whose keys are not in its
 identifier is injected -- `@kokuin/controller` depends on token for signing, so the reverse import
 would be a cycle.
-
 - `@kokuin/jwe` -- JWE encryption, split out of token because it was the sole `@noble/ciphers`
   consumer and verify-only consumers were paying for a cipher they never called.
 - `@kokuin/controller` -- the `did:kokuin:` profile DID: a KERI-style key event log, the fold that
@@ -26,7 +25,6 @@ rest of the repo stays free of it, so identity primitives never pull in a databa
 they store are supplied by the caller, never generated here.
 
 Three supporting packages sit beside them:
-
 - `@kokuin/otel` -- the `kokuin` tracer factory with the shared span and attribute names.
 - `@kokuin/keystore-conformance` -- private, never published. The framework-agnostic suite
   (`keyStoreConformanceCases`, `mutableKeyStoreConformanceCases`) that every keystore backend

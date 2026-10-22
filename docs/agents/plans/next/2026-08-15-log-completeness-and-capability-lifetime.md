@@ -7,7 +7,6 @@ outside it.
 complete" and "The design pass before the docs".
 
 **What was closed on the branch, so this item is not read as wider than it is:**
-
 - **Item 2 is moot.** It concerned the lifetime of a capability authorising a `did:kokuin:` revoke;
   that capability-authorised revoke has since been removed, and management authority lives in the
   log as management members (see `docs/reference/controller.md`). The general "a capability with no
@@ -20,7 +19,7 @@ complete" and "The design pass before the docs".
 ## 1. Truncation on a first encounter is still a silent revocation bypass
 
 `packages/controller/src/resolver.ts` (`computeView`). `loadLog` answers with whatever the caller
-has, and nothing establishes that it is the *whole* log. A peer who serves a prefix — stopping just
+has, and nothing establishes that it is the _whole_ log. A peer who serves a prefix — stopping just
 before the settlement that denies their device, or withholds the epoch revoke that does — produces a log that folds cleanly, verifies every
 signature, chains every digest, and yields a deny set missing exactly the entry that matters. The
 verifier cannot tell a truncated log from a short one.
@@ -33,7 +32,7 @@ no second branch to compare, only an honest-looking prefix.
 and a loaded log that does not supersede the last one accepted for that DID is refused
 (`LOG_NOT_AUTHORITATIVE`), as is a genuine fork against it (`LOG_FORKED`); current-epoch events are
 merged with what was seen and never forgotten. The comparison is
-`resolveBranches` over root chains, deliberately *not* a high-water mark over `(gen, seq)` — supersession
+`resolveBranches` over root chains, deliberately _not_ a high-water mark over `(gen, seq)` — supersession
 legitimately lowers the sequence, so a mark would have rejected the owner's recovering rotate at the
 moment it rescues the profile, which is a bricking bug rather than a defence. A stored log that no
 longer folds is treated as no memory rather than as a refusal, so a fold rule that tightens in a

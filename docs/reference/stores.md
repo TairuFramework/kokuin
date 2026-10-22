@@ -4,10 +4,10 @@ Two Hozon-backed persistence packages for the identity layer. Each is a `StoreDe
 [`@hozon/db`](https://github.com/TairuFramework/hozon), so it runs unchanged on `@hozon/node-sqlite`
 and `@hozon/postgres`.
 
-| Package | Holds | API type |
-|---------|-------|----------|
-| `@kokuin/store-controller` | `did:kokuin:` signed event logs | `ControllerStoreAPI` (a `LogStore`) |
-| `@kokuin/store-delegation` | delegation tokens and capability revocations | `DelegationStoreAPI` |
+| Package                    | Holds                                        | API type                            |
+| -------------------------- | -------------------------------------------- | ----------------------------------- |
+| `@kokuin/store-controller` | `did:kokuin:` signed event logs              | `ControllerStoreAPI` (a `LogStore`) |
+| `@kokuin/store-delegation` | delegation tokens and capability revocations | `DelegationStoreAPI`                |
 
 ## Registration
 
@@ -37,17 +37,16 @@ transaction instead of opening a nested one. No statement binds more than 500 pa
 
 `controller_logs`: one row per controller DID.
 
-| Column | Type | Notes |
-|--------|------|-------|
-| `did` | text | primary key |
-| `log` | json | the accepted `ControllerLog` (`{ chain, events }`); a row written before the log split is a bare event array, read back as that chain with no epoch events |
-| `created_at` | timestamp | defaults to now |
-| `updated_at` | timestamp | set on every `merge` write |
+| Column       | Type      | Notes                                                                                                                                                      |
+| ------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `did`        | text      | primary key                                                                                                                                                |
+| `log`        | json      | the accepted `ControllerLog` (`{ chain, events }`); a row written before the log split is a bare event array, read back as that chain with no epoch events |
+| `created_at` | timestamp | defaults to now                                                                                                                                            |
+| `updated_at` | timestamp | set on every `merge` write                                                                                                                                 |
 
 ### API
 
 `ControllerStoreAPI` is `@kokuin/controller`'s `LogStore` plus one method:
-
 - `get(did)`: the stored log, or `undefined`.
 - `merge(did, update)`: writes what `update` makes of the stored log and returns it, the read and
   the write in one store transaction (`withStoreTransaction`, joining an enclosing one). Atomic per
@@ -73,28 +72,28 @@ resolver records each folded log and refuses one that is behind one already seen
 
 `delegation_tokens`, primary key `(grantor, audience, resource)`:
 
-| Column | Type | Notes |
-|--------|------|-------|
-| `jti` | text | indexed; not a key, see `getDelegationTokenByGrantorJTI` |
-| `grantor`, `audience` | text | normalized with `normalizeDID` on write and read |
-| `token` | text | the compact token |
-| `resource`, `act` | text | |
-| `exp` | bigint | unix seconds; indexed with `audience` |
-| `hlc` | text | last-writer-wins stamp, see below |
-| `created_at`, `updated_at` | timestamp | |
+| Column                     | Type      | Notes                                                    |
+| -------------------------- | --------- | -------------------------------------------------------- |
+| `jti`                      | text      | indexed; not a key, see `getDelegationTokenByGrantorJTI` |
+| `grantor`, `audience`      | text      | normalized with `normalizeDID` on write and read         |
+| `token`                    | text      | the compact token                                        |
+| `resource`, `act`          | text      |                                                          |
+| `exp`                      | bigint    | unix seconds; indexed with `audience`                    |
+| `hlc`                      | text      | last-writer-wins stamp, see below                        |
+| `created_at`, `updated_at` | timestamp |                                                          |
 
 `revoked_capabilities`, primary key `(jti, revoker_did)`:
 
-| Column | Type | Notes |
-|--------|------|-------|
-| `jti` | text | the revoked capability |
-| `revoker_did` | text | normalized; each author owns its own row |
-| `revoked_iat` | bigint | unix seconds, floored on write (below) |
-| `revocation_token` | text | the signed revocation record |
-| `verified_at` | bigint, nullable | `NULL` is pending; set once a held capability confirms the issuer |
-| `cap_exp` | bigint, nullable | set on verification; drives the expired purge |
-| `hlc` | text | last-writer-wins stamp |
-| `created_at`, `updated_at` | timestamp | |
+| Column                     | Type             | Notes                                                             |
+| -------------------------- | ---------------- | ----------------------------------------------------------------- |
+| `jti`                      | text             | the revoked capability                                            |
+| `revoker_did`              | text             | normalized; each author owns its own row                          |
+| `revoked_iat`              | bigint           | unix seconds, floored on write (below)                            |
+| `revocation_token`         | text             | the signed revocation record                                      |
+| `verified_at`              | bigint, nullable | `NULL` is pending; set once a held capability confirms the issuer |
+| `cap_exp`                  | bigint, nullable | set on verification; drives the expired purge                     |
+| `hlc`                      | text             | last-writer-wins stamp                                            |
+| `created_at`, `updated_at` | timestamp        |                                                                   |
 
 The key is `(jti, revoker_did)` because a `jti` is chosen by whoever minted the capability and
 travels to the whole group, so several members can file a claim about the same `jti`. Only the claim
@@ -103,7 +102,6 @@ signed by the capability's own issuer binds; each author can displace only its o
 ### API
 
 Delegation tokens:
-
 - `addDelegationToken(token)`: last-writer-wins upsert keyed by `(grantor, audience, resource)`.
 - `getDelegationTokens({ grantor, audience })`, `listIssuedTokens(grantor)`.
 - `getHeldTokens({ audience, atTime })`: unexpired tokens held by `audience`, excluding any whose
@@ -114,7 +112,6 @@ Delegation tokens:
 - `removeDelegationToken({ jti })`.
 
 Revocations:
-
 - `addRevocation(input)`: last-writer-wins upsert keyed by `(jti, revoker_did)`. A `revoked_iat`
   beyond `now + MAX_REVOCATION_FUTURE_DRIFT_SECONDS` (one hour) is floored to that bound, not
   rejected: the record still binds, only its retention is bounded. A row written verified
@@ -140,7 +137,6 @@ and JS `<=`, so it must be an **ASCII** string whose **byte-wise lexicographic o
 order**. ASCII because SQL compares bytes and JS compares UTF-16 code units; the two orders are only
 guaranteed to agree on ASCII. A fixed-width serialized hybrid logical clock satisfies this:
 `<ISO wall time>:<zero-padded counter>:<nodeID>`.
-
 - **Local-only consumers** (no sync) may pass any strictly increasing string of that shape, for
   example `` `${new Date().toISOString()}:${String(counter).padStart(6, '0')}:${nodeID}` ``.
 - **Syncing consumers** need a real hybrid logical clock serialized in that format, so stamps from
@@ -175,7 +171,6 @@ Nothing purges implicitly. Schedule both methods yourself. Each is one time-pred
 atomic, idempotent and safe alongside writes. Both take `{ graceSeconds? }`, defaulting to
 `REVOCATION_GC_VERIFIED_GRACE_SECONDS` (30 days); a negative or non-integer value throws
 `RangeError`.
-
 - `purgeExpiredRevocations()` deletes verified rows whose `cap_exp` is more than the grace in the
   past. Verified rows with a null `cap_exp` are never deleted. The grace must cover the consumer's
   `clockTolerance`: a capability is still accepted up to `cap_exp + clockTolerance`, so
@@ -186,7 +181,6 @@ atomic, idempotent and safe alongside writes. Both take `{ graceSeconds? }`, def
   this is safe only while the consumer holds up its side.
 
 Consumer contracts:
-
 1. **Cap lifetime.** On mint **and on receive**, enforce `cap.exp - cap.iat <= MAX_CAP_TTL_SECONDS`
    (30 days), with `iat` required.
 2. **Future `iat`.** On mint and on receive, enforce
@@ -215,7 +209,6 @@ The returned hook also carries `.verdict(token, raw)`, resolving `true` for revo
 otherwise, for callers that prefer a value to an exception.
 
 Behaviour worth knowing:
-
 - **Fails closed on a dependency fault.** A store read that throws, or a resolver that throws for
   the capability's **own issuer**, makes the check throw that error rather than read as "not
   revoked". "I could not check" is not evidence of non-revocation.

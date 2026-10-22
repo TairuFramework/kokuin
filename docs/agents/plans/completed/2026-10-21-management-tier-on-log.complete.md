@@ -32,7 +32,7 @@ won anti-truncation.
   arrival order or wall time. Effects are semilattice unions: denials, removals and adds union, the
   lease is the maximum renewal, and removal dominates renewal. The order is Kahn topological with
   ties broken by digest.
-- **Who may do what.** Only root adds a member, and root signs every add. Root or any *other* member
+- **Who may do what.** Only root adds a member, and root signs every add. Root or any _other_ member
   renews or removes. "Other" is judged by pinned-key equality, so an alias cannot self-renew. Root
   or any single member revokes an edge holder. A member revoke may not target any member in its
   causal past, removed or denied ones included (the spec overrode the task brief here). Root and
@@ -96,7 +96,6 @@ won anti-truncation.
 ## Release cleanup (2026-10-22)
 
 The review's smaller follow-ons were settled before release, directly from the backlog note:
-
 - **`nbf` on the empty-chain subject arm.** `checkDelegationChain` with no remaining links and
   `iss === sub` checked `exp` and `iat` but not `nbf`. The member arm beside it and the subject arm
   of `checkCapability` both checked all three. Links reached through the walk were never exposed,
@@ -111,7 +110,6 @@ The review's smaller follow-ons were settled before release, directly from the b
   argument.
 
 Rulings:
-
 - **`NOT_MEMBER` keeps covering a saturated epoch.** `@kokuin/capability` depends only on the
   method-agnostic `@kokuin/token` contract, so a distinct reason would mean matching a
   controller-only error string. The `cause` carries `EPOCH_SATURATED`, as `capability.md`

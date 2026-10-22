@@ -1,4 +1,5 @@
 ---
+
 name: kokuin:discover
 description: Explore kokuin identity capabilities by domain
 ---

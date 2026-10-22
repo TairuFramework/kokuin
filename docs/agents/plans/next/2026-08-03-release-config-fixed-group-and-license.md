@@ -9,13 +9,13 @@ two land in minutes and stop active bleeding, so they should not wait behind the
 The release policy says token, capability, browser, node and deterministic release together,
 but nothing declares or enforces it, so the group has drifted apart with every release:
 
-| Package | Version (2026-08-03) |
-|---------|----------------------|
-| `@kokuin/token` | 0.3.0 |
-| `@kokuin/capability` | 0.2.1 |
-| `@kokuin/browser` | 0.2.0 |
-| `@kokuin/node` | 0.3.0 |
-| `@kokuin/deterministic` | 0.2.0 |
+| Package                 | Version (2026-08-03) |
+| ----------------------- | -------------------- |
+| `@kokuin/token`         | 0.3.0                |
+| `@kokuin/capability`    | 0.2.1                |
+| `@kokuin/browser`       | 0.2.0                |
+| `@kokuin/node`          | 0.3.0                |
+| `@kokuin/deterministic` | 0.2.0                |
 
 Five packages, five versions. Each release widens the spread, and the drift is what makes
 downstream adoption hard to reason about (see
@@ -32,7 +32,13 @@ Set the group under `versioning.fixed` in `pnpm-workspace.yaml`:
 ```yaml
 versioning:
   fixed:
-    - ['@kokuin/token', '@kokuin/capability', '@kokuin/browser', '@kokuin/node', '@kokuin/deterministic']
+    - [
+        "@kokuin/token",
+        "@kokuin/capability",
+        "@kokuin/browser",
+        "@kokuin/node",
+        "@kokuin/deterministic",
+      ]
 ```
 
 `expo`, `electron` and `ledger-device` are SDK/hardware-bound and float independently — they

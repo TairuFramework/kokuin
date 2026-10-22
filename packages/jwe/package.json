@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/jwe",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "JWE encryption for kokuin tokens",
   "keywords": [
     "json",

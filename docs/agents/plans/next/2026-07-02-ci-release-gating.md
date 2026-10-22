@@ -9,7 +9,7 @@ The build/test/release plumbing does not actually gate: fresh-clone `pnpm test` 
 firmware and derivation vectors are never exercised, and CI depends on an unpinned external
 workflow. Make the pipeline enforce what it claims.
 
-Scoped to the pipeline. The release *configuration* (fixed group, LICENSE) split out on
+Scoped to the pipeline. The release _configuration_ (fixed group, LICENSE) split out on
 2026-08-03 — see Out of scope.
 
 ## Work

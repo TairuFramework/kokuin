@@ -24,7 +24,6 @@ The APDU protocol versions in lockstep with the host-side package.
 ## Guardrails
 
 See the `kigu:conventions` skill. Repo-specific only:
-
 - pnpm only.
 - Cross-repo deps (`@sozai/*`) are published `^` ranges, never `workspace:`.
 - Releases use pnpm's built-in versioning (`pnpm change`, `pnpm version -r`, `pnpm run release`),

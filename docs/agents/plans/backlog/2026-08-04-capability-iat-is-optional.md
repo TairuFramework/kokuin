@@ -39,11 +39,13 @@ A capability's **lifetime** is `exp - iat`. Any consumer that wants to bound how
 capability may live — rather than only when it expires — computes that difference, and the
 computation is silently unanswerable when `iat` is missing.
 
-The failure mode is the awkward one: it is reachable by *omitting* a claim, not by setting one
+The failure mode is the awkward one: it is reachable by _omitting_ a claim, not by setting one
 badly. A bound written as
 
 ```ts
-if (payload.exp - payload.iat > MAX) { reject }
+if (payload.exp - payload.iat > MAX) {
+  reject
+}
 ```
 
 does not reject an unbounded token; it evaluates `exp - undefined` to `NaN`, and `NaN > MAX` is

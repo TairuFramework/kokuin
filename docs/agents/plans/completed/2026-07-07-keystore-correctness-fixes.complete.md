@@ -18,7 +18,6 @@ kept apart because that work is API-design/reconciliation touching `@kokuin/toke
 ## What was built
 
 Six fixes, each TDD with a regression test that fails against the old code:
-
 1. **electron `set()` clobber (Critical).** `set()` wrote the whole `keys` record with only its
    own entry, so storing a second identity deleted the first. Now reads-spread-writes like
    `remove()` already did.
@@ -62,7 +61,6 @@ reload/restart and assert on the persisted token issuer DID (`token.payload.iss`
 in-session key cache and store singleton otherwise mask clobber/durability bugs (the same trap
 bit an early unit test, which passed pre-fix because the entry's in-memory key cache
 short-circuited the storage read; fixed by reading back through a fresh store instance):
-
 - **e2e-web** (playwright, real IndexedDB): identity durable across `page.reload()`; two
   identities coexist and both persist. Ran 9/9 across chromium/firefox/webkit locally.
 - **e2e-electron** (playwright, real `electron-store`): two identities across a genuine app

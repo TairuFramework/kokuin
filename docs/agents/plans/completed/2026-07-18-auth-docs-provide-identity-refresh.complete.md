@@ -19,10 +19,9 @@ PR #9 replaced the free `provideFullIdentity` / `provideFullIdentityAsync` /
 Exploration found the drift was wider than the deferred item recorded. No package exported any
 free `provide*` function, yet three docs still published that surface, and seven distinct claims
 were factually wrong:
-
 - **Browser** was described as ES256/P-256, `SigningIdentity` only, "decryption is not
   supported". Reality is nearly the inverse: a non-extractable Ed25519 signing key plus a
-  derived X25519 agreement key, so it both signs and decrypts. ES256 is the *legacy* record
+  derived X25519 agreement key, so it both signs and decrypts. ES256 is the _legacy_ record
   path — signing-only, because WebCrypto will not let an ECDSA key do `deriveBits` — and is
   never silently re-keyed, since that would change the DID.
 - **Deterministic** claimed "there is no `provide*` helper". `HDKeyStore.provideIdentity` exists
@@ -72,7 +71,6 @@ the recorded green run, and endorsed the trade.
 ## What was built
 
 Nine commits, docs only — no source, config, or test file touched.
-
 - **`docs/reference/auth.md`** — all six keystore examples to canonical form; browser section
   rewritten to the Ed25519 + X25519 reality; contract section documents the
   `KeyEntry`/`MutableKeyEntry` split and the HD/ledger omission of the mutable facet; electron

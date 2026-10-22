@@ -11,7 +11,7 @@ pre-1.0).
 ## What was fixed
 
 1. **Permission prefix escalation** — `hasPartsMatch` (`packages/capability/src/index.ts`) now
-   iterates the *granted* segments and matches segment-for-segment at equal depth, with a
+   iterates the _granted_ segments and matches segment-for-segment at equal depth, with a
    trailing `*` grant segment matching the remainder. A grant more specific than the request
    (e.g. `foo/bar/baz` vs requested `foo/bar`) no longer authorizes the broader request — the
    escalation that also let a delegate mint capabilities wider than its parent. No implicit

@@ -51,17 +51,16 @@ for nullish/primitive input instead of throwing `TypeError` (which had propagate
 
 `@scure/base`'s base58 is O(n²) big-integer radix conversion. The audit named one path; a
 full decode-site inventory during implementation found three, all closed by length-checking
-the input *before* the decode:
-
+the input _before_ the decode:
 - **`did:peer:4` long form** (`decodePeer4`): default `maxDocSize` dropped from 64 KiB to
   4 KiB; the encoded pre-check now uses the real base58 expansion ratio (~1.3658) with an
   8-char slack instead of an arbitrary `2x`; the previously unbounded hash segment is capped
   at 64 chars.
 - **`did:key`** (`getSignatureInfo`): the payload was decoded in full before any size check,
-  and is reachable from `verifyToken` via the attacker-controlled `iss` claim *ahead of* the
+  and is reachable from `verifyToken` via the attacker-controlled `iss` claim _ahead of_ the
   signature check. Now bounded at 64 chars (largest supported key, ES256, is 48).
 - **`did:peer:4` short form via a `resolver`** (`resolveIssuerWithDoc`): the resolver-returned
-  document was re-encoded (`encodePeer4`, an O(n²) base58 *encode*) and its `publicKeyMultibase`
+  document was re-encoded (`encodePeer4`, an O(n²) base58 _encode_) and its `publicKeyMultibase`
   decoded, both unbounded and before the signature check — the most reachable of the three and
   with no ceiling (72s measured for a 100 KB field). Now the doc's canonical size is bounded
   (reusing the 4 KiB default) before the encode, and each `publicKeyMultibase` is length-checked

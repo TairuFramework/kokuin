@@ -10,7 +10,6 @@
 `provideIdentity`. Only `@kokuin/node`'s sync twin is shown in the docs.
 
 Sections to update, in both files, so they stay consistent with each other:
-
 - `docs/reference/auth.md` — the `@kokuin/expo` and `@kokuin/electron` keystore sections.
 - `docs/skills/auth.skill.md` — the corresponding expo and electron patterns.
 

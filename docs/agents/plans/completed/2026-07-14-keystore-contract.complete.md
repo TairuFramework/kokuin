@@ -40,7 +40,7 @@ expo lacked the prototype-pollution keyID guard node and browser had.
    ES256 is no longer minted anywhere in kokuin. Forced design: the agreement key is the
    birational image of the signing key (`ed25519.utils.toMontgomerySecret(seed)`), both
    imported non-extractable via JWK — a `subtle.generateKey`'d X25519 pair would be
-   independent and unreachable by any sender. `token` keeps `CODECS.ES256` for *verification*;
+   independent and unreachable by any sender. `token` keeps `CODECS.ES256` for _verification_;
    legacy ES256 records keep working **signing-only** and are **never silently re-keyed**
    (that would change the DID). Requires Chrome 137+, Firefox 130+, Safari 17+ — hard-errors,
    no P-256 fallback.

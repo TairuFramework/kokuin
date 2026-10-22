@@ -13,10 +13,10 @@ for a follow-up that no plan item ever tracked.
 
 Half of it happened by drift, so the remainder is invisible. As of 2026-08-03:
 
-| Repo | `@kokuin/token` | `@kokuin/capability` | Other |
-|------|-----------------|----------------------|-------|
-| enkaku | `^0.3.0` — current | `^0.2.1` — current | `@kokuin/electron ^0.4.0` — current |
-| kumiai | `^0.3.0` — current | **`^0.1.0` — two minors stale** | `@kokuin/expo ^0.3.0` — current |
+| Repo   | `@kokuin/token`    | `@kokuin/capability`            | Other                               |
+| ------ | ------------------ | ------------------------------- | ----------------------------------- |
+| enkaku | `^0.3.0` — current | `^0.2.1` — current              | `@kokuin/electron ^0.4.0` — current |
+| kumiai | `^0.3.0` — current | **`^0.1.0` — two minors stale** | `@kokuin/expo ^0.3.0` — current     |
 
 Both catalogs are in each repo's `pnpm-workspace.yaml`.
 

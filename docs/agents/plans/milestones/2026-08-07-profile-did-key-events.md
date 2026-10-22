@@ -21,8 +21,7 @@ identifier is a hash of the key material, so a key change is a new DID. `createR
 (`packages/token/src/rotation.ts`) papers over this by signing an assertion linking the old
 identity to the new one — a rotation chain, not a rotating identity.
 
-That is fine while a DID names a session or a device. It fails as soon as a DID names a *user*:
-
+That is fine while a DID names a session or a device. It fails as soon as a DID names a _user_:
 - Kubun keys ownership on the DID string — `documents.owner`, `catalogs.owner_did`, the
   access-default rows, and delegation `aud` (`kubun/packages/store-graph/src/api.ts`). Rotating
   the identifier turns every rotation into a data migration, and every read-access and write check
@@ -48,14 +47,14 @@ tier into a single seed-rooted one.
 
 ## Methods considered
 
-| Method | Verdict |
-| --- | --- |
-| `did:key`, `did:jwk` | Identifier *is* the key. Fails 1, 2, 3, 5. |
-| `did:peer:4` + rotation assertion (today) | Fails 1 and 5, as above. Fine for ephemeral session identities. |
-| `did:webvh` | Requires an HTTP origin; the method string embeds a domain. Its *log format* is worth copying: SCID = hash of the genesis entry, append-only signed DIDDoc versions, pre-rotation key hashes, optional witnesses. |
-| `did:dht` | Mainline DHT — no blockchain and no own server, but needs public DHT reachability, caps payloads at 1 KB (ML-DSA keys do not fit), guarantees no retention, and lost its maintainer when TBD wound down. Viable only as an optional mirror. |
-| `did:crdt` (arXiv 2606.16223) | Content-addressed genesis, CRDT merge, gossip discovery, no server. Closest published match to a peer-to-peer registry, but any non-revoked key may authorise any operation — no tiered authority, no pre-rotation. Research-grade. |
-| **KERI / `did:keri` / `did:webs`** | Meets all five original requirements. Rejected as a *dependency* (CESR weight, thin JS, no ML-DSA path we control), adopted as the *specification to imitate*. |
+| Method                                    | Verdict                                                                                                                                                                                                                                     |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `did:key`, `did:jwk`                      | Identifier _is_ the key. Fails 1, 2, 3, 5.                                                                                                                                                                                                  |
+| `did:peer:4` + rotation assertion (today) | Fails 1 and 5, as above. Fine for ephemeral session identities.                                                                                                                                                                             |
+| `did:webvh`                               | Requires an HTTP origin; the method string embeds a domain. Its _log format_ is worth copying: SCID = hash of the genesis entry, append-only signed DIDDoc versions, pre-rotation key hashes, optional witnesses.                           |
+| `did:dht`                                 | Mainline DHT — no blockchain and no own server, but needs public DHT reachability, caps payloads at 1 KB (ML-DSA keys do not fit), guarantees no retention, and lost its maintainer when TBD wound down. Viable only as an optional mirror. |
+| `did:crdt` (arXiv 2606.16223)             | Content-addressed genesis, CRDT merge, gossip discovery, no server. Closest published match to a peer-to-peer registry, but any non-revoked key may authorise any operation — no tiered authority, no pre-rotation. Research-grade.         |
+| **KERI / `did:keri` / `did:webs`**        | Meets all five original requirements. Rejected as a _dependency_ (CESR weight, thin JS, no ML-DSA path we control), adopted as the _specification to imitate_.                                                                              |
 
 Ledger-backed methods (`did:ion`, `did:ethr`, `did:cheqd`) and server-backed ones (`did:web`,
 `did:plc`) are out by construction — the stack has neither.
@@ -85,7 +84,7 @@ in the event, and log evolution never reaches the identifier. Not registered wit
 
 ### Keys live in the log, not in the identifier
 
-The DID document is a *projection* of a folded event log, not a stored artefact. Three event types
+The DID document is a _projection_ of a folded event log, not a stored artefact. Three event types
 — `inception`, `rotate`, `revoke` — each carrying `gen`, `seq`, a `prev` digest, and a criticality
 marker. `reset` is a `rotate` variant, not a fourth type. `interact` was dropped: nothing consumes
 it, and anchoring is served by a seal field on `inception` and `rotate`.
@@ -97,7 +96,6 @@ against a published specification.
 
 Inception is canonical — no timestamp, no nonce, no user label — so its contents, and therefore the
 DID, are a pure function of the seed and the profile index. Three properties fall out:
-
 - The DID regenerates from the mnemonic alone.
 - Profiles are enumerable by index, which is what makes an offline recovery picker possible.
 - Re-derivation is idempotent, so legitimate recovery cannot be mistaken for duplicity.
@@ -113,7 +111,7 @@ deny-set snapshot.
 
 ### Pre-rotation and superseding recovery
 
-`inception` commits *digests* of the next keys rather than the keys. A stolen device key cannot
+`inception` commits _digests_ of the next keys rather than the keys. A stolen device key cannot
 rotate the DID, and the next public keys are unpublished until used, so a quantum adversary has
 nothing to pre-compute against.
 
@@ -125,11 +123,11 @@ the recovery as a fork. Precedence overall is `(gen, seq)` lexicographic.
 
 One authority key per generation. No quorum and no thresholds.
 
-| Tier | Custody | May do |
-| --- | --- | --- |
-| Root seed | Ledger, or cold mnemonic | Rotate, reset, clear the deny set, mint the management capability |
+| Tier                  | Custody                         | May do                                                            |
+| --------------------- | ------------------------------- | ----------------------------------------------------------------- |
+| Root seed             | Ledger, or cold mnemonic        | Rotate, reset, clear the deny set, mint the management capability |
 | Management capability | Primary device, hot, long-lived | Mint and renew device and connector capabilities; author `revoke` |
-| Device capability | Per device, lifetime in days | Sign documents |
+| Device capability     | Per device, lifetime in days    | Sign documents                                                    |
 
 The management capability replaces the earlier scoped renewal capability, which existed only because
 authority was assumed unreachable. It holds **no key-event authority beyond `revoke`**: it cannot
@@ -144,23 +142,23 @@ hardware in hand, at the moment speed matters most.
 
 `revoke` adds an entry to a **deny set**, in one of two spellings.
 
-A **DID** denies a *holder*: no capability whose `aud` is that DID is valid from that position
+A **DID** denies a _holder_: no capability whose `aud` is that DID is valid from that position
 onward. It names the device DID rather than a capability `jti`, so it is one entry per device for
 that device's life and it covers capabilities the verifier has never seen.
 
 A **key** — `#<the multibase key exactly as it appears in `k`>`, the spelling a token's `kid`
-already uses — denies a *signer*: nothing the profile signed with that key verifies from that
+already uses — denies a _signer_: nothing the profile signed with that key verifies from that
 position onward. This is the middle rung of the remedy ladder made complete. `rotate` retires a
-leaked key for *new* issuance, because `resolve` answers from the head alone; it deliberately does
+leaked key for _new_ issuance, because `resolve` answers from the head alone; it deliberately does
 not touch material the profile has already issued, since `resolveHistoric` exists precisely so a
 routine rotation does not invalidate outstanding capabilities held by third parties who cannot know
 a rotation happened. Without an explicit key denial, a thief holding a leaked, since-rotated
-authority key could still mint a *fresh* wildcard capability that verified through the historic
+authority key could still mint a _fresh_ wildcard capability that verified through the historic
 path — which is where `@kokuin/capability` verifies every capability and every revocation record.
 So retirement is an event, not a side effect: rotate to stop new issuance, then revoke the key to
 end what it already signed.
 
-A key the profile *currently* publishes cannot be denied — the fold rejects the event. Rotate
+A key the profile _currently_ publishes cannot be denied — the fold rejects the event. Rotate
 first: the pre-rotation commitment is what the holder of a leaked key cannot forge, so `rotate` is
 the event that answers a live compromise. Allowing the denial would also let a management-tier
 device, whose `res` is normally a wildcard, stop the root tier from signing at all with one event.
@@ -175,9 +173,9 @@ expiry only for those that have not heard.
 The deny set is position-dependent state: clearing a DID at a later position does not retroactively
 validate its earlier actions. The hot key may add; only cold key-event authority may clear.
 
-The two spellings are enforced at opposite ends of that one set, and the *evaluation position*
+The two spellings are enforced at opposite ends of that one set, and the _evaluation position_
 differs with the question being asked. A DID denial is read at the position being verified — the
-whole question is whether this author was allowed to act *here*. A key denial is read at the head,
+whole question is whether this author was allowed to act _here_. A key denial is read at the head,
 because it is a statement about the key rather than about one event, and the position an artefact
 carries is author-supplied: a thief would otherwise present a token whose `kid` reaches back to a
 position before the revoke.
@@ -195,7 +193,7 @@ material moves, no rotation event, no group commit, no flag day.
 
 **Two distinct flows, deliberately not merged.** Device onboarding is the routine path and needs no
 seed: the new app shows its `did:key` as a QR, the existing app mints and returns a capability, and
-nothing secret travels in either direction. Mnemonic entry is *recovery*, for when no working device
+nothing secret travels in either direction. Mnemonic entry is _recovery_, for when no working device
 remains. Putting mnemonic entry on the onboarding path would make every app a seed holder, which is
 what the single-holder rule exists to prevent.
 
@@ -229,7 +227,6 @@ device from one profile while keeping it in another.
 ### Recovery
 
 Two guarantees with different requirements, previously blurred:
-
 - **Control recovery** — can this profile keep signing and rotating? Mnemonic, plus a head digest
   and `seq` where the log holds non-reproducible events. Survives total device loss, because the
   recovery-key commitment lives in the deterministic inception and the root can always author a
@@ -262,7 +259,6 @@ recovery-by-retrieval needs exactly the authenticated channel that device loss d
 
 Built on branch `key-events-design`. The resolved design and the decisions behind it are in
 `completed/2026-08-11-controller-key-events.complete.md`. Summary of what landed:
-
 - **`@kokuin/controller`** (new) — derivation, event schema, self-addressing digest, fold, key state
   at position, duplicity detection, handle derivation, profile enumeration. Named for DID Core's
   term for the entity that may change a DID document.
@@ -299,37 +295,35 @@ needs. Late joiners receive the full entry set at welcome, verified against the 
 so recovery does not depend on hub retention.
 
 Two structural constraints:
-
 - `foldEnvelope` requires every entry to be admin-authored in state-so-far
   (`packages/mls/src/envelope-fold.ts:61`), so a plain member cannot publish its own rotation.
   Addressed by a deliberate policy relaxation — see below.
 - Entries are group-scoped; a cross-group entry is rejected as a replay (`envelope-fold.ts:56`).
   Dissolved by nesting.
 
-So the outer ledger entry is group-scoped and notarises *ordering and inclusion only*; its `value`
+So the outer ledger entry is group-scoped and notarises _ordering and inclusion only_; its `value`
 carries a group-independent, self-authorising inner key event signed by the subject's own
-pre-committed key. The admin cannot forge the inner event, and cannot remove one *after inclusion*
+pre-committed key. The admin cannot forge the inner event, and cannot remove one _after inclusion_
 without the head diverging; the same inner bytes replay into every group unchanged.
 
 What the head does **not** prevent is pre-inclusion censorship: an admin can simply never include a
 member's rotation entry, and no head diverges over an entry that never existed. A group where the
-thief *is* the admin would never learn the revocation at all.
+thief _is_ the admin would never learn the revocation at all.
 
 **Rotation entries are member-publishable.** `foldEnvelope`'s admin-only invariant is relaxed for
 exactly one predicate: a non-admin-authored entry is admitted iff its type is in the rotation
-application namespace *and* the inner event's subject DID matches the authoring member. That removes
+application namespace _and_ the inner event's subject DID matches the authoring member. That removes
 the admin from the rotation path structurally. Costs, borne knowingly:
-
 - **A policy change with a flag day.** Every peer must ship the relaxed fold before the first
   member-authored entry appears, or that entry fails the commit closed. It needs a version gate:
   peers advertise support, and the entry type is only used once the group's policy floor includes it.
 - **Member writes need bounding.** Per-member rate and size limits on the relaxed types, so the rule
   is not a spam channel into the replayed-at-welcome ledger.
 
-The device→profile binding entry rides the *same* predicate and therefore the same flag day — one
+The device→profile binding entry rides the _same_ predicate and therefore the same flag day — one
 policy version gate covering an application namespace, not two.
 
-Verifiers should treat the highest inner `(gen, seq)` seen for a DID *anywhere* — any group, any
+Verifiers should treat the highest inner `(gen, seq)` seen for a DID _anywhere_ — any group, any
 direct presentation — as a monotonic floor: cheap, covers groups a rotation has not reached, and is
 the comparison that makes cross-group duplicity detectable.
 
@@ -338,7 +332,7 @@ commit closed. Do not plan on GroupContext extension `0xf102` either: populating
 change every peer must ship first (`packages/mls/src/policy.ts:99-118` admits only zero-length data).
 
 **Genesis changes.** `roleReducer.seed` makes `anchor.creatorDID` the epoch-0 admin. Under
-profile-keyed roles that must be the creator's *profile* DID — but then the creator's own device has
+profile-keyed roles that must be the creator's _profile_ DID — but then the creator's own device has
 no folded binding and cannot author the first entry. The anchor must seed both maps: creator profile
 DID as admin, creator device DID bound to it. That is a breaking change to group creation.
 
@@ -374,12 +368,12 @@ Tracked in `kubun/docs/agents/plans/backlog/2026-08-07-profile-did-ownership.md`
 Measured 2026-08-11 against the shipped branch, by reading each repo's `package.json` files and the
 symbols its sources import — not from the design notes, which were wrong about two of these.
 
-| Repo | Depends on | Adoption | Blocking work |
-| --- | --- | --- | --- |
-| **kubun** | `@kokuin/token`, `capability`, `browser`, `expo` (18 manifests) | not started | its own fail-open; the resolver interface; cut-off position |
-| **kumiai** | `@kokuin/token`, `expo` (8 manifests) | not started | ledger entry types, genesis, the two authority checks |
-| **enkaku** | `@kokuin/token`, `capability`, `electron` (7 manifests) | not started | none known — verify it builds |
-| sozai, tejika, mokei | — | n/a | none |
+| Repo                 | Depends on                                                      | Adoption    | Blocking work                                               |
+| -------------------- | --------------------------------------------------------------- | ----------- | ----------------------------------------------------------- |
+| **kubun**            | `@kokuin/token`, `capability`, `browser`, `expo` (18 manifests) | not started | its own fail-open; the resolver interface; cut-off position |
+| **kumiai**           | `@kokuin/token`, `expo` (8 manifests)                           | not started | ledger entry types, genesis, the two authority checks       |
+| **enkaku**           | `@kokuin/token`, `capability`, `electron` (7 manifests)         | not started | none known — verify it builds                               |
+| sozai, tejika, mokei | —                                                               | n/a         | none                                                        |
 
 **Nothing downstream has been built against the shipped packages.** That is the first task in
 `next/2026-08-11-did-kokuin-downstream-adoption.md` and it gates the rest.
@@ -404,7 +398,7 @@ symbols its sources import — not from the design notes, which were wrong about
 - **The 2026-08-15 review round added four things downstream must absorb.** Re-measured against all
   three repos on 2026-08-15: none implements `DIDMethodResolver`, and none references
   `resolveDenySet`, `resolveAgreementKey`, or passes a `methods:` registry anywhere — so the
-  `resolve`/`resolveHistoric` split costs them nothing *today*, and will cost them the day they
+  `resolve`/`resolveHistoric` split costs them nothing _today_, and will cost them the day they
   verify a `did:kokuin:` token or wrap a resolver. What does reach them, across 26 files calling
   `verifyToken`/`checkCapability`: (1) a presented capability's own `act`/`res` now constrain the
   request and must sit within the parent's grant — inert for these three, which pass invocation
@@ -465,7 +459,6 @@ symbols its sources import — not from the design notes, which were wrong about
 ## Resolved
 
 Recorded here so the reasoning is not re-litigated. Full arguments in the spec.
-
 - **Recovery when the quorum is lost** — dissolved. There is no quorum; the seed is the root and the
   mnemonic is the recovery path.
 - **Single-authority starter profiles** — dissolved. Every profile is single-authority.
@@ -480,7 +473,7 @@ Recorded here so the reasoning is not re-litigated. Full arguments in the spec.
 ## Open questions
 
 - **Implicit delegation, total or capped.** A device inherits its profile's role through membership,
-  so a stolen device of an admin *is* an admin in that group — it can manipulate the roster, not just
+  so a stolen device of an admin _is_ an admin in that group — it can manipulate the roster, not just
   write documents. A ceiling field in the binding entry (effective role = `min(profile role,
   ceiling)`) would allow a phone bound as `member` while the laptop is `admin`. Owned by the kumiai
   brainstorming.

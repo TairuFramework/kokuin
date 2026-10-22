@@ -6,10 +6,10 @@ keystores. **Overriding goal: harden the auth surface before external consumers 
 Updated 2026-08-03. The 2026-07-02 audit (`completed/2026-07-02-audit.complete.md`) drove the
 last month of work and is now mostly closed:
 
-| Severity | Closed | Open |
-|----------|--------|------|
-| Critical | 4 of 5 — prefix escalation, silent signing oracle, `alg:none`, electron clobber | #5 fixed release group |
-| High | 5 of 8 — commit timing, `provideAsync` races, `kid` relationship, audience validation, electron encryption check | firmware-in-CI, turbo `dependsOn`, SLIP-0010 vector |
+| Severity | Closed                                                                                                           | Open                                                |
+| -------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Critical | 4 of 5 — prefix escalation, silent signing oracle, `alg:none`, electron clobber                                  | #5 fixed release group                              |
+| High     | 5 of 8 — commit timing, `provideAsync` races, `kid` relationship, audience validation, electron encryption check | firmware-in-CI, turbo `dependsOn`, SLIP-0010 vector |
 
 Every remaining audit item is build and release plumbing, not auth correctness. The security
 work that remains came from elsewhere: one live fail-open found downstream in kubun.
@@ -54,7 +54,6 @@ The `did:peer:4` audience-less `iss` fail-open that led this list landed on 2026
 
 Per stack policy, kokuin promotes to 1.0 whole, once its surface is stable. Three prerequisites
 remain:
-
 - **Item 1 resolved.** It is the last open finding that changes verification behaviour, and it
   changes the wire format of `iss` for a whole class of tokens. Settling it after 1.0 would be
   a breaking change; settling it now is free.

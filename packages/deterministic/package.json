@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/deterministic",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Deterministic HD keystore",
   "keywords": [
     "cryptography",

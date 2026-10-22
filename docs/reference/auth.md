@@ -33,13 +33,13 @@ import type {
 } from '@kokuin/token'
 ```
 
-| Function | Returns | Notes |
-|---|---|---|
-| `randomIdentity()` | `OwnIdentity` | Fresh Ed25519 key pair in memory (`did:key:…`) |
-| `createIdentity(input)` | `Promise<MultiKeyIdentity>` | Multi-key `did:peer:4` identity with signing + encryption keys |
-| `createSigningIdentity(privateKey)` | `SigningIdentity` | Sign-only identity from an Ed25519 private key |
-| `createKeyAgreementIdentity(privateKey)` | `KeyAgreementIdentity` | Key-agreement-only identity (JWE recipient, via `@kokuin/jwe`) |
-| `createFullIdentity(privateKey)` | `FullIdentity` | Sign + key agreement from one Ed25519 private key |
+| Function                                 | Returns                     | Notes                                                          |
+| ---------------------------------------- | --------------------------- | -------------------------------------------------------------- |
+| `randomIdentity()`                       | `OwnIdentity`               | Fresh Ed25519 key pair in memory (`did:key:…`)                 |
+| `createIdentity(input)`                  | `Promise<MultiKeyIdentity>` | Multi-key `did:peer:4` identity with signing + encryption keys |
+| `createSigningIdentity(privateKey)`      | `SigningIdentity`           | Sign-only identity from an Ed25519 private key                 |
+| `createKeyAgreementIdentity(privateKey)` | `KeyAgreementIdentity`      | Key-agreement-only identity (JWE recipient, via `@kokuin/jwe`) |
+| `createFullIdentity(privateKey)`         | `FullIdentity`              | Sign + key agreement from one Ed25519 private key              |
 
 **Identity hierarchy**: `OwnIdentity ⊇ FullIdentity ⊇ SigningIdentity | KeyAgreementIdentity`.
 
@@ -54,16 +54,13 @@ type Identity = { readonly id: string }
 
 type SigningIdentity = Identity & {
   publicKey: Uint8Array
-  signToken<Payload>(
-    payload: Payload,
-    options?: SignTokenOptions,
-  ): Promise<SignedToken<Payload>>
+  signToken<Payload>(payload: Payload, options?: SignTokenOptions): Promise<SignedToken<Payload>>
 }
 
 type SignTokenOptions = {
-  header?: Record<string, unknown>  // extra fields merged into the signed JWS header
-  kid?: string                      // pick a non-primary signing key by fragment
-  embedLongForm?: boolean           // override the did:peer:4 long-form policy
+  header?: Record<string, unknown> // extra fields merged into the signed JWS header
+  kid?: string // pick a non-primary signing key by fragment
+  embedLongForm?: boolean // override the did:peer:4 long-form policy
 }
 
 type KeyAgreementIdentity = Identity & {
@@ -155,13 +152,13 @@ for (const s of serialized) {
 
 ```typescript
 type SignedPayload = {
-  iss: string         // issuer DID (set automatically from signing identity)
-  sub?: string        // subject
-  aud?: string        // audience
-  cap?: string | Array<string>  // capability token(s) embedded in the request
-  exp?: number        // expiry (Unix seconds)
-  nbf?: number        // not-before (Unix seconds)
-  iat?: number        // issued-at (Unix seconds)
+  iss: string // issuer DID (set automatically from signing identity)
+  sub?: string // subject
+  aud?: string // audience
+  cap?: string | Array<string> // capability token(s) embedded in the request
+  exp?: number // expiry (Unix seconds)
+  nbf?: number // not-before (Unix seconds)
+  iat?: number // issued-at (Unix seconds)
 }
 ```
 
@@ -181,22 +178,18 @@ import {
 import type { EnvelopeMode, TokenEncrypter } from '@kokuin/jwe'
 ```
 
-| `EnvelopeMode` | Description |
-|---|---|
-| `'plain'` | Unsigned, unencrypted bare JWT |
-| `'jws'` | Signed only (standard JWS) |
-| `'jws-in-jwe'` | Signed first, then encrypted |
-| `'jwe-in-jws'` | Encrypted first, then signed |
+| `EnvelopeMode` | Description                    |
+| -------------- | ------------------------------ |
+| `'plain'`      | Unsigned, unencrypted bare JWT |
+| `'jws'`        | Signed only (standard JWS)     |
+| `'jws-in-jwe'` | Signed first, then encrypted   |
+| `'jwe-in-jws'` | Encrypted first, then signed   |
 
 **JWE encrypt / decrypt** (ECDH-ES + A256GCM):
 
 ```typescript
 import { randomIdentity } from '@kokuin/token'
-import {
-  createTokenEncrypter,
-  encryptToken,
-  decryptToken,
-} from '@kokuin/jwe'
+import { createTokenEncrypter, encryptToken, decryptToken } from '@kokuin/jwe'
 
 const recipient = randomIdentity()
 
@@ -232,13 +225,12 @@ const recovered = await recipient.agreeKey(ephemeralPublicKey)
 `deriveSharedSecret` resolves the recipient's agreement key by the same rule
 `createTokenEncrypter` uses internally, and generates the ephemeral key pair inside the function —
 the ephemeral private key never leaves it. Two caveats before you use the result:
-
 - **It is raw ECDH output, not a key.** Run it through a KDF, and bind `ephemeralPublicKey` and
   the recipient DID into that KDF's info/context yourself. The JWE path does not do this either —
   it derives its content key with a fixed `algorithmID` and empty `partyUInfo`/`partyVInfo`, so no
   party identity reaches the KDF; its only per-message binding is `ephemeralPublicKey`, carried in
   the protected header that serves as the AES-GCM AAD. NIST SP 800-56A calls for party identities
-  in OtherInfo, and it matters most when this secret is combined with *other* factor secrets via
+  in OtherInfo, and it matters most when this secret is combined with _other_ factor secrets via
   HKDF — precisely where cross-factor confusion becomes possible.
 - **The agreement is anonymous.** This is ephemeral-static ECDH: anyone holding the recipient's
   DID can mint a valid `{ sharedSecret, ephemeralPublicKey }` pair, so possession of the secret is
@@ -249,11 +241,7 @@ the ephemeral private key never leaves it. Two caveats before you use the result
 
 ```typescript
 import { randomIdentity } from '@kokuin/token'
-import {
-  createTokenEncrypter,
-  wrapEnvelope,
-  unwrapEnvelope,
-} from '@kokuin/jwe'
+import { createTokenEncrypter, wrapEnvelope, unwrapEnvelope } from '@kokuin/jwe'
 import type { EnvelopeMode } from '@kokuin/jwe'
 
 const signer = randomIdentity()
@@ -261,14 +249,18 @@ const recipient = randomIdentity()
 const mode: EnvelopeMode = 'jws-in-jwe'
 
 const encrypter = createTokenEncrypter(recipient.id)
-const envelope = await wrapEnvelope(mode, { hello: 'world' }, {
-  signer,
-  encrypter,
-})
+const envelope = await wrapEnvelope(
+  mode,
+  { hello: 'world' },
+  {
+    signer,
+    encrypter,
+  },
+)
 
 const unwrapped = await unwrapEnvelope(envelope, { decrypter: recipient })
 console.log(unwrapped.payload) // { hello: 'world' }
-console.log(unwrapped.mode)    // 'jws-in-jwe'
+console.log(unwrapped.mode) // 'jws-in-jwe'
 ```
 
 ### Key rotation
@@ -278,7 +270,7 @@ Key rotation in `did:kokuin:` keeps the identifier stable while replacing the ke
 Rotation is managed through `@kokuin/controller`. A rotation event contains:
 - **Prior event digest** (`p`): Chains to the prior event in the log
 - **Signature and agreement keys** (`k`, `ka`): The new key material being rotated into
-- **Pre-rotation commitments** (`n`): Digests of the keys the *next* rotation must reveal
+- **Pre-rotation commitments** (`n`): Digests of the keys the _next_ rotation must reveal
 - **State snapshot** (`m`, `d`): The management members and deny set the rotation settles on — every rotation is a settlement
 
 `verifyRotate` validates a single rotate: it checks that `k` hashes to the digests the prior event committed in `n`. This creates a key takeover protection: an attacker who steals the current signing key still cannot rotate the profile, because rotation requires revealing keys that match the pre-committed digests — keys they do not possess. `foldLog` walks the whole root chain to establish the current key state, then merges the current epoch's management events (member adds, renewals, removals and revokes) into it.
@@ -311,8 +303,8 @@ const identitySync = store.provideIdentitySync('main-key')
 
 // Manual entry operations
 const entry = store.entry('main-key')
-const key = await entry.getAsync()     // Uint8Array | null
-const newKey = new Uint8Array(32)      // e.g. a freshly generated key
+const key = await entry.getAsync() // Uint8Array | null
+const newKey = new Uint8Array(32) // e.g. a freshly generated key
 await entry.setAsync(newKey)
 await entry.removeAsync()
 
@@ -360,10 +352,13 @@ console.log('DID:', identity.id)
 const signingIdentity = await store.provideSigningIdentity('user-session')
 
 // Sign a token
-const token = await signToken(identity, createUnsignedToken({
-  sub: 'resource:7',
-  exp: Math.floor(Date.now() / 1000) + 3600,
-}))
+const token = await signToken(
+  identity,
+  createUnsignedToken({
+    sub: 'resource:7',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  }),
+)
 const tokenString = stringifyToken(token)
 ```
 
@@ -384,7 +379,7 @@ console.log('DID:', identity.id)
 
 // Manual entry operations
 const entry = store.entry('device-identity')
-const key = await entry.getAsync()     // Uint8Array | null
+const key = await entry.getAsync() // Uint8Array | null
 await entry.removeAsync()
 ```
 
@@ -405,10 +400,13 @@ const identity = await store.provideIdentity('main-process-key')
 console.log('DID:', identity.id)
 
 // Sign a token (e.g. for IPC verification)
-const token = await signToken(identity, createUnsignedToken({
-  sub: 'renderer-process',
-  aud: 'main-process',
-}))
+const token = await signToken(
+  identity,
+  createUnsignedToken({
+    sub: 'renderer-process',
+    aud: 'main-process',
+  }),
+)
 ```
 
 Storage: `electron-store` default location (`~/Library/Application Support/<app>/config.json` on macOS).
@@ -433,8 +431,8 @@ const identity = await store.provideIdentity('0')
 console.log('DID:', identity.id)
 
 // Standalone derivation (no store required)
-const path = resolveDerivationPath('0')                // numeric keyID → "m/44'/876'/0'"
-const privateKey = derivePrivateKey(masterSeed, path)  // Uint8Array
+const path = resolveDerivationPath('0') // numeric keyID → "m/44'/876'/0'"
+const privateKey = derivePrivateKey(masterSeed, path) // Uint8Array
 const identity2 = createFullIdentity(privateKey)
 ```
 
@@ -473,7 +471,7 @@ import type { KeyEntry, KeyStore, MutableKeyEntry } from '@kokuin/token'
 type KeyEntry<PrivateKeyType> = {
   readonly keyID: string
   getAsync(): Promise<PrivateKeyType | null>
-  provideAsync(): Promise<PrivateKeyType>   // get-or-create
+  provideAsync(): Promise<PrivateKeyType> // get-or-create
 }
 
 type MutableKeyEntry<PrivateKeyType> = KeyEntry<PrivateKeyType> & {

@@ -18,7 +18,6 @@ store was refused.
 Today this is enforced by documentation only (`history.ts`, `controller.md`, `security.md`, and the
 store-controller `api.ts` and README): write only `authoritativeLog` output. Options, if that is not
 enough:
-
 - an opt-in `verifyHeld` flag that re-verifies once per process and caches the result per digest
   and signature list;
 - a provenance mark on stored rows (needs a local MAC key: bytes alone cannot carry an unforgeable

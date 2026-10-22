@@ -9,7 +9,6 @@ standards-alignment question, raised because the behaviour was surprising when w
 ## What was found
 
 `encryptWithX25519` derives the content encryption key with:
-
 - `algorithmID: 'A256GCM'` — a fixed constant equal to the JWE `enc` value, not a per-message or
   per-party identifier
 - `partyUInfo` and `partyVInfo` both hardcoded to an empty `Uint8Array`

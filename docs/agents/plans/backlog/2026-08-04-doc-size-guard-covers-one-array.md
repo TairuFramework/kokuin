@@ -27,7 +27,7 @@ approach so the guard can still never reject a document the byte measure would h
 have already bounded the document — resolver docs pass the identical guard in
 `resolveIssuerWithDoc`, and long-form docs pass `decodePeer4`'s byte check. Because
 `verifySignedPayload` awaits `cache.set`, the guard's only reachable novel effect is turning a
-post-verification cache-write rejection into a *failed verification*. It also measures the
+post-verification cache-write rejection into a _failed verification_. It also measures the
 canonical serialization where `decodePeer4` measures the raw embedded bytes, so the two can
 disagree at the margin.
 

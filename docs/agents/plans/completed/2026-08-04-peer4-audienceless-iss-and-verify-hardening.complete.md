@@ -50,7 +50,7 @@ payload in place and re-submit the same reference to get the tampered payload ba
 original design re-ran `getVerifiableData(token)`, which compares the recomputed header and
 payload against `token.data`. The final whole-branch review demonstrated with a working repro
 that this is bypassable: `data` lives on the same mutable object, so code that mutates the
-payload *and* recomputes `data` passes the check and stays in the `WeakSet`. The shipped fix
+payload _and_ recomputes `data` passes the check and stays in the `WeakSet`. The shipped fix
 records the verified `data` string in a module-level `WeakMap<object, string>` at both
 `verifiedTokens.add` sites, and the fast path compares the recomputation against that captured
 value, which no mutator can reach. A map miss fails closed. The earlier `data == null` guard and

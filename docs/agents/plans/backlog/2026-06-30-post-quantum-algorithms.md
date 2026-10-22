@@ -18,7 +18,7 @@ SLH-DSA) into the `@kokuin/token` algorithm registry, so identities can hold PQ 
 `milestones/2026-08-07-profile-did-key-events.md` depends on this work, and constrains it in two
 directions.
 
-It needs phase 1 and 2 to be reachable *without changing any identifier*: under `did:peer:4` the
+It needs phase 1 and 2 to be reachable _without changing any identifier_: under `did:peer:4` the
 identifier is a hash of the key document, so adding an ML-DSA key mints a new DID and breaks every
 ownership row downstream. Under the key-event design the key set lives in a log, so the same
 migration is one rotation event and the DID is untouched. That is the strongest argument for doing
@@ -37,7 +37,6 @@ has registered `alg` values to target rather than private ones:
 ## Phasing (recommended)
 
 Each phase is its own design and plan.
-
 1. **Verifier-only.** Add an ML-DSA `Verifier` to the existing `Verifiers` map. Lets any
    consumer verify tokens signed by external PQ identities, with no keystore changes.
 2. **Node and Electron signing.** Generate and store ML-DSA private keys via `@kokuin/node` and
