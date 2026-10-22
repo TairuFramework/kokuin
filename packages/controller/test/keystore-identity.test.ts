@@ -79,7 +79,7 @@ describe('provideControllerIdentity', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     await logStore.merge(did, async () => ({ chain: [inception, rot], events: [] }))
 

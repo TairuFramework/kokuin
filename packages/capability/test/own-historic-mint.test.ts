@@ -34,7 +34,7 @@ describe('a rotated-away authority key, at the capability path', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const fullLog = [inception, rotate]
 
@@ -102,7 +102,7 @@ describe('a rotated-away authority key, at the capability path', () => {
       profile: 0,
       did,
       prior: rotate.event,
-      options: { snapshot: { members: [], deny: [keyTarget(leakedKey)] } },
+      snapshot: { members: [], deny: [keyTarget(leakedKey)] },
     })
     const remediedLog = [inception, rotate, revoke]
     const remedied: MethodRegistry = [

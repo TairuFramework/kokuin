@@ -62,7 +62,7 @@ describe('TokenRevokedError', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const leaked = inception.event.k[0]
     if (leaked === undefined) throw new Error('expected inception key')
@@ -75,7 +75,7 @@ describe('TokenRevokedError', () => {
         profile: 0,
         did,
         prior: rotate.event,
-        options: { snapshot: { members: [], deny: [keyTarget(leaked)] } },
+        snapshot: { members: [], deny: [keyTarget(leaked)] },
       }),
     ]
     const registry = (log: Array<SignedEvent>): MethodRegistry => [

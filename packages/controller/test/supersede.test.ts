@@ -37,7 +37,7 @@ function settle(did: string, prior: EventCommon, deny: Array<string>): SignedEve
     profile: 0,
     did,
     prior,
-    options: { snapshot: { members: [], deny } },
+    snapshot: { members: [], deny },
   })
 }
 
@@ -49,7 +49,7 @@ describe('resolveBranches()', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const result = resolveBranches(did, [[icp], [icp, rot]])
     expect(result.ok).toBe(true)
@@ -64,7 +64,7 @@ describe('resolveBranches()', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const denying = settle(did, rot.event, [victim])
     const reset = createReset(seed, 0, 1)
@@ -100,14 +100,14 @@ describe('resolveBranches()', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const b = createRotate({
       seed,
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const result = resolveBranches(did, [
       [icp, a],
@@ -206,7 +206,7 @@ describe('resolveBranches()', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const honest = [icp, rot]
     // Appended by someone holding no key material: an unknown, non-critical, unsigned event at the

@@ -36,7 +36,7 @@ describe('createRotate()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     expect(event.s).toBe(1)
     expect(event.g).toBe(0)
@@ -50,7 +50,7 @@ describe('createRotate()', () => {
         profile: 0,
         did,
         prior: inception.event,
-        options: { snapshot: { members: [], deny: [] } },
+        snapshot: { members: [], deny: [] },
       }).event.i,
     ).toBe(did)
   })
@@ -63,7 +63,7 @@ describe('createRotate()', () => {
         profile: 0,
         did,
         prior: inception.event,
-        options: { snapshot: { members: [], deny: [] } },
+        snapshot: { members: [], deny: [] },
       }).event.p,
     ).toBe(priorDigest)
   })
@@ -75,7 +75,7 @@ describe('createRotate()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     expect(digestOf(event.k[0])).toBe(inception.event.n[0])
   })
@@ -88,7 +88,7 @@ describe('createRotate()', () => {
         profile: 0,
         did,
         prior: inception.event,
-        options: { snapshot: { members: [], deny: [] } },
+        snapshot: { members: [], deny: [] },
       }),
     ).toEqual(
       createRotate({
@@ -96,7 +96,7 @@ describe('createRotate()', () => {
         profile: 0,
         did,
         prior: inception.event,
-        options: { snapshot: { members: [], deny: [] } },
+        snapshot: { members: [], deny: [] },
       }),
     )
   })
@@ -110,7 +110,8 @@ describe('createRotate()', () => {
         profile: 0,
         did,
         prior: inception.event,
-        options: { seal, snapshot: { members: [], deny: [] } },
+        seal,
+        snapshot: { members: [], deny: [] },
       }).event.a,
     ).toBe(seal)
   })
@@ -123,7 +124,7 @@ describe('createRotate()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny } },
+      snapshot: { members: [], deny },
     })
     expect(event.d).toEqual(deny)
     expect(event.m).toEqual([])
@@ -141,7 +142,7 @@ describe('createRotate()', () => {
         profile: 0,
         did,
         prior,
-        options: { snapshot: { members: [], deny: [] } },
+        snapshot: { members: [], deny: [] },
       })
       log.push(rot)
       prior = rot.event
@@ -165,7 +166,7 @@ describe('verifyRotate()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     expect(verifyRotate(signed, { digest: priorDigest, n: inception.event.n })).toBe(true)
   })
@@ -178,7 +179,7 @@ describe('verifyRotate()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     expect(verifyRotate(signed, { digest: priorDigest, n: inception.event.n })).toBe(false)
   })
@@ -190,7 +191,7 @@ describe('verifyRotate()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     expect(verifyRotate(signed, { digest: digestOf({ other: true }), n: inception.event.n })).toBe(
       false,
@@ -204,7 +205,7 @@ describe('verifyRotate()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const injected = { did: 'did:key:zInjected', key: 'zInjected', add: 'zAdd', lease: 1 }
     for (const patch of [{ d: ['did:key:zInjected'] }, { m: [injected] }]) {
@@ -227,7 +228,7 @@ describe('verifyRotate()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
     const event = { ...signed.event, k: [encodeKey(current.publicKey, 'X25519')] }
@@ -245,7 +246,7 @@ describe('verifyRotate()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
     const event = { ...signed.event, ka: [] }
@@ -260,7 +261,7 @@ describe('verifyRotate()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
     const event = { ...signed.event, ka: [at(signed.event.k, 0)] }
@@ -279,24 +280,24 @@ describe('createRotate() refuses to emit an event the fold would reject', () => 
   test('a prior that commits no key is refused', () => {
     const { inception, did } = setup()
     const { n: _n, ...uncommitted } = inception.event
-    expect(() =>
-      createRotate({ seed, profile: 0, did, prior: uncommitted, options: { snapshot } }),
-    ).toThrow(/pre-commits no key/)
+    expect(() => createRotate({ seed, profile: 0, did, prior: uncommitted, snapshot })).toThrow(
+      /pre-commits no key/,
+    )
   })
 
   test('a prior committing a key other than the one derived at its next position is refused', () => {
     const { inception, did } = setup()
     const elsewhere = { ...inception.event, n: [digestOf('a key nothing derives')] }
-    expect(() =>
-      createRotate({ seed, profile: 0, did, prior: elsewhere, options: { snapshot } }),
-    ).toThrow(/pre-committed/)
+    expect(() => createRotate({ seed, profile: 0, did, prior: elsewhere, snapshot })).toThrow(
+      /pre-committed/,
+    )
     // Control: the real prior emits and folds.
     const good = createRotate({
       seed,
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot },
+      snapshot,
     })
     expect(foldLog(did, { chain: [inception, good], events: [] }).ok).toBe(true)
   })
@@ -314,7 +315,7 @@ describe('createRotate() refuses to emit an event the fold would reject', () => 
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     expect(forged.event.t).toBe('rot')
     expect(foldLog(did, { chain: [inception, forged], events: [] })).toEqual({
@@ -337,7 +338,7 @@ describe('a rotate`s thresholds and seal are checked', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const event = { ...base.event, ...patch } as unknown as typeof base.event
     const key = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
@@ -387,7 +388,8 @@ describe('a rotate`s thresholds and seal are checked', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { seal: 'zSomeExternalDigest', snapshot: { members: [], deny: [] } },
+      seal: 'zSomeExternalDigest',
+      snapshot: { members: [], deny: [] },
     })
     expect(sealed.event.a).toBe('zSomeExternalDigest')
     const plain = createRotate({
@@ -395,7 +397,7 @@ describe('a rotate`s thresholds and seal are checked', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     expect(plain.event.a).toBeUndefined()
     // The member is present-and-undefined on the object and absent from the encoding — the

@@ -88,7 +88,7 @@ describe('builders', () => {
       profile,
       did,
       prior: inception.event,
-      options: { snapshot: snapshotOf(head) },
+      snapshot: snapshotOf(head),
     })
     const rotated = headOf([inception, rot])
     const add = createAdd({ seed, profile, did, head: rotated, parents: [rotated.epoch], member })
@@ -102,7 +102,7 @@ describe('builders', () => {
       profile,
       did,
       prior: inception.event,
-      options: { snapshot: snapshotOf(head) },
+      snapshot: snapshotOf(head),
     })
     const rotated = headOf([inception, rot])
     // The inception's position with the rotated head's keys: the derived key is the retired one.

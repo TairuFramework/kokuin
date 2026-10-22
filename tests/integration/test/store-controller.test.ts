@@ -34,7 +34,7 @@ describe.each(backendsNamed('postgres'))('$name jsonb log column', (b) => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const log = [icp, rot] as Array<SignedEvent>
 

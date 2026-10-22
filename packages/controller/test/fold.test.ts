@@ -32,7 +32,7 @@ function build() {
     profile: 0,
     did,
     prior: icp.event,
-    options: { snapshot: { members: [], deny: [] } },
+    snapshot: { members: [], deny: [] },
   })
   // A settlement on top of it: the second rotate's snapshot denies the stolen device.
   const denying = settle(did, rot.event, [stolen])
@@ -45,7 +45,7 @@ function settle(did: string, prior: SignedEvent['event'], deny: Array<string>) {
     profile: 0,
     did,
     prior,
-    options: { snapshot: { members: [], deny } },
+    snapshot: { members: [], deny },
   })
 }
 

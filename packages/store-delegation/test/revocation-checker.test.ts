@@ -397,7 +397,7 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const beforeRotate = createControllerIdentity({
       seed,
@@ -425,7 +425,7 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const leaked = icp.event.k[0]
     if (leaked === undefined) throw new Error('expected inception key')
@@ -437,7 +437,7 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
         profile: 0,
         did,
         prior: rotate.event,
-        options: { snapshot: { members: [], deny: [keyTarget(leaked)] } },
+        snapshot: { members: [], deny: [keyTarget(leaked)] },
       }),
     ]
     const thief = createControllerIdentity({ seed, profile: 0, log: { chain: [icp], events: [] } })

@@ -65,7 +65,7 @@ describe('createControllerResolver()', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp, rot], events: [] }),
@@ -120,7 +120,7 @@ describe('createControllerResolver().resolve() with a kid', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp, rot], events: [] }),
@@ -183,7 +183,7 @@ describe('createControllerResolver() and a revoked key', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const leaked = at(icp.event.k, 0)
     const rev = createRotate({
@@ -191,7 +191,7 @@ describe('createControllerResolver() and a revoked key', () => {
       profile: 0,
       did,
       prior: rot.event,
-      options: { snapshot: { members: [], deny: [`#${leaked}`] } },
+      snapshot: { members: [], deny: [`#${leaked}`] },
     })
     return { did, leaked, rot, rev, rotated: [icp, rot], revoked: [icp, rot, rev] }
   }
@@ -269,7 +269,7 @@ describe('createControllerResolver() and a revoked key', () => {
       profile: 0,
       did,
       prior: rev.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [...revoked, cleared], events: [] }),
@@ -338,7 +338,7 @@ describe('createControllerResolver() shared folds', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     log = [icp, rot]
     const after = await resolver.resolve(did, {})
@@ -412,7 +412,7 @@ describe('createControllerResolver().resolveAgreementKey()', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp, rot], events: [] }),
@@ -441,7 +441,7 @@ describe('a resolver over a fixed view', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const result = foldLog(did, { chain: [icp, rot], events: [] })
     if (!result.ok) throw new Error('did not fold')
@@ -518,7 +518,7 @@ describe('a resolver over a fixed view', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [device] } },
+      snapshot: { members: [], deny: [device] },
     })
     const result = foldLog(did, { chain: [icp, rev], events: [] })
     if (!result.ok) throw new Error('did not fold')

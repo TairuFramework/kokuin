@@ -41,7 +41,7 @@ describe('encrypting to a did:kokuin: profile', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [inception, rotate], events: [] }),

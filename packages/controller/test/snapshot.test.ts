@@ -76,7 +76,7 @@ function peerDID(keys: Array<string>): string {
 const member = didKeyMember(edKey(7))
 
 function rotate(prior: SignedEvent['event'], snapshot: StateSnapshot): SignedEvent<RotateEvent> {
-  return createRotate({ seed, profile, did, prior, options: { snapshot } })
+  return createRotate({ seed, profile, did, prior, snapshot })
 }
 
 /**

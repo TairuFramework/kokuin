@@ -45,7 +45,7 @@ const rotated = createRotate({
   profile: 0,
   did,
   prior: inception.event,
-  options: { snapshot: { members: [], deny: [] } },
+  snapshot: { members: [], deny: [] },
 })
 const reset = createReset(seed, 0, 1)
 

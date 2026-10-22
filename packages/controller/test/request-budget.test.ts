@@ -50,7 +50,7 @@ const rot = createRotate({
   profile,
   did,
   prior: inception.event,
-  options: { snapshot: { members: [member], deny: [] } },
+  snapshot: { members: [member], deny: [] },
 })
 const chain: Array<SignedEvent> = [inception, rot]
 const folded = foldLog(did, { chain, events: [] })
@@ -214,7 +214,7 @@ describe('held memory', () => {
       profile,
       did,
       prior: rot.event,
-      options: { snapshot: { members: [member], deny: [] } },
+      snapshot: { members: [member], deny: [] },
     })
     const result = authoritativeLog({
       did,

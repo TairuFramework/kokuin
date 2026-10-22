@@ -42,7 +42,7 @@ function revokeOf(target: string): SignedEvent {
     profile: 0,
     did,
     prior: inception.event,
-    options: { snapshot: { members: [], deny: [target] } },
+    snapshot: { members: [], deny: [target] },
   })
 }
 

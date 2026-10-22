@@ -109,7 +109,7 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const leaked = inception.event.k[0]
 
@@ -132,7 +132,7 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
       profile: 0,
       did,
       prior: rotate.event,
-      options: { snapshot: { members: [], deny: [`#${leaked}`] } },
+      snapshot: { members: [], deny: [`#${leaked}`] },
     })
     const revoked = createControllerResolver({
       loadLog: async () => ({ chain: [inception, rotate, revoke], events: [] }),
@@ -144,7 +144,7 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
       profile: 0,
       did,
       prior: rotate.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const twiceRotated = createControllerResolver({
       loadLog: async () => ({ chain: [inception, rotate, undenied], events: [] }),
@@ -176,7 +176,7 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const log = [inception, rotate]
     const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })

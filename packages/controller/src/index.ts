@@ -47,7 +47,7 @@ export {
   verifyEpochSignature,
 } from './epoch-events.js'
 export {
-  type CreateRotateOptions,
+  type CreateRotateParams,
   createInception,
   createReset,
   createRotate,

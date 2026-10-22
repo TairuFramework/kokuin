@@ -18,12 +18,12 @@ import {
   type EpochSigner,
 } from '../src/epoch-events.js'
 import {
-  type CreateRotateOptions,
   createInception,
   createReset,
   createRotate,
   didFromInception,
   type EventCommon,
+  type StateSnapshot,
   // `signEvent` stays unexported from the package's public barrel (`src/index.ts`) — it is an
   // internal signing primitive, not part of the wire protocol. Importing it directly from
   // `events.js` here is legitimate: this is a test file, not a consumer of the public API, and
@@ -118,8 +118,8 @@ const implementation = {
     profile: number,
     did: string,
     prior: EventCommon,
-    options: CreateRotateOptions,
-  ) => createRotate({ seed, profile, did, prior, options }),
+    snapshot: StateSnapshot,
+  ) => createRotate({ seed, profile, did, prior, snapshot }),
   createReset,
   didFromInception,
   foldLog,

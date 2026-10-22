@@ -48,7 +48,7 @@ const rot = createRotate({
   profile: 0,
   did,
   prior: icp.event,
-  options: { snapshot: { members: [], deny: [] } },
+  snapshot: { members: [], deny: [] },
 })
 const reset = createReset(seed, 0, 1)
 // A chain `rev` as an older log carries one, signed by the inception key. The chain no longer has the
@@ -78,7 +78,7 @@ function settled(deny: Array<string>): SignedEvent {
     profile: 0,
     did,
     prior: icp.event,
-    options: { snapshot: { members: [], deny } },
+    snapshot: { members: [], deny },
   })
 }
 
@@ -471,7 +471,7 @@ describe('a malformed event its own author signed', () => {
       profile: 0,
       did: forgedDid,
       prior: forged.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     expect(foldLog(forgedDid, { chain: [forged, following], events: [] })).toEqual({
       ok: false,

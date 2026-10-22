@@ -43,7 +43,7 @@ function buildRotatedLog(logSeed: Uint8Array = seed) {
     profile: 0,
     did,
     prior: icp.event,
-    options: { snapshot: { members: [], deny: [] } },
+    snapshot: { members: [], deny: [] },
   })
   const headKeyEncoded = rot.event.k[0]
   const inceptionKeyEncoded = icp.event.k[0]
@@ -81,7 +81,7 @@ function buildRevokedLog(revokedSeed: Uint8Array) {
     profile: 0,
     did,
     prior: icp.event,
-    options: { snapshot: { members: [], deny: [] } },
+    snapshot: { members: [], deny: [] },
   })
   const retiredKey = icp.event.k[0]
   if (retiredKey == null) throw new Error('expected an inception key')
@@ -91,7 +91,7 @@ function buildRevokedLog(revokedSeed: Uint8Array) {
     profile: 0,
     did,
     prior: rot.event,
-    options: { snapshot: { members: [], deny: [denyEntry] } },
+    snapshot: { members: [], deny: [denyEntry] },
   })
   return {
     did,
@@ -243,7 +243,7 @@ export function controllerStoreCases(
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const long = [icp, rot] as Array<SignedEvent>
     const short = [icp] as Array<SignedEvent>
@@ -488,9 +488,7 @@ export function controllerStoreCases(
         profile: 0,
         did,
         prior: rot.event,
-        options: {
-          snapshot: { members: [], deny: ['did:key:z6MkForkRivalDeviceDidHere00000000000000000'] },
-        },
+        snapshot: { members: [], deny: ['did:key:z6MkForkRivalDeviceDidHere00000000000000000'] },
       })
       const fork = [icp, rot, rival] as Array<SignedEvent>
 

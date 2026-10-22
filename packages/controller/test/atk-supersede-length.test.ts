@@ -26,7 +26,7 @@ function rotateRun(did: string, icp: SignedEvent, length: number, tag: string): 
       profile: 0,
       did,
       prior,
-      options: { snapshot: { members: [], deny: [`${victim}${tag}${i}`] } },
+      snapshot: { members: [], deny: [`${victim}${tag}${i}`] },
     })
     branch.push(rot)
     prior = rot.event

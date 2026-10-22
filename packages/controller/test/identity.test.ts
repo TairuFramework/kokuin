@@ -60,7 +60,7 @@ describe('createControllerIdentity()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
 
     const identity = createControllerIdentity({
@@ -87,7 +87,7 @@ describe('createControllerIdentity()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     // A rotate that re-reveals the inception key instead of the pre-committed one: it does not
     // match the inception's `n`, so the fold rejects it.
@@ -148,7 +148,7 @@ describe('createControllerIdentity()', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
 
     expect(() =>
@@ -222,7 +222,7 @@ describe('createControllerIdentity() kid', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
 
     const identity = createControllerIdentity({

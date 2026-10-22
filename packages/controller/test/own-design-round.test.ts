@@ -53,7 +53,7 @@ function settle(
   deny: Array<string>,
   members: Array<MemberEntry> = [],
 ): SignedEvent {
-  return createRotate({ seed, profile: 0, did, prior, options: { snapshot: { members, deny } } })
+  return createRotate({ seed, profile: 0, did, prior, snapshot: { members, deny } })
 }
 
 /** An event of a type no version understands, unsigned, declaring itself skippable. */
@@ -119,7 +119,7 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
         profile: 0,
         did,
         prior: inception.event,
-        options: { snapshot: { members: [], deny: [] } },
+        snapshot: { members: [], deny: [] },
       }),
     ]
     const forged: SignedEvent = {
@@ -175,7 +175,7 @@ describe('unsigned padding cannot grow a log without limit', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const log = [
       inception,
@@ -229,7 +229,7 @@ describe('carrying a state forward cannot silently drop the rest of it', () => {
       profile: 0,
       did,
       prior: settled.event,
-      options: { snapshot: snapshotOf(state, { deny: [device] }) },
+      snapshot: snapshotOf(state, { deny: [device] }),
     })
     const kept = foldLog(did, { chain: [inception, settled, pruned], events: [] })
     expect(kept.ok).toBe(true)
@@ -254,7 +254,7 @@ describe('signing as the profile without the root seed', () => {
         profile: 0,
         did,
         prior: inception.event,
-        options: { snapshot: { members: [], deny: [] } },
+        snapshot: { members: [], deny: [] },
       }),
     ]
     // What a device is given: one private key, no seed, no profile index.

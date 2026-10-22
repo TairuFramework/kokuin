@@ -51,14 +51,14 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const rot2 = createRotate({
       seed,
       profile: 0,
       did,
       prior: rot1.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const log = [icp, rot1, rot2]
 
@@ -87,7 +87,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const log = [icp, rot1]
     const stranger = await mintWithKeyAt(did, 0, 0, strangerSeed)
@@ -106,7 +106,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const reset = createReset(seed, 0, 1)
     const stolen = await mintWithKeyAt(did, 0, 0)
@@ -138,7 +138,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const stolen = await mintWithKeyAt(did, 0, 0)
     let error: unknown
@@ -163,14 +163,14 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const rot2 = createRotate({
       seed,
       profile: 0,
       did,
       prior: rot1.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const log = [icp, rot1, rot2]
 
@@ -200,7 +200,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [retired] } },
+      snapshot: { members: [], deny: [retired] },
     })
     const stolen = await mintWithKeyAt(did, 0, 0)
     await expect(
@@ -212,7 +212,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       profile: 0,
       did,
       prior: rot1.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     await expect(
       verifyToken(stolen, { methods: registry([icp, rot1, dropping], did), historic: true }),
@@ -224,7 +224,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       profile: 0,
       did,
       prior: rot1.event,
-      options: { snapshot: { members: [], deny: [retired] } },
+      snapshot: { members: [], deny: [retired] },
     })
     await expect(
       verifyToken(stolen, { methods: registry([icp, rot1, keeping], did), historic: true }),

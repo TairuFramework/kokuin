@@ -55,7 +55,7 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
 
     const newRecovery = recoveryKeyOf(newRootSeed)
@@ -92,7 +92,7 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const newRecovery = recoveryKeyOf(newRootSeed)
     const mutated: RotateWithRecovery = {
@@ -128,7 +128,7 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const newRecovery = recoveryKeyOf(newRootSeed)
     const mutated: RotateWithRecovery = {
@@ -151,7 +151,7 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const control = foldLog(did, { chain: [icp, plainRot, oldReset], events: [] })
     expect(control.ok).toBe(true)

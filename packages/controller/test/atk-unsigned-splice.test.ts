@@ -22,14 +22,14 @@ function build() {
     profile: 0,
     did,
     prior: icp.event,
-    options: { snapshot: { members: [], deny: [] } },
+    snapshot: { members: [], deny: [] },
   })
   const denying = createRotate({
     seed,
     profile: 0,
     did,
     prior: rot.event,
-    options: { snapshot: { members: [], deny: [deviceX] } },
+    snapshot: { members: [], deny: [deviceX] },
   })
   return { icp, did, rot, denying, honest: [icp, rot, denying] }
 }

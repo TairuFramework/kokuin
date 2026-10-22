@@ -78,7 +78,7 @@ const rot = createRotate({
   profile,
   did,
   prior: inception.event,
-  options: { snapshot: { members: [memberA, memberB], deny: [] } },
+  snapshot: { members: [memberA, memberB], deny: [] },
 })
 const chain: Array<SignedEvent> = [inception, rot]
 

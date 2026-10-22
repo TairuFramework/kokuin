@@ -127,10 +127,8 @@ const rotate = createRotate({
   profile: 0,
   did,
   prior: log.chain[log.chain.length - 1].event,   // the chain's last event
-  options: {
-    snapshot: snapshotOf(folded.head, { deny: [entryToDrop], members: [addToDismiss] }),
-    seal: digestOf(grant),                          // optional
-  },
+  snapshot: snapshotOf(folded.head, { deny: [entryToDrop], members: [addToDismiss] }),
+  seal: digestOf(grant),                            // optional
 })
 ```
 

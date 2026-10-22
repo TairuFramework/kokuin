@@ -91,15 +91,6 @@ export type ConformanceProfileEntry = {
   handle: string
 }
 
-export type CreateRotateOptions = {
-  seal?: string
-  /**
-   * The complete state the rotate leaves behind — a **replacement**, not an addition. Required: every
-   * rotate is a settlement, and the state after it is its snapshot and nothing before it.
-   */
-  snapshot: ConformanceStateSnapshot
-}
-
 /** A signed management-tier event: an epoch event has no root-chain `s`, so it is not a {@link ConformanceSigned}. */
 export type ConformanceEpochSigned = { event: Record<string, unknown>; sigs: Array<string> }
 
@@ -137,7 +128,11 @@ export type ControllerImplementation = {
     profile: number,
     did: string,
     prior: ConformanceEvent,
-    options: CreateRotateOptions,
+    /**
+     * The complete state the rotate leaves behind — a **replacement**, not an addition. Required:
+     * every rotate is a settlement, and the state after it is its snapshot and nothing before it.
+     */
+    snapshot: ConformanceStateSnapshot,
   ) => ConformanceSigned
   /** A blind reset without `snapshot`; with one, the reset carries the whole state. */
   createReset: (
@@ -243,7 +238,7 @@ export function runControllerConformance(
     prior: ConformanceEvent,
     snapshot: ConformanceStateSnapshot = { members: [], deny: [] },
   ): ConformanceSigned {
-    return impl.createRotate(seed, 0, did, prior, { snapshot })
+    return impl.createRotate(seed, 0, did, prior, snapshot)
   }
 
   /** A rotate on `prior` denying `deny` and carrying no members. */

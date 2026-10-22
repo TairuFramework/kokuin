@@ -314,8 +314,11 @@ export type RotateEvent = EventCommon & {
   d?: Array<string>
 }
 
-export type CreateRotateOptions = {
-  seal?: string
+export type CreateRotateParams = {
+  seed: Uint8Array
+  profile: number
+  did: string
+  prior: EventCommon
   /**
    * The complete state this rotate leaves behind — **a replacement, not an addition**. The state
    * after a rotate is its snapshot and nothing before it, so a caller writing one deny entry meaning
@@ -329,14 +332,8 @@ export type CreateRotateOptions = {
    * retired-key denial an earlier rotate in the generation carried may not be dropped.
    */
   snapshot: StateSnapshot
-}
-
-export type CreateRotateParams = {
-  seed: Uint8Array
-  profile: number
-  did: string
-  prior: EventCommon
-  options: CreateRotateOptions
+  /** Seal: an anchored external digest — see {@link RotateEvent.a}. */
+  seal?: string
 }
 
 /**
@@ -355,7 +352,8 @@ export function createRotate({
   profile,
   did,
   prior,
-  options,
+  snapshot,
+  seal,
 }: CreateRotateParams): SignedEvent<RotateEvent> {
   const gen = prior.g
   const seq = prior.s + 1
@@ -402,9 +400,9 @@ export function createRotate({
     n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
     kt: 1,
     nt: 1,
-    a: options.seal,
-    m: options.snapshot.members,
-    d: options.snapshot.deny,
+    a: seal,
+    m: snapshot.members,
+    d: snapshot.deny,
   }
 
   return { event, sigs: signEvent(event, [current.privateKey]) }

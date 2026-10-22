@@ -17,14 +17,14 @@ describe('keyless branch hijack, independent reproduction', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const denying = createRotate({
       seed,
       profile: 0,
       did,
       prior: rotate.event,
-      options: { snapshot: { members: [], deny: ['did:key:zVictimDevice'] } },
+      snapshot: { members: [], deny: ['did:key:zVictimDevice'] },
     })
     const honest = [inception, rotate, denying]
 

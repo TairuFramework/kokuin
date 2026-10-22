@@ -36,7 +36,7 @@ const rotate = createRotate({
   profile: 0,
   did,
   prior: inception.event,
-  options: { snapshot: { members: [], deny: [] } },
+  snapshot: { members: [], deny: [] },
 })
 const leakedKey = inception.event.k[0]
 if (leakedKey === undefined) throw new Error('expected inception key')
@@ -48,7 +48,7 @@ describe('key revocation, independently', () => {
       profile: 0,
       did,
       prior: rotate.event,
-      options: { snapshot: { members: [], deny: [keyTarget(leakedKey)] } },
+      snapshot: { members: [], deny: [keyTarget(leakedKey)] },
     })
     const denied: MethodRegistry = [
       createControllerResolver({
@@ -167,7 +167,7 @@ describe('key revocation, independently', () => {
       profile: 0,
       did,
       prior: rotate.event,
-      options: { snapshot: { members: [], deny: [keyTarget(leakedKey)] } },
+      snapshot: { members: [], deny: [keyTarget(leakedKey)] },
     })
     const after: MethodRegistry = [
       createControllerResolver({
@@ -242,7 +242,7 @@ describe('key revocation, independently', () => {
       profile: 0,
       did,
       prior: rotate.event,
-      options: { snapshot: { members: [], deny: [keyTarget(leakedKey)] } },
+      snapshot: { members: [], deny: [keyTarget(leakedKey)] },
     })
     const after: MethodRegistry = [
       createControllerResolver({
@@ -265,7 +265,7 @@ describe('key revocation, independently', () => {
       profile: 0,
       did,
       prior: rotate.event,
-      options: { snapshot: { members: [], deny: [keyTarget(leakedKey)] } },
+      snapshot: { members: [], deny: [keyTarget(leakedKey)] },
     })
     const methods: MethodRegistry = [
       createControllerResolver({

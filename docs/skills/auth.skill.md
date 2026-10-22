@@ -413,7 +413,7 @@ const rotate = createRotate({
   profile: 0,
   did,
   prior: inception.event,
-  options: { snapshot: { members: [], deny: [] } }, // every rotate settles the whole state
+  snapshot: { members: [], deny: [] }, // every rotate settles the whole state
 })
 const log = { chain: [inception, rotate], events: [] }
 

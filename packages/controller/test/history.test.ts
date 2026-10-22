@@ -67,7 +67,7 @@ function settle(prior: EventCommon, deny: Array<string> = []): SignedEvent {
     profile,
     did,
     prior,
-    options: { snapshot: { members: [member], deny } },
+    snapshot: { members: [member], deny },
   })
 }
 
@@ -497,7 +497,7 @@ describe('a reset re-parented onto a different prefix', () => {
         profile,
         did,
         prior: reset.event,
-        options: { snapshot: { members: [], deny: [] } },
+        snapshot: { members: [], deny: [] },
       }),
     ],
     events: [],
@@ -529,7 +529,7 @@ describe('pruneLog()', () => {
       profile,
       did,
       prior: reset.event,
-      options: { snapshot: { members: [member], deny: ['did:key:zCarried'] } },
+      snapshot: { members: [member], deny: ['did:key:zCarried'] },
     })
     const fullChain = [icp, rot, settle(rot.event), reset, genOneRot]
     const liveHead = folded({ chain: fullChain, events: [] }).head

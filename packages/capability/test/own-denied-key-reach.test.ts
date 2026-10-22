@@ -42,7 +42,7 @@ const rotate = createRotate({
   profile: 0,
   did,
   prior: inception.event,
-  options: { snapshot: { members: [], deny: [] } },
+  snapshot: { members: [], deny: [] },
 })
 /** The key the inception established, which the rotate retired and the second rotate below denies. */
 const leaked = inception.event.k[0]
@@ -58,7 +58,7 @@ const revoked: Array<SignedEvent> = [
     profile: 0,
     did,
     prior: rotate.event,
-    options: { snapshot: { members: [], deny: [keyTarget(leaked)] } },
+    snapshot: { members: [], deny: [keyTarget(leaked)] },
   }),
 ]
 

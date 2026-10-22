@@ -224,7 +224,7 @@ describe('epoch-aware resolution', () => {
       profile,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const rotatedChain = [icp, rotated]
     const settled = headOf({ chain: rotatedChain, events: [] })

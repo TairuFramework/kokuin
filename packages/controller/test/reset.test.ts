@@ -170,7 +170,7 @@ describe('the recovery commitment is fixed at inception', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const withRecovery = { ...rot.event, r: digestOf('anything at all') }
     const key = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
@@ -218,14 +218,14 @@ describe('the recovery commitment is fixed at inception', () => {
       profile: 0,
       did,
       prior: inception.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const denying = createRotate({
       seed,
       profile: 0,
       did,
       prior: rot.event,
-      options: { snapshot: { members: [], deny: [target] } },
+      snapshot: { members: [], deny: [target] },
     })
     const reset = createReset(seed, 0, 1)
     const after = createRotate({
@@ -233,7 +233,7 @@ describe('the recovery commitment is fixed at inception', () => {
       profile: 0,
       did,
       prior: reset.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
 
     const result = foldLog(did, { chain: [inception, rot, denying, reset, after], events: [] })

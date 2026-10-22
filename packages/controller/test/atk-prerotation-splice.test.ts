@@ -35,7 +35,7 @@ describe('pre-rotation bypass attempts', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 1), 'EdDSA')
     const body: RotateEvent = { ...honest.event, k: [encodeKey(thief.publicKey, 'EdDSA')] }
@@ -56,7 +56,7 @@ describe('pre-rotation bypass attempts', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const current = deriveKeyPair(seedA, authorityPath(0, 0, 0), 'EdDSA')
     const body: RotateEvent = { ...honest.event, k: [...icp.event.k] }
@@ -74,7 +74,7 @@ describe('pre-rotation bypass attempts', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const spelled = honest.event.k[0]
     if (spelled === undefined) throw new Error('expected a rotated key')
@@ -88,7 +88,7 @@ describe('pre-rotation bypass attempts', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 0), 'EdDSA')
     const thiefKey = encodeKey(thief.publicKey, 'EdDSA')
@@ -111,7 +111,7 @@ describe('splicing, truncation, replay', () => {
       profile: 0,
       did: b.did,
       prior: b.icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     expect(foldLog(a.did, { chain: [a.icp, foreignRotate], events: [] }).ok).toBe(false)
   })
@@ -133,14 +133,14 @@ describe('splicing, truncation, replay', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const rot2 = createRotate({
       seed: seedA,
       profile: 0,
       did,
       prior: rot1.event,
-      options: { snapshot: { members: [], deny: [victim] } },
+      snapshot: { members: [], deny: [victim] },
     })
     expect(foldLog(did, { chain: [icp, rot1, rot2], events: [] }).ok).toBe(true)
     expect(foldLog(did, { chain: [icp, rot1, rot1], events: [] }).ok).toBe(false)
@@ -154,14 +154,14 @@ describe('splicing, truncation, replay', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const next = createRotate({
       seed: seedA,
       profile: 0,
       did,
       prior: rot.event,
-      options: { snapshot: { members: [], deny: [victim] } },
+      snapshot: { members: [], deny: [victim] },
     })
     expect(foldLog(did, { chain: [icp, rot, next], events: [] }).ok).toBe(true)
     expect(foldLog(did, { chain: [icp, next, rot], events: [] }).ok).toBe(false)
@@ -174,14 +174,14 @@ describe('splicing, truncation, replay', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     const denying = createRotate({
       seed: seedA,
       profile: 0,
       did,
       prior: rot.event,
-      options: { snapshot: { members: [], deny: [victim] } },
+      snapshot: { members: [], deny: [victim] },
     })
     const honest = [icp, rot, denying]
     expect(foldLog(did, { chain: [icp], events: [] }).ok).toBe(true)
@@ -216,7 +216,7 @@ describe('superseding recovery abuse', () => {
       profile: 0,
       did,
       prior: icp.event,
-      options: { snapshot: { members: [], deny: [] } },
+      snapshot: { members: [], deny: [] },
     })
     for (const order of [
       [

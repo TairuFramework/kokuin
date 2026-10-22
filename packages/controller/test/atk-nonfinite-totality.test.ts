@@ -26,7 +26,7 @@ function build() {
     profile: 0,
     did,
     prior: icp.event,
-    options: { snapshot: { members: [], deny: [] } },
+    snapshot: { members: [], deny: [] },
   })
   return { icp, did, rot, honest: [icp, rot] }
 }

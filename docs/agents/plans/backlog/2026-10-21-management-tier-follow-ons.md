@@ -2,7 +2,8 @@
 
 **Origin:** `completed/2026-10-21-management-tier-on-log.complete.md`.
 
-**Reviewed 2026-10-22** as release cleanup (`completed/2026-10-22-management-tier-follow-ons.complete.md`).
+**Reviewed 2026-10-22** as release cleanup (`completed/2026-10-21-management-tier-on-log.complete.md`,
+"Release cleanup").
 The smaller gaps were settled there. What is left here stays deliberately, each item with the
 trigger that should reopen it.
 

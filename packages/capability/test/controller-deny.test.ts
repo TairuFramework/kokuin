@@ -70,7 +70,7 @@ function settle(prior: SignedEvent['event'], deny: Array<string>): SignedEvent {
     profile: 0,
     did,
     prior,
-    options: { snapshot: { members: [], deny } },
+    snapshot: { members: [], deny },
   })
 }
 
@@ -145,7 +145,7 @@ describe('a capability whose audience the profile has revoked', () => {
         profile: 0,
         did,
         prior: revoke.event,
-        options: { snapshot: snapshotOf(at(folded.states, 1)) },
+        snapshot: snapshotOf(at(folded.states, 1)),
       }),
     ]
 

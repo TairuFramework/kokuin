@@ -54,14 +54,14 @@ const rotate = createRotate({
   profile: 0,
   did,
   prior: inception.event,
-  options: { snapshot: { members: [], deny: [] } },
+  snapshot: { members: [], deny: [] },
 })
 const rotateAgain = createRotate({
   seed,
   profile: 0,
   did,
   prior: rotate.event,
-  options: { snapshot: { members: [], deny: [] } },
+  snapshot: { members: [], deny: [] },
 })
 const reset = createReset(seed, 0, 1)
 
@@ -119,7 +119,7 @@ describe('a rotate keeps everything the profile has issued verifiable — under 
       profile: 0,
       did,
       prior: rotate.event,
-      options: { snapshot: { members: [], deny: [device] } },
+      snapshot: { members: [], deny: [device] },
     })
     const token = await tokenFrom([inception])
 
@@ -263,7 +263,7 @@ describe('a kid naming a key this profile never published', () => {
 // two-rotate logs above only approach this.
 
 const settle = (prior: SignedEvent['event'], deny: Array<string>) =>
-  createRotate({ seed, profile: 0, did, prior, options: { snapshot: { members: [], deny } } })
+  createRotate({ seed, profile: 0, did, prior, snapshot: { members: [], deny } })
 const rot1 = settle(inception.event, []) //   gen0 s1
 const rot2 = settle(rot1.event, [D1]) //      gen0 s2
 const rot3 = settle(rot2.event, [D1, D2]) //  gen0 s3
