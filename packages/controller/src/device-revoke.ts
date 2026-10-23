@@ -1,14 +1,21 @@
+import { normalizeDID } from '@kokuin/token'
+
 import { createRotate, type SignedEvent } from './events.js'
 import { type FoldResult, foldLog, snapshotOf } from './fold.js'
 
 function foldDeviceChain(did: string, chain: Array<SignedEvent>): FoldResult {
   const folded = foldLog(did, { chain, events: [] })
   if (!folded.ok) return folded
-  // The general fold skips non-critical unknown events, including legacy chain revokes.
-  const index = chain.findIndex(({ event }) => event.t !== 'icp' && event.t !== 'rot')
+  // Only an inception at index zero advances state. Later non-critical inceptions are skipped.
+  const index = chain.findIndex(({ event }, index) => event.t !== (index === 0 ? 'icp' : 'rot'))
   return index === -1
     ? folded
     : { ok: false, reason: 'device revoke requires a root-only chain', index }
+}
+
+function deniesSubject(deny: ReadonlySet<string>, subject: string): boolean {
+  const canonical = normalizeDID(subject)
+  return [...deny].some((entry) => normalizeDID(entry) === canonical)
 }
 
 /** First same-generation rotate newly denying `subject`, or undefined for an invalid chain. */
@@ -27,8 +34,8 @@ export function deviceRevokeIndex(
       state != null &&
       prior != null &&
       state.gen === prior.gen &&
-      state.deny.has(subject) &&
-      !prior.deny.has(subject)
+      deniesSubject(state.deny, subject) &&
+      !deniesSubject(prior.deny, subject)
     ) {
       return index
     }
@@ -55,7 +62,8 @@ export function createDeviceRevoke({
   const folded = foldDeviceChain(did, chain)
   if (!folded.ok) throw new Error(folded.reason)
   const head = folded.head
-  if (head.deny.has(subject)) throw new Error('createDeviceRevoke: subject already denied')
+  if (deniesSubject(head.deny, subject))
+    throw new Error('createDeviceRevoke: subject already denied')
   const prior = chain.at(-1)
   if (prior == null) throw new Error('Missing controller head')
   return createRotate({

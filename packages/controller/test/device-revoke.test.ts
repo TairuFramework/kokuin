@@ -1,3 +1,4 @@
+import { encodePeer4 } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
 import {
@@ -20,6 +21,26 @@ const inception = createInception(seed, profile)
 const did = didFromInception(inception.event)
 const subject = 'did:key:zStolenDevice'
 const empty: StateSnapshot = { members: [], deny: [] }
+const deviceKey = createInception(new Uint8Array(32).fill(2), profile).event.k[0]
+if (deviceKey == null) throw new Error('Missing device key')
+const { longForm, shortForm } = encodePeer4({
+  '@context': ['https://www.w3.org/ns/did/v1'],
+  verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase: deviceKey }],
+  authentication: ['#key-0'],
+})
+const peerForms = [
+  { denied: longForm, equivalent: shortForm },
+  { denied: shortForm, equivalent: longForm },
+]
+
+function skippedInception(prior: SignedEvent): SignedEvent {
+  const next = rotate(prior)
+  return {
+    ...next,
+    event: { ...next.event, t: 'icp', crit: false },
+    sigs: [],
+  } as unknown as SignedEvent
+}
 
 function rotate(prior: SignedEvent, deny: Array<string> = []): SignedEvent {
   return createRotate({ seed, profile, did, prior: prior.event, snapshot: { members: [], deny } })
@@ -75,12 +96,45 @@ describe('deviceRevokeIndex()', () => {
     expect(deviceRevokeIndex(did, chain, subject)).toBe(1)
   })
 
-  test('matches deny entries exactly as the folded state holds them', () => {
+  test('keeps did:key fragments distinct', () => {
     const qualified = `${subject}#device`
     const chain = [inception, rotate(inception, [qualified])]
     expect(assertFolds(chain).deny.has(qualified)).toBe(true)
     expect(deviceRevokeIndex(did, chain, subject)).toBeUndefined()
     expect(deviceRevokeIndex(did, chain, qualified)).toBe(1)
+  })
+
+  test.each(peerForms)('matches an equivalent peer DID ($denied)', ({ denied, equivalent }) => {
+    const chain = [inception, rotate(inception, [denied])]
+    assertFolds(chain)
+    expect(deviceRevokeIndex(did, chain, equivalent)).toBe(1)
+  })
+
+  test.each(peerForms)(
+    'keeps the first revoke when a peer DID spelling changes ($denied)',
+    ({ denied, equivalent }) => {
+      const revoke = rotate(inception, [denied])
+      const chain = [inception, revoke, rotate(revoke, [equivalent])]
+      assertFolds(chain)
+      expect(deviceRevokeIndex(did, chain, equivalent)).toBe(1)
+    },
+  )
+
+  test.each(peerForms)(
+    'does not count a spelling change after a reset-carried denial ($denied)',
+    ({ denied, equivalent }) => {
+      const reset = createReset(seed, profile, 1, { ...empty, deny: [denied] })
+      const chain = [inception, reset, rotate(reset, [equivalent])]
+      assertFolds(chain)
+      expect(deviceRevokeIndex(did, chain, equivalent)).toBeUndefined()
+    },
+  )
+
+  test('refuses a non-critical inception skipped after the root inception', () => {
+    const skipped = skippedInception(inception)
+    const chain = [inception, skipped, rotate(inception, [subject])]
+    assertFolds(chain)
+    expect(deviceRevokeIndex(did, chain, subject)).toBeUndefined()
   })
 
   test('returns undefined if a later invalid event prevents the whole chain folding', () => {
@@ -149,6 +203,25 @@ describe('createDeviceRevoke()', () => {
     const chain = [inception, rotate(inception, [subject])]
     expect(() => createDeviceRevoke({ seed, profile, did, chain, subject })).toThrow(
       /already denied/,
+    )
+  })
+
+  test.each(peerForms)(
+    'throws if an equivalent peer DID is already denied ($denied)',
+    ({ denied, equivalent }) => {
+      const chain = [inception, rotate(inception, [denied])]
+      assertFolds(chain)
+      expect(() => createDeviceRevoke({ seed, profile, did, chain, subject: equivalent })).toThrow(
+        /already denied/,
+      )
+    },
+  )
+
+  test('refuses a skipped inception rather than building an invalid rotate', () => {
+    const chain = [inception, skippedInception(inception)]
+    assertFolds(chain)
+    expect(() => createDeviceRevoke({ seed, profile, did, chain, subject })).toThrow(
+      /root-only chain/,
     )
   })
 

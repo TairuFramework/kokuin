@@ -166,9 +166,9 @@ A root that does not know the current generation starts at `gen = 1` and retries
 `deviceRevokeIndex(did, chain, subject)` returns the chain index of the first rotate that newly denies `subject` within its generation.
 The resulting state's deny set must contain the subject, and the prior state's must exclude it.
 Resets never count, even when their snapshots carry the denial. Later rotates carrying an existing denial do not count again.
-Matching uses the exact strings in `KeyState.deny`, without DID normalisation.
+Matching normalises the subject and deny entries with `normalizeDID`, treating `did:peer:4` long and short forms as equivalent.
 The helper returns `undefined` when no rotate matches or the chain does not fold.
-Both helpers accept root chains containing only `icp` and `rot`, with no epoch events.
+Both helpers require an `icp` at index zero and only `rot` events afterwards, with no epoch events.
 
 ```typescript
 import { createDeviceRevoke, deviceRevokeIndex } from '@kokuin/controller'
