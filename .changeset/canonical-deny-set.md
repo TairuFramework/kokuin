@@ -1,5 +1,4 @@
 ---
-"@kokuin/controller": patch
 "@kokuin/capability": patch
 ---
 
