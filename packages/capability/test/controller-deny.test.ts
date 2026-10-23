@@ -14,6 +14,7 @@ import {
   createSigningIdentity,
   createUnsignedToken,
   type DIDMethodResolver,
+  encodePeer4,
   type MethodRegistry,
   randomIdentity,
   type SigningIdentity,
@@ -24,6 +25,7 @@ import {
 import { beforeEach, describe, expect, test } from 'vitest'
 
 import {
+  AUDIENCE_REVOKED,
   checkCapability,
   createCapability,
   DEFAULT_MAX_DELEGATION_DEPTH,
@@ -544,5 +546,56 @@ describe('a deny set nothing could answer for', () => {
         },
       ),
     ).resolves.toBeUndefined()
+  })
+})
+
+describe('canonical peer:4 audience revocation', () => {
+  const { longForm, shortForm } = encodePeer4({
+    '@context': ['https://www.w3.org/ns/did/v1'],
+    verificationMethod: [
+      { id: '#key-0', type: 'Multikey', publicKeyMultibase: at(inception.event.k, 0) },
+    ],
+    authentication: ['#key-0'],
+  })
+
+  test.each([
+    { spelling: 'long', denied: longForm, aud: shortForm },
+    { spelling: 'short', denied: shortForm, aud: longForm },
+  ])(
+    'refuses a $spelling-form denial with the other audience spelling',
+    async ({ denied, aud }) => {
+      const capability = await createCapability(
+        controller,
+        { sub: did, aud, act: 'write', res: 'doc/1', exp: now() + 3600 },
+        undefined,
+        { methods },
+      )
+      const invocation = { iss: aud, sub: did, cap: [stringifyToken(capability)] }
+      await expect(
+        checkCapability({ act: 'write', res: 'doc/1' }, invocation, { methods }),
+      ).resolves.toBeUndefined()
+      log = [inception, revokeOf(denied)]
+      await expect(
+        checkCapability({ act: 'write', res: 'doc/1' }, invocation, { methods }),
+      ).rejects.toThrow(AUDIENCE_REVOKED)
+    },
+  )
+
+  test.each([
+    { spelling: 'long', denied: longForm, aud: shortForm },
+    { spelling: 'short', denied: shortForm, aud: longForm },
+  ])('refuses a raw third-party $spelling-form denial', async ({ denied, aud }) => {
+    const real = at(methods, 0)
+    const rawResolver: DIDMethodResolver = {
+      ...real,
+      resolveDenySet: async () => new Set([denied]),
+    }
+    await expect(
+      checkCapability(
+        { act: 'write', res: 'doc/1' },
+        { iss: did, sub: did, aud, act: 'write', res: 'doc/1' },
+        { methods: [rawResolver] },
+      ),
+    ).rejects.toThrow(AUDIENCE_REVOKED)
   })
 })

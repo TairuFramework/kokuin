@@ -320,11 +320,16 @@ export function resolverOver(load: (did: string) => Promise<FoldedView>): DIDMet
       // The head's set, deliberately, not the state at any position a capability names: `iat` is
       // author-supplied and backdatable, so anchoring to it would let a revoked holder pick a
       // position at which it was not yet denied. The head merges the current epoch, so a denial
-      // made there without root counts as soon as this party has seen it. Both spellings ride in it
-      // (see `KeyState.deny`); the key half is enforced by `signingKeyFrom`, and the two forms
-      // cannot collide. `load` throws `Unknown DID` rather than answering an empty (= "nobody
-      // revoked") set.
-      return (await live(did)).head.deny
+      // made there without root counts as soon as this party has seen it. Preserve every raw entry
+      // and add its canonical form for DID lookups. Key targets pass through unchanged and are
+      // enforced by `signingKeyFrom`. Keep the folded set raw for snapshots and event digests.
+      // `load` throws `Unknown DID` rather than answering an empty (= "nobody revoked") set.
+      const denied = new Set<string>()
+      for (const entry of (await live(did)).head.deny) {
+        denied.add(entry)
+        denied.add(normalizeDID(entry))
+      }
+      return denied
     },
     async resolveAgreementKey(did: string): Promise<Array<ResolvedAgreementKey>> {
       // The head's set only, unlike `resolve`. A retired agreement key is a downgrade, not a grant
