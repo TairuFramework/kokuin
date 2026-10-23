@@ -25,6 +25,11 @@ export {
   deriveKeyPair,
   recoveryPath,
 } from './derivation.js'
+export {
+  type CreateDeviceRevokeParams,
+  createDeviceRevoke,
+  deviceRevokeIndex,
+} from './device-revoke.js'
 export { TOO_MANY_FAILED_SIGNATURES } from './epoch.js'
 export {
   type AddEvent,
