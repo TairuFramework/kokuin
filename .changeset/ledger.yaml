@@ -38,6 +38,10 @@
   dir: packages/controller
   intents:
     - shared-device-revoke
+"@kokuin/controller@0.2.3":
+  dir: packages/controller
+  intents:
+    - device-revoke-indices
 "@kokuin/deterministic@0.2.4":
   dir: packages/deterministic
   intents:
