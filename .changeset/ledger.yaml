@@ -34,6 +34,10 @@
   dir: packages/controller
   intents:
     - kind-ducks-bake
+"@kokuin/controller@0.2.2":
+  dir: packages/controller
+  intents:
+    - shared-device-revoke
 "@kokuin/deterministic@0.2.4":
   dir: packages/deterministic
   intents:
