@@ -161,6 +161,25 @@ createReset(seed, profile, gen, snapshot) // carries the whole recovered state
 
 A root that does not know the current generation starts at `gen = 1` and retries higher; no attacker can author a competing reset at any generation, so the cost of guessing low is a round trip, never loss of control.
 
+### Device revokes on the root chain
+
+`deviceRevokeIndex(did, chain, subject)` returns the chain index of the first rotate that newly denies `subject` within its generation.
+The resulting state's deny set must contain the subject, and the prior state's must exclude it.
+Resets never count, even when their snapshots carry the denial. Later rotates carrying an existing denial do not count again.
+Matching uses the exact strings in `KeyState.deny`, without DID normalisation.
+The helper returns `undefined` when no rotate matches or the chain does not fold.
+Both helpers accept root chains containing only `icp` and `rot`, with no epoch events.
+
+```typescript
+import { createDeviceRevoke, deviceRevokeIndex } from '@kokuin/controller'
+
+const revoke = createDeviceRevoke({ seed, profile: 0, did, chain, subject })
+const index = deviceRevokeIndex(did, [...chain, revoke], subject)
+```
+
+`createDeviceRevoke` folds the chain and carries `snapshotOf(head)` forward, appending the subject to the head's deny set.
+It preserves existing denials and management members, and throws if the chain is invalid or the subject is already denied.
+
 ### Epoch events
 
 An epoch event shares the envelope's spirit and fields of its own:
