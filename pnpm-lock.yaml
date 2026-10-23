@@ -218,6 +218,9 @@ catalogs:
     '@sozai/codec':
       specifier: ^0.4.3
       version: 0.4.3
+    '@sozai/hlc':
+      specifier: ^0.1.0
+      version: 0.1.0
     '@sozai/json':
       specifier: ^0.3.0
       version: 0.3.0
@@ -572,6 +575,28 @@ importers:
       '@sozai/otel':
         specifier: 'catalog:'
         version: 0.4.0(@logtape/logtape@2.4.2)
+
+  packages/records:
+    dependencies:
+      '@kokuin/token':
+        specifier: workspace:^
+        version: link:../token
+      '@noble/hashes':
+        specifier: 'catalog:'
+        version: 2.4.0
+      '@sozai/codec':
+        specifier: 'catalog:'
+        version: 0.4.3
+      '@sozai/hlc':
+        specifier: 'catalog:'
+        version: 0.1.0
+      '@sozai/json':
+        specifier: 'catalog:'
+        version: 0.3.0
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.5
 
   packages/store-controller:
     dependencies:
@@ -2337,6 +2362,9 @@ packages:
 
   '@sozai/codec@0.4.3':
     resolution: {integrity: sha512-C2WtBwspVIRtCS4AS4qXTQUxgTN2RjzKH/eK6nInh0/MeCZUBtkxrp40GwKy6VCA3lim2Ta8bFNXet9l8QbxCg==}
+
+  '@sozai/hlc@0.1.0':
+    resolution: {integrity: sha512-DudiJ1oyqO4VNnjrsQXPoGy5OsbQYnaOgtlH4DTzr2C51XyxrxYgm5l2WhGv/x0Mz0uL2Zxwn6xa00SQlBiFvQ==}
 
   '@sozai/json@0.3.0':
     resolution: {integrity: sha512-ArThPadz4kZjDqVnHI+UROwervbL9riIEYQ4b0g9e9mtA22EZ54lvNgsNvEUHL+oK53tlhgmHsgO2w5FwCTrhg==}
@@ -7032,6 +7060,8 @@ snapshots:
   '@sozai/codec@0.4.3':
     dependencies:
       '@sozai/json': 0.3.0
+
+  '@sozai/hlc@0.1.0': {}
 
   '@sozai/json@0.3.0': {}
 
