@@ -33,10 +33,25 @@ export function getDelegationMigrations(ctx: MigrationContext): Record<string, M
         // seconds column ceilings at 2038. The adapter's int8 parser reads it
         // back as a JS number, so the row type stays `number`.
         .addColumn('exp', t.bigint, (col) => col.notNull())
+        .addColumn('superseded', 'integer', (col) => col.defaultTo(0).notNull())
         .addColumn('hlc', t.text, hlcColumn)
         .addColumn('created_at', t.timestamp, (col) => col.defaultTo(now).notNull())
         .addColumn('updated_at', t.timestamp)
-        .addPrimaryKeyConstraint(`${p}_delegation_tokens_pkey`, ['grantor', 'audience', 'resource'])
+        .addPrimaryKeyConstraint(`${p}_delegation_tokens_pkey`, [
+          'grantor',
+          'audience',
+          'resource',
+          'jti',
+        ])
+        .execute()
+
+      await db.schema
+        .createIndex(`${p}_delegation_tokens_active_key_idx`)
+        .ifNotExists()
+        .unique()
+        .on('delegation_tokens')
+        .columns(['grantor', 'audience', 'resource'])
+        .where(sql.ref('superseded'), '=', 0)
         .execute()
 
       await db.schema
@@ -54,8 +69,7 @@ export function getDelegationMigrations(ctx: MigrationContext): Record<string, M
         .columns(['audience', 'exp'])
         .execute()
 
-      // Revocation lookup keys on `jti`, which is not part of the composite PK
-      // `(grantor, audience, resource)`.
+      // JTI is last in the composite key, so revocation lookups need a separate index.
       await db.schema
         .createIndex(`${p}_delegation_tokens_jti_idx`)
         .ifNotExists()

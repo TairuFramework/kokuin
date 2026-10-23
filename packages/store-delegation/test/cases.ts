@@ -7,7 +7,6 @@ import { Migrator } from 'kysely/migration'
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
 
 import {
-  createDelegationStore,
   type DelegationStoreAPI,
   type DelegationStoreTables,
   delegationStoreDefinition,
@@ -171,6 +170,13 @@ export function delegationStoreCases(
       expect(rows).toHaveLength(1)
       expect(rows[0]?.token).toBe('v1')
 
+      expect(
+        await store.addDelegationToken(
+          delegationToken({ ...base, jti: 'jti-equal-lww', token: 'v-equal', hlc: hlc(5) }),
+        ),
+      ).toBe(false)
+      expect((await store.getDelegationTokens(base)).map((row) => row.token)).toEqual(['v1'])
+
       // Newer HLC with different content wins and overwrites in place.
       const newer = await store.addDelegationToken(
         delegationToken({ ...base, token: 'v2', hlc: hlc(6) }),
@@ -179,6 +185,397 @@ export function delegationStoreCases(
       rows = await store.getDelegationTokens({ grantor: base.grantor, audience: base.audience })
       expect(rows).toHaveLength(1)
       expect(rows[0]?.token).toBe('v2')
+    })
+
+    test('a replaced grant stays reachable for revocation while active readers return its replacement', async () => {
+      const grantor = 'did:key:g-replaced'
+      const audience = 'did:key:a-replaced'
+      const base = { grantor, audience, resource: 'doc:replaced' }
+      await store.addDelegationToken(
+        delegationToken({ ...base, jti: 'jti-replaced-a', token: 'grant-a', hlc: hlc(1) }),
+      )
+      expect(
+        await store.addDelegationToken(
+          delegationToken({ ...base, jti: 'jti-replaced-b', token: 'grant-b', hlc: hlc(2) }),
+        ),
+      ).toBe(true)
+
+      const original = await store.getDelegationTokenByGrantorJTI({
+        grantor,
+        jti: 'jti-replaced-a',
+      })
+      expect(original?.token).toBe('grant-a')
+      expect(
+        (await store.listDelegationTokensByJTI('jti-replaced-a')).map((row) => row.token),
+      ).toEqual(['grant-a'])
+      expect(
+        (await store.getDelegationTokens({ grantor, audience })).map((row) => row.jti),
+      ).toEqual(['jti-replaced-b'])
+      expect(
+        (await store.getHeldTokens({ audience, atTime: 1_000 })).map((row) => row.jti),
+      ).toEqual(['jti-replaced-b'])
+      expect((await store.listIssuedTokens(grantor)).map((row) => row.jti)).toEqual([
+        'jti-replaced-b',
+      ])
+
+      await store.addRevocation(
+        revocation({
+          jti: 'jti-replaced-a',
+          revoker_did: grantor,
+          verified_at: 1_700_000_001,
+          cap_exp: original?.exp,
+        }),
+      )
+      expect((await store.getHeldRevocations({ audience })).map((row) => row.jti)).toEqual([
+        'jti-replaced-a',
+      ])
+      expect(
+        (await store.getHeldTokens({ audience, atTime: 1_000 })).map((row) => row.jti),
+      ).toEqual(['jti-replaced-b'])
+    })
+
+    test('unrevoked superseded grants list only live replaced rows for one key', async () => {
+      const grantor = 'did:key:g-superseded-live'
+      const audience = 'did:key:a-superseded-live'
+      const base = { grantor, audience, resource: 'doc:superseded-live' }
+      await store.addDelegationToken(
+        delegationToken({ ...base, jti: 'live-a', token: 'grant-live-a', exp: 5_000, hlc: hlc(1) }),
+      )
+      await store.addDelegationToken(
+        delegationToken({ ...base, jti: 'expired-b', token: 'grant-b', exp: 900, hlc: hlc(2) }),
+      )
+      await store.addDelegationToken(
+        delegationToken({ ...base, jti: 'revoked-c', token: 'grant-c', exp: 5_000, hlc: hlc(3) }),
+      )
+      await store.addDelegationToken(
+        delegationToken({ ...base, jti: 'live-d', token: 'grant-live-d', exp: 5_000, hlc: hlc(4) }),
+      )
+      await store.addDelegationToken(
+        delegationToken({ ...base, jti: 'active-e', token: 'grant-e', exp: 5_000, hlc: hlc(5) }),
+      )
+      for (const other of [
+        { ...base, resource: 'doc:superseded-live-other', jti: 'other-resource' },
+        { ...base, grantor: 'did:key:g-superseded-other', jti: 'other-grantor' },
+        { ...base, audience: 'did:key:a-superseded-other', jti: 'other-audience' },
+      ]) {
+        await store.addDelegationToken(delegationToken({ ...other, exp: 5_000, hlc: hlc(1) }))
+        await store.addDelegationToken(
+          delegationToken({ ...other, jti: `${other.jti}-active`, exp: 5_000, hlc: hlc(2) }),
+        )
+        expect((await store.getDelegationTokenByGrantorJTI(other))?.superseded).toBe(1)
+      }
+      await store.addRevocation(revocation({ jti: 'revoked-c', revoker_did: grantor }))
+      await store.addRevocation(revocation({ jti: 'live-d', revoker_did: 'did:key:someone-else' }))
+
+      expect(
+        (await store.listUnrevokedSupersededTokens({ ...base, atTime: 1_000 })).map(
+          (row) => row.jti,
+        ),
+      ).toEqual(['live-a', 'live-d'])
+    })
+
+    test('replaying an older superseded grant does not replace the active grant', async () => {
+      const grantor = 'did:key:g-replaced-replay'
+      const audience = 'did:key:a-replaced-replay'
+      const base = { grantor, audience, resource: 'doc:replaced-replay' }
+      const original = delegationToken({
+        ...base,
+        jti: 'jti-replaced-replay-a',
+        token: 'grant-a',
+        hlc: hlc(1),
+      })
+      await store.addDelegationToken(original)
+      await store.addDelegationToken(
+        delegationToken({ ...base, jti: 'jti-replaced-replay-b', token: 'grant-b', hlc: hlc(3) }),
+      )
+
+      expect(
+        await store.addDelegationToken({ ...original, token: 'stale-grant-a', hlc: hlc(2) }),
+      ).toBe(false)
+      expect(
+        (await store.getDelegationTokens({ grantor, audience })).map((row) => row.jti),
+      ).toEqual(['jti-replaced-replay-b'])
+      expect(
+        (await store.getDelegationTokenByGrantorJTI({ grantor, jti: original.jti }))?.token,
+      ).toBe('grant-a')
+    })
+
+    test.each([false, true])(
+      'a superseded JTI returns with a winning HLC (rollback: %s)',
+      async (rollback) => {
+        const base = {
+          grantor: `did:key:g-reactivated-${rollback}`,
+          audience: `did:key:a-reactivated-${rollback}`,
+          resource: 'doc:reactivated',
+        }
+        const original = delegationToken({
+          ...base,
+          jti: `reactivated-a-${rollback}`,
+          token: 'grant-a',
+          hlc: hlc(1),
+        })
+        const replacement = delegationToken({
+          ...base,
+          jti: `reactivated-b-${rollback}`,
+          token: 'grant-b',
+          hlc: hlc(3),
+        })
+        await store.addDelegationToken(original)
+        await store.addDelegationToken(replacement)
+        expect((await store.getDelegationTokenByGrantorJTI(original))?.superseded).toBe(1)
+
+        const returning = {
+          ...original,
+          token: 'grant-a-new',
+          act: 'read',
+          exp: 6_000,
+          hlc: hlc(4),
+        }
+        const reactivate = async (target: DelegationStoreAPI) => {
+          expect(await target.addDelegationToken(returning)).toBe(true)
+          expect(await target.getDelegationTokens(base)).toEqual([
+            expect.objectContaining({ ...returning, superseded: 0 }),
+          ])
+          expect(await target.getDelegationTokenByGrantorJTI(replacement)).toMatchObject({
+            ...replacement,
+            superseded: 1,
+          })
+        }
+
+        if (rollback) {
+          const aborted = new Error('abort reactivation')
+          await expect(
+            db.withTransaction<{ delegation: DelegationStoreAPI }, void>(async (tx) => {
+              await reactivate(await tx.getStore('delegation'))
+              throw aborted
+            }),
+          ).rejects.toBe(aborted)
+          expect(await store.getDelegationTokens(base)).toEqual([
+            expect.objectContaining({ ...replacement, superseded: 0 }),
+          ])
+          expect(await store.getDelegationTokenByGrantorJTI(original)).toMatchObject({
+            ...original,
+            superseded: 1,
+          })
+        } else {
+          await reactivate(store)
+        }
+      },
+    )
+
+    test('an older unseen grant stays revocable while the newer grant remains active', async () => {
+      const grantor = 'did:key:g-out-of-order'
+      const audience = 'did:key:a-out-of-order'
+      const base = { grantor, audience, resource: 'doc:out-of-order' }
+      await store.addDelegationToken(
+        delegationToken({ ...base, jti: 'jti-out-of-order-b', token: 'grant-b', hlc: hlc(2) }),
+      )
+
+      expect(
+        await store.addDelegationToken(
+          delegationToken({ ...base, jti: 'jti-out-of-order-a', token: 'grant-a', hlc: hlc(1) }),
+        ),
+      ).toBe(false)
+
+      expect(
+        (await store.getDelegationTokenByGrantorJTI({ grantor, jti: 'jti-out-of-order-a' }))?.token,
+      ).toBe('grant-a')
+      expect(
+        (await store.listDelegationTokensByJTI('jti-out-of-order-a')).map((row) => row.token),
+      ).toEqual(['grant-a'])
+      expect(
+        (await store.getDelegationTokens({ grantor, audience })).map((row) => row.jti),
+      ).toEqual(['jti-out-of-order-b'])
+      expect(
+        (await store.getHeldTokens({ audience, atTime: 1_000 })).map((row) => row.jti),
+      ).toEqual(['jti-out-of-order-b'])
+      expect((await store.listIssuedTokens(grantor)).map((row) => row.jti)).toEqual([
+        'jti-out-of-order-b',
+      ])
+    })
+
+    test('concurrent replacements keep the highest HLC active without losing the original grant', async () => {
+      const grantor = 'did:key:g-replaced-concurrent'
+      const audience = 'did:key:a-replaced-concurrent'
+      const base = { grantor, audience, resource: 'doc:replaced-concurrent' }
+      await store.addDelegationToken(
+        delegationToken({
+          ...base,
+          jti: 'jti-replaced-concurrent-a',
+          token: 'grant-a',
+          hlc: hlc(1),
+        }),
+      )
+
+      await Promise.all([
+        store.addDelegationToken(
+          delegationToken({
+            ...base,
+            jti: 'jti-replaced-concurrent-b',
+            token: 'grant-b',
+            hlc: hlc(2),
+          }),
+        ),
+        store.addDelegationToken(
+          delegationToken({
+            ...base,
+            jti: 'jti-replaced-concurrent-c',
+            token: 'grant-c',
+            hlc: hlc(3),
+          }),
+        ),
+      ])
+
+      expect(
+        (await store.getDelegationTokens({ grantor, audience })).map((row) => row.jti),
+      ).toEqual(['jti-replaced-concurrent-c'])
+      expect(
+        (await store.getDelegationTokenByGrantorJTI({ grantor, jti: 'jti-replaced-concurrent-a' }))
+          ?.token,
+      ).toBe('grant-a')
+    })
+
+    test('concurrent replacements share an ambient transaction without losing grant history', async () => {
+      const grantor = 'did:key:g-replaced-ambient'
+      const audience = 'did:key:a-replaced-ambient'
+      const base = { grantor, audience, resource: 'doc:replaced-ambient' }
+      await store.addDelegationToken(
+        delegationToken({ ...base, jti: 'jti-replaced-ambient-a', token: 'grant-a', hlc: hlc(1) }),
+      )
+
+      await db.withTransaction<{ delegation: DelegationStoreAPI }, void>(async (tx) => {
+        const scoped = await tx.getStore('delegation')
+        await Promise.all([
+          scoped.addDelegationToken(
+            delegationToken({
+              ...base,
+              jti: 'jti-replaced-ambient-b',
+              token: 'grant-b',
+              hlc: hlc(2),
+            }),
+          ),
+          scoped.addDelegationToken(
+            delegationToken({
+              ...base,
+              jti: 'jti-replaced-ambient-c',
+              token: 'grant-c',
+              hlc: hlc(3),
+            }),
+          ),
+        ])
+      })
+
+      expect(
+        (await store.getDelegationTokens({ grantor, audience })).map((row) => row.jti),
+      ).toEqual(['jti-replaced-ambient-c'])
+      expect(
+        (await store.getDelegationTokenByGrantorJTI({ grantor, jti: 'jti-replaced-ambient-a' }))
+          ?.token,
+      ).toBe('grant-a')
+    })
+
+    test.each([false, true])(
+      'concurrent fresh-key grants retain every JTI and activate the highest HLC (ambient: %s)',
+      async (ambient) => {
+        const base = {
+          grantor: `did:key:g-fresh-race-${ambient}`,
+          audience: `did:key:a-fresh-race-${ambient}`,
+          resource: 'doc:fresh-race',
+        }
+        const lower = delegationToken({
+          ...base,
+          jti: `fresh-race-a-${ambient}`,
+          token: 'grant-a',
+          hlc: hlc(1),
+        })
+        const higher = delegationToken({
+          ...base,
+          jti: `fresh-race-b-${ambient}`,
+          token: 'grant-b',
+          hlc: hlc(3),
+        })
+        expect(await store.getDelegationTokens(base)).toEqual([])
+        const race = async (target: DelegationStoreAPI) => {
+          await Promise.all([target.addDelegationToken(lower), target.addDelegationToken(higher)])
+        }
+        if (ambient) {
+          await db.withTransaction<{ delegation: DelegationStoreAPI }, void>(async (tx) => {
+            await race(await tx.getStore('delegation'))
+          })
+        } else {
+          await race(store)
+        }
+        expect(await store.getDelegationTokens(base)).toEqual([
+          expect.objectContaining({ ...higher, superseded: 0 }),
+        ])
+        expect(await store.getDelegationTokenByGrantorJTI(lower)).toMatchObject({
+          ...lower,
+          superseded: 1,
+        })
+        expect(await store.getDelegationTokenByGrantorJTI(higher)).toMatchObject({
+          ...higher,
+          superseded: 0,
+        })
+      },
+    )
+
+    test('rolling back a grant replacement restores the active grant and removes its replacement', async () => {
+      const grantor = 'did:key:g-replaced-rollback'
+      const audience = 'did:key:a-replaced-rollback'
+      const base = { grantor, audience, resource: 'doc:replaced-rollback' }
+      await store.addDelegationToken(
+        delegationToken({ ...base, jti: 'jti-replaced-rollback-a', token: 'grant-a', hlc: hlc(1) }),
+      )
+
+      await expect(
+        db.withTransaction<{ delegation: DelegationStoreAPI }, void>(async (tx) => {
+          const scoped = await tx.getStore('delegation')
+          await scoped.addDelegationToken(
+            delegationToken({
+              ...base,
+              jti: 'jti-replaced-rollback-b',
+              token: 'grant-b',
+              hlc: hlc(2),
+            }),
+          )
+          throw new Error('abort replacement')
+        }),
+      ).rejects.toThrow('abort replacement')
+
+      expect(
+        (await store.getDelegationTokens({ grantor, audience })).map((row) => row.jti),
+      ).toEqual(['jti-replaced-rollback-a'])
+      expect(
+        await store.getDelegationTokenByGrantorJTI({ grantor, jti: 'jti-replaced-rollback-b' }),
+      ).toBeNull()
+    })
+
+    test('a superseded grant preserves ambiguity when its grantor reused the JTI across resources', async () => {
+      const grantor = 'did:key:g-replaced-ambiguous'
+      const audience = 'did:key:a-replaced-ambiguous'
+      const jti = 'jti-replaced-ambiguous'
+      await store.addDelegationToken(
+        delegationToken({ grantor, audience, jti, resource: 'doc:replaced-one', hlc: hlc(1) }),
+      )
+      await store.addDelegationToken(
+        delegationToken({ grantor, audience, jti, resource: 'doc:replaced-two', hlc: hlc(1) }),
+      )
+      await store.addDelegationToken(
+        delegationToken({
+          grantor,
+          audience,
+          jti: 'jti-replaced-ambiguous-new',
+          resource: 'doc:replaced-one',
+          hlc: hlc(2),
+        }),
+      )
+
+      await expect(store.getDelegationTokenByGrantorJTI({ grantor, jti })).rejects.toThrow(
+        /Ambiguous delegation token/,
+      )
+      expect(
+        (await store.listDelegationTokensByJTI(jti)).map((row) => row.resource).sort(),
+      ).toEqual(['doc:replaced-one', 'doc:replaced-two'])
     })
 
     test('getDelegationTokenByGrantorJTI returns the named grantor’s token or null', async () => {
@@ -1110,6 +1507,7 @@ export function delegationStoreCases(
   // HozonDB, so the schema these cases assert against is the one the migration
   // produces and not one a store factory could have repaired.
   describe('migrated schema', () => {
+    let provider: HozonDB
     let adapter: Adapter
     let raw: Kysely<DelegationStoreTables>
     let db: Kysely<DelegationStoreTables>
@@ -1145,10 +1543,13 @@ export function delegationStoreCases(
       }
 
       db = raw.withPlugin(plugin)
-      store = createDelegationStore(db, adapter)
+      provider = new HozonDB({ adapter, tablePrefix })
+      provider.register(delegationStoreDefinition)
+      store = await getDelegationStore(provider)
     }, 120_000)
 
     afterAll(async () => {
+      await provider?.close()
       await raw?.destroy()
     })
 
@@ -1166,6 +1567,7 @@ export function delegationStoreCases(
           `${prefix}_delegation_tokens_grantor_audience_idx`,
           `${prefix}_delegation_tokens_audience_exp_idx`,
           `${prefix}_delegation_tokens_jti_idx`,
+          `${prefix}_delegation_tokens_active_key_idx`,
         ]),
       )
       expect(await indexNames(raw, adapter.kind, `${prefix}_revoked_capabilities`)).toContain(

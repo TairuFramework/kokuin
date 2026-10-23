@@ -1,5 +1,5 @@
 import type { CreatedAtColumn, UpdatedAtColumn } from '@hozon/adapter'
-import type { Insertable, Selectable } from '@hozon/db'
+import type { Generated, Insertable, Selectable } from '@hozon/db'
 
 // --- Delegation tokens ---
 
@@ -11,6 +11,7 @@ export type DelegationTokenTable = {
   resource: string
   act: string
   exp: number
+  superseded: Generated<number>
   /**
    * Last-writer-wins stamp, supplied by every caller and never generated here.
    * Byte-wise lexicographic order must match causal order: SQL compares it with

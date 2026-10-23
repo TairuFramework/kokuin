@@ -26,12 +26,13 @@ const delegations = await getDelegationStore(db)
 
 Registering runs the `0-init` migration for that store. `createControllerStore(db, adapter,
 context)` takes hozon's store context, whose provider must have the controller store registered: a
-merge resolves the store again on its locked transaction. `createDelegationStore(db, adapter)` builds
-the API over a Kysely instance directly, for a caller that manages its own migrations.
+merge resolves the store again on its locked transaction. `createDelegationStore(db, adapter,
+context)` also requires hozon's store context, with the delegation store registered on its provider.
+Both factories resolve the locked transaction's store to obtain its Kysely instance.
 
 Store methods that read then write join a caller's enclosing transaction instead of opening a
-nested one: controller merges through `withKeyLock`, delegation methods through
-`withStoreTransaction`. No statement binds more than 500 parameters.
+nested one. Controller merges and delegation-token arbitration use `withKeyLock`.
+Revocation upserts use `withStoreTransaction`. No statement binds more than 500 parameters.
 
 ## `@kokuin/store-controller`
 
@@ -75,7 +76,7 @@ resolver records each folded log and refuses one that is behind one already seen
 
 ### Tables
 
-`delegation_tokens`, primary key `(grantor, audience, resource)`:
+`delegation_tokens`, primary key `(grantor, audience, resource, jti)`:
 
 | Column                     | Type      | Notes                                                    |
 | -------------------------- | --------- | -------------------------------------------------------- |
@@ -85,6 +86,7 @@ resolver records each folded log and refuses one that is behind one already seen
 | `resource`, `act`          | text      |                                                          |
 | `exp`                      | bigint    | unix seconds; indexed with `audience`                    |
 | `hlc`                      | text      | last-writer-wins stamp, see below                        |
+| `superseded`               | integer   | defaults to 0; 1 retains a losing or replaced grant       |
 | `created_at`, `updated_at` | timestamp |                                                          |
 
 `revoked_capabilities`, primary key `(jti, revoker_did)`:
@@ -107,14 +109,25 @@ signed by the capability's own issuer binds; each author can displace only its o
 ### API
 
 Delegation tokens:
-- `addDelegationToken(token)`: last-writer-wins upsert keyed by `(grantor, audience, resource)`.
-- `getDelegationTokens({ grantor, audience })`, `listIssuedTokens(grantor)`.
-- `getHeldTokens({ audience, atTime })`: unexpired tokens held by `audience`, excluding any whose
+- `addDelegationToken(token)`: history-preserving last-writer-wins arbitration per `(grantor, audience, resource)`.
+  A losing or equal stamp retains an unseen JTI with `superseded = 1` and returns `false`.
+  A winning different JTI supersedes the active row. A winning same JTI updates its row in place.
+  A partial unique index allows one active row per logical key.
+  Arbitration holds `withKeyLock(context.provider, 'delegation_tokens', [grantor, audience, resource])`,
+  using normalised DIDs. It serialises calls within one ambient transaction, including absent keys.
+  Postgres uses an advisory transaction lock. SQLite reserves its writer before the read.
+  Consumers holding this lock must obtain the store from its callback provider and issue writes sequentially.
+  The callback provider inherits lock ownership, so calls made there are re-entrant.
+- `getDelegationTokens({ grantor, audience })`, `listIssuedTokens(grantor)`: active rows only (`superseded = 0`).
+- `getHeldTokens({ audience, atTime })`: unexpired active tokens held by `audience`, excluding any whose
   grantor has a **verified** revocation. Pending revocations do not filter.
-- `getDelegationTokenByGrantorJTI({ jti, grantor })`: throws if that grantor holds more than one
-  row for the `jti`, rather than pick one.
-- `listDelegationTokensByJTI(jti)`: every grantor's row. Diagnostics, not authorization.
-- `removeDelegationToken({ jti })`.
+- `listUnrevokedSupersededTokens({ grantor, audience, resource, atTime })`: unexpired superseded grants for one normalised key.
+  Excludes any revocation by the grantor, pending or verified. Other revokers cannot suppress these rows.
+  Orders by `hlc`, then `jti`. This lists grants still needing revocation, rather than authorising their use.
+- `getDelegationTokenByGrantorJTI({ jti, grantor })`: includes superseded rows.
+  Throws if that grantor holds more than one row for the `jti`, rather than pick one.
+- `listDelegationTokensByJTI(jti)`: every grantor's rows, including superseded rows. Diagnostics, not authorization.
+- `removeDelegationToken({ jti })`: deletes matching active and superseded rows across all grantors.
 
 Revocations:
 - `addRevocation(input)`: last-writer-wins upsert keyed by `(jti, revoker_did)`. A `revoked_iat`
@@ -128,11 +141,15 @@ Revocations:
   `verified_at IS NOT NULL`, the inverse of the enforcement rule: a co-member holds no copy of the
   capability, so its genuine revocation stays pending forever.
 - `getHeldRevocations({ audience })`: verified revocations joined to locally held tokens whose
-  grantor is the revoker.
+  grantor is the revoker, including superseded tokens.
 - `markRevocationVerified(jti, issuer, { cap_exp, verified_at? })`,
   `getPendingRevocationByIssuer(jti, issuer)`,
   `deletePendingRevocationsFromOtherIssuers(jti, issuer)`: the cap-arrival cross-check. The
   arriving capability proves only that its own issuer's record is genuine.
+
+The history schema is defined in `0-init`, without an additional migration.
+Existing databases that recorded an older `0-init` require schema alignment before using this API.
+They need the `superseded` column, four-column primary key, and partial unique active-key index.
 
 ### The `hlc` contract
 
@@ -164,11 +181,13 @@ ALTER TABLE <prefix>_revoked_capabilities ALTER COLUMN hlc TYPE text COLLATE "C"
 
 ### The `boolean` from `add*`
 
-`addDelegationToken` and `addRevocation` return whether the stored row changed: `true` for a new
-row, `false` when the stamp loses, and `true` only if content differs when it wins (an identical
-re-broadcast with a newer `hlc` is `false`). Treat it as an **approximate** change signal for
-gating emission. The pre-read takes no lock, so two concurrent writers can both see `true`. Never
-use it for correctness.
+`addDelegationToken` returns whether active content changed, comparing `jti`, `token`, `act`, and `exp`.
+A new active row returns `true`. A losing stamp returns `false`, even when it inserts superseded history.
+An identical re-broadcast with a newer `hlc` returns `false`. The key lock serialises arbitration and its change signal.
+
+`addRevocation` returns whether its row changed: new rows return `true`, losing stamps return `false`.
+Winning stamps return `true` only when content differs. This revocation signal remains approximate because its pre-read takes no lock.
+Two concurrent revocation writers can both return `true`. Use these signals for emission gating, never authorization.
 
 ### Purging
 
@@ -246,7 +265,7 @@ Behaviour worth knowing:
 logical tables become `<prefix>_controller_logs`, `<prefix>_delegation_tokens` and
 `<prefix>_revoked_capabilities` (so `hozon_controller_logs` and so on by default), the migration
 bookkeeping tables `<prefix>_controller_migration` and `<prefix>_delegation_migration`, and the
-indexes and primary keys `<prefix>_delegation_tokens_pkey`, `<prefix>_delegation_tokens_jti_idx`,
+indexes and primary keys `<prefix>_delegation_tokens_pkey`, `<prefix>_delegation_tokens_active_key_idx`, `<prefix>_delegation_tokens_jti_idx`,
 and so on.
 
 A consumer migrating data created by an earlier in-application implementation passes that

@@ -1,7 +1,7 @@
-// Parameter audit: every statement binds a fixed, small count (at most 9) -- no `IN` lists
+// Parameter audit: every statement binds a fixed, small count (at most 11) -- no `IN` lists
 // built from input and no multi-row values -- so none nears the 500-parameter limit.
 import type { Adapter } from '@hozon/adapter'
-import { type Kysely, withStoreTransaction } from '@hozon/db'
+import { type Kysely, type StoreContext, withKeyLock, withStoreTransaction } from '@hozon/db'
 import { normalizeDID } from '@kokuin/token'
 
 import type {
@@ -21,9 +21,8 @@ export type PurgeParams = { graceSeconds?: number }
 
 export type DelegationStoreAPI = {
   /**
-   * Last-writer-wins upsert keyed by `(grantor, audience, resource)`. Returns whether the stored
-   * row changed. The result is an approximate change signal for emission gating: the pre-read
-   * takes no lock, so two concurrent writers can both see `true`.
+   * Serialised last-writer-wins arbitration per `(grantor, audience, resource)`.
+   * Losing and replaced JTIs remain superseded for revocation. Returns whether active content changed.
    */
   addDelegationToken(token: InsertDelegationToken): Promise<boolean>
   getDelegationTokens(params: {
@@ -32,6 +31,13 @@ export type DelegationStoreAPI = {
   }): Promise<Array<DelegationToken>>
   getHeldTokens(params: { audience: string; atTime: number }): Promise<Array<DelegationToken>>
   listIssuedTokens(grantor: string): Promise<Array<DelegationToken>>
+  /** Live superseded grants without any revocation by their grantor, including pending claims. */
+  listUnrevokedSupersededTokens(params: {
+    grantor: string
+    audience: string
+    resource: string
+    atTime: number
+  }): Promise<Array<DelegationToken>>
   getDelegationTokenByGrantorJTI(params: {
     jti: string
     grantor: string
@@ -149,6 +155,8 @@ function resolveGraceSeconds(params?: PurgeParams): number {
   return grace
 }
 
+const storeDatabases = new WeakMap<DelegationStoreAPI, Kysely<DelegationStoreTables>>()
+
 // One identity reaches this store in two spellings: a `did:peer:4` signer
 // embeds its long form as the `iss` of its first token to a given audience and
 // its short form thereafter, while `identity.id` and `sub` are always short. So
@@ -160,67 +168,94 @@ function resolveGraceSeconds(params?: PurgeParams): number {
 export function createDelegationStore(
   db: Kysely<DelegationStoreTables>,
   adapter: Adapter,
+  context: StoreContext,
 ): DelegationStoreAPI {
   const api: DelegationStoreAPI = {
-    // LWW arbitration on `hlc`: SQL `>` decides the upsert, JS `<=` the change
-    // signal. Both are byte-wise (see the migration's collation), so they agree.
-    // The pre-read and upsert share a store transaction, which joins an enclosing
-    // one. That does not lock the pre-read, so the result stays approximate.
+    // Lock before reading so arbitration preserves history even on one ambient transaction.
     async addDelegationToken(token: InsertDelegationToken): Promise<boolean> {
       const grantor = normalizeDID(token.grantor)
       const audience = normalizeDID(token.audience)
-      return await withStoreTransaction(db, async (trx) => {
-        const existing = await trx
-          .selectFrom('delegation_tokens')
-          .select(['jti', 'token', 'act', 'exp', 'hlc'])
-          .where('grantor', '=', grantor)
-          .where('audience', '=', audience)
-          .where('resource', '=', token.resource)
-          .executeTakeFirst()
+      const key = { grantor, audience, resource: token.resource }
+      return await withKeyLock(
+        context.provider,
+        'delegation_tokens',
+        [grantor, audience, token.resource],
+        async (tx) => {
+          // Standalone calls resolve the database belonging to the lock's new transaction.
+          const store = (await tx.getStore('delegation')) as DelegationStoreAPI
+          const trx = storeDatabases.get(store)
+          if (trx == null) throw new Error('Delegation store database is unavailable')
+          const existing = await trx
+            .selectFrom('delegation_tokens')
+            .select(['jti', 'token', 'act', 'exp', 'hlc'])
+            .where('grantor', '=', grantor)
+            .where('audience', '=', audience)
+            .where('resource', '=', token.resource)
+            .where('superseded', '=', 0)
+            .executeTakeFirst()
+          if (existing != null && token.hlc <= existing.hlc) {
+            // A losing JTI may already have been delivered and must remain revocable.
+            await trx
+              .insertInto('delegation_tokens')
+              .values({
+                ...key,
+                jti: token.jti,
+                token: token.token,
+                act: token.act,
+                exp: token.exp,
+                hlc: token.hlc,
+                superseded: 1,
+              })
+              .onConflict((oc) =>
+                oc.columns(['grantor', 'audience', 'resource', 'jti']).doNothing(),
+              )
+              .execute()
+            return false
+          }
 
-        await trx
-          .insertInto('delegation_tokens')
-          .values({
-            jti: token.jti,
-            grantor,
-            audience,
-            token: token.token,
-            resource: token.resource,
-            act: token.act,
-            exp: token.exp,
-            hlc: token.hlc,
-          })
-          .onConflict((oc) =>
-            oc
-              .columns(['grantor', 'audience', 'resource'])
-              .doUpdateSet((eb) => ({
-                jti: eb.ref('excluded.jti'),
+          if (existing != null && existing.jti !== token.jti) {
+            await trx
+              .updateTable('delegation_tokens')
+              .set({ superseded: 1, updated_at: adapter.encodeTimestamp(new Date()) as number })
+              .where('grantor', '=', grantor)
+              .where('audience', '=', audience)
+              .where('resource', '=', token.resource)
+              .where('superseded', '=', 0)
+              .execute()
+          }
+
+          await trx
+            .insertInto('delegation_tokens')
+            .values({
+              ...key,
+              jti: token.jti,
+              token: token.token,
+              act: token.act,
+              exp: token.exp,
+              hlc: token.hlc,
+              superseded: 0,
+            })
+            .onConflict((oc) =>
+              oc.columns(['grantor', 'audience', 'resource', 'jti']).doUpdateSet((eb) => ({
                 token: eb.ref('excluded.token'),
                 act: eb.ref('excluded.act'),
                 exp: eb.ref('excluded.exp'),
                 hlc: eb.ref('excluded.hlc'),
+                superseded: 0,
                 updated_at: adapter.encodeTimestamp(new Date()) as number,
-              }))
-              .where((eb) => eb('excluded.hlc', '>', eb.ref('delegation_tokens.hlc'))),
-          )
-          .execute()
+              })),
+            )
+            .execute()
 
-        if (existing == null) {
-          return true
-        }
-        if (token.hlc <= existing.hlc) {
-          // LWW lost: the stored row is unchanged.
-          return false
-        }
-        // LWW won: report a change only if content differs, so an identical
-        // re-broadcast with a newer hlc is a no-op for consumers.
-        return (
-          existing.jti !== token.jti ||
-          existing.token !== token.token ||
-          existing.act !== token.act ||
-          existing.exp !== token.exp
-        )
-      })
+          return (
+            existing == null ||
+            existing.jti !== token.jti ||
+            existing.token !== token.token ||
+            existing.act !== token.act ||
+            existing.exp !== token.exp
+          )
+        },
+      )
     },
 
     async getDelegationTokens(params: {
@@ -232,6 +267,7 @@ export function createDelegationStore(
         .selectAll()
         .where('grantor', '=', normalizeDID(params.grantor))
         .where('audience', '=', normalizeDID(params.audience))
+        .where('delegation_tokens.superseded', '=', 0)
         .execute()
     },
 
@@ -254,6 +290,7 @@ export function createDelegationStore(
         )
         .selectAll('delegation_tokens')
         .where('audience', '=', normalizeDID(params.audience))
+        .where('delegation_tokens.superseded', '=', 0)
         .where('exp', '>', params.atTime)
         // Pending revocations (verified_at IS NULL) are not binding until the
         // cap-arrival cross-check verifies them, so they don't filter tokens.
@@ -271,6 +308,28 @@ export function createDelegationStore(
         .selectFrom('delegation_tokens')
         .selectAll()
         .where('grantor', '=', normalizeDID(grantor))
+        .where('superseded', '=', 0)
+        .execute()
+    },
+
+    async listUnrevokedSupersededTokens(params): Promise<Array<DelegationToken>> {
+      const grantor = normalizeDID(params.grantor)
+      return await db
+        .selectFrom('delegation_tokens')
+        .leftJoin('revoked_capabilities', (join) =>
+          join
+            .onRef('revoked_capabilities.jti', '=', 'delegation_tokens.jti')
+            .onRef('revoked_capabilities.revoker_did', '=', 'delegation_tokens.grantor'),
+        )
+        .selectAll('delegation_tokens')
+        .where('delegation_tokens.grantor', '=', grantor)
+        .where('audience', '=', normalizeDID(params.audience))
+        .where('resource', '=', params.resource)
+        .where('delegation_tokens.superseded', '=', 1)
+        .where('exp', '>', params.atTime)
+        .where('revoked_capabilities.jti', 'is', null)
+        .orderBy('delegation_tokens.hlc')
+        .orderBy('delegation_tokens.jti')
         .execute()
     },
 
@@ -529,5 +588,6 @@ export function createDelegationStore(
     },
   }
 
+  storeDatabases.set(api, db)
   return api
 }
