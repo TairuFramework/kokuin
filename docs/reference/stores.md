@@ -147,9 +147,8 @@ Revocations:
   `deletePendingRevocationsFromOtherIssuers(jti, issuer)`: the cap-arrival cross-check. The
   arriving capability proves only that its own issuer's record is genuine.
 
-The history schema is defined in `0-init`, without an additional migration.
-Existing databases that recorded an older `0-init` require schema alignment before using this API.
-They need the `superseded` column, four-column primary key, and partial unique active-key index.
+The history schema is defined in `0-init`, without an additional migration. A database whose
+`0-init` predates it (no `superseded` column, three-column primary key) is not migrated: reset it.
 
 ### The `hlc` contract
 
@@ -169,15 +168,7 @@ guaranteed to agree on ASCII. A fixed-width serialized hybrid logical clock sati
 
 SQL and JS must agree on the order. SQLite's default `BINARY` collation is byte-wise. On Postgres the
 `0-init` migration creates both `hlc` columns with `COLLATE "C"`, because the default collation can be
-locale-sensitive. That holds only for tables `0-init` creates. A legacy Postgres database adopted
-under `tablePrefix` (see below) already records `0-init` as applied, so the migration is skipped and
-its `hlc` columns keep whatever collation they were created with. Before relying on SQL/JS agreement
-there, run:
-
-```sql
-ALTER TABLE <prefix>_delegation_tokens ALTER COLUMN hlc TYPE text COLLATE "C";
-ALTER TABLE <prefix>_revoked_capabilities ALTER COLUMN hlc TYPE text COLLATE "C";
-```
+locale-sensitive.
 
 ### The `boolean` from `add*`
 
@@ -265,19 +256,13 @@ Behaviour worth knowing:
 logical tables become `<prefix>_controller_logs`, `<prefix>_delegation_tokens` and
 `<prefix>_revoked_capabilities` (so `hozon_controller_logs` and so on by default), the migration
 bookkeeping tables `<prefix>_controller_migration` and `<prefix>_delegation_migration`, and the
-indexes and primary keys `<prefix>_delegation_tokens_pkey`, `<prefix>_delegation_tokens_active_key_idx`, `<prefix>_delegation_tokens_jti_idx`,
-and so on.
+indexes and primary keys `<prefix>_delegation_tokens_pkey`,
+`<prefix>_delegation_tokens_active_key_idx`, `<prefix>_delegation_tokens_jti_idx`, and so on.
 
-A consumer migrating data created by an earlier in-application implementation passes that
-implementation's prefix as `tablePrefix`. With it, the **table and migration-bookkeeping names
-match** (`<prefix>_controller_logs`, `<prefix>_delegation_tokens`,
-`<prefix>_revoked_capabilities`, same columns), but the **index and primary-key names do not**. Do not
-assume a byte-identical schema; `tests/integration` pins the physical names.
-
-Because `0-init` is already recorded in `<prefix>_delegation_migration`, it does not run against such a
-database, so on Postgres the `hlc` columns do not get `COLLATE "C"`. Run the two `ALTER TABLE`
-statements from [the `hlc` contract](#the-hlc-contract) with that `<prefix>` before relying on
-SQL/JS agreement.
+A consumer replacing an earlier in-application implementation may pass that implementation's prefix
+as `tablePrefix` to keep its table names, but not its data: the schema differs (delegation history,
+`COLLATE "C"`, constraint names), and `0-init` does not run against a database that already records
+it. Reset the database. `tests/integration` pins the physical names.
 
 ## Tests
 

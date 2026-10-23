@@ -16,9 +16,11 @@ would be a cycle.
   See [../reference/controller.md](../reference/controller.md) and
   [../reference/security.md](../reference/security.md).
 
-- `@kokuin/store-controller` -- Hozon-backed `LogStore` for `did:kokuin:` event logs.
-- `@kokuin/store-delegation` -- Hozon-backed store for delegation tokens and revocations, plus the
-  revocation checker over `@kokuin/capability`. See [../reference/stores.md](../reference/stores.md).
+- `@kokuin/store-controller` -- Hozon-backed `LogStore` for `did:kokuin:` event logs; `merge` is
+  serialised per DID with hozon's key lock.
+- `@kokuin/store-delegation` -- Hozon-backed store for delegation tokens (with superseded grant
+  history, so a delivered JTI stays revocable) and revocations, plus the revocation checker over
+  `@kokuin/capability`. See [../reference/stores.md](../reference/stores.md).
 
 These two are the only published packages depending on hozon (`@hozon/db`, `@hozon/adapter`); the
 rest of the repo stays free of it, so identity primitives never pull in a database. The `hlc` stamps
