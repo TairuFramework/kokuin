@@ -168,6 +168,7 @@ The resulting state's deny set must contain the subject, and the prior state's m
 Resets never count, even when their snapshots carry the denial. Later rotates carrying an existing denial do not count again.
 Matching normalises the subject and deny entries with `normalizeDID`, treating `did:peer:4` long and short forms as equivalent.
 The helper returns `undefined` when no rotate matches or the chain does not fold.
+`deviceRevokeIndices(did, chain, subject)` folds once and returns every such index in chain order (empty for an invalid chain). A subject revoked, cleared by a reset and revoked again in a later generation has two indices; a verifier checking a specific rotate, or applying its own generation floor, uses this rather than the first index.
 Both helpers require an `icp` at index zero and only `rot` events afterwards, with no epoch events.
 
 ```typescript
