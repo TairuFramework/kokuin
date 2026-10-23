@@ -24,12 +24,14 @@ const controllers = await getControllerStore(db)
 const delegations = await getDelegationStore(db)
 ```
 
-Registering runs the `0-init` migration for that store. `createControllerStore(db, adapter)` and
-`createDelegationStore(db, adapter)` build the API over a Kysely instance directly, for a caller that
-manages its own migrations.
+Registering runs the `0-init` migration for that store. `createControllerStore(db, adapter,
+context)` takes hozon's store context, whose provider must have the controller store registered: a
+merge resolves the store again on its locked transaction. `createDelegationStore(db, adapter)` builds
+the API over a Kysely instance directly, for a caller that manages its own migrations.
 
-Store methods that read then write use `withStoreTransaction`, which joins a caller's enclosing
-transaction instead of opening a nested one. No statement binds more than 500 parameters.
+Store methods that read then write join a caller's enclosing transaction instead of opening a
+nested one: controller merges through `withKeyLock`, delegation methods through
+`withStoreTransaction`. No statement binds more than 500 parameters.
 
 ## `@kokuin/store-controller`
 
@@ -49,11 +51,14 @@ transaction instead of opening a nested one. No statement binds more than 500 pa
 `ControllerStoreAPI` is `@kokuin/controller`'s `LogStore` plus one method:
 - `get(did)`: the stored log, or `undefined`.
 - `merge(did, update)`: writes what `update` makes of the stored log and returns it, the read and
-  the write in one store transaction (`withStoreTransaction`, joining an enclosing one). Atomic per
-  DID: on Postgres the row is locked on read, and a first insert that loses a race re-reads the
-  winner's row and **runs `update` again** — so `update` must be free of side effects. On SQLite one
-  process's single connection serialises merges; across processes a stale read fails on write with
-  `SQLITE_BUSY` rather than losing an update. When `update` throws, nothing is written; when it
+  the write in one transaction, joining an enclosing one. It holds
+  `withKeyLock(provider, 'controller_logs', [did])`, which serialises concurrent merges for that DID,
+  also within one transaction. A consumer may hold the same lock around its own read-then-merge and
+  must then obtain the store from the lock callback's provider (an outer provider waits on the lock it
+  holds). The lock is re-entrant inside its callback, so merges issued there are not queued against
+  each other: run them one after another. On Postgres the row is also locked on read, and a first
+  insert that loses a race re-reads the winner's row and **runs `update` again** — so `update` must be
+  free of side effects. On SQLite the lock reserves the writer before reading. When `update` throws, nothing is written; when it
   returns `current` itself (nothing changed, as `authoritativeLog` answers a resolution that learned
   nothing new), nothing is written either and `updated_at` does not move. A stored value that is not
   a log, or not JSON at all, reads as no memory rather than throwing. The store

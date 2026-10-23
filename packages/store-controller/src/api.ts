@@ -1,5 +1,5 @@
 import type { Adapter } from '@hozon/adapter'
-import { type Kysely, withStoreTransaction } from '@hozon/db'
+import { type Kysely, type StoreContext, withKeyLock } from '@hozon/db'
 import {
   type ControllerLog,
   isControllerLog,
@@ -15,6 +15,8 @@ export type ControllerStoreAPI = LogStore & {
   /** Last explicit store write, including a locally seeded controller log. */
   getObservedAt(did: string): Promise<Date | undefined>
 }
+
+const storeDatabases = new WeakMap<ControllerStoreAPI, Kysely<ControllerStoreTables>>()
 
 // ParseJSONResultsPlugin usually parses the JSON column back to an object, but a
 // value can still arrive as a string (adapter/driver dependent). Handle both. A
@@ -42,6 +44,7 @@ function decodeLog(value: unknown): ControllerLog | undefined {
 export function createControllerStore(
   db: Kysely<ControllerStoreTables>,
   adapter: Adapter,
+  context: StoreContext,
 ): ControllerStoreAPI {
   const api: ControllerStoreAPI = {
     async get(did: string): Promise<ControllerLog | undefined> {
@@ -72,20 +75,18 @@ export function createControllerStore(
     // resolver does not re-verify the current epoch's stored events. Writing
     // peer bytes directly would bypass the anti-truncation guarantee AND let a
     // forged event of the current epoch be applied as authentic.
-    // The read and the write share a store transaction, which joins an enclosing
-    // one. Postgres locks the row on read (`for update`), so a concurrent merge
-    // waits and then reads this one's result. A DID with no row has nothing to
-    // lock: both merges would see none, so the insert is made `do nothing` and a
-    // lost race (no row inserted) re-reads, now locking the row the winner wrote.
-    // SQLite has no row locks: in one process the single connection's mutex
-    // serialises merges; across processes a stale deferred read fails with
-    // SQLITE_BUSY (or SQLITE_BUSY_SNAPSHOT) on write, so nothing is lost and the
-    // merge throws.
+    // The key lock serialises merges even within one transaction, including a
+    // DID with no row. Postgres also locks the row on read and re-reads after a
+    // lost insert race against a writer that does not hold the key lock.
     async merge(
       did: string,
       update: (current: ControllerLog | undefined) => Promise<ControllerLog>,
     ): Promise<ControllerLog> {
-      return await withStoreTransaction(db, async (trx) => {
+      return await withKeyLock(context.provider, 'controller_logs', [did], async (tx) => {
+        // Resolve through the locked provider so standalone calls use its new transaction.
+        const store = (await tx.getStore('controller')) as ControllerStoreAPI
+        const trx = storeDatabases.get(store)
+        if (trx == null) throw new Error('Controller store database is unavailable')
         const lock = adapter.kind === 'postgres'
         const values = (next: ControllerLog) => ({
           did,
@@ -132,5 +133,6 @@ export function createControllerStore(
     },
   }
 
+  storeDatabases.set(api, db)
   return api
 }

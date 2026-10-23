@@ -130,6 +130,8 @@ const THROW_SEED = new Uint8Array(32).fill(13)
 const LEGACY_SEED = new Uint8Array(32).fill(12)
 const UNCHANGED_SEED = new Uint8Array(32).fill(14)
 const RESOLVED_SEED = new Uint8Array(32).fill(15)
+const TRANSACTION_RACE_SEED = new Uint8Array(32).fill(18)
+const TRANSACTION_FIRST_RACE_SEED = new Uint8Array(32).fill(19)
 
 // An epoch event admitting a member named `name`, rooted at the log's head. The store never verifies
 // events, so these only need to be distinct, well-formed entries.
@@ -314,6 +316,44 @@ export function controllerStoreCases(
     await Promise.all([first, second])
     expect(memberNames(await store.get(did))).toEqual(['did:key:a', 'did:key:b'])
   })
+
+  test.each([
+    ['stored', TRANSACTION_RACE_SEED],
+    ['new', TRANSACTION_FIRST_RACE_SEED],
+  ] as const)(
+    'two concurrent merges for one %s DID in the same transaction both land',
+    async (state, logSeed) => {
+      const { did, log } = buildRotatedLog(logSeed)
+      if (state === 'stored') await put(did, log)
+      else expect(await store.get(did)).toBeUndefined()
+      const a = buildAdd(did, log, logSeed, 'a')
+      const b = buildAdd(did, log, logSeed, 'b')
+
+      await db.withTransaction(async (tx) => {
+        const logs = await getControllerStore(tx)
+        let issued: () => void = () => {}
+        const secondIssued = new Promise<void>((resolve) => {
+          issued = resolve
+        })
+        const slow = appendEvent(log, a)
+        let secondCurrent: ControllerLog | undefined
+        const first = logs.merge(did, async (current) => {
+          await secondIssued
+          return await slow(current)
+        })
+        const appendSecond = appendEvent(log, b)
+        const second = logs.merge(did, async (current) => {
+          secondCurrent = current
+          return await appendSecond(current)
+        })
+        issued()
+        const [firstResult] = await Promise.all([first, second])
+        expect(memberNames(await logs.get(did))).toEqual(['did:key:a', 'did:key:b'])
+        expect(secondCurrent).toEqual(firstResult)
+      })
+      expect(memberNames(await store.get(did))).toEqual(['did:key:a', 'did:key:b'])
+    },
+  )
 
   test('two concurrent first merges for a new DID both land', async () => {
     const { did, log } = buildRotatedLog(FIRST_RACE_SEED)
