@@ -1,4 +1,4 @@
-import type { DIDMethodResolver } from '@kokuin/token'
+import { type DIDMethodResolver, encodePeer4, normalizeDID } from '@kokuin/token'
 import { describe, expect, test } from 'vitest'
 
 import {
@@ -531,4 +531,46 @@ describe('a resolver over a fixed view', () => {
       fixedViewResolver(did, result.states, result.head).resolveDenySet?.(did),
     ).resolves.toEqual(new Set([device]))
   })
+})
+
+describe('canonical peer:4 deny sets', () => {
+  test.each(['long', 'short'] as const)(
+    'retains raw entries and canonicalises a %s-form denial',
+    async (form) => {
+      const { icp, did } = build()
+      const { longForm, shortForm } = encodePeer4({
+        '@context': ['https://www.w3.org/ns/did/v1'],
+        verificationMethod: [
+          { id: '#key-0', type: 'Multikey', publicKeyMultibase: at(icp.event.k, 0) },
+        ],
+        authentication: ['#key-0'],
+      })
+      const raw = form === 'long' ? longForm : shortForm
+      const targets = [raw, device, '#zRetiredKey']
+      const rot = createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: icp.event,
+        snapshot: { members: [], deny: targets },
+      })
+      const log = { chain: [icp, rot], events: [] }
+      const folded = foldLog(did, log)
+      if (!folded.ok) throw new Error(folded.reason)
+      const resolver = createControllerResolver({ loadLog: async () => log })
+      for (const view of [
+        resolver,
+        resolver.frozen(),
+        fixedViewResolver(did, folded.states, folded.head),
+      ]) {
+        const denied = await view.resolveDenySet?.(did)
+        expect(denied?.has(raw)).toBe(true)
+        expect(denied?.has(shortForm)).toBe(true)
+        expect(denied?.has(normalizeDID(longForm))).toBe(true)
+        expect(denied?.has(device)).toBe(true)
+        expect(denied?.has('#zRetiredKey')).toBe(true)
+      }
+      expect([...folded.head.deny]).toEqual(targets)
+    },
+  )
 })
