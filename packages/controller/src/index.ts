@@ -83,6 +83,7 @@ export {
   keyStateAt,
   MAX_SKIPPED_SLACK,
   type MemberState,
+  RESET_HAS_TOMBSTONES,
   ROTATE_NEEDS_SNAPSHOT,
   SNAPSHOT_DROPS_RETIRED_KEY,
   SNAPSHOT_MALFORMED,
@@ -140,7 +141,7 @@ export {
   type ControllerResolverOptions,
   createControllerResolver,
 } from './resolver.js'
-export { EPOCH_SATURATED, MEMBER_NOT_EFFECTIVE } from './state-resolver.js'
+export { EPOCH_SATURATED, MEMBER_NOT_EFFECTIVE, MEMBER_NOT_HISTORIC } from './state-resolver.js'
 export {
   type Duplicity,
   type ResolveFailure,

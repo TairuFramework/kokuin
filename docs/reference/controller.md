@@ -118,7 +118,7 @@ Publishes the first authority keys (`k`), the key agreement set (`ka`), the pre-
 
 Reveals the keys the prior event committed in `n`, commits the next set, and republishes `ka`. Signed by the newly revealed keys, per KERI — which is what makes a stolen _current_ key unable to rotate.
 
-**Every rotate carries a full state snapshot**: `m`, the management set (each member's DID, pinned key, add digest and lease end), and `d`, the deny set. The state after a rotate **is** its snapshot; nothing before it contributes, and the epoch it closes stops counting. A non-reset rotate without both halves fails the fold with `ROTATE_NEEDS_SNAPSHOT` (`rotate carries no state snapshot`): there is no "carry the prior state forward", because the prior state may hold epoch effects a verifier holding only the chain cannot reproduce, and half a snapshot would read as "no members" or "no denials" when its author meant neither.
+**Every rotate carries a full state snapshot**: `m`, the live management set, `d`, the deny set, and optional `u`, the removed incarnations. Each member entry carries its DID, pinned key, add digest and lease end. The state after a rotate **is** its snapshot; nothing before it contributes, and the epoch it closes stops counting. A non-reset rotate without both halves fails the fold with `ROTATE_NEEDS_SNAPSHOT` (`rotate carries no state snapshot`): there is no "carry the prior state forward", because the prior state may hold epoch effects a verifier holding only the chain cannot reproduce, and half a snapshot would read as "no members" or "no denials" when its author meant neither.
 
 ```typescript
 import { createRotate, foldLog, snapshotOf } from '@kokuin/controller'
@@ -135,10 +135,10 @@ const rotate = createRotate({
 })
 ```
 
-`snapshot` is **a replacement, not an addition**. Build it with `snapshotOf(head, drop)`, which carries forward every member not removed and every deny entry, minus what `drop` names; writing one by hand and forgetting an entry silently un-revokes a device, un-retires a leaked key or dismisses a member, with nothing in the log to say so. The snapshot is root's **chosen replacement state**, not a proven merge: a removal or denial root never saw is not in it, and root's tooling must present it that way.
+`snapshot` is **a replacement, not an addition**. Build it with `snapshotOf(head, drop)`, which carries forward every live member, removed incarnation and deny entry, minus what `drop` names; writing one by hand and forgetting an entry silently un-revokes a device, un-retires a leaked key or dismisses a member, with nothing in the log to say so. The snapshot is root's **chosen replacement state**, not a proven merge: a removal or denial root never saw is not in it, and root's tooling must present it that way.
 
 The fold judges every snapshot against the generation it lands on, each rule with its own reason:
-- **Shape** (`SNAPSHOT_MALFORMED`): `m` is a list of members whose pins decode as Ed25519, no two sharing an add digest or a pinned key; `d` is a list of strings.
+- **Shape** (`SNAPSHOT_MALFORMED`): `m` and optional `u` contain Ed25519 member entries, with no duplicate add digest across either list. Only live entries require unique pins. `d` contains strings.
 - **Disjoint from root** (`SNAPSHOT_MEMBER_KEY_IS_ROOT`): no pin is a `k` or `ka` anywhere on the generation's chain (this rotate's included), committed in one of its `n`, or the recovery key.
 - **The DID carries the pin** (`SNAPSHOT_MEMBER_DID_MISMATCH`): each member DID is a `did:key` of exactly that key, or a long-form `did:peer:4` whose document carries that one Ed25519 signing key and no other.
 - **Checkpointed retirements stay** (`SNAPSHOT_DROPS_RETIRED_KEY`): a key-target denial naming a key on the generation's chain, once a rotate's snapshot has carried it, must be carried by every later snapshot in the generation. Historic resolution would otherwise accept fresh tokens signed with that key again. The chain alone enforces it, so a pruned and a full store agree; only a reset clears it. A retired-key denial made in an epoch and left out of the next snapshot was never checkpointed — it is lost, which is why root's tooling should surface retired chain keys the snapshot does not deny.
@@ -468,3 +468,50 @@ Prefer the key form on any path that runs often. The seed is the root of everyth
 `@kokuin/controller-conformance` is private and never published: a framework-agnostic suite (`runControllerConformance(impl)`) that any implementation of this method runs to prove it honours the contract — inception self-certification, pre-rotation, state snapshots and retired-key tombstones, key denial, reset supersession and snapshot resets, duplicity, criticality, the epoch merge (order independence, causal authorisation, old-epoch and cross-epoch events, saturation) and the management-member rules.
 
 It is a contract, not a proof of security. The 2026-08-15 review found five Criticals that the suite passed, because it only ever presented equal-length branches: the properties it certified were never the ones under attack. Rows have since been added for what those attacks reached. Treat a green suite as "this implementation agrees with the others", never as "this implementation is safe".
+
+
+### Removed incarnations and historic membership
+
+`StateSnapshot.removed` carries removed incarnations as `MemberEntry` values. Non-reset rotate events encode these entries in `u`, separately from live members in `m`.
+Absent `u` means an empty list. `u` may appear only with a full `m`/`d` snapshot.
+Older verifiers ignore `u`, so removed incarnations remain absent from their live membership sets.
+A removal flag inside `m` would instead expose removed members as live to older verifiers.
+
+The fold marks each tombstone `removed: true` and `effective: false`.
+Renewal or removal of a tombstone cannot restore its authority. Its signatures cannot authorise epoch events.
+Tombstones obey the same Ed25519, DID pin and root-key exclusion rules as live entries.
+An add digest cannot occur twice across `m` and `u`. A new live incarnation may share a removed incarnation's pin.
+
+`snapshotOf(head)` preserves removed incarnations alongside live members and denials.
+`drop.members` prunes either kind by add digest, explicitly discarding evidence from future snapshots.
+Earlier chain snapshots can still supply evidence. An incarnation added and removed between settlements needs its tombstone preserved to remain provable.
+Tombstones accumulate within a generation, increasing every carrying settlement's event size by one complete member entry per retained incarnation.
+`MAX_EVENT_BYTES` limits epoch events only. Root-chain snapshot growth is bounded only by transport and storage limits.
+Root may prune tombstones at the cost of evidence. A reset starts a new generation.
+
+`resolveMemberHistoric(subject, { did, add, gen })` returns the pinned Ed25519 key and lease for verifying past-issued material.
+It is optional on `DIDMethodResolver`, and available on controller resolvers and their `frozen()` views.
+Its absence must fail closed. It must never authenticate a live signer.
+
+The query generation must equal the head generation.
+The incarnation must occur in the head or a chain snapshot within that generation.
+The DID must match under `normalizeDID`, including equivalent long and short peer DID forms.
+Effective live members and removed incarnations resolve. A later DID or key denial does not invalidate a removed incarnation.
+A denied live incarnation refuses, even if an earlier snapshot admitted it. A current denial also refuses a pruned live incarnation.
+Unknown incarnations, other DIDs, other generations and non-Ed25519 pins refuse with `IssuerKeyNotFoundError` carrying `MEMBER_NOT_HISTORIC`.
+Saturated epochs refuse with `EPOCH_SATURATED`, as every other resolver method does.
+`resolveMember` continues to require current effective membership.
+
+An epoch add is evidence of admission only when the fold accepts it against its causal past.
+An add following a denial refuses with `ADD_KEY_DENIED` and supplies no historic evidence.
+Concurrent add and denial branches admit the add in its undenied causal state, then merge into an ineffective live incarnation.
+That live incarnation refuses historic resolution. If subsequently removed, its admitted incarnation remains historic evidence, including after settlement.
+Root snapshots explicitly attest their replacement membership state. The fold cannot reconstruct unpublished events behind that attestation.
+
+Removal alone preserves historic verification within the generation. Revoking the member's grants belongs to the capability layer.
+A reset invalidates every old-generation query, including queries for incarnations carried into the new generation.
+A blind reset supplies no membership evidence for the new generation.
+A reset snapshot may re-admit an incarnation as live through root attestation, matching `resolveMember` behaviour.
+Only then can its unchanged add digest resolve under the new generation.
+A reset must never carry `u`, even an empty list: nobody has been removed in the new generation.
+`createReset` throws for non-empty `removed` snapshots. The fold refuses any reset carrying `u` with `RESET_HAS_TOMBSTONES`.

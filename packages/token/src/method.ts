@@ -85,6 +85,12 @@ export type DIDMethodResolver = {
    * reject, never resolve.
    */
   resolveMember?(subject: string, member: MemberQuery): Promise<ResolvedMember>
+  /**
+   * Historic member authority within the current generation. Removed incarnations remain valid,
+   * including after denial. Denied live incarnations fail closed. Absence must fail closed.
+   * This verifies past-issued material and must never authenticate a live signer.
+   */
+  resolveMemberHistoric?(subject: string, member: MemberQuery): Promise<ResolvedMember>
 }
 
 export type MethodRegistry = ReadonlyArray<DIDMethodResolver>

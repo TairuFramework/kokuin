@@ -12,6 +12,7 @@ import {
 import { DID_PREFIX, keyTarget } from './events.js'
 import type { KeyState } from './fold.js'
 import { decodeKey } from './keys.js'
+import { denialTargetsMember } from './members.js'
 
 /** The method segment of {@link DID_PREFIX}, so the two cannot drift. */
 export const DID_METHOD = DID_PREFIX.slice('did:'.length, -1)
@@ -32,6 +33,9 @@ export const EPOCH_SATURATED = 'controller epoch is saturated'
 
 /** What `resolveMember` rejects a member with that is not live in the head's generation. */
 export const MEMBER_NOT_EFFECTIVE = 'not an effective management member'
+
+/** Historic membership refusals after a successful controller fold. */
+export const MEMBER_NOT_HISTORIC = 'not a historic management member'
 
 /**
  * The `kid` fragment's body, or `null` when the header names no key. Format is `#<the multibase key
@@ -246,6 +250,39 @@ export function memberFrom(did: string, head: KeyState, query: MemberQuery): Res
   return { key: { alg: key.alg, publicKey: key.publicKey }, lease: member.lease }
 }
 
+/** Removed incarnations retain authority for past-issued material until a generation reset. */
+export function historicMemberFrom(
+  did: string,
+  view: FoldedView,
+  query: MemberQuery,
+): ResolvedMember {
+  const refuse = (cause?: unknown) =>
+    new IssuerKeyNotFoundError(`Controller ${did} ${query.did} is ${MEMBER_NOT_HISTORIC}`, {
+      cause,
+    })
+  if (query.gen !== view.head.gen) throw refuse()
+  const current = view.head.members.get(query.add)
+  // A live denial is a compromise response, even when an earlier snapshot admitted the member.
+  if (current !== undefined && !current.removed && !current.effective) throw refuse()
+  const member =
+    current ??
+    view.states
+      .findLast((state) => state.gen === query.gen && state.members.has(query.add))
+      ?.members.get(query.add)
+  if (member === undefined) throw refuse()
+  if (!member.removed && [...view.head.deny].some((entry) => denialTargetsMember(entry, member)))
+    throw refuse()
+  if (!member.removed && !member.effective) throw refuse()
+  try {
+    if (normalizeDID(member.did) !== normalizeDID(query.did)) throw refuse()
+    const key = decodeKey(member.key)
+    if (key.alg !== 'EdDSA') throw refuse()
+    return { key: { alg: key.alg, publicKey: key.publicKey }, lease: member.lease }
+  } catch (cause) {
+    throw refuse(cause)
+  }
+}
+
 /**
  * A `DIDMethodResolver` answering every member out of the view `load` yields for the asked DID —
  * the one shape the live resolver and its frozen views share, so the
@@ -294,6 +331,9 @@ export function resolverOver(load: (did: string) => Promise<FoldedView>): DIDMet
       // the profile already made: the recipient decrypts old ciphertexts by re-deriving from the
       // seed, never by resolution.
       return agreementKeysFrom(did, (await live(did)).head)
+    },
+    async resolveMemberHistoric(subject: string, member: MemberQuery): Promise<ResolvedMember> {
+      return historicMemberFrom(subject, await live(subject), member)
     },
     async resolveMember(subject: string, member: MemberQuery): Promise<ResolvedMember> {
       return memberFrom(subject, (await live(subject)).head, member)
