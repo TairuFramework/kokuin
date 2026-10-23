@@ -29,6 +29,8 @@ import {
   verifySignedRecord,
 } from '../src/index.js'
 
+const TEST_OP_KIND = 'test/record-op'
+
 const NOW = Date.now()
 const TYPE = 'catalog'
 const LWW = { kind: 'lww' } as const
@@ -58,18 +60,18 @@ async function signed(
     deleted: payload === null,
     meta: options.meta ?? {},
   }
-  return { ...key, hlc: claim.hlc, payload, ...(await signRecordOp(signer, claim)) }
+  return { ...key, hlc: claim.hlc, payload, ...(await signRecordOp(signer, claim, TEST_OP_KIND)) }
 }
 
 async function decisionFor(record: SignedRecord): Promise<RecordDecision> {
-  const op = await verifySignedRecord(record)
+  const op = await verifySignedRecord(record, TEST_OP_KIND)
   if (op === null) throw new Error('The signed fixture did not verify')
   return {
     key: { type: record.type, owner: record.owner, id: record.id },
     decisionHLC: typeof op.claim.meta.version === 'string' ? op.claim.meta.version : op.claim.hlc,
     contentDigest:
       typeof records.recordDecisionDigest === 'function'
-        ? await records.recordDecisionDigest(record)
+        ? await records.recordDecisionDigest(record, TEST_OP_KIND)
         : toB64U(blake3(canonicalRecordClaim(op.claim), { dkLen: 32 })),
     copies: [record],
   }
@@ -118,7 +120,7 @@ function memoryStore(initial: ReadonlyArray<RecordDecision> = []) {
         if (decision === undefined) return
         const copies: Array<SignedRecord> = []
         for (const copy of decision.copies) {
-          const op = await verifySignedRecord(copy)
+          const op = await verifySignedRecord(copy, TEST_OP_KIND)
           if (op?.issuer !== signerDID) copies.push(copy)
         }
         view().set(keyOf(key), { ...decision, copies })
@@ -159,6 +161,7 @@ function applyWith(
   overrides: Partial<ApplyRecordChunkParams> = {},
 ) {
   return applyRecordChunk({
+    opKind: TEST_OP_KIND,
     records: input,
     store,
     types: new Map(types.map((item) => [item.type, item])),
@@ -186,9 +189,9 @@ describe('owner-qualified decisions and signed copies', () => {
     const valid = await signed(signer, key, {
       meta: { version: stamp(signer, 1) },
     })
-    const invalidOp = await verifySignedRecord(invalid)
-    const missingOp = await verifySignedRecord(missing)
-    const validOp = await verifySignedRecord(valid)
+    const invalidOp = await verifySignedRecord(invalid, TEST_OP_KIND)
+    const missingOp = await verifySignedRecord(missing, TEST_OP_KIND)
+    const validOp = await verifySignedRecord(valid, TEST_OP_KIND)
     if (invalidOp === null || missingOp === null || validOp === null)
       throw new Error('invalid signed fixture')
 
@@ -233,11 +236,11 @@ describe('owner-qualified decisions and signed copies', () => {
         payload: null,
         meta: { version: version('z') },
       })
-      const highOp = await verifySignedRecord(high)
+      const highOp = await verifySignedRecord(high, TEST_OP_KIND)
       if (highOp === null) throw new Error('invalid signed fixture')
       for (let index = 0; index < 32; index++) {
         const copy = await signed(signer, key, { meta: { version: version(`a${index}`) } })
-        const op = await verifySignedRecord(copy)
+        const op = await verifySignedRecord(copy, TEST_OP_KIND)
         if (op === null) throw new Error('invalid signed fixture')
         if (records.recordClaimDigest(op.claim) > records.recordClaimDigest(highOp.claim)) {
           pair = { key, high, highOp, low: { copy, op } }
@@ -369,6 +372,7 @@ describe('owner-qualified decisions and signed copies', () => {
       ],
     })
     const context = (store: RecordStoreAdapter): VisibilityContext => ({
+      opKind: TEST_OP_KIND,
       requester: { peerDID: readerDID, controllerDID: null },
       proofs: [proof],
       store,
@@ -405,16 +409,16 @@ describe('owner-qualified decisions and signed copies', () => {
     const high = await signed(alice, key, { hlc, payload: new Uint8Array([2]) })
     const resignedHigh = await signed(device, key, { hlc, payload: new Uint8Array([2]) })
     expect(records.recordDecisionDigest).toBeTypeOf('function')
-    const lowDigest = await records.recordDecisionDigest(low)
-    const highDigest = await records.recordDecisionDigest(high)
-    expect(await records.recordDecisionDigest(resignedHigh)).toBe(highDigest)
+    const lowDigest = await records.recordDecisionDigest(low, TEST_OP_KIND)
+    const highDigest = await records.recordDecisionDigest(high, TEST_OP_KIND)
+    expect(await records.recordDecisionDigest(resignedHigh, TEST_OP_KIND)).toBe(highDigest)
     const versionedOriginal = await signed(alice, key, { hlc, meta: { version: hlc } })
     const versionedResigned = await signed(device, key, {
       hlc: stamp(device, 1),
       meta: { version: hlc },
     })
-    expect(await records.recordDecisionDigest(versionedResigned)).toBe(
-      await records.recordDecisionDigest(versionedOriginal),
+    expect(await records.recordDecisionDigest(versionedResigned, TEST_OP_KIND)).toBe(
+      await records.recordDecisionDigest(versionedOriginal, TEST_OP_KIND),
     )
     expect(lowDigest).not.toBe(highDigest)
     const winner = lowDigest > highDigest ? low : high
@@ -427,7 +431,9 @@ describe('owner-qualified decisions and signed copies', () => {
       await applyWith(order, memory.store, [definition()], {
         resolveController: async (did) => (did === normalizeDID(device.id) ? key.owner : null),
       })
-      expect(memory.read(key)?.contentDigest).toBe(await records.recordDecisionDigest(winner))
+      expect(memory.read(key)?.contentDigest).toBe(
+        await records.recordDecisionDigest(winner, TEST_OP_KIND),
+      )
     }
   })
 
@@ -449,7 +455,7 @@ describe('owner-qualified decisions and signed copies', () => {
       owner: signedClaim.owner,
       hlc: signedClaim.hlc,
       payload: null,
-      ...(await signRecordOp(signer, signedClaim)),
+      ...(await signRecordOp(signer, signedClaim, TEST_OP_KIND)),
     })
     const first = await sign(claim)
     const resigned = await sign({
@@ -457,10 +463,10 @@ describe('owner-qualified decisions and signed copies', () => {
       hlc: '2026-09-27T00:00:02.000Z:00000000:node',
     })
     expect(first.opHash).not.toBe(resigned.opHash)
-    expect(await records.recordDecisionDigest(first)).toBe(
+    expect(await records.recordDecisionDigest(first, TEST_OP_KIND)).toBe(
       'uO4S0JWZcbMAIZT8a4gzva2n3XCguybZvIb7GcT2HLw',
     )
-    expect(await records.recordDecisionDigest(resigned)).toBe(
+    expect(await records.recordDecisionDigest(resigned, TEST_OP_KIND)).toBe(
       'uO4S0JWZcbMAIZT8a4gzva2n3XCguybZvIb7GcT2HLw',
     )
   })

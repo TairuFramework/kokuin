@@ -16,6 +16,8 @@ would be a cycle.
   See [../reference/controller.md](../reference/controller.md) and
   [../reference/security.md](../reference/security.md).
 
+- `@kokuin/records` -- signed replicated records, merge policies, apply, visibility, and range reconciliation. No Hozon dependency. See [records](../reference/records.md).
+
 - `@kokuin/store-controller` -- Hozon-backed `LogStore` for `did:kokuin:` event logs; `merge` is
   serialised per DID with hozon's key lock.
 - `@kokuin/store-delegation` -- Hozon-backed store for delegation tokens (with superseded grant

@@ -9,6 +9,11 @@ export type RecordDecisionMap = Map<string, RecordDecision>
 /**
  * Where a receiver keeps each owner's current decision, addressed by `(type, owner, id)`.
  *
+ * One store holds ops of exactly one `opKind`. All records enter through apply, which
+ * verifies them under that kind. Never share a store, or reconcile two stores, across kinds.
+ * `rangeLeaf` and decision digests assume records already verified under the store's kind;
+ * these comparison values do not isolate replay domains themselves.
+ *
  * `get`, `getMany` and `list` include tombstones. `getMany` answers what `get` would for each
  * key, in fewer reads, and throws whatever `get` would throw for any one of them. `putCopy`
  * retains a copy of the winning decision; a new decision replaces the old one. `pruneCopy`

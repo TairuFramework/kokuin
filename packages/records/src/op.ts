@@ -18,12 +18,6 @@ import {
   type SignedRecord,
 } from './record.js'
 
-/**
- * Marks a token as a record op, so a signature the same identity made for another purpose
- * cannot be replayed as one.
- */
-const RECORD_OP_KIND = 'kubun/record-op'
-
 /** A record op whose signature checked out. `issuer` is the verified signer, normalized. */
 export type VerifiedRecordOp = {
   issuer: string
@@ -79,9 +73,16 @@ function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
 function hasRecordOpEnvelope(
   payload: Record<string, unknown>,
   header: Record<string, unknown>,
+  opKind: string,
 ): boolean {
   const { iss, kind, claim } = payload
-  if (typeof iss !== 'string' || kind !== RECORD_OP_KIND || typeof claim !== 'string') return false
+  if (
+    typeof iss !== 'string' ||
+    typeof kind !== 'string' ||
+    kind !== opKind ||
+    typeof claim !== 'string'
+  )
+    return false
   const payloadKeys = Object.keys(payload).sort()
   if (
     payloadKeys.length !== 3 ||
@@ -109,7 +110,7 @@ function hasRecordOpEnvelope(
 }
 
 /**
- * Sign a record claim. The token carries the canonical claim bytes rather than the claim
+ * Sign a record claim under the caller's required replay domain `opKind`. The token carries the canonical claim bytes rather than the claim
  * as JSON members, so what a verifier reads back is byte-for-byte what was signed.
  *
  * @throws RecordClaimError when the claim is malformed.
@@ -118,16 +119,17 @@ function hasRecordOpEnvelope(
 export async function signRecordOp(
   identity: SigningIdentity,
   claim: RecordClaim,
+  opKind: string,
 ): Promise<{ opJWT: string; opHash: string }> {
   const bytes = canonicalRecordClaim(claim)
   const signed = await identity.signToken(
-    { kind: RECORD_OP_KIND, claim: toB64U(bytes) },
+    { kind: opKind, claim: toB64U(bytes) },
     { embedLongForm: true },
   )
   const opJWT = stringifyToken(signed)
   if (
     !isCanonicalCompactToken(opJWT) ||
-    !hasRecordOpEnvelope(signed.payload, signed.header) ||
+    !hasRecordOpEnvelope(signed.payload, signed.header, opKind) ||
     typeof signed.payload.iss !== 'string' ||
     normalizeDID(signed.payload.iss) !== normalizeDID(identity.id) ||
     signed.payload.claim !== toB64U(bytes)
@@ -155,7 +157,7 @@ function decodeClaim(encoded: string): RecordClaim | null {
 }
 
 /**
- * Verify a record op and extract its claim. Returns `null` (never throws) when the token is
+ * Verify a record op under the required `opKind` and extract its claim. Returns `null` (never throws) when the token is
  * unparseable, unsigned (`alg: 'none'`), not a record op, or carries a malformed or
  * non-canonical claim.
  *
@@ -164,6 +166,7 @@ function decodeClaim(encoded: string): RecordClaim | null {
  */
 export async function verifyRecordOp(
   opJWT: string,
+  opKind: string,
   methods?: MethodRegistry,
 ): Promise<VerifiedRecordOp | null> {
   if (!isCanonicalCompactToken(opJWT)) {
@@ -178,7 +181,7 @@ export async function verifyRecordOp(
   if (!isVerifiedToken<SignedPayload & Record<string, unknown>>(verified)) {
     return null
   }
-  if (!hasRecordOpEnvelope(verified.payload, verified.header)) return null
+  if (!hasRecordOpEnvelope(verified.payload, verified.header, opKind)) return null
   const { iss, claim } = verified.payload
   if (typeof iss !== 'string' || typeof claim !== 'string') return null
   const decoded = decodeClaim(claim)
@@ -198,9 +201,10 @@ export async function verifyRecordOp(
  */
 export async function verifySignedRecord(
   record: SignedRecord,
+  opKind: string,
   methods?: MethodRegistry,
 ): Promise<VerifiedRecordOp | null> {
-  const verified = await verifyRecordOp(record.opJWT, methods)
+  const verified = await verifyRecordOp(record.opJWT, opKind, methods)
   if (verified === null) {
     return null
   }

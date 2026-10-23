@@ -16,6 +16,8 @@ import {
 } from '../src/index.js'
 import { decisionOf } from './decision-fixture.js'
 
+const TEST_OP_KIND = 'test/record-op'
+
 const NOW = Date.now()
 
 async function makeRecord(identity: SigningIdentity, id: string): Promise<SignedRecord> {
@@ -29,7 +31,7 @@ async function makeRecord(identity: SigningIdentity, id: string): Promise<Signed
     deleted: false,
     meta: {},
   }
-  const signed = await signRecordOp(identity, claim)
+  const signed = await signRecordOp(identity, claim, TEST_OP_KIND)
   return { type: claim.type, id, owner: claim.owner, hlc: claim.hlc, payload, ...signed }
 }
 
@@ -123,6 +125,7 @@ describe('applyRecordChunk reads the store in batches', () => {
     )
     const { store, events } = batchStore()
     const result = await applyRecordChunk({
+      opKind: TEST_OP_KIND,
       records,
       store,
       types: new Map([
@@ -152,6 +155,7 @@ describe('applyRecordChunk reads the store in batches', () => {
     )
     const { store, events } = batchStore([replay as SignedRecord])
     const result = await applyRecordChunk({
+      opKind: TEST_OP_KIND,
       records: [first, replay, last] as Array<SignedRecord>,
       store,
       types: new Map([['test.value', valueType({ precheck: async () => false })]]),

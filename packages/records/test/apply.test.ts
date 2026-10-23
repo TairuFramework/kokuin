@@ -31,6 +31,8 @@ import {
 } from '../src/index.js'
 import { decisionOf } from './decision-fixture.js'
 
+const TEST_OP_KIND = 'test/record-op'
+
 // Pass-through spy on token verification, so a test can prove the signature check never ran.
 vi.mock('@kokuin/token', async (importOriginal) => {
   const actual = await importOriginal<typeof TokenModule>()
@@ -126,7 +128,7 @@ function claimFor(identity: TestIdentity, draft: Draft = {}): RecordClaim {
 
 async function makeRecord(identity: TestIdentity, draft: Draft = {}): Promise<SignedRecord> {
   const claim = claimFor(identity, draft)
-  const signed = await signRecordOp(identity, claim)
+  const signed = await signRecordOp(identity, claim, TEST_OP_KIND)
   const payload = draft.payload === undefined ? new Uint8Array([1]) : draft.payload
   return { type: claim.type, id: claim.id, owner: claim.owner, hlc: claim.hlc, payload, ...signed }
 }
@@ -171,6 +173,7 @@ function applyWith(
   params: Partial<ApplyRecordChunkParams> = {},
 ) {
   return applyRecordChunk({
+    opKind: TEST_OP_KIND,
     records,
     store,
     types,
@@ -195,7 +198,7 @@ test('same-decision chunk verifies 64 incoming signers at most twice each', asyn
         owner: claim.owner,
         hlc: claim.hlc,
         payload: new Uint8Array([1]),
-        ...(await signRecordOp(signer, claim)),
+        ...(await signRecordOp(signer, claim, TEST_OP_KIND)),
       }
     }),
   )
@@ -235,7 +238,7 @@ describe('the clock gate runs before anything else', () => {
       deleted: false,
       meta: {},
     }
-    const signed = await signRecordOp(identity, claim)
+    const signed = await signRecordOp(identity, claim, TEST_OP_KIND)
     const put = vi.fn(async () => {})
     const receiveClock = vi.fn()
     const authorize = vi.fn(async () => true)
@@ -259,6 +262,7 @@ describe('the clock gate runs before anything else', () => {
       ],
     ])
     const result = await applyRecordChunk({
+      opKind: TEST_OP_KIND,
       records: [
         {
           type: claim.type,
@@ -362,7 +366,7 @@ describe('the five checks run in order', () => {
     const handSigned = async (id: string): Promise<SignedRecord> => {
       const claim = { ...claimFor(identity), id }
       const signed = await identity.signToken(
-        { kind: 'kubun/record-op', claim: toB64U(fromUTF(canonicalStringify(claim))) },
+        { kind: TEST_OP_KIND, claim: toB64U(fromUTF(canonicalStringify(claim))) },
         { embedLongForm: true },
       )
       const opJWT = stringifyToken(signed)
@@ -388,7 +392,7 @@ describe('the five checks run in order', () => {
     const [header, , signature] = genuine.opJWT.split('.')
     const [, payload] = other.opJWT.split('.')
     const forgedJWT = `${header}.${payload}.${signature}`
-    expect(await verifyRecordOp(forgedJWT)).toBeNull()
+    expect(await verifyRecordOp(forgedJWT, TEST_OP_KIND)).toBeNull()
     const forged = { ...other, opJWT: forgedJWT }
     const authorize = vi.fn(async () => true)
     const { store, writes } = memoryStore()
@@ -902,7 +906,8 @@ describe('conflicts', () => {
     const identity = randomIdentity()
     const a = await makeRecord(identity, { meta: { version: [3] }, payload: new Uint8Array([1]) })
     const b = await makeRecord(identity, { meta: { version: [3] }, payload: new Uint8Array([2]) })
-    return (await recordDecisionDigest(a)) > (await recordDecisionDigest(b))
+    return (await recordDecisionDigest(a, TEST_OP_KIND)) >
+      (await recordDecisionDigest(b, TEST_OP_KIND))
       ? { high: a, low: b }
       : { high: b, low: a }
   }
@@ -938,7 +943,10 @@ describe('conflicts', () => {
     const identity = randomIdentity()
     const a = await makeRecord(identity, { offsetMS: 0 })
     const b = await makeRecord(identity, { offsetMS: 1000 })
-    const high = (await recordDecisionDigest(a)) > (await recordDecisionDigest(b)) ? a : b
+    const high =
+      (await recordDecisionDigest(a, TEST_OP_KIND)) > (await recordDecisionDigest(b, TEST_OP_KIND))
+        ? a
+        : b
     const types = typesOf(valueType({ policy: { kind: 'immutable' } }))
     for (const [first, second] of [
       [a, b],
@@ -1191,4 +1199,39 @@ describe('afterAuthorize hook', () => {
     expect(retained).toEqual([older.opHash])
     expect(read('test.value', 'one')).toEqual(newer)
   })
+})
+
+test('apply rejects a record from another replay domain', async () => {
+  const identity = randomIdentity()
+  const claim = claimFor(identity)
+  const signed = await signRecordOp(identity, claim, 'a/op')
+  const record = { ...claim, payload: new Uint8Array([1]), ...signed }
+  const memory = memoryStore()
+  const result = await applyWith([record], memory.store, typesOf(valueType()), {
+    opKind: 'b/op',
+  })
+  expect(result.rejected).toEqual([{ record, reason: 'signature' }])
+  expect(result.applied).toBe(0)
+  expect(memory.read(record.type, record.id)).toBeNull()
+})
+
+test('authorizers receive the caller transport context by reference', async () => {
+  const record = await makeRecord(randomIdentity())
+  const transportContext = { channel: Symbol('channel') }
+  let received: unknown
+  const result = await applyWith(
+    [record],
+    memoryStore().store,
+    typesOf(
+      valueType({
+        authorize: async (_op, ctx) => {
+          received = ctx.transportContext
+          return true
+        },
+      }),
+    ),
+    { transportContext },
+  )
+  expect(result.applied).toBe(1)
+  expect(received).toBe(transportContext)
 })

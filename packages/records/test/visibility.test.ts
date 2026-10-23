@@ -28,6 +28,8 @@ import {
 } from '../src/index.js'
 import { decisionOf } from './decision-fixture.js'
 
+const TEST_OP_KIND = 'test/record-op'
+
 const KEY = 'credential.key'
 const BRANCH = 'credential.key-branch'
 const WRAPPING = 'credential.wrapping'
@@ -95,7 +97,7 @@ async function makeRecord(
     owner: claim.owner,
     hlc: claim.hlc,
     payload,
-    ...(await signRecordOp(signer, claim)),
+    ...(await signRecordOp(signer, claim, TEST_OP_KIND)),
   }
 }
 
@@ -158,12 +160,13 @@ function contextFor(
   const wrapping = options.definition ?? wrappingDefinition(w.ownerDID)
   const current = options.current ?? { 'key-1': 3, 'key-2': 3 }
   return {
+    opKind: TEST_OP_KIND,
     requester: { peerDID: requester.peerDID, controllerDID: requester.controllerDID ?? null },
     proofs: options.proofs ?? [],
     store: options.store,
     // The same authorizer apply runs, as a responder binds it.
     authorizeProof: async (record, stored) => {
-      const op = await verifySignedRecord(record)
+      const op = await verifySignedRecord(record, TEST_OP_KIND)
       return (
         op !== null &&
         (await wrapping.authorize(op, {
@@ -254,7 +257,14 @@ test('a proof below the responder current key version earns no entries', async (
       deleted: false,
       meta,
     }
-    return { type, id, owner, hlc: claim.hlc, payload, ...(await signRecordOp(signer, claim)) }
+    return {
+      type,
+      id,
+      owner,
+      hlc: claim.hlc,
+      payload,
+      ...(await signRecordOp(signer, claim, TEST_OP_KIND)),
+    }
   }
   const proof = await make('credential.wrapping', 'wrap-1', {
     keyID: 'key-1',
@@ -273,6 +283,7 @@ test('a proof below the responder current key version earns no entries', async (
     pruneCopy: async () => {},
   }
   const ctx: VisibilityContext = {
+    opKind: TEST_OP_KIND,
     requester: { peerDID: requester.id, controllerDID: null },
     proofs: [proof],
     store,
@@ -741,13 +752,13 @@ describe('keyHolder', () => {
     test('a forked proof loses by content digest even when its op hash is greater', async () => {
       const w = world()
       const base = await wrappingFor(w, 'key-1', 3, w.bDID)
-      const verified = await verifySignedRecord(base)
+      const verified = await verifySignedRecord(base, TEST_OP_KIND)
       if (verified === null) throw new Error('Signed wrapping did not verify')
       const copies: Array<{ record: SignedRecord; digest: string }> = []
       for (let value = 0; value < 12; value++) {
         const payload = new Uint8Array([value])
         const claim = { ...verified.claim, payloadDigest: recordPayloadDigest(payload) }
-        const record = { ...base, payload, ...(await signRecordOp(w.owner, claim)) }
+        const record = { ...base, payload, ...(await signRecordOp(w.owner, claim, TEST_OP_KIND)) }
         copies.push({ record, digest: decisionOf(record).contentDigest })
       }
       const opposed = copies.flatMap((proof) =>
@@ -1005,7 +1016,7 @@ describe('the responder filters before it answers', () => {
       if (record.type !== type) {
         continue
       }
-      const op = await verifySignedRecord(record)
+      const op = await verifySignedRecord(record, TEST_OP_KIND)
       const leaf = op === null ? null : rangeLeaf(decisionOf(record), LWW)
       if (leaf !== null) {
         leaves.push(leaf)
@@ -1093,4 +1104,27 @@ describe('the responder filters before it answers', () => {
     const ctx = contextFor(w, { peerDID: w.b.id }, { store })
     expect(await visibleTo(tampered, ['ownerDevices'], ctx)).toBe(false)
   })
+})
+
+test('visibility hooks receive the caller transport context by reference', async () => {
+  const w = world()
+  const record = await makeRecord(w.owner, KEY, 'one', {})
+  const transportContext = { channel: Symbol('channel') }
+  let received: unknown
+  const ctx: VisibilityContext = {
+    ...contextFor(w, { peerDID: w.owner.id }, memoryStore()),
+    transportContext,
+  }
+  const types = typesWithVisibility()
+  const definition = types.get(KEY)
+  if (definition === undefined) throw new Error('Missing key type')
+  types.set(KEY, {
+    ...definition,
+    visibleTo: async (_record, context) => {
+      received = context.transportContext
+      return true
+    },
+  })
+  expect(await filterVisibleRecords([record], types, ctx)).toEqual([record])
+  expect(received).toBe(transportContext)
 })

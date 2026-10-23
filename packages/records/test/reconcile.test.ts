@@ -33,6 +33,8 @@ import {
 } from '../src/index.js'
 import { decisionOf } from './decision-fixture.js'
 
+const TEST_OP_KIND = 'test/record-op'
+
 type RangeResponse = RangeSummary | RangeLeafList
 
 const TYPE = 'credential.entry'
@@ -252,7 +254,7 @@ test('a numeric-string version pulls the numeric winner from the responder', asy
       deleted: false,
       meta: { version },
     }
-    return { ...key, hlc, payload, ...(await signRecordOp(identity, claim)) }
+    return { ...key, hlc, payload, ...(await signRecordOp(identity, claim, TEST_OP_KIND)) }
   }
   const local = await signedVersion('2')
   const remote = await signedVersion('10')
@@ -693,15 +695,19 @@ describe('fetched records still pass through apply', () => {
   ): Promise<SignedRecord> {
     const owner = normalizeDID(identity.id)
     const hlc = HLC.serialize({ wallTime: Now + offsetMS, counter: 0, nodeID: identity.id })
-    const signed = await signRecordOp(identity, {
-      type: TYPE,
-      id,
-      owner,
-      hlc,
-      payloadDigest: recordPayloadDigest(payload),
-      deleted: false,
-      meta: {},
-    })
+    const signed = await signRecordOp(
+      identity,
+      {
+        type: TYPE,
+        id,
+        owner,
+        hlc,
+        payloadDigest: recordPayloadDigest(payload),
+        deleted: false,
+        meta: {},
+      },
+      TEST_OP_KIND,
+    )
     return { type: TYPE, id, owner, hlc, payload, ...signed }
   }
 
@@ -716,7 +722,7 @@ describe('fetched records still pass through apply', () => {
   async function leavesOf(store: RecordStoreAdapter): Promise<Array<RangeLeaf>> {
     const out: Array<RangeLeaf> = []
     for (const record of await store.list([TYPE])) {
-      const op = await verifySignedRecord(record.copies[0] as SignedRecord)
+      const op = await verifySignedRecord(record.copies[0] as SignedRecord, TEST_OP_KIND)
       const leaf = op === null ? null : rangeLeaf(record, definition.policy)
       if (leaf !== null) {
         out.push(leaf)
@@ -742,6 +748,7 @@ describe('fetched records still pass through apply', () => {
       await Promise.all(result.state.requested.map((keyValue) => responderStore.get(keyValue)))
     ).flatMap((decision) => decision?.copies ?? [])
     const applied = await applyRecordChunk({
+      opKind: TEST_OP_KIND,
       records: fetchedRecords,
       store: requesterStore,
       types: new Map([[TYPE, definition]]),

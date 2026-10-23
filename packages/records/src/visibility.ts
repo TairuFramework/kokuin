@@ -1,81 +1,18 @@
 import { normalizeDID } from '@kokuin/token'
-import { fromB64U, toB64U, toUTF } from '@sozai/codec'
 
 import {
-  type CatalogTransportGroupKind,
   isDependencyUnsatisfied,
-  type RecordRequester,
   type RecordTypeDefinition,
   type VisibilityContext,
 } from './apply.js'
-import { parseCanonicalHLC } from './clock.js'
-import type { RecordDecision } from './decision.js'
 import { type VerifiedRecordOp, verifySignedRecord } from './op.js'
 import { compareRecordOps } from './policy.js'
 import {
-  canonicalRecordClaim,
-  isRecordClaim,
   type RecordClaim,
   recordClaimDigest,
   recordPayloadMatches,
   type SignedRecord,
 } from './record.js'
-
-function catalogDecisionClaim(record: SignedRecord): RecordClaim | null {
-  try {
-    const segments = record.opJWT.split('.')
-    if (segments.length !== 3) return null
-    const envelope = JSON.parse(toUTF(fromB64U(segments[1] as string))) as Record<string, unknown>
-    if (envelope.kind !== 'kubun/record-op' || typeof envelope.claim !== 'string') return null
-    const claim = JSON.parse(toUTF(fromB64U(envelope.claim))) as unknown
-    return isRecordClaim(claim) && toB64U(canonicalRecordClaim(claim)) === envelope.claim
-      ? claim
-      : null
-  } catch {
-    return null
-  }
-}
-
-/** A group-scope check; serving callers verify the signed copy and issuer authority. */
-export async function visibleCatalogRecord(
-  decision: RecordDecision,
-  requesterDID: string | RecordRequester,
-  transportGroupID: string,
-  transportGroupKind: CatalogTransportGroupKind,
-  roster: ReadonlySet<string>,
-): Promise<boolean> {
-  if (
-    (decision.key.type !== 'catalog' && decision.key.type !== 'catalog.exposure') ||
-    parseCanonicalHLC(decision.decisionHLC) === null
-  )
-    return false
-  const subject =
-    typeof requesterDID === 'string' ? { peerDID: requesterDID, controllerDID: null } : requesterDID
-  const requester = normalizedOrNull(subject.peerDID)
-  if (requester === null || !roster.has(requester)) return false
-  const ownsRecord =
-    requester === normalizedOrNull(decision.key.owner) ||
-    normalizedOrNull(subject.controllerDID) === normalizedOrNull(decision.key.owner)
-  if (transportGroupKind === 'ownAgents' && !ownsRecord) return false
-  if (transportGroupKind === 'standard' && decision.key.type !== 'catalog.exposure') return false
-  for (const copy of decision.copies) {
-    const claim = catalogDecisionClaim(copy)
-    if (
-      claim !== null &&
-      claim.type === decision.key.type &&
-      claim.owner === decision.key.owner &&
-      claim.id === decision.key.id &&
-      (decision.key.type === 'catalog.exposure'
-        ? claim.meta.version === decision.decisionHLC &&
-          (transportGroupKind === 'ownAgents' || claim.meta.groupID === transportGroupID)
-        : decision.key.type === 'catalog' && claim.hlc === decision.decisionHLC) &&
-      recordClaimDigest(claim) === decision.contentDigest &&
-      recordPayloadMatches(copy, claim)
-    )
-      return true
-  }
-  return false
-}
 
 /**
  * A built-in visibility rule. Each reads the record's verified claim:
@@ -165,7 +102,7 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
   if (definition === undefined) {
     return null
   }
-  const op = await verifySignedRecord(proof, ctx.methods)
+  const op = await verifySignedRecord(proof, ctx.opKind, ctx.methods)
   if (op === null || op.claim.deleted || !recordPayloadMatches(proof, op.claim)) {
     return null
   }
@@ -192,14 +129,14 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
   })
   const storedRecord = storedDecision?.copies[0] ?? null
   const storedOp =
-    storedRecord === null ? null : await verifySignedRecord(storedRecord, ctx.methods)
+    storedRecord === null ? null : await verifySignedRecord(storedRecord, ctx.opKind, ctx.methods)
   if (!storedRowAdmits(op, storedOp, definition)) {
     return null
   }
   // A proof the responder cannot check for lack of a dependency earns nothing, the same as
   // one that fails, rather than parking as it would in apply.
   for (const dependency of definition.dependencies(proof, op)) {
-    if (await isDependencyUnsatisfied(dependency, ctx.store, ctx.methods)) {
+    if (await isDependencyUnsatisfied(dependency, ctx.store, ctx.opKind, ctx.methods)) {
       return null
     }
   }
@@ -323,7 +260,7 @@ export async function visibleTo(
   if (rules.length === 0) {
     return false
   }
-  const op = await verifySignedRecord(record, ctx.methods)
+  const op = await verifySignedRecord(record, ctx.opKind, ctx.methods)
   if (op === null) {
     return false
   }

@@ -1,3 +1,5 @@
+import type { MethodRegistry } from '@kokuin/token'
+
 import { compareRecordDecisionHLC, parseCanonicalHLC } from './clock.js'
 import { type VerifiedRecordOp, verifySignedRecord } from './op.js'
 import { RecordClaimError, type RecordKey, recordClaimDigest, type SignedRecord } from './record.js'
@@ -51,8 +53,12 @@ export function recordDecisionFromVerifiedCopies(
 }
 
 /** Stable identity of signed content, independent of the identity that signed this copy. */
-export async function recordDecisionDigest(record: SignedRecord): Promise<string> {
-  const op = await verifySignedRecord(record)
+export async function recordDecisionDigest(
+  record: SignedRecord,
+  opKind: string,
+  methods?: MethodRegistry,
+): Promise<string> {
+  const op = await verifySignedRecord(record, opKind, methods)
   if (op === null) throw new RecordClaimError('Record signature is invalid')
   return recordClaimDigest(op.claim)
 }

@@ -22,8 +22,6 @@ import {
 /** The authenticated peer asking for records, and the controller it acts for, if any. */
 export type RecordRequester = { peerDID: string; controllerDID: string | null }
 
-export type CatalogTransportGroupKind = 'standard' | 'ownAgents'
-
 /**
  * What a responding peer knows when it decides whether a requester may receive a record.
  *
@@ -43,9 +41,9 @@ export type CatalogTransportGroupKind = 'standard' | 'ownAgents'
  */
 export type VisibilityContext = {
   requester: RecordRequester
-  transportGroupID?: string | null
-  transportGroupKind?: CatalogTransportGroupKind
-  transportRoster?: ReadonlySet<string>
+  opKind: string
+  /** Caller-owned transport state, passed unchanged and never signed. */
+  transportContext?: unknown
   proofs: ReadonlyArray<SignedRecord>
   store: RecordStoreAdapter
   authorizeProof: (record: SignedRecord, stored: SignedRecord | null) => Promise<boolean>
@@ -67,8 +65,8 @@ export type VisibilityContext = {
  *   never through a store bound outside the transaction.
  */
 export type RecordReceiveContext = {
-  transportGroupKind?: CatalogTransportGroupKind
-  groupID?: string | null
+  /** Caller-owned transport state, passed unchanged and never signed. */
+  transportContext?: unknown
 }
 
 export type RecordAuthorizeContext = RecordReceiveContext & {
@@ -98,11 +96,10 @@ export type RecordDependency = RecordKey & {
  *
  * - `authorize` decides whether the op's verified issuer may write this record. `stored` is
  *   the record's current op, or `null` on a first write. The engine itself refuses an owner
- *   change under `lww` and `monotonic`, whatever `authorize` answers. Under `immutable` it
- *   does not, since two different ops under one id settle on the greater `opHash`: the
- *   authorizer of an `immutable` type must bind the owner to the owner of the record it
- *   depends on, not only check the issuer against `claim.owner`, or an op naming a different
- *   owner could take the record over by drawing the greater `opHash`.
+ *   change under `lww` and `monotonic`, whatever `authorize` answers. `immutable` skips this
+ *   owner-continuity check. Owner-qualified keys keep different owners' records separate.
+ *   WARNING: bind `claim.owner` to the owner of the record an immutable record depends on.
+ *   Checking only the issuer against `claim.owner` can admit a dependent under the wrong owner.
  * - `precheck` is a stateless issuer and signed-shape check before dependencies are read.
  * - `dependsOn` lists the types whose records this one may need, and orders a chunk.
  * - `dependencies` names the exact records this one needs before it can be authorized. It
@@ -168,6 +165,7 @@ export type ApplyResult = {
 }
 
 export type ApplyRecordChunkParams = RecordReceiveContext & {
+  opKind: string
   records: ReadonlyArray<SignedRecord>
   store: RecordStoreAdapter
   types: ReadonlyMap<string, RecordTypeDefinition>
@@ -256,6 +254,7 @@ type Outcome =
   | { status: 'rejected'; reason: string }
 
 type ChunkContext = RecordReceiveContext & {
+  opKind: string
   tx: RecordStoreAdapter
   resolveController: ApplyRecordChunkParams['resolveController']
   verifyCapability: ApplyRecordChunkParams['verifyCapability']
@@ -277,7 +276,7 @@ async function decisionSnapshot(key: RecordKey, ctx: ChunkContext): Promise<Deci
   const verified = await Promise.all(
     (decision?.copies ?? []).map(async (copy) => ({
       copy,
-      op: await verifySignedRecord(copy, ctx.methods),
+      op: await verifySignedRecord(copy, ctx.opKind, ctx.methods),
     })),
   )
   const snapshot = { decision, verified, checkedPrior: false }
@@ -320,12 +319,13 @@ function rememberCopy(
 export async function isDependencyUnsatisfied(
   dependency: RecordDependency,
   tx: RecordStoreAdapter,
+  opKind: string,
   methods?: MethodRegistry,
 ): Promise<boolean> {
   const stored = await tx.get(dependency)
   if (stored === null || stored.key.owner !== dependency.owner) return true
   for (const copy of stored.copies) {
-    const op = await verifySignedRecord(copy, methods)
+    const op = await verifySignedRecord(copy, opKind, methods)
     if (
       op?.claim.type === dependency.type &&
       op.claim.owner === dependency.owner &&
@@ -340,10 +340,11 @@ export async function isDependencyUnsatisfied(
 async function isParked(
   candidate: Candidate,
   tx: RecordStoreAdapter,
+  opKind: string,
   methods?: MethodRegistry,
 ): Promise<boolean> {
   for (const dependency of candidate.definition.dependencies(candidate.record, candidate.op)) {
-    if (await isDependencyUnsatisfied(dependency, tx, methods)) {
+    if (await isDependencyUnsatisfied(dependency, tx, opKind, methods)) {
       return true
     }
   }
@@ -360,7 +361,7 @@ async function applyCandidate(candidate: Candidate, ctx: ChunkContext): Promise<
   if (storedDecision?.copies.some((copy) => copy.opHash === record.opHash)) {
     return { status: 'noop' }
   }
-  if (await isParked(candidate, tx, ctx.methods)) {
+  if (await isParked(candidate, tx, ctx.opKind, ctx.methods)) {
     return { status: 'parked' }
   }
   // A stored op that no longer verifies is not a record, so it binds no owner and yields to
@@ -382,8 +383,7 @@ async function applyCandidate(candidate: Candidate, ctx: ChunkContext): Promise<
     record,
     stored,
     store: tx,
-    transportGroupKind: ctx.transportGroupKind,
-    groupID: ctx.groupID,
+    transportContext: ctx.transportContext,
     resolveController: ctx.resolveController,
     verifyCapability: ctx.verifyCapability,
   })
@@ -416,8 +416,7 @@ async function applyCandidate(candidate: Candidate, ctx: ChunkContext): Promise<
             record: copy,
             stored: record,
             store: tx,
-            transportGroupKind: ctx.transportGroupKind,
-            groupID: ctx.groupID,
+            transportContext: ctx.transportContext,
             resolveController: ctx.resolveController,
             verifyCapability: ctx.verifyCapability,
           }))
@@ -490,8 +489,11 @@ class RefusedCandidate extends Error {
  * 7. its payload matches the signed digest.
  *
  * Nothing about a record is read before the first check — not the store, not its signature
- * — and the local clock only advances once the chunk has committed, from the records it
- * stored. Records apply in the types' dependency order; one whose dependencies are not
+ * — and `receiveClock` advances the local clock from stored records after the chunk's
+ * transaction returns. An owned transaction has committed at that point. Inside a
+ * caller-owned transaction, apply advances `receiveClock` before the enclosing transaction
+ * commits. Callers needing commit-only clock effects must defer them until that commit.
+ * Records apply in the types' dependency order; one whose dependencies are not
  * stored or not yet satisfied is retried after each pass that stored something, and returned
  * as parked when a pass stores nothing.
  *
@@ -520,7 +522,7 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
       rejected.push({ record, reason: 'unknown-type' })
       continue
     }
-    const op = await verifySignedRecord(record, params.methods)
+    const op = await verifySignedRecord(record, params.opKind, params.methods)
     if (op === null) {
       rejected.push({ record, reason: 'signature' })
       continue
@@ -579,7 +581,7 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
       if (!verifiedStored.has(id)) {
         verifiedStored.add(id)
         for (const copy of prefetched.get(id)?.copies ?? []) {
-          const op = await verifySignedRecord(copy, params.methods)
+          const op = await verifySignedRecord(copy, params.opKind, params.methods)
           if (op !== null && op.issuer !== op.claim.owner) await prefetchController(op.issuer)
         }
       }
@@ -630,8 +632,8 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
       }
       const ctx: ChunkContext = {
         tx,
-        transportGroupKind: params.transportGroupKind ?? 'standard',
-        groupID: params.groupID,
+        opKind: params.opKind,
+        transportContext: params.transportContext,
         resolveController: async (did) =>
           controllers.has(did)
             ? (controllers.get(did) ?? null)

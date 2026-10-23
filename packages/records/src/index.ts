@@ -9,7 +9,6 @@ export {
   type ApplyRecordChunkParams,
   type ApplyResult,
   applyRecordChunk,
-  type CatalogTransportGroupKind,
   type RecordAuthorizeContext,
   type RecordConflict,
   RecordContentRefusalError,
@@ -90,6 +89,5 @@ export {
   type VisibilityRule,
   verifyHolderProof,
   visibilityRules,
-  visibleCatalogRecord,
   visibleTo,
 } from './visibility.js'
