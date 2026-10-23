@@ -18,14 +18,18 @@ function deniesSubject(deny: ReadonlySet<string>, subject: string): boolean {
   return [...deny].some((entry) => normalizeDID(entry) === canonical)
 }
 
-/** First same-generation rotate newly denying `subject`, or undefined for an invalid chain. */
-export function deviceRevokeIndex(
+/**
+ * Every same-generation rotate newly denying `subject`, in chain order, or an empty array for an
+ * invalid chain. A subject revoked, cleared by a reset and revoked again yields both indices.
+ */
+export function deviceRevokeIndices(
   did: string,
   chain: Array<SignedEvent>,
   subject: string,
-): number | undefined {
+): Array<number> {
   const folded = foldDeviceChain(did, chain)
-  if (!folded.ok) return undefined
+  if (!folded.ok) return []
+  const indices: Array<number> = []
   for (let index = 1; index < chain.length; index++) {
     const state = folded.states[index]
     const prior = folded.states[index - 1]
@@ -37,10 +41,19 @@ export function deviceRevokeIndex(
       deniesSubject(state.deny, subject) &&
       !deniesSubject(prior.deny, subject)
     ) {
-      return index
+      indices.push(index)
     }
   }
-  return undefined
+  return indices
+}
+
+/** First same-generation rotate newly denying `subject`, or undefined for an invalid chain. */
+export function deviceRevokeIndex(
+  did: string,
+  chain: Array<SignedEvent>,
+  subject: string,
+): number | undefined {
+  return deviceRevokeIndices(did, chain, subject)[0]
 }
 
 export type CreateDeviceRevokeParams = {

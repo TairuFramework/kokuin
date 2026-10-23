@@ -29,6 +29,7 @@ export {
   type CreateDeviceRevokeParams,
   createDeviceRevoke,
   deviceRevokeIndex,
+  deviceRevokeIndices,
 } from './device-revoke.js'
 export { TOO_MANY_FAILED_SIGNATURES } from './epoch.js'
 export {

@@ -7,6 +7,7 @@ import {
   createReset,
   createRotate,
   deviceRevokeIndex,
+  deviceRevokeIndices,
   didFromInception,
   digestOf,
   foldLog,
@@ -231,5 +232,22 @@ describe('createDeviceRevoke()', () => {
         /empty log|invalid rotate/,
       )
     }
+  })
+})
+
+describe('deviceRevokeIndices()', () => {
+  test('returns every revoke, including a re-revoke after a reset cleared the denial', () => {
+    const revoke = rotate(inception, [subject])
+    const reset = createReset(seed, profile, 1)
+    const rerevoke = rotate(reset, [subject])
+    const chain = [inception, revoke, reset, rerevoke]
+    assertFolds(chain)
+    expect(deviceRevokeIndices(did, chain, subject)).toEqual([1, 3])
+    expect(deviceRevokeIndex(did, chain, subject)).toBe(1)
+  })
+
+  test('returns an empty array for a chain without a revoke and for an invalid chain', () => {
+    expect(deviceRevokeIndices(did, [inception, rotate(inception)], subject)).toEqual([])
+    expect(deviceRevokeIndices(did, [inception, skippedInception(inception)], subject)).toEqual([])
   })
 })
