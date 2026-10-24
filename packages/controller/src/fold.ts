@@ -31,7 +31,7 @@ export {
  * One management member as a state holds it: the snapshot entry, plus whether a removal has ended
  * it (`removed`) and whether it may act at all (`effective`: present, not removed, and not targeted
  * by any entry of the same state's deny set — see `denialTargetsMember`). A chain state's members are
- * its snapshot's, including removed incarnations.
+ * its snapshot's live entries.
  */
 export type MemberState = MemberEntry & { removed: boolean; effective: boolean }
 
@@ -78,9 +78,11 @@ export type KeyState = {
   deny: ReadonlySet<string>
   /**
    * The management set, keyed by each member's `add` digest (its incarnation). A chain state's is its
-   * event's snapshot `m` and `u`, in snapshot order.
+   * event's snapshot `m`, in snapshot order. The head also holds epoch removals.
    */
   members: ReadonlyMap<string, MemberState>
+  /** Removed incarnations from snapshot `u`, keyed by add digest, separate from `members`. */
+  tombstones: ReadonlyMap<string, MemberEntry>
   /**
    * Digest of the chain event that opened the epoch this state belongs to. Every chain event opens
    * one, so for a chain state this is its own `digest`; epoch events name it as their `e`.
@@ -277,8 +279,9 @@ function stepEvent(
       const denied = snapshot.deny.some((denial) => denialTargetsMember(denial, entry))
       members.set(add, { ...entry, removed: false, effective: !denied })
     }
+    const memberTombstones = new Map<string, MemberEntry>()
     for (const { did: memberDID, key, add, lease } of snapshot.removed ?? []) {
-      members.set(add, { did: memberDID, key, add, lease, removed: true, effective: false })
+      memberTombstones.set(add, { did: memberDID, key, add, lease })
     }
 
     const digest = digestOf(rot.event)
@@ -299,6 +302,7 @@ function stepEvent(
         recovery: prior.recovery,
         deny: denyAfter,
         members,
+        tombstones: memberTombstones,
         epoch: digest,
         saturated: false,
         digest,
@@ -426,6 +430,7 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
         deny: new Set<string>(),
         // The inception opens the first epoch with an empty management set.
         members: new Map<string, MemberState>(),
+        tombstones: new Map<string, MemberEntry>(),
         epoch: digestOf(first.event),
         saturated: false,
         digest: digestOf(first.event),
@@ -538,6 +543,10 @@ export function snapshotOf(
     if (droppedMembers.has(member.add)) continue
     const entries = member.removed ? removed : members
     entries.push({ did: member.did, key: member.key, add: member.add, lease: member.lease })
+  }
+  for (const member of state.tombstones.values()) {
+    if (droppedMembers.has(member.add)) continue
+    removed.push({ did: member.did, key: member.key, add: member.add, lease: member.lease })
   }
   return {
     members,

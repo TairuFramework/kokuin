@@ -688,11 +688,9 @@ describe('historic management membership', () => {
     ]
     for (const event of events) {
       const result = foldLog(did, { chain: nextChain, events: [event] })
-      expect(result.ok && result.head.members.get(add)).toMatchObject({
-        removed: true,
-        effective: false,
-        lease: LEASE,
-      })
+      expect(result.ok && result.head.members.has(add)).toBe(false)
+      expect(result.ok && result.head.tombstones.get(add)).toMatchObject({ lease: LEASE })
+      expect(result.ok && result.rejected).toBe(1)
       expect(result.ok && result.head.deny.size).toBe(0)
     }
     const renewal = createRenew({
@@ -703,10 +701,9 @@ describe('historic management membership', () => {
       add,
       lease: LEASE + 1,
     })
-    expect(headOf({ chain: nextChain, events: [renewal] }).members.get(add)).toMatchObject({
-      removed: true,
-      effective: false,
-    })
+    const renewed = headOf({ chain: nextChain, events: [renewal] })
+    expect(renewed.members.has(add)).toBe(false)
+    expect(renewed.tombstones.get(add)).toEqual(next.tombstones.get(add))
     expect(snapshotOf(next, { members: [add] }).removed ?? []).toEqual([])
   })
 })

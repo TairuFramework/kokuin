@@ -280,6 +280,7 @@ type KeyState = {
   recovery: string // the inception's commitment, carried unchanged for the log's life
   deny: ReadonlySet<string> // both spellings
   members: ReadonlyMap<string, MemberState> // keyed by add digest
+  tombstones: ReadonlyMap<string, MemberEntry> // snapshot u, keyed by add digest
   epoch: string // digest of the chain event that opened this epoch
   saturated: boolean
   digest: string // digest of the chain event that produced this state
@@ -477,7 +478,11 @@ Absent `u` means an empty list. `u` may appear only with a full `m`/`d` snapshot
 Older verifiers ignore `u`, so removed incarnations remain absent from their live membership sets.
 A removal flag inside `m` would instead expose removed members as live to older verifiers.
 
-The fold marks each tombstone `removed: true` and `effective: false`.
+`KeyState.members` keeps its 0.2 behaviour: chain states contain only live snapshot entries, in snapshot order.
+The head also holds members removed by epoch events, with `removed: true` and `effective: false`.
+Snapshot tombstones never enter either `members` map.
+`KeyState.tombstones` holds them separately as `MemberEntry` values keyed by add digest.
+The head carries the last chain state's tombstones.
 Renewal or removal of a tombstone cannot restore its authority. Its signatures cannot authorise epoch events.
 Tombstones obey the same Ed25519, DID pin and root-key exclusion rules as live entries.
 An add digest cannot occur twice across `m` and `u`. A new live incarnation may share a removed incarnation's pin.

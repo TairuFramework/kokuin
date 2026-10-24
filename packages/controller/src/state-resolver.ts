@@ -265,11 +265,16 @@ export function historicMemberFrom(
   const current = view.head.members.get(query.add)
   // A live denial is a compromise response, even when an earlier snapshot admitted the member.
   if (current !== undefined && !current.removed && !current.effective) throw refuse()
+  const historic = view.states.findLast(
+    (state) =>
+      state.gen === query.gen && (state.members.has(query.add) || state.tombstones.has(query.add)),
+  )
+  const tombstone = view.head.tombstones.get(query.add) ?? historic?.tombstones.get(query.add)
   const member =
     current ??
-    view.states
-      .findLast((state) => state.gen === query.gen && state.members.has(query.add))
-      ?.members.get(query.add)
+    (tombstone === undefined
+      ? historic?.members.get(query.add)
+      : { ...tombstone, removed: true, effective: false })
   if (member === undefined) throw refuse()
   if (!member.removed && [...view.head.deny].some((entry) => denialTargetsMember(entry, member)))
     throw refuse()

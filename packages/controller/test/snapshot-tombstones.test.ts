@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest'
 
+import { digestOf } from '../src/canonical.js'
 import { authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
+import { createRemove } from '../src/epoch-events.js'
 import {
   createInception,
   createReset,
@@ -10,7 +12,7 @@ import {
   signEvent,
   verifyReset,
 } from '../src/events.js'
-import { foldLog, RESET_HAS_TOMBSTONES } from '../src/fold.js'
+import { foldLog, RESET_HAS_TOMBSTONES, snapshotOf } from '../src/fold.js'
 import { encodeKey } from '../src/keys.js'
 import {
   SNAPSHOT_MALFORMED,
@@ -47,11 +49,73 @@ function folded(members: Array<MemberEntry>, removed: unknown) {
   })
 }
 describe('snapshot removed incarnations', () => {
+  test('settled tombstones preserve live-only member reads across the chain and head', () => {
+    const live = { ...entry, add: 'live-add' }
+    const logs = [true, false].map((withTombstone) => {
+      const admitted = createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: icp.event,
+        snapshot: { members: [entry], deny: [] },
+      })
+      const settled = createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: admitted.event,
+        snapshot: { members: [live], ...(withTombstone ? { removed: [entry] } : {}), deny: [] },
+      })
+      const carried = createRotate({
+        seed,
+        profile: 0,
+        did,
+        prior: settled.event,
+        snapshot: { members: [live], ...(withTombstone ? { removed: [entry] } : {}), deny: [] },
+      })
+      return { chain: [icp, admitted, settled, carried], events: [] }
+    })
+    const [withRemoved, withoutRemoved] = logs.map((log) => foldLog(did, log))
+    if (!withRemoved?.ok || !withoutRemoved?.ok) throw new Error('fixture must fold')
+    for (const [index, state] of withRemoved.states.entries()) {
+      const comparison = withoutRemoved.states[index]
+      if (comparison === undefined) throw new Error('fixture states must align')
+      expect([...state.members]).toEqual([...comparison.members])
+      expect(state.members.has(entry.add)).toBe(index === 1)
+      expect(state.tombstones.has(entry.add)).toBe(index >= 2)
+    }
+    expect([...withRemoved.head.members]).toEqual([...withoutRemoved.head.members])
+    expect(withRemoved.head.members.has(entry.add)).toBe(false)
+    expect([...withRemoved.head.tombstones.values()]).toEqual([entry])
+    expect(snapshotOf(withRemoved.head)).toEqual({ members: [live], removed: [entry], deny: [] })
+    expect(snapshotOf(withRemoved.head, { members: [entry.add] })).toEqual({
+      members: [live],
+      deny: [],
+    })
+    const removal = createRemove({
+      signer: { root: { seed, profile: 0 } },
+      did,
+      head: withRemoved.head,
+      parents: [withRemoved.head.epoch],
+      add: live.add,
+    })
+    const settledLog = logs[0]
+    if (settledLog === undefined) throw new Error('fixture log is missing')
+    const result = foldLog(did, { ...settledLog, events: [removal] })
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.applied).toEqual([digestOf(removal.event)])
+    expect(result.head.members.has(entry.add)).toBe(false)
+    expect(result.head.members.get(live.add)).toMatchObject({ removed: true, effective: false })
+    expect(snapshotOf(result.head).removed).toEqual([live, entry])
+    expect(snapshotOf(result.head, { members: [live.add, entry.add] }).removed).toBeUndefined()
+  })
+
   test('live re-add may share a tombstone pin', () => {
     const result = folded([{ ...entry, add: 'new-add' }], [entry])
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.head.members.get(entry.add)).toMatchObject({ removed: true, effective: false })
+    expect(result.head.members.has(entry.add)).toBe(false)
+    expect(result.head.tombstones.get(entry.add)).toEqual(entry)
     expect(result.head.members.get('new-add')).toMatchObject({ removed: false, effective: true })
   })
   test('malformed tombstones and duplicate incarnations fail closed', () => {
