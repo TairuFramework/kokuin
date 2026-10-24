@@ -649,10 +649,10 @@ importers:
     dependencies:
       '@hozon/adapter':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.2.1
       '@hozon/db':
         specifier: 'catalog:'
-        version: 0.4.0(@logtape/logtape@2.4.2)
+        version: 0.5.0(@logtape/logtape@2.4.2)
       '@kokuin/records':
         specifier: workspace:^
         version: link:../records
