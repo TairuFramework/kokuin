@@ -100,7 +100,8 @@ const records = createVaultRecords({
 `VAULT_OP_KIND` is the exported constant `kokuin/vault-op/v1`. Factories require an explicit `opKind` and never default it.
 Signing, apply, embedded proof verification and reconciliation must use the same kind.
 Reads and writes refuse an absent or different durable binding.
-`getVaultRecordsStore(provider)` without a kind only retrieves storage already initialised by the host.
+`getVaultRecordsStore(provider)` without a kind retrieves registered storage without checking its durable operation-kind binding.
+Records operations enforce that binding when they run.
 
 `records.apply(records, transportContext)` receives signed records through the [records engine](./records.md).
 `records.write({ records, preconditions, transportContext })` submits signed local output through the same engine.
@@ -208,8 +209,8 @@ Retained secret factors require their supplied inputs for re-wrapping.
 | `skip` | Leave the old entry untouched |
 
 An instruction names one existing selected entry. Duplicate or unknown instructions refuse the whole operation.
-Optional `contentHLC` replaces content intent. Optional `consumer` replaces signed opaque metadata.
-Without those fields, re-encryption preserves their previous values.
+In replicated mode, optional `contentHLC` replaces content intent and optional `consumer` replaces signed opaque metadata.
+Without those fields, replicated re-encryption preserves their previous values. Local rotation stores a fresh entry HLC and ignores both fields.
 Replacement of a tombstone is unsupported.
 
 Repair uses authenticated branches, received entry candidates and prior tombstones.

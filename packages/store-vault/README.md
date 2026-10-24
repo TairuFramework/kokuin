@@ -100,9 +100,10 @@ Entry operations accept explicit owner-qualified addresses, byte plaintext and p
 Returned entry rows include stored provenance. No entry ID has application-specific meaning.
 
 `rotate` and `repairFork` require `excludedRecipients` and `reissue` arrays, including explicit empty arrays.
-Rotation carries generic plaintext and public metadata forward. It preserves content intent unless an instruction supplies another `contentHLC`.
+Replicated rotation carries generic plaintext and public metadata forward, preserving content intent unless an instruction supplies another `contentHLC`.
+Local rotation stores a fresh entry HLC and ignores `contentHLC` and `consumer` instructions.
 A reissue instruction names one entry and selects `preserve`, `replace`, `delete` or `skip`.
-`replace` supplies new plaintext. `consumer` optionally replaces signed opaque metadata.
+`replace` supplies new plaintext. In replicated mode, `consumer` optionally replaces signed opaque metadata.
 `skip` leaves the old entry untouched. Duplicate or unknown entry instructions refuse the whole operation.
 Replacement instructions target live entries. Tombstone preservation and explicit deletion require no plaintext.
 
@@ -112,7 +113,8 @@ Repair uses received authenticated candidates, prior tombstones and vault branch
 Repair returns rotated, not-needed or pending. Missing preservation factors leave the fork pending for an explicit retry.
 Received candidate history has no all-peers completeness guarantee.
 
-Replicated coordinators submit every signed output through `write` and apply, with key version, branch-set and entry HLC preconditions.
+Replicated coordinators submit every signed output through `write` and apply with operation-specific preconditions.
+Rotation checks key version and branch set. Lifecycle changes check key version. Entry writes check the entry HLC.
 They refuse parked, rejected or losing output and roll back the operation. There is no direct signed put.
 Retained wrapping factors and reissued entry projections are checked against signed evidence before they become new signed output.
 `reendorse({ ownerDID, keyID, records })` re-signs only named stored decisions, including key tombstones, without changing their claims or payloads.
