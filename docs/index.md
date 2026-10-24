@@ -11,6 +11,7 @@
 - [Authentication & keys](./reference/auth.md) -- identities, tokens, JWE, keystores.
 - [Capabilities & delegation](./reference/capability.md) -- scoped grants, chains, revocation.
 - [`did:kokuin:` controllers](./reference/controller.md) -- the profile DID method and its key event log.
+- [Vault](./reference/vault.md) -- content-key crypto, signed vault records, storage and coordinators.
 - [Stores](./reference/stores.md) -- Hozon-backed persistence for controller logs, delegation tokens and
   revocations; the `hlc` contract, purge scheduling and the revocation checker.
 - [Security model](./reference/security.md) -- guarantees, assumptions, and what a consumer must do

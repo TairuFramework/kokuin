@@ -22,7 +22,7 @@ This maps the database-free vault record lock `{ type: 'vault.key', key: JSON.st
 Replicated adapters must reuse this mapping.
 
 The base schema contains only keys, wrappings and entries. Each row has a `local` or `replicated` mode.
-Coordinators and transport are supplied separately.
+The package supplies coordinators. The consumer supplies transport.
 
 ## Optional records
 
