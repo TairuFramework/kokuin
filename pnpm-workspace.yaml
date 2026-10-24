@@ -34,14 +34,15 @@ versioning:
 catalog:
   '@electron-forge/cli': ^8.0.1
   '@electron-forge/plugin-vite': ^8.0.1
-  '@hozon/adapter': ^0.2.0
-  '@hozon/db': ^0.4.0
+  '@hozon/adapter': ^0.2.1
+  '@hozon/db': ^0.5.0
   '@hozon/node-sqlite': ^0.2.0
   '@hozon/postgres': ^0.2.0
   '@opentelemetry/api': ^1.10.0
   '@opentelemetry/sdk-trace': ^3.0.0
   '@sozai/async': ^0.4.1
   '@sozai/codec': ^0.4.3
+  '@sozai/hlc': ^0.1.0
   '@sozai/json': ^0.3.0
   '@sozai/lock': ^0.1.2
   '@sozai/log': ^0.4.0

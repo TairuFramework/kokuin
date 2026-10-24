@@ -62,6 +62,7 @@ describe.each(backends())('$name', (b) => {
         'legacy_delegation_tokens_grantor_audience_idx',
         'legacy_delegation_tokens_audience_exp_idx',
         'legacy_delegation_tokens_jti_idx',
+        'legacy_delegation_tokens_active_key_idx',
       ]),
     )
     expect(await indexNames(raw, db.adapter.kind, 'legacy_revoked_capabilities')).toContain(

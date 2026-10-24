@@ -4,6 +4,7 @@ import {
   type MemberQuery,
   normalizeDID,
   type ResolvedAgreementKey,
+  type ResolvedHistoricMember,
   type ResolvedMember,
   type ResolvedSigningKey,
   type ResolveIssuerHeader,
@@ -12,6 +13,7 @@ import {
 import { DID_PREFIX, keyTarget } from './events.js'
 import type { KeyState } from './fold.js'
 import { decodeKey } from './keys.js'
+import { denialTargetsMember } from './members.js'
 
 /** The method segment of {@link DID_PREFIX}, so the two cannot drift. */
 export const DID_METHOD = DID_PREFIX.slice('did:'.length, -1)
@@ -32,6 +34,9 @@ export const EPOCH_SATURATED = 'controller epoch is saturated'
 
 /** What `resolveMember` rejects a member with that is not live in the head's generation. */
 export const MEMBER_NOT_EFFECTIVE = 'not an effective management member'
+
+/** Historic membership refusals after a successful controller fold. */
+export const MEMBER_NOT_HISTORIC = 'not a historic management member'
 
 /**
  * The `kid` fragment's body, or `null` when the header names no key. Format is `#<the multibase key
@@ -246,6 +251,48 @@ export function memberFrom(did: string, head: KeyState, query: MemberQuery): Res
   return { key: { alg: key.alg, publicKey: key.publicKey }, lease: member.lease }
 }
 
+/** Incarnation evidence within the current generation, never proof of signing time. */
+export function historicMemberFrom(
+  did: string,
+  view: FoldedView,
+  query: MemberQuery,
+): ResolvedHistoricMember {
+  const refuse = (cause?: unknown) =>
+    new IssuerKeyNotFoundError(`Controller ${did} ${query.did} is ${MEMBER_NOT_HISTORIC}`, {
+      cause,
+    })
+  if (query.gen !== view.head.gen) throw refuse()
+  const current = view.head.members.get(query.add)
+  // A live denial is a compromise response, even when an earlier snapshot admitted the member.
+  if (current !== undefined && !current.removed && !current.effective) throw refuse()
+  const historic = view.states.findLast(
+    (state) =>
+      state.gen === query.gen && (state.members.has(query.add) || state.tombstones?.has(query.add)),
+  )
+  const tombstone = view.head.tombstones?.get(query.add) ?? historic?.tombstones?.get(query.add)
+  const member =
+    current ??
+    (tombstone === undefined
+      ? historic?.members.get(query.add)
+      : { ...tombstone, removed: true, effective: false })
+  if (member === undefined) throw refuse()
+  if (!member.removed && [...view.head.deny].some((entry) => denialTargetsMember(entry, member)))
+    throw refuse()
+  if (!member.removed && !member.effective) throw refuse()
+  try {
+    if (normalizeDID(member.did) !== normalizeDID(query.did)) throw refuse()
+    const key = decodeKey(member.key)
+    if (key.alg !== 'EdDSA') throw refuse()
+    return {
+      key: { alg: key.alg, publicKey: key.publicKey },
+      lease: member.lease,
+      removed: current?.effective !== true,
+    }
+  } catch (cause) {
+    throw refuse(cause)
+  }
+}
+
 /**
  * A `DIDMethodResolver` answering every member out of the view `load` yields for the asked DID —
  * the one shape the live resolver and its frozen views share, so the
@@ -283,17 +330,25 @@ export function resolverOver(load: (did: string) => Promise<FoldedView>): DIDMet
       // The head's set, deliberately, not the state at any position a capability names: `iat` is
       // author-supplied and backdatable, so anchoring to it would let a revoked holder pick a
       // position at which it was not yet denied. The head merges the current epoch, so a denial
-      // made there without root counts as soon as this party has seen it. Both spellings ride in it
-      // (see `KeyState.deny`); the key half is enforced by `signingKeyFrom`, and the two forms
-      // cannot collide. `load` throws `Unknown DID` rather than answering an empty (= "nobody
-      // revoked") set.
-      return (await live(did)).head.deny
+      // made there without root counts as soon as this party has seen it. Preserve every raw entry
+      // and add its canonical form for DID lookups. Key targets pass through unchanged and are
+      // enforced by `signingKeyFrom`. Keep the folded set raw for snapshots and event digests.
+      // `load` throws `Unknown DID` rather than answering an empty (= "nobody revoked") set.
+      const denied = new Set<string>()
+      for (const entry of (await live(did)).head.deny) {
+        denied.add(entry)
+        denied.add(normalizeDID(entry))
+      }
+      return denied
     },
     async resolveAgreementKey(did: string): Promise<Array<ResolvedAgreementKey>> {
       // The head's set only, unlike `resolve`. A retired agreement key is a downgrade, not a grant
       // the profile already made: the recipient decrypts old ciphertexts by re-deriving from the
       // seed, never by resolution.
       return agreementKeysFrom(did, (await live(did)).head)
+    },
+    async resolveMemberHistoric(subject: string, member: MemberQuery) {
+      return historicMemberFrom(subject, await live(subject), member)
     },
     async resolveMember(subject: string, member: MemberQuery): Promise<ResolvedMember> {
       return memberFrom(subject, (await live(subject)).head, member)

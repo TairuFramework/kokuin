@@ -1,0 +1,11 @@
+---
+"@kokuin/controller": patch
+---
+
+Root snapshots carry removed incarnations as tombstones in a new `u` field beside `m`/`d` (a previous verifier ignores it and sees them as absent); `snapshotOf` keeps removed members unless dropped. A reset must not carry `u` (`RESET_HAS_TOMBSTONES`). New `resolveMemberHistoric(did, { did, add, gen })`: resolves an incarnation that was effective in the current generation, including after removal and a later deny of a removed member; refuses another generation, an unknown incarnation and a denied live member (`MEMBER_NOT_HISTORIC`). Controller resolvers return each deny entry raw plus its canonical form, so a `did:peer:4` denied in long form is also denied in short form. `resolveMemberHistoric` now always returns a `removed` flag that is false only when the incarnation is present and effective in the head, and true for every other resolving answer, including pruned entries.
+
+`KeyState.members` keeps its 0.2 behaviour: chain states hold only live snapshot members, and the head also holds epoch removals. Snapshot tombstones live separately in the new `KeyState.tombstones?: ReadonlyMap<string, MemberEntry>`, keyed by add digest. The head carries the last chain state's tombstones.
+
+The epoch fold also keeps its 0.2 behaviour: snapshot tombstones never enter causal membership. Root renewal/removal of a tombstoned add refuses because the target is not a member. Tombstoned signers refuse because they are not members. A live member may revoke a tombstoned incarnation's DID without invalidating its historic evidence. The fold always supplies `tombstones`. Readers treat an omitted map on caller-built states as empty. `createReset` silently drops `snapshot.removed`, allowing a reset built from `snapshotOf(head)` after removal. The reset never carries `u`, and the fold retains `RESET_HAS_TOMBSTONES`.
+
+Logs written by this version fold on 0.2.3 to the same members, deny sets and epoch effects: 0.2.3 ignores `u`. Only inputs that kokuin's builders never emit from honest state are newly refused: a reset carrying `u` (`RESET_HAS_TOMBSTONES`), a reset whose `g` is not a safe integer, and a malformed `u` (an add duplicated across `m` and `u` or within `u`, a non-array, a negative lease, a non-EdDSA or root-key pin, or a DID that does not carry its pin).

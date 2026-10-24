@@ -68,6 +68,7 @@ export {
   type MemberQuery,
   type MethodRegistry,
   type ResolvedAgreementKey,
+  type ResolvedHistoricMember,
   type ResolvedMember,
   type ResolvedSigningKey,
 } from './method.js'

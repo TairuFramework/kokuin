@@ -24,12 +24,15 @@ const controllers = await getControllerStore(db)
 const delegations = await getDelegationStore(db)
 ```
 
-Registering runs the `0-init` migration for that store. `createControllerStore(db, adapter)` and
-`createDelegationStore(db, adapter)` build the API over a Kysely instance directly, for a caller that
-manages its own migrations.
+Registering runs the `0-init` migration for that store. `createControllerStore(db, adapter,
+context)` takes hozon's store context, whose provider must have the controller store registered: a
+merge resolves the store again on its locked transaction. `createDelegationStore(db, adapter,
+context)` also requires hozon's store context, with the delegation store registered on its provider.
+Both factories resolve the locked transaction's store to obtain its Kysely instance.
 
-Store methods that read then write use `withStoreTransaction`, which joins a caller's enclosing
-transaction instead of opening a nested one. No statement binds more than 500 parameters.
+Store methods that read then write join a caller's enclosing transaction instead of opening a
+nested one. Controller merges and delegation-token arbitration use `withKeyLock`.
+Revocation upserts use `withStoreTransaction`. No statement binds more than 500 parameters.
 
 ## `@kokuin/store-controller`
 
@@ -49,11 +52,14 @@ transaction instead of opening a nested one. No statement binds more than 500 pa
 `ControllerStoreAPI` is `@kokuin/controller`'s `LogStore` plus one method:
 - `get(did)`: the stored log, or `undefined`.
 - `merge(did, update)`: writes what `update` makes of the stored log and returns it, the read and
-  the write in one store transaction (`withStoreTransaction`, joining an enclosing one). Atomic per
-  DID: on Postgres the row is locked on read, and a first insert that loses a race re-reads the
-  winner's row and **runs `update` again** — so `update` must be free of side effects. On SQLite one
-  process's single connection serialises merges; across processes a stale read fails on write with
-  `SQLITE_BUSY` rather than losing an update. When `update` throws, nothing is written; when it
+  the write in one transaction, joining an enclosing one. It holds
+  `withKeyLock(provider, 'controller_logs', [did])`, which serialises concurrent merges for that DID,
+  also within one transaction. A consumer may hold the same lock around its own read-then-merge and
+  must then obtain the store from the lock callback's provider (an outer provider waits on the lock it
+  holds). The lock is re-entrant inside its callback, so merges issued there are not queued against
+  each other: run them one after another. On Postgres the row is also locked on read, and a first
+  insert that loses a race re-reads the winner's row and **runs `update` again** — so `update` must be
+  free of side effects. On SQLite the lock reserves the writer before reading. When `update` throws, nothing is written; when it
   returns `current` itself (nothing changed, as `authoritativeLog` answers a resolution that learned
   nothing new), nothing is written either and `updated_at` does not move. A stored value that is not
   a log, or not JSON at all, reads as no memory rather than throwing. The store
@@ -70,7 +76,7 @@ resolver records each folded log and refuses one that is behind one already seen
 
 ### Tables
 
-`delegation_tokens`, primary key `(grantor, audience, resource)`:
+`delegation_tokens`, primary key `(grantor, audience, resource, jti)`:
 
 | Column                     | Type      | Notes                                                    |
 | -------------------------- | --------- | -------------------------------------------------------- |
@@ -80,6 +86,7 @@ resolver records each folded log and refuses one that is behind one already seen
 | `resource`, `act`          | text      |                                                          |
 | `exp`                      | bigint    | unix seconds; indexed with `audience`                    |
 | `hlc`                      | text      | last-writer-wins stamp, see below                        |
+| `superseded`               | integer   | defaults to 0; 1 retains a losing or replaced grant       |
 | `created_at`, `updated_at` | timestamp |                                                          |
 
 `revoked_capabilities`, primary key `(jti, revoker_did)`:
@@ -102,14 +109,25 @@ signed by the capability's own issuer binds; each author can displace only its o
 ### API
 
 Delegation tokens:
-- `addDelegationToken(token)`: last-writer-wins upsert keyed by `(grantor, audience, resource)`.
-- `getDelegationTokens({ grantor, audience })`, `listIssuedTokens(grantor)`.
-- `getHeldTokens({ audience, atTime })`: unexpired tokens held by `audience`, excluding any whose
+- `addDelegationToken(token)`: history-preserving last-writer-wins arbitration per `(grantor, audience, resource)`.
+  A losing or equal stamp retains an unseen JTI with `superseded = 1` and returns `false`.
+  A winning different JTI supersedes the active row. A winning same JTI updates its row in place.
+  A partial unique index allows one active row per logical key.
+  Arbitration holds `withKeyLock(context.provider, 'delegation_tokens', [grantor, audience, resource])`,
+  using normalised DIDs. It serialises calls within one ambient transaction, including absent keys.
+  Postgres uses an advisory transaction lock. SQLite reserves its writer before the read.
+  Consumers holding this lock must obtain the store from its callback provider and issue writes sequentially.
+  The callback provider inherits lock ownership, so calls made there are re-entrant.
+- `getDelegationTokens({ grantor, audience })`, `listIssuedTokens(grantor)`: active rows only (`superseded = 0`).
+- `getHeldTokens({ audience, atTime })`: unexpired active tokens held by `audience`, excluding any whose
   grantor has a **verified** revocation. Pending revocations do not filter.
-- `getDelegationTokenByGrantorJTI({ jti, grantor })`: throws if that grantor holds more than one
-  row for the `jti`, rather than pick one.
-- `listDelegationTokensByJTI(jti)`: every grantor's row. Diagnostics, not authorization.
-- `removeDelegationToken({ jti })`.
+- `listUnrevokedSupersededTokens({ grantor, audience, resource, atTime })`: unexpired superseded grants for one normalised key.
+  Excludes any revocation by the grantor, pending or verified. Other revokers cannot suppress these rows.
+  Orders by `hlc`, then `jti`. This lists grants still needing revocation, rather than authorising their use.
+- `getDelegationTokenByGrantorJTI({ jti, grantor })`: includes superseded rows.
+  Throws if that grantor holds more than one row for the `jti`, rather than pick one.
+- `listDelegationTokensByJTI(jti)`: every grantor's rows, including superseded rows. Diagnostics, not authorization.
+- `removeDelegationToken({ jti })`: deletes matching active and superseded rows across all grantors.
 
 Revocations:
 - `addRevocation(input)`: last-writer-wins upsert keyed by `(jti, revoker_did)`. A `revoked_iat`
@@ -123,11 +141,14 @@ Revocations:
   `verified_at IS NOT NULL`, the inverse of the enforcement rule: a co-member holds no copy of the
   capability, so its genuine revocation stays pending forever.
 - `getHeldRevocations({ audience })`: verified revocations joined to locally held tokens whose
-  grantor is the revoker.
+  grantor is the revoker, including superseded tokens.
 - `markRevocationVerified(jti, issuer, { cap_exp, verified_at? })`,
   `getPendingRevocationByIssuer(jti, issuer)`,
   `deletePendingRevocationsFromOtherIssuers(jti, issuer)`: the cap-arrival cross-check. The
   arriving capability proves only that its own issuer's record is genuine.
+
+The history schema is defined in `0-init`, without an additional migration. A database whose
+`0-init` predates it (no `superseded` column, three-column primary key) is not migrated: reset it.
 
 ### The `hlc` contract
 
@@ -147,23 +168,17 @@ guaranteed to agree on ASCII. A fixed-width serialized hybrid logical clock sati
 
 SQL and JS must agree on the order. SQLite's default `BINARY` collation is byte-wise. On Postgres the
 `0-init` migration creates both `hlc` columns with `COLLATE "C"`, because the default collation can be
-locale-sensitive. That holds only for tables `0-init` creates. A legacy Postgres database adopted
-under `tablePrefix` (see below) already records `0-init` as applied, so the migration is skipped and
-its `hlc` columns keep whatever collation they were created with. Before relying on SQL/JS agreement
-there, run:
-
-```sql
-ALTER TABLE <prefix>_delegation_tokens ALTER COLUMN hlc TYPE text COLLATE "C";
-ALTER TABLE <prefix>_revoked_capabilities ALTER COLUMN hlc TYPE text COLLATE "C";
-```
+locale-sensitive.
 
 ### The `boolean` from `add*`
 
-`addDelegationToken` and `addRevocation` return whether the stored row changed: `true` for a new
-row, `false` when the stamp loses, and `true` only if content differs when it wins (an identical
-re-broadcast with a newer `hlc` is `false`). Treat it as an **approximate** change signal for
-gating emission. The pre-read takes no lock, so two concurrent writers can both see `true`. Never
-use it for correctness.
+`addDelegationToken` returns whether active content changed, comparing `jti`, `token`, `act`, and `exp`.
+A new active row returns `true`. A losing stamp returns `false`, even when it inserts superseded history.
+An identical re-broadcast with a newer `hlc` returns `false`. The key lock serialises arbitration and its change signal.
+
+`addRevocation` returns whether its row changed: new rows return `true`, losing stamps return `false`.
+Winning stamps return `true` only when content differs. This revocation signal remains approximate because its pre-read takes no lock.
+Two concurrent revocation writers can both return `true`. Use these signals for emission gating, never authorization.
 
 ### Purging
 
@@ -241,19 +256,13 @@ Behaviour worth knowing:
 logical tables become `<prefix>_controller_logs`, `<prefix>_delegation_tokens` and
 `<prefix>_revoked_capabilities` (so `hozon_controller_logs` and so on by default), the migration
 bookkeeping tables `<prefix>_controller_migration` and `<prefix>_delegation_migration`, and the
-indexes and primary keys `<prefix>_delegation_tokens_pkey`, `<prefix>_delegation_tokens_jti_idx`,
-and so on.
+indexes and primary keys `<prefix>_delegation_tokens_pkey`,
+`<prefix>_delegation_tokens_active_key_idx`, `<prefix>_delegation_tokens_jti_idx`, and so on.
 
-A consumer migrating data created by an earlier in-application implementation passes that
-implementation's prefix as `tablePrefix`. With it, the **table and migration-bookkeeping names
-match** (`<prefix>_controller_logs`, `<prefix>_delegation_tokens`,
-`<prefix>_revoked_capabilities`, same columns), but the **index and primary-key names do not**. Do not
-assume a byte-identical schema; `tests/integration` pins the physical names.
-
-Because `0-init` is already recorded in `<prefix>_delegation_migration`, it does not run against such a
-database, so on Postgres the `hlc` columns do not get `COLLATE "C"`. Run the two `ALTER TABLE`
-statements from [the `hlc` contract](#the-hlc-contract) with that `<prefix>` before relying on
-SQL/JS agreement.
+A consumer replacing an earlier in-application implementation may pass that implementation's prefix
+as `tablePrefix` to keep its table names, but not its data: the schema differs (delegation history,
+`COLLATE "C"`, constraint names), and `0-init` does not run against a database that already records
+it. Reset the database. `tests/integration` pins the physical names.
 
 ## Tests
 

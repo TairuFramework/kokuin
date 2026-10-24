@@ -13,6 +13,9 @@ export type MemberQuery = { did: string; add: string; gen: number }
 /** The signing key a subject's log pins for a member, and when that membership lapses (unix seconds). */
 export type ResolvedMember = { key: ResolvedSigningKey; lease: number }
 
+/** Historic incarnation evidence, marked removed unless the incarnation is effective in the head. */
+export type ResolvedHistoricMember = ResolvedMember & { removed: boolean }
+
 export type AgreementAlgorithm = 'X25519'
 
 /** A key agreement key a DID method resolved for a recipient. */
@@ -85,6 +88,16 @@ export type DIDMethodResolver = {
    * reject, never resolve.
    */
   resolveMember?(subject: string, member: MemberQuery): Promise<ResolvedMember>
+  /**
+   * Proves incarnation and generation, never signing time. A removed incarnation can still sign
+   * new material claiming it. Its records require re-endorsement by effective members for new
+   * receipt, never acceptance on this answer alone. Use the historic answer only to decide what
+   * to re-endorse and for audit, never to authenticate a live signer.
+   * `removed` is false only for an incarnation present and effective in the head. Every other
+   * resolving answer returns true, including entries found only in earlier chain states after pruning.
+   * Removed incarnations resolve even after denial. Denied live incarnations and absence fail closed.
+   */
+  resolveMemberHistoric?(subject: string, member: MemberQuery): Promise<ResolvedHistoricMember>
 }
 
 export type MethodRegistry = ReadonlyArray<DIDMethodResolver>

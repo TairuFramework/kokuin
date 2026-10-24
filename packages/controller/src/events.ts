@@ -259,11 +259,17 @@ export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string
 export type MemberEntry = { did: string; key: string; add: string; lease: number }
 
 /**
- * The whole management state a root-chain event leaves behind: the member set and the deny set. The
+ * The whole management state a root-chain event leaves behind: live members, removed incarnations
+ * and the deny set. The
  * state after the event **is** this snapshot — nothing before it contributes — so it is root's
  * chosen replacement state, not a proven merge of everything that happened before it.
  */
-export type StateSnapshot = { members: Array<MemberEntry>; deny: Array<string> }
+export type StateSnapshot = {
+  members: Array<MemberEntry>
+  /** Removed incarnations retained as historic evidence. Absent means empty. */
+  removed?: Array<MemberEntry>
+  deny: Array<string>
+}
 
 /**
  * The shape of one snapshot member, nothing more: whether the DID carries the key, whether the key
@@ -310,6 +316,9 @@ export type RotateEvent = EventCommon & {
    * rotate that is not a reset: every rotate is a settlement. A reset carries both or neither.
    */
   m?: Array<MemberEntry>
+  /** Removed incarnations. Only on a non-reset rotate with a full `m`/`d` snapshot. */
+  // Kept outside `m` so older verifiers ignore tombstones rather than treating them as live members.
+  u?: Array<MemberEntry>
   /** Deny half of the state snapshot. Replaces the set the prior state held outright. */
   d?: Array<string>
 }
@@ -402,6 +411,7 @@ export function createRotate({
     nt: 1,
     a: seal,
     m: snapshot.members,
+    u: snapshot.removed,
     d: snapshot.deny,
   }
 
@@ -483,7 +493,8 @@ export function verifyRotate(
  * duplicity — which only the recovery-key holder can cause, and a reset at a higher generation
  * resolves. Members keep their `add` references, but every grant names its generation, so every
  * grant minted under the prior one still dies. The snapshot is checked against the **new**
- * generation's keys, and no retired-key denial of the old one need carry over.
+ * generation's keys, and no retired-key denial of the old one need carry over. Removed incarnations
+ * are silently dropped: nobody has been removed in the new generation.
  *
  * The root need not know the current generation, only eventually exceed it (no attacker can author a
  * competing reset at any generation): a blind root starts at `gen = 1` and retries higher if it
@@ -568,6 +579,7 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
     return false
   }
   const emptyDeny = isKeyList(event.d) && event.d.length === 0
+  if (event.u !== undefined && (event.m == null || event.d == null)) return false
   if (event.m == null ? !emptyDeny : event.d == null) {
     return false
   }

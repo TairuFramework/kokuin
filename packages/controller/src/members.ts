@@ -160,9 +160,9 @@ export type ValidateSnapshotParams = {
  *
  * Rules, in order:
  *
- * - **Shape** ({@link SNAPSHOT_MALFORMED}): `members` is a list of {@link MemberEntry} whose pins
- *   decode as Ed25519, no two sharing an `add` (one incarnation, one entry) or a pinned key (one key
- *   twice would let it renew itself through the alias); `deny` is a key list.
+ * - **Shape** ({@link SNAPSHOT_MALFORMED}): `members` and optional `removed` contain Ed25519
+ *   entries, with no duplicate `add` across either list. Only live entries require unique pins,
+ *   preventing self-renewal through an alias. `deny` is a key list.
  * - **Disjoint from root** ({@link SNAPSHOT_MEMBER_KEY_IS_ROOT}): no pin is a `k`/`ka` on the
  *   generation's chain, committed in one of its `n`, or the recovery key the inception commits. A
  *   management device never holds a root key, so member authority and root authority cannot be
@@ -176,8 +176,9 @@ export type ValidateSnapshotParams = {
 export function validateSnapshot(params: ValidateSnapshotParams): string | null {
   const { snapshot, generationKeys, generationCommitments, recovery, tombstones } = params
   const members: unknown = snapshot.members
+  const removed: unknown = snapshot.removed === undefined ? [] : snapshot.removed
   const deny: unknown = snapshot.deny
-  if (!Array.isArray(members) || !isKeyList(deny)) {
+  if (!Array.isArray(members) || !Array.isArray(removed) || !isKeyList(deny)) {
     return SNAPSHOT_MALFORMED
   }
   const adds = new Set<string>()
@@ -192,17 +193,24 @@ export function validateSnapshot(params: ValidateSnapshotParams): string | null 
     adds.add(entry.add)
     pins.add(entry.key)
   }
+  for (const entry of removed) {
+    if (!isMemberEntry(entry) || tryDecodeKey(entry.key)?.alg !== 'EdDSA' || adds.has(entry.add)) {
+      return SNAPSHOT_MALFORMED
+    }
+    adds.add(entry.add)
+  }
+  const entries = [...members, ...removed] as Array<MemberEntry>
   const root: RootKeySet = {
     keys: new Set(generationKeys),
     commitments: new Set(generationCommitments),
     recovery,
   }
-  for (const entry of members as Array<MemberEntry>) {
+  for (const entry of entries) {
     if (isRootKey(entry.key, root)) {
       return SNAPSHOT_MEMBER_KEY_IS_ROOT
     }
   }
-  for (const entry of members as Array<MemberEntry>) {
+  for (const entry of entries) {
     if (!memberCarriesKey(entry.did, entry.key)) {
       return SNAPSHOT_MEMBER_DID_MISMATCH
     }

@@ -16,6 +16,9 @@ import { MAX_LOG_EVENTS } from './limits.js'
 import { type ControllerLog, isControllerLog, LOG_TOO_LARGE, MALFORMED_LOG } from './log.js'
 import { denialTargetsMember, ROTATE_NEEDS_SNAPSHOT, validateSnapshot } from './members.js'
 
+/** A reset opens a generation with no removed incarnations. */
+export const RESET_HAS_TOMBSTONES = 'reset must not carry removed incarnations'
+
 export {
   ROTATE_NEEDS_SNAPSHOT,
   SNAPSHOT_DROPS_RETIRED_KEY,
@@ -28,7 +31,7 @@ export {
  * One management member as a state holds it: the snapshot entry, plus whether a removal has ended
  * it (`removed`) and whether it may act at all (`effective`: present, not removed, and not targeted
  * by any entry of the same state's deny set — see `denialTargetsMember`). A chain state's members are
- * its snapshot's, so none is removed; removal is an epoch effect.
+ * its snapshot's live entries.
  */
 export type MemberState = MemberEntry & { removed: boolean; effective: boolean }
 
@@ -75,9 +78,11 @@ export type KeyState = {
   deny: ReadonlySet<string>
   /**
    * The management set, keyed by each member's `add` digest (its incarnation). A chain state's is its
-   * event's snapshot `m`, in snapshot order.
+   * event's snapshot `m`, in snapshot order. The head also holds epoch removals.
    */
   members: ReadonlyMap<string, MemberState>
+  /** Removed incarnations from snapshot `u`. The fold fills this map; absent means empty. */
+  tombstones?: ReadonlyMap<string, MemberEntry>
   /**
    * Digest of the chain event that opened the epoch this state belongs to. Every chain event opens
    * one, so for a chain state this is its own `digest`; epoch events name it as their `e`.
@@ -179,6 +184,12 @@ function stepEvent(
     const isReset = rot.event.g > prior.gen
 
     if (isReset) {
+      if (!Number.isSafeInteger(rot.event.g) || rot.event.g < 1) {
+        return { status: 'fail', reason: 'invalid reset' }
+      }
+      if ('u' in rot.event) {
+        return { status: 'fail', reason: RESET_HAS_TOMBSTONES }
+      }
       // A reset chains to the inception, not the head, so `p` is recomputable without the log. This
       // reason is unobservable (`verifyReset` below rejects the same event with `invalid reset`) but
       // stays because `s` is wire data and this states what a reset's sequence must be — do not spend
@@ -209,10 +220,13 @@ function stepEvent(
     if (!isReset && (rot.event.m == null || rot.event.d == null)) {
       return { status: 'fail', reason: ROTATE_NEEDS_SNAPSHOT }
     }
+    if (rot.event.u !== undefined && (rot.event.m == null || rot.event.d == null)) {
+      return { status: 'fail', reason: ROTATE_NEEDS_SNAPSHOT }
+    }
     const snapshot: StateSnapshot =
       rot.event.m == null
         ? { members: [], deny: [] }
-        : { members: rot.event.m, deny: rot.event.d ?? [] }
+        : { members: rot.event.m, removed: rot.event.u, deny: rot.event.d ?? [] }
 
     // The generation's root keys and commitments, this event's included: a reset opens a new
     // generation and is judged against its own keys alone; a rotate against every chain state of its
@@ -265,6 +279,10 @@ function stepEvent(
       const denied = snapshot.deny.some((denial) => denialTargetsMember(denial, entry))
       members.set(add, { ...entry, removed: false, effective: !denied })
     }
+    const memberTombstones = new Map<string, MemberEntry>()
+    for (const { did: memberDID, key, add, lease } of snapshot.removed ?? []) {
+      memberTombstones.set(add, { did: memberDID, key, add, lease })
+    }
 
     const digest = digestOf(rot.event)
     return {
@@ -284,6 +302,7 @@ function stepEvent(
         recovery: prior.recovery,
         deny: denyAfter,
         members,
+        tombstones: memberTombstones,
         epoch: digest,
         saturated: false,
         digest,
@@ -411,6 +430,7 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
         deny: new Set<string>(),
         // The inception opens the first epoch with an empty management set.
         members: new Map<string, MemberState>(),
+        tombstones: new Map<string, MemberEntry>(),
         epoch: digestOf(first.event),
         saturated: false,
         digest: digestOf(first.event),
@@ -503,9 +523,9 @@ export function keyStateAt(result: FoldResult, position: number): KeyState | und
  * state forward, pruning a few entries rather than replacing it. A rotate's snapshot replaces the
  * state outright, so writing one by hand means writing out everything that stays; miss one and the
  * profile silently un-revokes a device, un-retires a leaked key or dismisses a management member.
- * This builds it from the fold's own answer instead: every member not removed (`drop.members` names
+ * This builds it from the fold's own answer instead: every live or removed member (`drop.members` names
  * members by `add` digest) and every deny entry (`drop.deny`). Entries in `drop` the state does not
- * carry are ignored.
+ * carry are ignored. Dropping removed members discards historic membership evidence.
  *
  * Root's tooling owes its user the warnings the fold cannot give: dropping a holder DID denial
  * re-authorises it, safe only once every authority that could have minted it a grant has ended; and
@@ -518,9 +538,19 @@ export function snapshotOf(
   const droppedDeny = new Set(drop.deny ?? [])
   const droppedMembers = new Set(drop.members ?? [])
   const members: Array<MemberEntry> = []
+  const removed: Array<MemberEntry> = []
   for (const member of state.members.values()) {
-    if (member.removed || droppedMembers.has(member.add)) continue
-    members.push({ did: member.did, key: member.key, add: member.add, lease: member.lease })
+    if (droppedMembers.has(member.add)) continue
+    const entries = member.removed ? removed : members
+    entries.push({ did: member.did, key: member.key, add: member.add, lease: member.lease })
   }
-  return { members, deny: [...state.deny].filter((entry) => !droppedDeny.has(entry)) }
+  for (const member of state.tombstones?.values() ?? []) {
+    if (droppedMembers.has(member.add)) continue
+    removed.push({ did: member.did, key: member.key, add: member.add, lease: member.lease })
+  }
+  return {
+    members,
+    ...(removed.length > 0 ? { removed } : {}),
+    deny: [...state.deny].filter((entry) => !droppedDeny.has(entry)),
+  }
 }

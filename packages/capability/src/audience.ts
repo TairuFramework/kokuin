@@ -45,7 +45,7 @@ function carriesOwnKeys(did: string): boolean {
  *
  * The *holder* half of the set. `#<key>` entries denying the subject's own keys are enforced where a
  * key is resolved (`verifyToken` on every link), not here — this sees `aud`, not the signing key. The
- * two forms cannot collide, so membership matching stays exact.
+ * two target types cannot collide. DID entries compare canonically.
  */
 export async function assertAudienceNotRevoked(
   payload: { sub?: unknown; aud?: unknown },
@@ -67,9 +67,9 @@ export async function assertAudienceNotRevoked(
     return
   }
   const denied = await resolveDenySet(sub)
-  // Both spellings: a deny set names whatever the denying event wrote, which for a `did:peer:4`
-  // device may be either form, while `aud` may arrive as the other one.
-  if (denied.has(aud) || denied.has(normalizeDID(aud))) {
+  // Third-party resolvers may return raw entries, so canonicalise both sides.
+  const canonicalDenied = new Set([...denied].map(normalizeDID))
+  if (canonicalDenied.has(normalizeDID(aud))) {
     throw new Error(`${AUDIENCE_REVOKED}: ${aud}`)
   }
 }
