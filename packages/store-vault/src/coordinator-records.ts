@@ -21,7 +21,13 @@ export type EntryInfo = {
 }
 
 export type RecordFunctions = {
-  wrapping(row: WrappingRow, branch: Branch, consumer?: unknown): Promise<SignedRecord>
+  /** Signs at `hlc` when given, or at a newly allocated one. */
+  wrapping(
+    row: WrappingRow,
+    branch: Branch,
+    consumer?: unknown,
+    hlc?: string,
+  ): Promise<SignedRecord>
   entry(
     row: EntryRow,
     branch: Branch,
@@ -46,15 +52,22 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
     row: WrappingRow,
     branch: Branch,
     consumer: unknown = null,
+    hlc?: string,
   ): Promise<SignedRecord> {
-    return ctx.signed('vault.wrapping', { ownerDID: row.ownerDID, id: row.wrappingID }, row, {
-      keyID: row.keyID,
-      keyVersion: row.keyVersion,
-      branchID: branch.branchID,
-      branchRecordID: branch.branchRecordID,
-      recipient: row.recipientDID,
-      consumer,
-    })
+    return ctx.signed(
+      'vault.wrapping',
+      { ownerDID: row.ownerDID, id: row.wrappingID },
+      row,
+      {
+        keyID: row.keyID,
+        keyVersion: row.keyVersion,
+        branchID: branch.branchID,
+        branchRecordID: branch.branchRecordID,
+        recipient: row.recipientDID,
+        consumer,
+      },
+      hlc,
+    )
   }
 
   async function entry(
@@ -186,20 +199,20 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
       ])
       const key = settledValue(keyResult)
       const ops = settledValue(opsResult)
-      const output: Array<SignedRecord> = []
+      // Records are built together. `signRecordOp` calls the signer one at a time, in record order.
+      const output = await settleAll(
+        request.records.map(async (record, index) => {
+          const op = ops[index]
 
-      // Signing stays sequential: signer calls follow the caller's record order.
-      for (const [index, record] of request.records.entries()) {
-        const op = ops[index]
+          if (op === undefined) throw new VaultNotFound()
 
-        if (op === undefined) throw new VaultNotFound()
-
-        // Re-sign the entire original claim. Consumer evidence and content intent stay authenticated.
-        output.push({
-          ...record,
-          ...(await signRecordOp(params.signer, op.claim, params.records.opKind)),
-        })
-      }
+          // Re-sign the entire original claim. Consumer evidence and content intent stay authenticated.
+          return {
+            ...record,
+            ...(await signRecordOp(params.signer, op.claim, params.records.opKind)),
+          }
+        }),
+      )
 
       const branches = settledValue(branchesResult)
 

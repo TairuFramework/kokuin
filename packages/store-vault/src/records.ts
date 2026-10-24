@@ -28,14 +28,17 @@ import {
   vaultRevocationRecordID,
 } from '@kokuin/vault'
 
+import {
+  KEY_BRANCH_COLUMNS,
+  PARAMETER_BUDGET,
+  selectWrappings,
+  statementChunks,
+  upsertKeyBranches,
+  upsertReplicatedDecision,
+} from './batch.js'
 import { getVaultStore } from './definition.js'
 import type { VaultDatabase } from './record-context.js'
-import {
-  claimMode,
-  VaultModeConflict,
-  VaultWriteConflict,
-  vaultDatabases,
-} from './record-context.js'
+import { VaultModeConflict, VaultWriteConflict, vaultDatabases } from './record-context.js'
 import { getVaultRecordsStore } from './record-definition.js'
 import type { VaultKeyBranchTable, VaultRecordsTables, VaultRecordTable } from './record-tables.js'
 import { settleAll, settledValue } from './settle.js'
@@ -114,6 +117,8 @@ type Bound = VaultDatabase & {
   params: VaultRecordsParams
   store: VaultStoreAPI
   locks?: Array<HeldLock>
+  /** Set once the domain row matched this adapter's operation kind. */
+  domainChecked?: boolean
 }
 
 // Keyed OR predicates per getMany statement, within SQLite's default bind limit.
@@ -144,6 +149,26 @@ function groupRows(rows: Array<VaultRecordTable>): Map<string, Array<VaultRecord
   return groups
 }
 
+/** Deletes the named copies of one record, in statements of at most `PARAMETER_BUDGET` binds. */
+async function deleteCopies(
+  db: Kysely<VaultRecordsTables>,
+  key: RecordKey,
+  opHashes: Array<string>,
+): Promise<void> {
+  await settleAll(
+    // Three binds name the record. The rest name copies.
+    chunk(opHashes, PARAMETER_BUDGET - 3).map((part) => {
+      return db
+        .deleteFrom('vault_records')
+        .where('type', '=', key.type)
+        .where('owner', '=', key.owner)
+        .where('id', '=', key.id)
+        .where('op_hash', 'in', part)
+        .execute()
+    }),
+  )
+}
+
 function whereKey(db: Kysely<VaultRecordsTables>, key: RecordKey) {
   return db
     .selectFrom('vault_records')
@@ -154,6 +179,10 @@ function whereKey(db: Kysely<VaultRecordsTables>, key: RecordKey) {
 }
 
 async function assertDomain(bound: Bound): Promise<void> {
+  // The domain row is written once, in its own committed transaction, and never changed. Once it
+  // matches, it matches for the bound adapter's lifetime.
+  if (bound.domainChecked === true) return
+
   const row = await withStoreTransaction(bound.db, (db) => {
     return db.selectFrom('vault_record_domain').selectAll().executeTakeFirst()
   })
@@ -163,6 +192,8 @@ async function assertDomain(bound: Bound): Promise<void> {
 
   if (row.op_kind !== bound.opKind)
     throw new TypeError('Vault records store belongs to another operation kind')
+
+  bound.domainChecked = true
 }
 
 async function checked(row: VaultRecordTable, bound: Bound): Promise<CheckedRecord | null> {
@@ -299,8 +330,7 @@ async function projection(record: SignedRecord, op: VerifiedRecordOp, bound: Bou
 
     if (existing?.mode === 'local') throw new VaultModeConflict()
 
-    await claimMode(db, record, 'replicated')
-
+    // The caller, `putCopy`, claims the decision for replicated mode in the same transaction.
     if (record.payload === null) {
       await db
         .deleteFrom(table)
@@ -465,44 +495,52 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
     async dropRevokedWrappings(address) {
       if (!db.isTransaction) throw new Error('Wrapping suppression requires the apply transaction')
 
-      const denied = new Set(
-        (await this.listRevocations(address)).map((did) => {
-          return vaultRevocationRecordID(address.keyID, did)
-        }),
-      )
+      const [revocations, wrappings] = await settleAll([
+        this.listRevocations(address),
+        bound.store.listWrappings(address),
+      ])
+      const denied = new Set(revocations.map((did) => vaultRevocationRecordID(address.keyID, did)))
+      const revoked = wrappings
+        .filter((row) => {
+          const recipients = [
+            row.recipientDID,
+            ...row.descriptors.filter((d) => d.kind === 'did').map((d) => d.params.recipient),
+          ]
 
-      for (const row of await bound.store.listWrappings(address)) {
-        const recipients = [
-          row.recipientDID,
-          ...row.descriptors.filter((d) => d.kind === 'did').map((d) => d.params.recipient),
-        ]
-
-        if (
-          !recipients.some((recipient) => {
+          return recipients.some((recipient) => {
             return (
               typeof recipient === 'string' &&
               denied.has(vaultRevocationRecordID(address.keyID, recipient))
             )
           })
-        )
-          continue
+        })
+        .map((row) => ({ owner_did: row.ownerDID, wrapping_id: row.wrappingID }))
 
-        // Denial never deletes an unrelated local record.
-        const held = await db
-          .selectFrom('vault_wrappings')
-          .select('mode')
-          .where('owner_did', '=', row.ownerDID)
-          .where('wrapping_id', '=', row.wrappingID)
-          .executeTakeFirst()
+      if (revoked.length === 0) return
 
-        if (held?.mode === 'local') throw new VaultModeConflict()
+      const parts = statementChunks(revoked, 2)
+      const held = await settleAll(parts.map((part) => selectWrappings(db, part).execute()))
 
-        await db
-          .deleteFrom('vault_wrappings')
-          .where('owner_did', '=', row.ownerDID)
-          .where('wrapping_id', '=', row.wrappingID)
-          .execute()
-      }
+      // Denial never deletes an unrelated local record.
+      if (held.flat().some((row) => row.mode === 'local')) throw new VaultModeConflict()
+
+      await settleAll(
+        parts.map((part) => {
+          return db
+            .deleteFrom('vault_wrappings')
+            .where((eb) => {
+              return eb.or(
+                part.map((row) => {
+                  return eb.and([
+                    eb('owner_did', '=', row.owner_did),
+                    eb('wrapping_id', '=', row.wrapping_id),
+                  ])
+                }),
+              )
+            })
+            .execute()
+        }),
+      )
     },
   }
 }
@@ -694,22 +732,19 @@ function makeAdapter(bound: Bound): RecordStoreAdapter {
 
         await projection(record, op, bound)
       } else {
-        for (const [index, row] of previousRows.entries()) {
-          const prior = priors[index] ?? null
+        const dropped = previousRows
+          .filter((row, index) => {
+            const prior = priors[index] ?? null
 
-          if (
-            prior === null ||
-            (recordSignerKey(prior.op.issuer, prior.copy.opJWT) === incomingSigner &&
-              row.op_hash !== keepHash)
-          )
-            await db
-              .deleteFrom('vault_records')
-              .where('type', '=', record.type)
-              .where('owner', '=', record.owner)
-              .where('id', '=', record.id)
-              .where('op_hash', '=', row.op_hash)
-              .execute()
-        }
+            return (
+              prior === null ||
+              (recordSignerKey(prior.op.issuer, prior.copy.opJWT) === incomingSigner &&
+                row.op_hash !== keepHash)
+            )
+          })
+          .map((row) => row.op_hash)
+
+        if (dropped.length > 0) await deleteCopies(db, record, dropped)
       }
 
       if (keepHash === record.opHash)
@@ -719,14 +754,17 @@ function makeAdapter(bound: Bound): RecordStoreAdapter {
           .onConflict((oc) => oc.columns(['type', 'owner', 'id', 'op_hash']).doNothing())
           .execute()
 
-      await claimMode(db, record, 'replicated')
-      await db
-        .updateTable('vault_decisions')
-        .set({ content_digest: contentDigest, decision_hlc: decisionHLC })
-        .where('type', '=', record.type)
-        .where('owner', '=', record.owner)
-        .where('id', '=', record.id)
-        .execute()
+      // Claims the key for replicated mode and records the decision in one statement. A key
+      // held in local mode is left alone and counts no row.
+      const claimed = await upsertReplicatedDecision(db, {
+        type: record.type,
+        owner: record.owner,
+        id: record.id,
+        content_digest: contentDigest,
+        decision_hlc: decisionHLC,
+      }).executeTakeFirstOrThrow()
+
+      if (claimed.numInsertedOrUpdatedRows === 0n) throw new VaultModeConflict()
     },
     async pruneCopy(key, signerDID) {
       if (!db.isTransaction) throw new Error('Copy pruning requires the apply transaction')
@@ -746,15 +784,11 @@ function makeAdapter(bound: Bound): RecordStoreAdapter {
 
       if (!verified.some(({ op }) => op !== null && op.issuer !== signerDID)) return
 
-      for (const { copy, op } of verified)
-        if (op?.issuer === signerDID)
-          await db
-            .deleteFrom('vault_records')
-            .where('type', '=', key.type)
-            .where('owner', '=', key.owner)
-            .where('id', '=', key.id)
-            .where('op_hash', '=', copy.opHash)
-            .execute()
+      const dropped = verified
+        .filter(({ op }) => op?.issuer === signerDID)
+        .map(({ copy }) => copy.opHash)
+
+      if (dropped.length > 0) await deleteCopies(db, key, dropped)
     },
   }
 
@@ -1077,12 +1111,12 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
           .where('key_id', '=', address.keyID)
           .execute()
 
-        for (const row of rows)
-          await tx
-            .insertInto('vault_key_branches')
-            .values(row)
-            .onConflict((oc) => oc.columns(['owner_did', 'record_id']).doUpdateSet(row))
-            .execute()
+        // A record ID still projected under another key is taken over, as one upsert per row did.
+        await settleAll(
+          statementChunks(rows, KEY_BRANCH_COLUMNS).map((part) => {
+            return upsertKeyBranches(tx, part).execute()
+          }),
+        )
 
         return true
       })

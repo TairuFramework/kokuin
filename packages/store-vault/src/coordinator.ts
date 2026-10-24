@@ -1,4 +1,3 @@
-import type { SignedRecord } from '@kokuin/records'
 import type { FactorInput } from '@kokuin/vault'
 import {
   createVaultKeyReference,
@@ -91,12 +90,8 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
             }),
           ),
         ])
-        const output: Array<SignedRecord> = [...chain.records]
-        const rows: Array<WrappingRow> = []
-
-        // Signing stays sequential: HLC allocation and output order follow the factor sets.
-        for (const { factors, wrappingID, result } of wrapped) {
-          const row = {
+        const rows: Array<WrappingRow> = wrapped.map(({ factors, wrappingID, result }) => {
+          return {
             ...key,
             wrappingID,
             keyVersion: 1,
@@ -104,23 +99,30 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
             provenance: chain.branchID,
             ...result,
           }
+        })
 
-          rows.push(row)
+        if (params.mode === 'replicated') {
+          // HLCs are allocated in factor-set order. `signRecordOp` calls the signer in that order,
+          // one at a time.
+          const hlcs: Array<string> = []
 
-          if (params.mode === 'replicated')
-            output.push(await records.wrapping(row, chain, request.consumer ?? null))
-        }
+          for (let index = 0; index < rows.length; index += 1) hlcs.push(await params.nextHLC())
 
-        if (params.mode === 'replicated')
+          const signed = await settleAll(
+            rows.map((row, index) => {
+              return records.wrapping(row, chain, request.consumer ?? null, hlcs[index])
+            }),
+          )
+
           await ctx.write(
             store,
-            output,
+            [...chain.records, ...signed],
             { key: { ...key, expectedVersion: null, expectedBranches: [] } },
             request,
           )
-        else {
+        } else {
           await store.putKey(key)
-          for (const row of rows) await store.putWrapping(row)
+          await store.putWrappings(rows)
         }
       })
 
@@ -181,25 +183,31 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         }
 
         if (params.mode === 'local') {
-          await store.putWrapping(row)
-          await store.deleteWrapping(existing)
+          // Different wrapping IDs: the write and the delete are independent.
+          await settleAll([store.putWrapping(row), store.deleteWrapping(existing)])
         } else {
           // The verified evidence already holds the prior wrapping's authenticated metadata.
           if (evidence === undefined) throw new VaultNotFound()
 
           const consumer = evidence.op.claim.meta.consumer
-          const replacement = await records.wrapping(row, branch, consumer)
-          const deletion = await ctx.signed(
-            'vault.wrapping',
-            { ownerDID: key.ownerDID, id: existing.wrappingID },
-            null,
-            {
-              keyID: key.keyID,
-              keyVersion: key.version,
-              recipient: existing.recipientDID,
-              consumer,
-            },
-          )
+          // HLCs in the old order. `signRecordOp` signs the two in that order, one at a time.
+          const replacementHLC = await params.nextHLC()
+          const deletionHLC = await params.nextHLC()
+          const [replacement, deletion] = await settleAll([
+            records.wrapping(row, branch, consumer, replacementHLC),
+            ctx.signed(
+              'vault.wrapping',
+              { ownerDID: key.ownerDID, id: existing.wrappingID },
+              null,
+              {
+                keyID: key.keyID,
+                keyVersion: key.version,
+                recipient: existing.recipientDID,
+                consumer,
+              },
+              deletionHLC,
+            ),
+          ])
 
           await ctx.write(
             store,

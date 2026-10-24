@@ -44,11 +44,17 @@ export type VaultStoreAPI = {
   setKeyVersion(row: KeyAddress & Pick<KeyRow, 'version'>): Promise<void>
   deleteKey(address: KeyAddress): Promise<void>
   putWrapping(row: WrappingRow): Promise<void>
+  /** As `putWrapping` for each row, in batched statements. A later row for one address wins. */
+  putWrappings(rows: ReadonlyArray<WrappingRow>): Promise<void>
   getWrapping(address: WrappingAddress): Promise<WrappingRow | undefined>
   listWrappings(address: KeyAddress & { keyVersion?: number }): Promise<Array<WrappingRow>>
   deleteWrapping(address: WrappingAddress): Promise<void>
+  /** As `deleteWrapping` for each address, in batched statements. */
+  deleteWrappings(addresses: ReadonlyArray<WrappingAddress>): Promise<void>
   deleteWrappingsBelowVersion(address: KeyAddress & { keyVersion: number }): Promise<void>
   putEntry(row: EntryRow): Promise<void>
+  /** As `putEntry` for each row, in batched statements. A later row for one address wins. */
+  putEntries(rows: ReadonlyArray<EntryRow>): Promise<void>
   /** Stores caller-encrypted bytes. Does nothing if the observed source disappears or changes key. */
   moveEntry(row: EntryRow): Promise<void>
   updateEntryIfPresent(row: EntryRow): Promise<'updated' | 'absent'>
@@ -58,5 +64,7 @@ export type VaultStoreAPI = {
   listEntryOwners(entryID: string): Promise<Array<string>>
   listEntries(filter: EntryFilter): Promise<Array<EntryRow>>
   deleteEntry(address: EntryAddress): Promise<void>
+  /** As `deleteEntry` for each address, in batched statements. */
+  deleteEntries(addresses: ReadonlyArray<EntryAddress>): Promise<void>
   getMaxEntryHLC(): Promise<string | null>
 }

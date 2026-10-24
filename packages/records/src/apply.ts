@@ -183,6 +183,7 @@ export type ApplyRecordChunkParams = RecordReceiveContext & {
   maxDriftMS: number
   receiveClock: (stamp: HLCTimestamp) => void
   methods?: MethodRegistry
+  /** Called for several DIDs at once before the chunk locks; must accept concurrent calls. */
   resolveController: (did: string) => Promise<string | null>
   verifyCapability: (
     tokens: ReadonlyArray<string>,
@@ -394,19 +395,28 @@ export async function isDependencyUnsatisfied(
   opKind: string,
   methods?: MethodRegistry,
 ): Promise<boolean> {
-  const stored = await tx.get(dependency)
+  return await isDependencyUnsatisfiedBy(dependency, await tx.get(dependency), opKind, methods)
+}
+
+/** As {@link isDependencyUnsatisfied}, against a decision already read. */
+export async function isDependencyUnsatisfiedBy(
+  dependency: RecordDependency,
+  stored: RecordDecision | null,
+  opKind: string,
+  methods?: MethodRegistry,
+): Promise<boolean> {
   if (stored === null || stored.key.owner !== dependency.owner) return true
-  for (const copy of stored.copies) {
-    const op = await verifySignedRecord(copy, opKind, methods)
-    if (
+  // Verification never throws, so every copy is checked together, then matched in order.
+  const ops = await Promise.all(
+    stored.copies.map((copy) => verifySignedRecord(copy, opKind, methods)),
+  )
+  return !ops.some(
+    (op) =>
       op?.claim.type === dependency.type &&
       op.claim.owner === dependency.owner &&
       op.claim.id === dependency.id &&
-      (dependency.satisfiedBy?.(op) ?? true)
-    )
-      return false
-  }
-  return true
+      (dependency.satisfiedBy?.(op) ?? true),
+  )
 }
 
 async function isParked(candidate: Candidate, ctx: ChunkContext): Promise<boolean> {
@@ -600,18 +610,28 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
   const candidates: Array<Candidate> = []
   // Refused records await one batched read of the store, which may show them as replays.
   const refusedReplays: Array<SignedRecord> = []
-  for (const record of records) {
+  // The clock and type checks run first for every record. Signatures of the records that pass
+  // them are verified together, since verification never throws; the rest runs in record order.
+  const screened = records.map((record) => {
     const stamp = parseBoundedHLC(record.hlc, nowMS, maxDriftMS)
+    const definition = stamp === null ? undefined : types.get(record.type)
+    return {
+      record,
+      stamp,
+      definition,
+      verifying: definition === undefined ? null : verify(record),
+    }
+  })
+  for (const { record, stamp, definition, verifying } of screened) {
     if (stamp === null) {
       rejected.push({ record, reason: 'clock' })
       continue
     }
-    const definition = types.get(record.type)
-    if (definition === undefined) {
+    if (definition === undefined || verifying === null) {
       rejected.push({ record, reason: 'unknown-type' })
       continue
     }
-    const op = await verify(record)
+    const op = await verifying
     if (op === null) {
       rejected.push({ record, reason: 'signature' })
       continue
@@ -653,30 +673,51 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
   async function processChunk(active: ReadonlyArray<Candidate>): Promise<ProcessedChunk> {
     const expected = new Map<Candidate, Array<RecordLockKey>>()
     const allKeys = new Map<string, RecordLockKey>()
-    const controllers = new Map<string, string | null>()
+    const controllers = new Map<string, Promise<string | null>>()
     const prefetched = await getRecordDecisions(
       store,
       active.map((candidate) => candidate.record),
     )
-    const verifiedStored = new Set<string>()
+    const verifiedStored = new Map<string, Promise<void>>()
     const prefetchController = async (did: string): Promise<void> => {
-      if (!controllers.has(did)) controllers.set(did, await params.resolveController(did))
-    }
-    for (const candidate of active) {
-      if (candidate.op.issuer !== candidate.op.claim.owner) {
-        await prefetchController(candidate.op.issuer)
+      let resolving = controllers.get(did)
+      if (resolving === undefined) {
+        resolving = params.resolveController(did)
+        controllers.set(did, resolving)
       }
-      const id = recordKeyText(candidate.record)
-      if (!verifiedStored.has(id)) {
-        verifiedStored.add(id)
-        for (const copy of prefetched.get(id)?.copies ?? []) {
+      await resolving
+    }
+    const verifyStored = async (id: string): Promise<void> => {
+      await Promise.all(
+        (prefetched.get(id)?.copies ?? []).map(async (copy) => {
           const op = await verify(copy)
           if (op !== null && op.issuer !== op.claim.owner) await prefetchController(op.issuer)
+        }),
+      )
+    }
+    // Each candidate's controller and stored-copy reads run together, and shared reads are made
+    // once. The lock-key hooks then run one at a time, in candidate order, as before. Failures
+    // are thrown in candidate order: a candidate's reads, then its hook.
+    const reads = await Promise.allSettled(
+      active.map(async (candidate) => {
+        if (candidate.op.issuer !== candidate.op.claim.owner) {
+          await prefetchController(candidate.op.issuer)
         }
-      }
-      const stored = prefetched.get(id) ?? null
+        const id = recordKeyText(candidate.record)
+        let storedChecked = verifiedStored.get(id)
+        if (storedChecked === undefined) {
+          storedChecked = verifyStored(id)
+          verifiedStored.set(id, storedChecked)
+        }
+        await storedChecked
+      }),
+    )
+    for (const [index, candidate] of active.entries()) {
+      const read = reads[index]
+      if (read?.status === 'rejected') throw read.reason
       const hook = candidate.definition.lockKeys
       if (hook === undefined) continue
+      const stored = prefetched.get(recordKeyText(candidate.record)) ?? null
       const keys = [
         ...new Map(
           (await hook(candidate.record, stored)).map((key) => [
@@ -724,9 +765,7 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
         opKind: params.opKind,
         transportContext: params.transportContext,
         resolveController: async (did) =>
-          controllers.has(did)
-            ? (controllers.get(did) ?? null)
-            : await params.resolveController(did),
+          await (controllers.get(did) ?? params.resolveController(did)),
         verifyCapability: params.verifyCapability,
         methods: params.methods,
         decisions: new Map(),

@@ -1,10 +1,21 @@
 import type { Kysely, StoreDefinition } from '@hozon/db'
 import { HozonDB, sql } from '@hozon/db'
 import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
+import type { RecordTypeDefinition, VisibilityContext } from '@kokuin/records'
+import { filterVisibleRecords, visibilityRules } from '@kokuin/records'
 import type * as Token from '@kokuin/token'
+import type { SignedToken, SigningIdentity, SignTokenOptions } from '@kokuin/token'
 import { randomIdentity } from '@kokuin/token'
 import type { VaultPinRejected } from '@kokuin/vault'
-import { DEFAULT_FREE_ATTEMPTS, getSuite, VAULT_OP_KIND } from '@kokuin/vault'
+import {
+  DEFAULT_FREE_ATTEMPTS,
+  getSuite,
+  VAULT_OP_KIND,
+  vaultHolderTypes,
+  vaultKeyVersionReader,
+  vaultProofAuthorizer,
+  vaultRecordTypes,
+} from '@kokuin/vault'
 import { createRuntime } from '@sozai/runtime'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
@@ -15,6 +26,7 @@ import {
   createVaultCoordinator,
   getVaultRecordsStore,
   getVaultStore,
+  vaultRecordPortsFor,
   vaultRecordsStoreDefinition,
   vaultStoreDefinition,
 } from '../src/index.js'
@@ -68,7 +80,39 @@ const bytes = (text: string) => new TextEncoder().encode(text)
 const metadata = { kind: 'blob', label: 'State', attributes: { app: 'test' } }
 const runtime = createRuntime()
 
-async function fixture(): Promise<Fixture> {
+type ExclusiveSigner = { signer: SigningIdentity; calls(): number }
+
+/** A signer that fails any call made while another is in flight, as a hardware signer would. */
+function exclusiveSigner(identity: SigningIdentity): ExclusiveSigner {
+  let active = false
+  let calls = 0
+
+  async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
+    payload: Payload,
+    options?: SignTokenOptions,
+  ): Promise<SignedToken<Payload>> {
+    if (active) throw new Error('Overlapping signer call')
+
+    active = true
+    calls += 1
+
+    try {
+      // Hold the call open across a timer, so an overlapping call would arrive while it runs.
+      await new Promise((resolve) => setTimeout(resolve, 1))
+
+      return await identity.signToken(payload, options)
+    } finally {
+      active = false
+    }
+  }
+
+  return { signer: { ...identity, signToken }, calls: () => calls }
+}
+
+async function fixture(
+  mode: 'local' | 'replicated' = 'replicated',
+  signerFor: (identity: SigningIdentity) => SigningIdentity = (identity) => identity,
+): Promise<Fixture> {
   const adapter = new NodeSQLiteAdapter({ database: ':memory:' })
   const stats: Measured = {
     total: 0,
@@ -168,13 +212,16 @@ async function fixture(): Promise<Fixture> {
     migrations: {},
     createAPI: (raw: Kysely<Record<string, never>>) => raw,
   } satisfies StoreDefinition<Record<string, never>, Kysely<Record<string, never>>>)
-  db.register(vaultRecordsStoreDefinition)
-  await getVaultRecordsStore(db, VAULT_OP_KIND)
+  // A local-only deployment registers no records store.
+  if (mode === 'replicated') {
+    db.register(vaultRecordsStoreDefinition)
+    await getVaultRecordsStore(db, VAULT_OP_KIND)
+  }
 
   const identity = randomIdentity()
   let counter = 1000
   let clockGate: Promise<unknown> | undefined
-  const manager = createVaultCoordinator({
+  const common = {
     store: await getVaultStore(db),
     principal: identity.id,
     identity,
@@ -191,16 +238,23 @@ async function fixture(): Promise<Fixture> {
 
       return `2026-10-01T00:00:00.000Z:${counter.toString().padStart(8, '0')}:vault-calls`
     },
-    mode: 'replicated',
-    signer: identity,
-    records: {
-      opKind: VAULT_OP_KIND,
-      nowMS: () => Date.parse('2026-10-01T01:00:00.000Z'),
-      maxDriftMS: 60_000,
-      validateConsumerMetadata: async () => true,
-      onCorruptRow: (info) => corruptRows.push(info),
-    },
-  })
+  }
+  const manager = createVaultCoordinator(
+    mode === 'local'
+      ? { ...common, mode: 'local' }
+      : {
+          ...common,
+          mode: 'replicated',
+          signer: signerFor(identity),
+          records: {
+            opKind: VAULT_OP_KIND,
+            nowMS: () => Date.parse('2026-10-01T01:00:00.000Z'),
+            maxDriftMS: 60_000,
+            validateConsumerMetadata: async () => true,
+            onCorruptRow: (info) => corruptRows.push(info),
+          },
+        },
+  )
 
   return {
     manager,
@@ -284,7 +338,8 @@ describe('coordinator store calls (replicated)', () => {
     expect(perEntry.entryGets).toBeLessThanOrEqual(1)
     expect(rotate12.batchGets).toBe(rotate4.batchGets)
     expect(rotate12.branchRows).toBe(rotate4.branchRows)
-    expect(perEntry.total).toBeLessThanOrEqual(12)
+    // Left per entry: its record's copy persistence and projection, one record at a time.
+    expect(perEntry.total).toBeLessThanOrEqual(7)
 
     // Measured with a cold memo: each distinct token is verified once per operation. A rotated
     // entry costs its stored op and the op that replaces it.
@@ -344,10 +399,125 @@ describe('records apply reads (replicated)', () => {
     expect(perEntry.entryGets).toBeLessThanOrEqual(1)
     expect(perEntry.branchRows).toBe(0)
     expect(large.batchGets).toBe(small.batchGets)
-    expect(perEntry.total).toBeLessThanOrEqual(12)
+    expect(perEntry.total).toBeLessThanOrEqual(7)
     // Measured with a cold memo: each incoming token is verified once, however often the
     // chunk reads it.
     expect(perEntry.verifies).toBeLessThanOrEqual(1)
+  })
+})
+
+describe('coordinator store calls (local)', () => {
+  test('rotate writes its rows in batched statements', async () => {
+    const f = await fixture('local')
+    const small = await keyWithEntries(f, 4)
+    const large = await keyWithEntries(f, 12)
+    const rotate4 = await f.measure(() => {
+      return f.manager.rotate({ ...small, excludedRecipients: [], reissue: [] })
+    })
+    const rotate12 = await f.measure(() => {
+      return f.manager.rotate({ ...large, excludedRecipients: [], reissue: [] })
+    })
+    const perEntry = (rotate12.total - rotate4.total) / 8
+
+    console.table({ rotate4, rotate12 })
+    console.log('local rotate statements per additional entry', perEntry)
+
+    // Reads and writes are batched: twelve entries fit the same statements as four.
+    expect(rotate12.total).toBe(rotate4.total)
+    expect(rotate12.verifies).toBe(0)
+  })
+})
+
+describe('visibility filter (replicated)', () => {
+  async function filterCost(count: number): Promise<Measured> {
+    const f = await fixture()
+    const key = await keyWithEntries(f, count)
+    const adapter = f.manager.records.adapter
+    const entries = (await adapter.list(['vault.entry'])).flatMap((d) => d.copies)
+    const params = {
+      opKind: VAULT_OP_KIND,
+      portsFor: vaultRecordPortsFor,
+      validateConsumerMetadata: async () => true,
+      authority: { authorize: async () => true },
+    }
+    const vaultTypes = vaultRecordTypes(params)
+    const entryType = vaultTypes.get('vault.entry') as RecordTypeDefinition
+    // An entry is shown to a holder of its key. The rule runs against the filter's own context,
+    // so holdings and key versions are read once per call.
+    const types = new Map(vaultTypes).set('vault.entry', {
+      ...entryType,
+      visibleTo: visibilityRules(['keyHolder']),
+    })
+    const ctx: VisibilityContext = {
+      store: adapter,
+      opKind: VAULT_OP_KIND,
+      requester: { peerDID: f.ownerDID, controllerDID: null },
+      proofs: [],
+      holderTypes: vaultHolderTypes(vaultTypes),
+      currentKeyVersion: vaultKeyVersionReader(adapter, params),
+      authorizeProof: vaultProofAuthorizer(params, adapter),
+      isGroupMember: async () => false,
+    }
+
+    let visible = 0
+    const measured = await f.measure(async () => {
+      visible = (await filterVisibleRecords(entries, types, ctx)).length
+    })
+
+    expect(key.ownerDID).toBe(f.ownerDID)
+    expect(visible).toBe(count)
+
+    return measured
+  }
+
+  test('filtering N records reads holdings and key versions once', async () => {
+    const small = await filterCost(4)
+    const large = await filterCost(12)
+    const perRecord = {
+      total: (large.total - small.total) / 8,
+      verifies: (large.verifies - small.verifies) / 8,
+    }
+
+    console.table({ filter4: small, filter12: large })
+    console.log('visibility cost per additional record', perRecord)
+
+    // The holding and the key version are read once per call, whatever the record count.
+    expect(large.total).toBe(small.total)
+    // One verification per record: the record itself, inside its hook.
+    expect(perRecord.verifies).toBeLessThanOrEqual(1)
+  })
+})
+
+describe('signer calls (replicated)', () => {
+  test('a signer that refuses overlapping calls signs every write', async () => {
+    let exclusive: ExclusiveSigner | undefined
+    const f = await fixture('replicated', (identity) => {
+      exclusive = exclusiveSigner(identity)
+
+      return exclusive.signer
+    })
+    const key = await keyWithEntries(f, 4)
+    const target = await f.manager.createKey({ ownerDID: f.ownerDID })
+    const entry = { ownerDID: f.ownerDID, entryID: `${key.keyID}:0` }
+
+    await f.manager.updateEntry({ ...entry, plaintext: bytes('changed') })
+    await f.manager.reKeyEntry({ ...entry, toKeyID: target.keyID })
+    expect(await f.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })).toBe(2)
+
+    const records = (
+      await f.manager.records.adapter.list([
+        'vault.key',
+        'vault.key-branch',
+        'vault.wrapping',
+        'vault.entry',
+        'vault.revocation',
+      ])
+    ).flatMap((decision) => decision.copies)
+    const replica = await fixture()
+
+    expect((await replica.manager.records.apply(records)).applied).toBe(records.length)
+    // Rotate alone signs a branch, a wrapping and three entries.
+    expect(exclusive?.calls()).toBeGreaterThan(10)
   })
 })
 

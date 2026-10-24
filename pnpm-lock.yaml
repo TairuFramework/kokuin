@@ -666,6 +666,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.5
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.7
 
   packages/token:
     dependencies:

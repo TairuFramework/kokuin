@@ -28,7 +28,7 @@ import { getVaultStore } from './definition.js'
 import { VaultWriteConflict, vaultDatabases } from './record-context.js'
 import type { VaultKeyBranch, VaultRecords, VaultWritePreconditions } from './records.js'
 import { createVaultRecords, VaultRecordRowError } from './records.js'
-import { settleAll } from './settle.js'
+import { settleAll, settledValue } from './settle.js'
 import type { KeyAddress, KeyRow, VaultStoreAPI, WrappingRow } from './types.js'
 
 export class VaultNotAuthorized extends Error {
@@ -376,16 +376,49 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
       params.records.onCorruptRow?.({ type: 'vault.key-branch', id, error: new Error(reason) })
     }
 
-    // Read only the projected proof records. Any mismatch fails closed, as a full scan would.
-    for (const id of proofs) {
-      let decision: RecordDecision | null
-
+    const keys = proofs.map((id) => ({ type: 'vault.key-branch', owner: address.ownerDID, id }))
+    // One batched read. A corrupt row fails the whole batch, so then each proof is read alone and
+    // only the corrupt one is reported.
+    const read = async (): Promise<Array<RecordDecision | null | VaultRecordRowError>> => {
       try {
-        decision = await adapter.get({ type: 'vault.key-branch', owner: address.ownerDID, id })
+        const decisions = await getRecordDecisions(adapter, keys)
+
+        return keys.map((key) => decisions.get(recordKeyText(key)) ?? null)
       } catch (error) {
         if (!(error instanceof VaultRecordRowError)) throw error
+      }
 
-        params.records.onCorruptRow?.({ type: 'vault.key-branch', id, error })
+      const each: Array<RecordDecision | null | VaultRecordRowError> = []
+
+      for (const key of keys) {
+        try {
+          each.push(await adapter.get(key))
+        } catch (error) {
+          if (!(error instanceof VaultRecordRowError)) throw error
+
+          each.push(error)
+        }
+      }
+
+      return each
+    }
+    const decisions = await read()
+    // Verify every proof together, then consume the results in proof order, as a sequential
+    // scan would: the first failure reached is the one thrown.
+    const checks = await Promise.allSettled(
+      decisions.map((decision) => {
+        const record = decision instanceof VaultRecordRowError ? undefined : decision?.copies[0]
+
+        return record === undefined ? Promise.resolve(null) : verified(record)
+      }),
+    )
+
+    // Read only the projected proof records. Any mismatch fails closed, as a full scan would.
+    for (const [index, id] of proofs.entries()) {
+      const decision = decisions[index] ?? null
+
+      if (decision instanceof VaultRecordRowError) {
+        params.records.onCorruptRow?.({ type: 'vault.key-branch', id, error: decision })
         continue
       }
 
@@ -396,7 +429,9 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
         continue
       }
 
-      const op = await verified(record)
+      const op = settledValue(checks[index] as PromiseSettledResult<VerifiedRecordOp | null>)
+
+      if (op === null) throw new VaultNotFound()
 
       if (
         op.claim.meta.keyID !== address.keyID ||

@@ -1,7 +1,7 @@
 import { normalizeDID } from '@kokuin/token'
 
 import {
-  isDependencyUnsatisfied,
+  isDependencyUnsatisfiedBy,
   type RecordTypeDefinition,
   type VisibilityContext,
 } from './apply.js'
@@ -13,6 +13,7 @@ import {
   recordPayloadMatches,
   type SignedRecord,
 } from './record.js'
+import { getRecordDecisions, recordKeyText } from './store.js'
 
 /**
  * A built-in visibility rule. Each reads the record's verified claim:
@@ -139,12 +140,12 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
     return null
   }
   // A proof is weighed against the row the responder holds for the same record, so a
-  // revoked, superseded or taken-over wrapping cannot stand in for the live one.
-  const storedDecision = await ctx.store.get({
-    type: proof.type,
-    owner: op.claim.owner,
-    id: proof.id,
-  })
+  // revoked, superseded or taken-over wrapping cannot stand in for the live one. That row and
+  // the proof's dependencies are read in one batch.
+  const storedKey = { type: proof.type, owner: op.claim.owner, id: proof.id }
+  const dependencies = definition.dependencies(proof, op)
+  const decisions = await getRecordDecisions(ctx.store, [storedKey, ...dependencies])
+  const storedDecision = decisions.get(recordKeyText(storedKey)) ?? null
   const storedRecord = storedDecision?.copies[0] ?? null
   const storedOp =
     storedRecord === null ? null : await verifySignedRecord(storedRecord, ctx.opKind, ctx.methods)
@@ -153,10 +154,18 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
   }
   // A proof the responder cannot check for lack of a dependency earns nothing, the same as
   // one that fails, rather than parking as it would in apply.
-  for (const dependency of definition.dependencies(proof, op)) {
-    if (await isDependencyUnsatisfied(dependency, ctx.store, ctx.opKind, ctx.methods)) {
-      return null
-    }
+  const unsatisfied = await Promise.all(
+    dependencies.map((dependency) =>
+      isDependencyUnsatisfiedBy(
+        dependency,
+        decisions.get(recordKeyText(dependency)) ?? null,
+        ctx.opKind,
+        ctx.methods,
+      ),
+    ),
+  )
+  if (unsatisfied.includes(true)) {
+    return null
   }
   const authorized = await ctx.authorizeProof(proof, storedOp === null ? null : storedRecord)
   return authorized ? { keyID, owner: op.claim.owner } : null
@@ -331,6 +340,9 @@ export function visibilityRules(
  *
  * A responder runs this over its records before it fingerprints, splits or lists a range and
  * before it answers a fetch, so a hidden record changes none of them.
+ *
+ * Records are checked together: the `visibleTo` hooks, and the context's resolvers and store,
+ * must accept concurrent calls. The first failure in record order is thrown.
  */
 export async function filterVisibleRecords(
   records: ReadonlyArray<SignedRecord>,
@@ -352,12 +364,20 @@ export async function filterVisibleRecords(
     },
   }
   holdingIndexes.set(scoped, { checks: [], held: new Set() })
+  // Records are checked together. They share the holding index, so each holding is still
+  // checked once. The first failure in record order is thrown.
+  const admitted = await Promise.allSettled(
+    records.map(async (record) => {
+      const hook = types.get(record.type)?.visibleTo
+      return hook !== undefined && (await hook(record, scoped))
+    }),
+  )
   const visible: Array<SignedRecord> = []
-  for (const record of records) {
-    const hook = types.get(record.type)?.visibleTo
-    if (hook !== undefined && (await hook(record, scoped))) {
-      visible.push(record)
-    }
+  for (const [index, record] of records.entries()) {
+    const result = admitted[index]
+    if (result === undefined) continue
+    if (result.status === 'rejected') throw result.reason
+    if (result.value) visible.push(record)
   }
   return visible
 }

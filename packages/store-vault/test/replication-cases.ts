@@ -606,6 +606,10 @@ export function replicationCases(harness: StoreHarness): void {
         () => left.store.deleteEntry(entryAddress),
         () => left.store.deleteWrapping(wrappingAddress),
         () => left.store.deleteWrappingsBelowVersion({ ...source.address, keyVersion: 2 }),
+        // A replicated row anywhere in a batch refuses the batch.
+        () => left.store.putEntries([storedEntry(source.address, { entryID: 'local-entry' }), row]),
+        () => left.store.deleteEntries([entryAddress]),
+        () => left.store.deleteWrappings([wrappingAddress]),
       ])
         await expect(write()).rejects.toThrow(VaultModeConflict)
       expect(await left.store.getEntry(entryAddress)).toEqual(row)

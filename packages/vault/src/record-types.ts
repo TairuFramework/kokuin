@@ -250,18 +250,16 @@ async function keyOwnerMatches(
 
   if (decision === null) return false
 
-  for (const record of decision.copies) {
-    const key = await verifySignedRecord(record, params.opKind, params.methods)
+  // Verification never throws, so the copies are verified together.
+  const keys = await Promise.all(
+    decision.copies.map((record) => verifySignedRecord(record, params.opKind, params.methods)),
+  )
 
-    if (
-      key !== null &&
-      vaultRecordMeta(KEY, key.claim) !== null &&
-      key.claim.owner === op.claim.owner
+  return keys.some((key) => {
+    return (
+      key !== null && vaultRecordMeta(KEY, key.claim) !== null && key.claim.owner === op.claim.owner
     )
-      return true
-  }
-
-  return false
+  })
 }
 
 async function revoked(

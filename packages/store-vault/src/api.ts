@@ -10,9 +10,22 @@ import {
   withStoreTransaction,
 } from '@hozon/db'
 
-import { claimMode, VaultModeConflict, vaultDatabases } from './record-context.js'
+import type { WrappingValues } from './batch.js'
+import {
+  deleteEntryRows,
+  deleteWrappingRows,
+  ENTRY_COLUMNS,
+  selectEntries,
+  selectWrappings,
+  statementChunks,
+  upsertEntries,
+  upsertWrappings,
+  WRAPPING_COLUMNS,
+} from './batch.js'
+import { claimModes, VaultModeConflict, vaultDatabases } from './record-context.js'
 import { getVaultRecordsStore } from './record-definition.js'
 import type { VaultRecordsTables } from './record-tables.js'
+import { settleAll } from './settle.js'
 import type {
   VaultEntryTable,
   VaultKeyTable,
@@ -115,12 +128,13 @@ export function createVaultStore(
 
     return withKeyLocks(context.provider, 'vault_keys', addresses.map(lockTuple), run)
   }
-  const localMode = async (
+  const localModes = async (
     trx: Kysely<VaultStoreTables>,
     type: 'vault.key' | 'vault.entry' | 'vault.wrapping',
-    owner: string,
-    id: string,
+    keys: ReadonlyArray<{ owner: string; id: string }>,
   ): Promise<void> => {
+    if (keys.length === 0) return
+
     const table =
       type === 'vault.key'
         ? 'vault_keys'
@@ -129,19 +143,87 @@ export function createVaultStore(
           : 'vault_wrappings'
     const column =
       type === 'vault.key' ? 'key_id' : type === 'vault.entry' ? 'entry_id' : 'wrapping_id'
-    const row = await trx
-      .selectFrom(table)
-      .select('mode')
-      .where('owner_did', '=', owner)
-      .where(column, '=', id)
-      .executeTakeFirst()
+    const rows = await settleAll(
+      statementChunks(keys, 2).map((part) => {
+        return trx
+          .selectFrom(table)
+          .select('mode')
+          .where((eb) => {
+            return eb.or(
+              part.map((key) => eb.and([eb('owner_did', '=', key.owner), eb(column, '=', key.id)])),
+            )
+          })
+          .execute()
+      }),
+    )
 
-    if (row?.mode === 'replicated') throw new VaultModeConflict()
+    if (rows.flat().some((row) => row.mode === 'replicated')) throw new VaultModeConflict()
 
     if (context.provider.hasStore('vault-records')) {
       await getVaultRecordsStore(context.provider)
-      await claimMode(trx as Kysely<VaultRecordsTables>, { type, owner, id }, 'local')
+      await claimModes(
+        trx as Kysely<VaultRecordsTables>,
+        keys.map((key) => ({ type, owner: key.owner, id: key.id })),
+        'local',
+      )
     }
+  }
+  const localMode = (
+    trx: Kysely<VaultStoreTables>,
+    type: 'vault.key' | 'vault.entry' | 'vault.wrapping',
+    owner: string,
+    id: string,
+  ): Promise<void> => {
+    return localModes(trx, type, [{ owner, id }])
+  }
+  // One lock per key, however many rows name it.
+  const keysOf = (rows: ReadonlyArray<KeyAddress>): Array<KeyAddress> => {
+    return [
+      ...new Map(
+        rows.map((row) => [
+          JSON.stringify([row.ownerDID, row.keyID]),
+          { ownerDID: row.ownerDID, keyID: row.keyID },
+        ]),
+      ).values(),
+    ]
+  }
+  // The last write of each address wins, as sequential writes would. One address written under
+  // two keys fails as the second sequential write would.
+  const lastWrites = <Row extends KeyAddress>(
+    rows: ReadonlyArray<Row>,
+    address: (row: Row) => string,
+    message: string,
+  ): Array<Row> => {
+    const unique = new Map<string, Row>()
+
+    for (const row of rows) {
+      const id = address(row)
+      const previous = unique.get(id)
+
+      if (previous !== undefined && previous.keyID !== row.keyID) throw new Error(message)
+
+      unique.delete(id)
+      unique.set(id, row)
+    }
+
+    return [...unique.values()]
+  }
+  const wrappingValues = (row: WrappingRow): WrappingValues => {
+    return {
+      owner_did: row.ownerDID,
+      wrapping_id: row.wrappingID,
+      key_id: row.keyID,
+      key_version: row.keyVersion,
+      descriptors: adapter.encodeJSON(row.descriptors) as WrappingRow['descriptors'],
+      descriptor_digest: row.descriptorDigest,
+      iv: adapter.encodeBinary(row.iv) as Uint8Array,
+      wrapped_key: adapter.encodeBinary(row.wrappedKey) as Uint8Array,
+      recipient_did: row.recipientDID,
+      provenance: row.provenance,
+    }
+  }
+  const written = (results: Array<{ numInsertedOrUpdatedRows?: bigint }>): bigint => {
+    return results.reduce((sum, result) => sum + (result.numInsertedOrUpdatedRows ?? 0n), 0n)
   }
   const selectEntry = (trx: Kysely<VaultStoreTables>, address: EntryAddress) => {
     return trx
@@ -294,43 +376,53 @@ export function createVaultStore(
       })
     },
     async putWrapping(row) {
-      await locked([row], async (trx) => {
-        await localMode(trx, 'vault.wrapping', row.ownerDID, row.wrappingID)
+      await api.putWrappings([row])
+    },
+    async putWrappings(input) {
+      const rows = lastWrites(
+        input,
+        (row) => JSON.stringify([row.ownerDID, row.wrappingID]),
+        'Wrapping belongs to another key',
+      )
 
-        const existing = await trx
-          .selectFrom('vault_wrappings')
-          .select('key_id')
-          .where('owner_did', '=', row.ownerDID)
-          .where('wrapping_id', '=', row.wrappingID)
-          .executeTakeFirst()
+      if (rows.length === 0) return
 
-        if (existing != null && existing.key_id !== row.keyID)
+      await locked(keysOf(rows), async (trx) => {
+        await localModes(
+          trx,
+          'vault.wrapping',
+          rows.map((row) => ({ owner: row.ownerDID, id: row.wrappingID })),
+        )
+
+        const keyOf = new Map(
+          rows.map((row) => [JSON.stringify([row.ownerDID, row.wrappingID]), row.keyID]),
+        )
+        const existing = await settleAll(
+          statementChunks(rows, 2).map((part) => {
+            return selectWrappings(
+              trx,
+              part.map((row) => ({ owner_did: row.ownerDID, wrapping_id: row.wrappingID })),
+            ).execute()
+          }),
+        )
+
+        if (
+          existing
+            .flat()
+            .some(
+              (held) =>
+                keyOf.get(JSON.stringify([held.owner_did, held.wrapping_id])) !== held.key_id,
+            )
+        )
           throw new Error('Wrapping belongs to another key')
 
-        const values = {
-          owner_did: row.ownerDID,
-          wrapping_id: row.wrappingID,
-          key_id: row.keyID,
-          key_version: row.keyVersion,
-          descriptors: adapter.encodeJSON(row.descriptors) as WrappingRow['descriptors'],
-          descriptor_digest: row.descriptorDigest,
-          iv: adapter.encodeBinary(row.iv) as Uint8Array,
-          wrapped_key: adapter.encodeBinary(row.wrappedKey) as Uint8Array,
-          recipient_did: row.recipientDID,
-          provenance: row.provenance,
-        }
-        const result = await trx
-          .insertInto('vault_wrappings')
-          .values(values)
-          .onConflict((oc) => {
-            return oc
-              .columns(['owner_did', 'wrapping_id'])
-              .doUpdateSet(values)
-              .where('vault_wrappings.key_id', '=', row.keyID)
-          })
-          .executeTakeFirst()
+        const results = await settleAll(
+          statementChunks(rows, WRAPPING_COLUMNS).map((part) => {
+            return upsertWrappings(trx, part.map(wrappingValues)).executeTakeFirstOrThrow()
+          }),
+        )
 
-        if (result.numInsertedOrUpdatedRows === 0n)
+        if (written(results) !== BigInt(rows.length))
           throw new Error('Wrapping belongs to another key')
       })
     },
@@ -361,20 +453,42 @@ export function createVaultStore(
       })
     },
     async deleteWrapping(address) {
-      // Discover the key before locking, then qualify deletion so a changed association survives.
-      const row = await api.getWrapping(address)
+      await api.deleteWrappings([address])
+    },
+    async deleteWrappings(addresses) {
+      if (addresses.length === 0) return
 
-      if (row == null) return
+      // Discover each key before locking, then qualify deletion so a changed association survives.
+      const rows = (
+        await read((trx) => {
+          return settleAll(
+            statementChunks(addresses, 2).map((part) => {
+              return selectWrappings(
+                trx,
+                part.map((address) => {
+                  return { owner_did: address.ownerDID, wrapping_id: address.wrappingID }
+                }),
+              ).execute()
+            }),
+          )
+        })
+      ).flat()
 
-      await locked([row], async (trx) => {
-        await localMode(trx, 'vault.wrapping', row.ownerDID, row.wrappingID)
-        await trx
-          .deleteFrom('vault_wrappings')
-          .where('owner_did', '=', row.ownerDID)
-          .where('wrapping_id', '=', row.wrappingID)
-          .where('key_id', '=', row.keyID)
-          .execute()
-      })
+      if (rows.length === 0) return
+
+      await locked(
+        keysOf(rows.map((row) => ({ ownerDID: row.owner_did, keyID: row.key_id }))),
+        async (trx) => {
+          await localModes(
+            trx,
+            'vault.wrapping',
+            rows.map((row) => ({ owner: row.owner_did, id: row.wrapping_id })),
+          )
+          await settleAll(
+            statementChunks(rows, 3).map((part) => deleteWrappingRows(trx, part).execute()),
+          )
+        },
+      )
     },
     async deleteWrappingsBelowVersion(address) {
       await locked([address], async (trx) => {
@@ -386,8 +500,11 @@ export function createVaultStore(
           .where('key_version', '<', address.keyVersion)
           .execute()
 
-        for (const row of rows)
-          await localMode(trx, 'vault.wrapping', row.owner_did, row.wrapping_id)
+        await localModes(
+          trx,
+          'vault.wrapping',
+          rows.map((row) => ({ owner: row.owner_did, id: row.wrapping_id })),
+        )
 
         await trx
           .deleteFrom('vault_wrappings')
@@ -398,26 +515,53 @@ export function createVaultStore(
       })
     },
     async putEntry(row) {
-      await locked([row], async (trx) => {
-        await localMode(trx, 'vault.entry', row.ownerDID, row.entryID)
+      await api.putEntries([row])
+    },
+    async putEntries(input) {
+      const rows = lastWrites(
+        input,
+        (row) => JSON.stringify([row.ownerDID, row.entryID]),
+        'Entry belongs to another key',
+      )
 
-        const existing = await selectEntry(trx, row).executeTakeFirst()
+      if (rows.length === 0) return
 
-        if (existing != null && existing.key_id !== row.keyID)
+      await locked(keysOf(rows), async (trx) => {
+        await localModes(
+          trx,
+          'vault.entry',
+          rows.map((row) => ({ owner: row.ownerDID, id: row.entryID })),
+        )
+
+        const keyOf = new Map(
+          rows.map((row) => [JSON.stringify([row.ownerDID, row.entryID]), row.keyID]),
+        )
+        const existing = await settleAll(
+          statementChunks(rows, 2).map((part) => {
+            return selectEntries(
+              trx,
+              part.map((row) => ({ owner_did: row.ownerDID, entry_id: row.entryID })),
+            ).execute()
+          }),
+        )
+
+        if (
+          existing
+            .flat()
+            .some(
+              (held) => keyOf.get(JSON.stringify([held.owner_did, held.entry_id])) !== held.key_id,
+            )
+        )
           throw new Error('Entry belongs to another key')
 
-        const result = await trx
-          .insertInto('vault_entries')
-          .values(entryValues(row))
-          .onConflict((oc) => {
-            return oc
-              .columns(['owner_did', 'entry_id'])
-              .doUpdateSet(entryValues(row))
-              .where('vault_entries.key_id', '=', row.keyID)
-          })
-          .executeTakeFirst()
+        const results = await settleAll(
+          statementChunks(rows, ENTRY_COLUMNS).map((part) => {
+            return upsertEntries(trx, part.map(entryValues)).executeTakeFirstOrThrow()
+          }),
+        )
 
-        if (result.numInsertedOrUpdatedRows === 0n) throw new Error('Entry belongs to another key')
+        if (written(results) !== BigInt(rows.length))
+          throw new Error('Entry belongs to another key')
       })
     },
     async moveEntry(row) {
@@ -499,19 +643,39 @@ export function createVaultStore(
       })
     },
     async deleteEntry(address) {
-      const row = await api.getEntry(address)
+      await api.deleteEntries([address])
+    },
+    async deleteEntries(addresses) {
+      if (addresses.length === 0) return
 
-      if (row == null) return
+      const rows = (
+        await read((trx) => {
+          return settleAll(
+            statementChunks(addresses, 2).map((part) => {
+              return selectEntries(
+                trx,
+                part.map((address) => ({ owner_did: address.ownerDID, entry_id: address.entryID })),
+              ).execute()
+            }),
+          )
+        })
+      ).flat()
 
-      await locked([row], async (trx) => {
-        await localMode(trx, 'vault.entry', row.ownerDID, row.entryID)
-        await trx
-          .deleteFrom('vault_entries')
-          .where('owner_did', '=', row.ownerDID)
-          .where('entry_id', '=', row.entryID)
-          .where('key_id', '=', row.keyID)
-          .execute()
-      })
+      if (rows.length === 0) return
+
+      await locked(
+        keysOf(rows.map((row) => ({ ownerDID: row.owner_did, keyID: row.key_id }))),
+        async (trx) => {
+          await localModes(
+            trx,
+            'vault.entry',
+            rows.map((row) => ({ owner: row.owner_did, id: row.entry_id })),
+          )
+          await settleAll(
+            statementChunks(rows, 3).map((part) => deleteEntryRows(trx, part).execute()),
+          )
+        },
+      )
     },
     async getMaxEntryHLC() {
       return read(async (trx) => {

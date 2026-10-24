@@ -40,7 +40,8 @@
   },
   "devDependencies": {
     "@hozon/node-sqlite": "catalog:",
-    "@types/node": "catalog:"
+    "@types/node": "catalog:",
+    "kysely": "catalog:"
   },
   "publishConfig": {
     "access": "public"

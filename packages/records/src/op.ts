@@ -141,9 +141,16 @@ function hasRecordOpEnvelope(
   )
 }
 
+// The last signing call queued for each identity. A hardware or prompting signer must never
+// see overlapping calls, so each call waits for the one before it, settled either way.
+const signingQueues = new WeakMap<SigningIdentity, Promise<unknown>>()
+
 /**
  * Sign a record claim under the caller's required replay domain `opKind`. The token carries the canonical claim bytes rather than the claim
  * as JSON members, so what a verifier reads back is byte-for-byte what was signed.
+ *
+ * Calls for one identity reach it one at a time, in the order they were made, so callers may
+ * sign several records at once.
  *
  * @throws RecordClaimError when the claim is malformed.
  * @throws RecordOpSigningError when the identity produces an unverifiable record-op envelope.
@@ -154,10 +161,17 @@ export async function signRecordOp(
   opKind: string,
 ): Promise<{ opJWT: string; opHash: string }> {
   const bytes = canonicalRecordClaim(claim)
-  const signed = await identity.signToken(
-    { kind: opKind, claim: toB64U(bytes) },
-    { embedLongForm: true },
+  const previous = signingQueues.get(identity) ?? Promise.resolve()
+  // Queued entries never reject, so a failed call does not stop the next one.
+  const signing = previous.then(() => {
+    return identity.signToken({ kind: opKind, claim: toB64U(bytes) }, { embedLongForm: true })
+  })
+  // The queue only orders calls. Each caller sees its own failure.
+  signingQueues.set(
+    identity,
+    signing.catch(() => {}),
   )
+  const signed = await signing
   const opJWT = stringifyToken(signed)
   if (
     !isCanonicalCompactToken(opJWT) ||

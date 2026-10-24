@@ -241,6 +241,7 @@ export function createRotateFunctions(
         const grouped = await candidates(key, store)
         const selected: Array<Selection> = []
         let addsEntry = false
+        const comparisons: Array<[Selection, Selection]> = []
 
         for (const list of grouped.values()) {
           list.sort(compare)
@@ -263,14 +264,21 @@ export function createRotateFunctions(
             continue
           }
 
-          const [a, b] = await settleAll([decrypt(chosen), decrypt(winning)])
+          comparisons.push([chosen, winning])
+        }
 
+        // Plaintext comparisons are independent. Decrypts run together; the first failure in
+        // group order wins.
+        const compared = await settleAll(
+          comparisons.map(([chosen, winning]) => settleAll([decrypt(chosen), decrypt(winning)])),
+        )
+
+        for (const [a, b] of compared)
           if (
             (a === null) !== (b === null) ||
             (a !== null && b !== null && (a.length !== b.length || !a.every((v, i) => v === b[i])))
           )
             addsEntry = true
-        }
 
         const signature = (w: WrappingRow) => {
           return JSON.stringify({
@@ -365,10 +373,17 @@ export function createRotateFunctions(
           }),
         ),
       ])
-      const output: Array<SignedRecord> = [...chain.records]
+      // HLCs are allocated in order: wrappings, then entries, then revocations. Entries decrypt and
+      // encrypt while earlier records sign; `signRecordOp` calls the signer one at a time, in this
+      // order. The output keeps it.
+      const signing: Array<Promise<SignedRecord>> = []
+      const sign = (task: Promise<SignedRecord>): void => {
+        // Awaited together below. A failure before then must not surface as unhandled.
+        task.catch(() => {})
+        signing.push(task)
+      }
       const wrappings: Array<WrappingRow> = []
 
-      // Signing stays sequential: HLC allocation and output order follow the retained order.
       for (const { previous, wrappingID, result } of wrapped) {
         const row = {
           ...next,
@@ -386,7 +401,7 @@ export function createRotateFunctions(
 
           if (prior === undefined) throw new VaultNotFound()
 
-          output.push(await records.wrapping(row, chain, prior.op.claim.meta.consumer))
+          sign(records.wrapping(row, chain, prior.op.claim.meta.consumer, await params.nextHLC()))
         }
       }
 
@@ -423,8 +438,8 @@ export function createRotateFunctions(
           deletions.push(selected.entryID)
 
           if (params.mode === 'replicated')
-            output.push(
-              await ctx.signed(
+            sign(
+              ctx.signed(
                 'vault.entry',
                 { ownerDID: key.ownerDID, id: selected.entryID },
                 null,
@@ -466,8 +481,7 @@ export function createRotateFunctions(
 
         entries.push(row)
 
-        if (params.mode === 'replicated')
-          output.push(await records.entry(row, chain, contentHLC, consumer))
+        if (params.mode === 'replicated') sign(records.entry(row, chain, contentHLC, consumer))
       }
 
       if (params.mode === 'replicated') {
@@ -475,15 +489,18 @@ export function createRotateFunctions(
           const id = vaultRevocationRecordID(key.keyID, did)
           const revokedDID = id.slice(id.indexOf('/') + 1)
 
-          output.push(
-            await ctx.signed(
+          sign(
+            ctx.signed(
               'vault.revocation',
               { ownerDID: key.ownerDID, id },
               {},
               { keyID: key.keyID, revokedDID, consumer: null },
+              await params.nextHLC(),
             ),
           )
         }
+
+        const output = [...chain.records, ...(await settleAll(signing))]
 
         await ctx.write(
           store,
@@ -493,13 +510,16 @@ export function createRotateFunctions(
         )
       } else {
         await store.putKey(next)
-        for (const wrapping of wrappings) await store.putWrapping(wrapping)
-        for (const entry of entries) await store.putEntry(entry)
-        for (const entryID of deletions)
-          await store.deleteEntry({ ownerDID: key.ownerDID, entryID })
-
-        for (const row of existingWrappings.filter((w) => excluded(w, request.excludedRecipients)))
-          await store.deleteWrapping(row)
+        // Each set names distinct rows, so the batched writes run together. The first failure in
+        // the old order wins.
+        await settleAll([
+          store.putWrappings(wrappings),
+          store.putEntries(entries),
+          store.deleteEntries(deletions.map((entryID) => ({ ownerDID: key.ownerDID, entryID }))),
+          store.deleteWrappings(
+            existingWrappings.filter((w) => excluded(w, request.excludedRecipients)),
+          ),
+        ])
       }
 
       return next.version

@@ -399,12 +399,16 @@ export function storeVaultCases(harness: StoreHarness): void {
       'setKeyVersion',
       'deleteKey',
       'putWrapping',
+      'putWrappings',
       'deleteWrapping',
+      'deleteWrappings',
       'deleteWrappingsBelowVersion',
       'putEntry',
+      'putEntries',
       'updateEntryIfPresent',
       'updateEntryIfUnchanged',
       'deleteEntry',
+      'deleteEntries',
     ] as const)('%s waits for the shared owner-qualified key lock', async (method) => {
       const entry = storedEntry(address)
       const next = { ...entry, hlc: stamp(2), ciphertext: new Uint8Array([42]) }
@@ -418,17 +422,23 @@ export function storeVaultCases(harness: StoreHarness): void {
         setKeyVersion: (tx: VaultStoreAPI) => tx.setKeyVersion({ ...address, version: 2 }),
         deleteKey: (tx: VaultStoreAPI) => tx.deleteKey(address),
         putWrapping: (tx: VaultStoreAPI) => tx.putWrapping({ ...wrapping, keyVersion: 2 }),
+        putWrappings: (tx: VaultStoreAPI) => tx.putWrappings([{ ...wrapping, keyVersion: 2 }]),
         // Discovery must derive the held key from the row, not from an extra argument field.
         deleteWrapping: (tx: VaultStoreAPI) =>
           tx.deleteWrapping({ ownerDID: address.ownerDID, wrappingID: wrapping.wrappingID }),
+        deleteWrappings: (tx: VaultStoreAPI) =>
+          tx.deleteWrappings([{ ownerDID: address.ownerDID, wrappingID: wrapping.wrappingID }]),
         deleteWrappingsBelowVersion: (tx: VaultStoreAPI) =>
           tx.deleteWrappingsBelowVersion({ ...address, keyVersion: 2 }),
         putEntry: (tx: VaultStoreAPI) => tx.putEntry(next),
+        putEntries: (tx: VaultStoreAPI) => tx.putEntries([next]),
         updateEntryIfPresent: (tx: VaultStoreAPI) => tx.updateEntryIfPresent(next),
         updateEntryIfUnchanged: (tx: VaultStoreAPI) =>
           tx.updateEntryIfUnchanged({ ...next, expectedHLC: entry.hlc }),
         deleteEntry: (tx: VaultStoreAPI) =>
           tx.deleteEntry({ ownerDID: address.ownerDID, entryID: entry.entryID }),
+        deleteEntries: (tx: VaultStoreAPI) =>
+          tx.deleteEntries([{ ownerDID: address.ownerDID, entryID: entry.entryID }]),
       }
       await expectWriterBlocked(db, address, writers[method], [address])
       switch (method) {
@@ -445,13 +455,16 @@ export function storeVaultCases(harness: StoreHarness): void {
           expect(await store.getKey(address)).toBeUndefined()
           break
         case 'putWrapping':
+        case 'putWrappings':
           expect(await store.getWrapping(wrapping)).toEqual({ ...wrapping, keyVersion: 2 })
           break
         case 'deleteWrapping':
+        case 'deleteWrappings':
         case 'deleteWrappingsBelowVersion':
           expect(await store.getWrapping(wrapping)).toBeUndefined()
           break
         case 'deleteEntry':
+        case 'deleteEntries':
           expect(await store.getEntry(entry)).toBeUndefined()
           break
         default:
@@ -653,6 +666,57 @@ export function storeVaultCases(harness: StoreHarness): void {
       await store.deleteEntry(row)
       await store.deleteEntry(row)
       expect(await store.getEntry(other)).toEqual(other)
+    })
+
+    test('batched writes match per-row writes across statement chunks', async () => {
+      const count = 250
+      const entries = Array.from({ length: count }, (_, i) => {
+        return storedEntry(address, {
+          entryID: `entry-${String(i).padStart(3, '0')}`,
+          hlc: stamp(i),
+        })
+      })
+      const wrappings = Array.from({ length: count }, (_, i) => {
+        return storedWrapping(address, { wrappingID: `wrap-${String(i).padStart(3, '0')}` })
+      })
+      const before = queries.length
+      await store.putEntries(entries)
+      await store.putWrappings(wrappings)
+      // Rows are bound in chunks under the parameter budget, not one statement per row.
+      expect(queries.length - before).toBeLessThan(40)
+      expect(await store.listEntries(address)).toEqual(entries)
+      expect(await store.listWrappings(address)).toEqual(wrappings)
+
+      // A later row for one address wins, as a later sequential write would.
+      const first = entries[0] as EntryRow
+      const replaced = { ...first, hlc: stamp(900), ciphertext: new Uint8Array([9]) }
+      await store.putEntries([{ ...first, hlc: stamp(899) }, replaced])
+      expect(await store.getEntry(first)).toEqual(replaced)
+
+      // A row held by another key refuses the whole batch, as the single write refuses its row.
+      const fresh = storedEntry(address, { entryID: 'entry-fresh' })
+      await expect(store.putEntries([fresh, { ...replaced, keyID: 'other-key' }])).rejects.toThrow(
+        'Entry belongs to another key',
+      )
+      expect(await store.getEntry(fresh)).toBeUndefined()
+      await expect(store.putEntries([fresh, { ...fresh, keyID: 'other-key' }])).rejects.toThrow(
+        'Entry belongs to another key',
+      )
+      await expect(
+        store.putWrappings([{ ...(wrappings[0] as WrappingRow), keyID: 'other-key' }]),
+      ).rejects.toThrow('Wrapping belongs to another key')
+
+      const deleting = queries.length
+      await store.deleteEntries([
+        ...entries.map((row) => ({ ownerDID: row.ownerDID, entryID: row.entryID })),
+        { ownerDID: address.ownerDID, entryID: 'entry-missing' },
+      ])
+      await store.deleteWrappings(wrappings)
+      expect(queries.length - deleting).toBeLessThan(40)
+      expect(await store.listEntries(address)).toEqual([])
+      expect(await store.listWrappings(address)).toEqual([])
+      await store.deleteEntries([])
+      await store.putEntries([])
     })
 
     test('attribute subsets require own exact string values and combine without a bind limit', async () => {
