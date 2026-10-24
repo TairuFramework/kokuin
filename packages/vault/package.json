@@ -35,10 +35,12 @@
   },
   "dependencies": {
     "@kokuin/jwe": "workspace:^",
+    "@kokuin/records": "workspace:^",
     "@kokuin/token": "workspace:^",
     "@noble/ciphers": "catalog:",
     "@noble/hashes": "catalog:",
     "@sozai/codec": "catalog:",
+    "@sozai/hlc": "catalog:",
     "@sozai/runtime": "catalog:"
   },
   "devDependencies": {

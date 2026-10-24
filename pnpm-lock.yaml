@@ -684,6 +684,9 @@ importers:
       '@kokuin/jwe':
         specifier: workspace:^
         version: link:../jwe
+      '@kokuin/records':
+        specifier: workspace:^
+        version: link:../records
       '@kokuin/token':
         specifier: workspace:^
         version: link:../token
@@ -696,6 +699,9 @@ importers:
       '@sozai/codec':
         specifier: 'catalog:'
         version: 0.4.3
+      '@sozai/hlc':
+        specifier: 'catalog:'
+        version: 0.1.0
       '@sozai/runtime':
         specifier: 'catalog:'
         version: 0.1.0
