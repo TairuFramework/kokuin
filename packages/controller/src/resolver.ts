@@ -2,7 +2,8 @@ import type { DIDMethodResolver } from '@kokuin/token'
 
 import type { EpochLimits } from './epoch.js'
 import { DID_PREFIX } from './events.js'
-import { authoritativeLogWithin, type LogStore } from './history.js'
+import { memoizedAuthoritativeLog } from './fold-memo.js'
+import type { LogStore } from './history.js'
 import { type ControllerLog, isControllerLog } from './log.js'
 import { type FoldedView, resolverOver } from './state-resolver.js'
 
@@ -16,8 +17,12 @@ export type ControllerResolverOptions = {
    * and a prefix resolves to a head that is missing whatever came after it — a withheld epoch revoke
    * is a denial this resolution does not see.
    *
-   * Reuse the instance rather than building one per resolution: concurrent resolutions of one DID
-   * share a single in-flight fold. Not a cache — the entry drops as soon as the fold settles.
+   * Called on every resolution: the log is always re-read, so a revoke landing between two
+   * resolutions takes effect. Reuse the instance rather than building one per resolution: concurrent
+   * resolutions of one DID share a single in-flight fold, and that entry drops as soon as the fold
+   * settles. The fold itself is memoized process-wide by the exact log (and, with a `history`, the
+   * exact log seen), so re-reading an unchanged log does not verify its signatures again; any new
+   * event changes the key and is folded.
    *
    * One re-entry hazard remains, not this callback's: a `verifyToken` hook that resolves *this* DID
    * through *this* resolver joins the calling fold and awaits a promise that cannot settle. Give such
@@ -79,7 +84,9 @@ export function createControllerResolverWithin(
   // DID: sharing the pending fold makes that a quiet deadlock the caller's request timeout catches,
   // rather than an await-chained Ed25519 loop that starves the timer queue.
   //
-  // Not a cache: removed as soon as the fold settles, so a later resolution re-folds.
+  // Not a cache of answers: removed as soon as the fold settles, so a later resolution re-reads the
+  // log. Re-reading an unchanged log is cheap because the fold of those exact bytes is memoized (see
+  // `memoizedAuthoritativeLog`), keyed by content, so a changed log is never answered from memory.
   const inFlight = new Map<string, Promise<FoldedView>>()
 
   // Shared by every member: load, fold, throw `Unknown DID` when absent. The chain's states as well
@@ -92,17 +99,22 @@ export function createControllerResolverWithin(
     // Without a store, the same fold against no memory: the request limit, the chain, then the
     // epoch — one path, so the two configurations cannot disagree about what a log means.
     if (options.history == null) {
-      return authoritativeLogWithin({ did, loaded: log, seen: undefined, context: CONTEXT }, limits)
-        .result
+      return memoizedAuthoritativeLog(
+        { did, loaded: log, seen: undefined, context: CONTEXT },
+        limits,
+      ).result
     }
     // Compared against what this party last accepted, so a truncated log — folding cleanly, missing
     // the revoke that matters — is refused. See `LogStore`.
     // Inside the store's merge, so two resolutions of one DID never lose each other's events. A log
     // that lost throws out of the update, so nothing is written and the store never moves backwards.
     // The answer is the merged fold — what was seen plus what was loaded — not the presentation.
+    // The merge and the comparison run on every resolution: the memo is keyed by the seen log as
+    // well as the loaded one, so a prefix memoized before a longer log was accepted is a different
+    // entry from that prefix presented against the longer log, and the latter is folded and refused.
     let view: FoldedView | undefined
     await options.history.merge(did, async (seen) => {
-      const settled = authoritativeLogWithin({ did, loaded: log, seen, context: CONTEXT }, limits)
+      const settled = memoizedAuthoritativeLog({ did, loaded: log, seen, context: CONTEXT }, limits)
       view = settled.result
       return settled.log
     })
@@ -130,9 +142,9 @@ export function createControllerResolverWithin(
     try {
       return await fold
     } finally {
-      // Removal is what keeps this from being a cache: the next resolution re-reads and re-folds, so
-      // a revoke landing between two resolutions takes effect. In `finally`, so a rejected fold
-      // clears too.
+      // Removal is what keeps this from being a cache of answers: the next resolution re-reads the
+      // log, so a revoke landing between two resolutions takes effect (its new digest misses the fold
+      // memo). In `finally`, so a rejected fold clears too.
       inFlight.delete(did)
     }
   }
