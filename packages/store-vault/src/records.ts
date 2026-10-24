@@ -37,8 +37,8 @@ import {
   vaultDatabases,
 } from './record-context.js'
 import { getVaultRecordsStore } from './record-definition.js'
-import type { VaultRecordsTables, VaultRecordTable } from './record-tables.js'
-import { settleAll } from './settle.js'
+import type { VaultKeyBranchTable, VaultRecordsTables, VaultRecordTable } from './record-tables.js'
+import { settleAll, settledValue } from './settle.js'
 import type { EntryAddress, KeyAddress, VaultStoreAPI, WrappingRow } from './types.js'
 
 export class VaultRecordRowError extends Error {
@@ -92,6 +92,11 @@ export type VaultRecords = {
     transportContext?: unknown
   }): Promise<ApplyResult>
   listKeyBranches(address: KeyAddress & { keyVersion: number }): Promise<Array<VaultKeyBranch>>
+  /**
+   * Rewrites the key's branch projection from its stored, verified `vault.key-branch` records.
+   * Writes only when the projection differs. Returns whether it did.
+   */
+  rebuildKeyBranches(address: KeyAddress): Promise<boolean>
   listWrappingsWithBranch(
     address: KeyAddress & { keyVersion?: number },
   ): Promise<Array<WrappingRow>>
@@ -845,13 +850,8 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         if (expectedKey === undefined && expectedEntry === undefined)
           throw new TypeError('Signed writes require a key or entry precondition')
 
-        const [old, observedEntry] = await settleAll([
-          getRecordDecisions(tx, request.records),
-          expectedEntry === undefined
-            ? Promise.resolve(undefined)
-            : inner.store.getEntry(expectedEntry),
-        ])
-        const recordAddresses = await settleAll(
+        // The address precondition reads nothing, so it runs before any store read, as it did.
+        const ops = await settleAll(
           request.records.map(async (record) => {
             const op = await verifySignedRecord(record, params.opKind, params.methods)
 
@@ -869,6 +869,18 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
             )
               throw new TypeError('Every signed output requires an address precondition')
 
+            return op
+          }),
+        )
+        const [old, observedEntry] = await settleAll([
+          getRecordDecisions(tx, request.records),
+          expectedEntry === undefined
+            ? Promise.resolve(undefined)
+            : inner.store.getEntry(expectedEntry),
+        ])
+        const recordAddresses = await settleAll(
+          request.records.map(async (record, position) => {
+            const op = ops[position] ?? null
             const found: Array<KeyAddress> = []
 
             if (op !== null && typeof op.claim.meta.keyID === 'string')
@@ -926,13 +938,16 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
 
           return JSON.stringify(current) === JSON.stringify(expected)
         }
-        const [current, currentEntry, keyMatches] = await settleAll([
+        // All three run together. Results are checked in the old order: held copies, entry key,
+        // key version and branches, entry HLC.
+        const [currentRead, entryRead, keyRead] = await Promise.allSettled([
           getRecordDecisions(tx, request.records),
           expectedEntry === undefined
             ? Promise.resolve(undefined)
             : inner.store.getEntry(expectedEntry),
           keyCheck(),
         ])
+        const current = settledValue(currentRead)
         const currentOps = await settleAll(
           request.records.flatMap((record) => {
             return (current.get(recordKeyText(record))?.copies ?? []).map((copy) => {
@@ -945,10 +960,12 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
           if (op !== null && !heldKeys.has(JSON.stringify([op.claim.owner, op.claim.meta.keyID])))
             throw new VaultWriteConflict()
 
+        const currentEntry = settledValue(entryRead)
+
         if (expectedEntry !== undefined && currentEntry?.keyID !== observedEntry?.keyID)
           throw new VaultWriteConflict()
 
-        if (!keyMatches) throw new VaultWriteConflict()
+        if (!settledValue(keyRead)) throw new VaultWriteConflict()
 
         if (
           expectedEntry !== undefined &&
@@ -1002,6 +1019,73 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
       await assertDomain(bound)
 
       return params.store.listWrappings(address)
+    },
+    async rebuildKeyBranches(address) {
+      await assertDomain(bound)
+
+      const decisions = await adapter.list(['vault.key-branch'])
+      const candidates = decisions.flatMap((decision) => {
+        const record = decision.copies[0]
+
+        return record !== undefined && record.owner === address.ownerDID ? [record] : []
+      })
+      const ops = await settleAll(
+        candidates.map((record) => verifySignedRecord(record, params.opKind, params.methods)),
+      )
+      const rows: Array<VaultKeyBranchTable> = []
+
+      for (const [index, record] of candidates.entries()) {
+        const op = ops[index] ?? null
+
+        if (op === null || op.claim.meta.keyID !== address.keyID) continue
+
+        const decoded = decodeVaultRecord(record, op.claim.meta)
+
+        if (decoded.type !== 'vault.key-branch') continue
+
+        rows.push({
+          owner_did: decoded.owner,
+          key_id: decoded.meta.keyID,
+          key_version: decoded.meta.keyVersion,
+          record_id: decoded.id,
+          branch_id: decoded.meta.branchID,
+          op_jwt: decoded.payload.opJWT,
+        })
+      }
+
+      const text = (list: Array<VaultKeyBranchTable>) => {
+        return JSON.stringify(
+          list
+            .map((row) => [row.record_id, row.key_version, row.branch_id, row.op_jwt])
+            .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+        )
+      }
+
+      return withStoreTransaction(bound.db, async (tx) => {
+        const held = await tx
+          .selectFrom('vault_key_branches')
+          .selectAll()
+          .where('owner_did', '=', address.ownerDID)
+          .where('key_id', '=', address.keyID)
+          .execute()
+
+        if (text(held) === text(rows)) return false
+
+        await tx
+          .deleteFrom('vault_key_branches')
+          .where('owner_did', '=', address.ownerDID)
+          .where('key_id', '=', address.keyID)
+          .execute()
+
+        for (const row of rows)
+          await tx
+            .insertInto('vault_key_branches')
+            .values(row)
+            .onConflict((oc) => oc.columns(['owner_did', 'record_id']).doUpdateSet(row))
+            .execute()
+
+        return true
+      })
     },
     listRevocations: (address) => vaultRecordPortsFor(adapter).listRevocations(address),
     listEntryCandidates: (address) => candidates(address, address.keyVersion, false),

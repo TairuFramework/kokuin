@@ -26,3 +26,10 @@ export async function settleAll<Values extends ReadonlyArray<unknown>>(
 
   throw failure.reason
 }
+
+/** The value of a settled task, or its rejection thrown. Lets the caller pick the throw order. */
+export function settledValue<Value>(result: PromiseSettledResult<Value>): Value {
+  if (result.status === 'rejected') throw result.reason
+
+  return result.value
+}

@@ -274,8 +274,10 @@ type ChunkContext = RecordReceiveContext & {
   methods?: MethodRegistry
   decisions: Map<string, DecisionSnapshot>
   dependencies: DependencyLists
-  /** Verifies each distinct op token once for this apply call. */
+  /** Verifies each distinct op token once in this transaction. */
   verify: (record: SignedRecord) => Promise<VerifiedRecordOp | null>
+  /** Why the batched read failed, if it did. */
+  prefetchError?: unknown
 }
 
 type DecisionSnapshot = {
@@ -301,7 +303,15 @@ async function decisionSnapshot(key: RecordKey, ctx: ChunkContext): Promise<Deci
   const id = recordKeyText(key)
   const cached = ctx.decisions.get(id)
   if (cached !== undefined) return cached
-  const snapshot = await snapshotOf(await ctx.tx.get(key), ctx)
+  let decision: RecordDecision | null
+  try {
+    decision = await ctx.tx.get(key)
+  } catch (error) {
+    // After a failed batch, its error is the store's first failure in this transaction. On a
+    // store where a failed statement aborts the transaction, this read only reports that.
+    throw ctx.prefetchError ?? error
+  }
+  const snapshot = await snapshotOf(decision, ctx)
   ctx.decisions.set(id, snapshot)
   return snapshot
 }
@@ -309,7 +319,7 @@ async function decisionSnapshot(key: RecordKey, ctx: ChunkContext): Promise<Deci
 /**
  * Loads the decisions of `keys` the chunk has not read yet, in one batched read. `known` holds
  * decisions already read in this transaction. A failed batch seeds nothing: each key is then
- * read on first use, and fails there, as without the batch.
+ * read on first use, and a failing read there reports the batch's error.
  */
 async function prefetchSnapshots(
   keys: ReadonlyArray<RecordKey>,
@@ -325,7 +335,9 @@ async function prefetchSnapshots(
   let loaded: RecordDecisionMap = new Map()
   try {
     loaded = await getRecordDecisions(ctx.tx, [...missing.values()])
-  } catch {
+  } catch (error) {
+    // Kept, not dropped: a later single read that fails reports this original error.
+    ctx.prefetchError = error
     missing.clear()
   }
   const ids = [...new Set([...knownKeys, ...missing.keys()])].filter((id) => !ctx.decisions.has(id))
@@ -724,7 +736,10 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
             candidate.definition.dependencies(candidate.record, candidate.op),
           ]),
         ),
-        verify,
+        // A fresh scope per transaction: a resolved issuer's key removed before the locks must
+        // not pass on a verification made before them. Self-certifying issuers still hit the
+        // process-wide memo.
+        verify: createRecordVerifier(params.opKind, params.methods),
       }
       // One batched read for every decision the chunk will consult: each record's own and its
       // dependencies'. Writes made by this chunk update these snapshots in place.

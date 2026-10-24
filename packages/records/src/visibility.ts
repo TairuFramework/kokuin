@@ -67,13 +67,13 @@ type Holding = { keyID: string; owner: string }
 
 /**
  * Key holdings checked so far in one {@link filterVisibleRecords} call. Holdings are checked in
- * order, each at most once, until one answers the key asked about. The index lives only as long
- * as that call, which writes nothing, so a revoked or replaced holding is never answered from it
- * later.
+ * order, each at most once, until one answers the key asked about. One promise per holding lets
+ * concurrent checks share it. The index lives only as long as that call, which writes nothing, so
+ * a revoked or replaced holding is never answered from it later.
  */
 type HoldingIndex = {
   records?: Promise<Array<SignedRecord>>
-  next: number
+  checks: Array<Promise<Holding | null>>
   held: Set<string>
 }
 
@@ -214,13 +214,13 @@ async function isKeyHolder(claim: RecordClaim, ctx: VisibilityContext): Promise<
       .list([...ctx.holderTypes.keys()])
       .then((holdings) => [...holdings.flatMap((decision) => decision.copies), ...ctx.proofs])
     const records = await index.records
-    while (index.next < records.length) {
-      const record = records[index.next]
-      index.next += 1
-      if (record === undefined) {
-        break
+    for (const [position, record] of records.entries()) {
+      let check = index.checks[position]
+      if (check === undefined) {
+        check = checkedHolding(record, ctx)
+        index.checks[position] = check
       }
-      const holding = await checkedHolding(record, ctx)
+      const holding = await check
       if (holding === null) {
         continue
       }
@@ -351,7 +351,7 @@ export async function filterVisibleRecords(
       return version
     },
   }
-  holdingIndexes.set(scoped, { next: 0, held: new Set() })
+  holdingIndexes.set(scoped, { checks: [], held: new Set() })
   const visible: Array<SignedRecord> = []
   for (const record of records) {
     const hook = types.get(record.type)?.visibleTo

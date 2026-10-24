@@ -51,13 +51,17 @@ const registry: MethodRegistry = [
   },
 ]
 
-async function makeRecord(identity: SigningIdentity, id: string): Promise<SignedRecord> {
+async function makeRecord(
+  identity: SigningIdentity,
+  id: string,
+  options: { owner?: string; wallTime?: number } = {},
+): Promise<SignedRecord> {
   const payload = new Uint8Array([1])
   const claim = {
     type: 'test.value',
     id,
-    owner: normalizeDID(identity.id),
-    hlc: HLC.serialize({ wallTime: NOW, counter: 0, nodeID: identity.id }),
+    owner: options.owner ?? normalizeDID(identity.id),
+    hlc: HLC.serialize({ wallTime: options.wallTime ?? NOW, counter: 0, nodeID: identity.id }),
     payloadDigest: recordPayloadDigest(payload),
     deleted: false,
     meta: { label: id },
@@ -130,7 +134,7 @@ describe('record op verification memo', () => {
     expect(verifications.count).toBe(1)
   })
 
-  test('apply verifies each token once per call for a registry-resolved issuer', async () => {
+  test('apply verifies a registry-resolved token once before the locks and once under them', async () => {
     const identity = randomIdentity()
     const records = await Promise.all(['a', 'b', 'c'].map((id) => makeRecord(identity, id)))
     const apply = async () => {
@@ -161,9 +165,61 @@ describe('record op verification memo', () => {
     }
 
     expect(await apply()).toEqual({ applied: 0, parked: [], rejected: [], conflicts: [] })
-    expect(verifications.count).toBe(3)
-    // A second call verifies again: the scope is one call.
-    await apply()
+    // Three tokens: each verified as the incoming record and prefetched copy before the locks,
+    // then once more as the stored snapshot under them.
     expect(verifications.count).toBe(6)
+    // A second call verifies again: no scope outlives a call.
+    await apply()
+    expect(verifications.count).toBe(12)
+  })
+
+  test('a resolved key removed between the pre-lock read and the lock is not honoured', async () => {
+    const removed = new Set<string>()
+    const rotating: MethodRegistry = [
+      {
+        method: 'key',
+        resolve: async (did, header) => {
+          if (removed.has(did)) throw new Error(`Key removed: ${did}`)
+          return await resolveIssuerWithDoc({ iss: did, header })
+        },
+      },
+    ]
+    const owner = randomIdentity()
+    const writer = randomIdentity()
+    // A newer stored op, signed by another writer the owner admitted, would win the merge.
+    const stored = await makeRecord(writer, 'a', { owner: normalizeDID(owner.id) })
+    const incoming = await makeRecord(owner, 'a', { wallTime: NOW - 1000 })
+    const store = storeOf([stored])
+    // Locking is the moment between the pre-lock read and the authoritative reads.
+    store.lock = async () => {
+      removed.add(writer.id)
+    }
+    const result = await applyRecordChunk({
+      opKind: TEST_OP_KIND,
+      records: [incoming],
+      store,
+      types: new Map([
+        [
+          'test.value',
+          {
+            type: 'test.value',
+            policy: { kind: 'lww' },
+            dependsOn: [],
+            authorize: async () => true,
+            dependencies: () => [],
+            lockKeys: (record) => [{ type: record.type, key: record.id }],
+          },
+        ],
+      ]),
+      nowMS: NOW,
+      maxDriftMS: 60_000,
+      receiveClock: () => {},
+      methods: rotating,
+      resolveController: async () => null,
+      verifyCapability: async () => false,
+    })
+
+    // Under the lock the stored op no longer verifies, so it is no record and the older op applies.
+    expect(result).toEqual({ applied: 1, parked: [], rejected: [], conflicts: [] })
   })
 })

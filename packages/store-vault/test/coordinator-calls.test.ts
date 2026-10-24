@@ -3,10 +3,13 @@ import { HozonDB, sql } from '@hozon/db'
 import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
 import type * as Token from '@kokuin/token'
 import { randomIdentity } from '@kokuin/token'
-import { getSuite, VAULT_OP_KIND } from '@kokuin/vault'
+import type { VaultPinRejected } from '@kokuin/vault'
+import { DEFAULT_FREE_ATTEMPTS, getSuite, VAULT_OP_KIND } from '@kokuin/vault'
 import { createRuntime } from '@sozai/runtime'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
+// Test-only reset of the process-wide op memo; the package root does not export it.
+import { clearRecordOpMemo } from '../../records/lib/op.js'
 import type { KeyAddress, VaultCoordinator } from '../src/index.js'
 import {
   createVaultCoordinator,
@@ -211,6 +214,8 @@ async function fixture(): Promise<Fixture> {
       stats.branchRows = 0
       stats.peak = 0
       verifications.count = 0
+      // Cold: counts must not depend on which tokens earlier work in this process verified.
+      clearRecordOpMemo()
       await operation()
 
       return { ...stats, verifies: verifications.count }
@@ -281,10 +286,13 @@ describe('coordinator store calls (replicated)', () => {
     expect(rotate12.branchRows).toBe(rotate4.branchRows)
     expect(perEntry.total).toBeLessThanOrEqual(12)
 
-    // Each signed op is verified once per process: a write verifies only the record it signs.
-    expect(perEntry.verifies).toBeLessThanOrEqual(1)
-    for (const measured of [put, update, reKey, remove])
-      expect(measured.verifies).toBeLessThanOrEqual(1)
+    // Measured with a cold memo: each distinct token is verified once per operation. A rotated
+    // entry costs its stored op and the op that replaces it.
+    expect(perEntry.verifies).toBeLessThanOrEqual(2)
+    expect(put.verifies).toBeLessThanOrEqual(3)
+    expect(update.verifies).toBeLessThanOrEqual(4)
+    expect(remove.verifies).toBeLessThanOrEqual(4)
+    expect(reKey.verifies).toBeLessThanOrEqual(7)
 
     // Independent reads inside one transaction are requested together. Reads outside a
     // transaction, as in openKey, each take the single SQLite connection in turn.
@@ -337,8 +345,8 @@ describe('records apply reads (replicated)', () => {
     expect(perEntry.branchRows).toBe(0)
     expect(large.batchGets).toBe(small.batchGets)
     expect(perEntry.total).toBeLessThanOrEqual(12)
-    // At most one verification per incoming token. These tokens were verified when the source
-    // wrote them, in this process, so the shared memo answers them all.
+    // Measured with a cold memo: each incoming token is verified once, however often the
+    // chunk reads it.
     expect(perEntry.verifies).toBeLessThanOrEqual(1)
   })
 })
@@ -444,6 +452,7 @@ describe('key-branch lookup', () => {
     await f.manager.lock(key)
 
     await expect(f.manager.openKey(key)).rejects.toMatchObject({ name: 'VaultRepairPending' })
+    expect(f.corruptRows).toContainEqual(expect.objectContaining({ type: 'vault.key-branch', id }))
   })
 
   test('a corrupt branch record fails closed and is reported', async () => {
@@ -459,7 +468,7 @@ describe('key-branch lookup', () => {
     expect(f.corruptRows).toContainEqual(expect.objectContaining({ type: 'vault.key-branch', id }))
   })
 
-  test('a projection naming another key-branch record fails closed', async () => {
+  test('a projection naming another key-branch record fails closed until repair rebuilds it', async () => {
     const f = await fixture()
     const key = await keyWithEntries(f, 0)
     const other = await keyWithEntries(f, 0)
@@ -473,5 +482,96 @@ describe('key-branch lookup', () => {
     await f.manager.lock(key)
 
     await expect(f.manager.openKey(key)).rejects.toMatchObject({ name: 'VaultRepairPending' })
+    expect(f.corruptRows).toContainEqual(
+      expect.objectContaining({ type: 'vault.key-branch', id: otherID }),
+    )
+
+    // Repair rewrites the projection from the signed records. The key opens again.
+    await f.manager.repairFork({ ...key, excludedRecipients: [], reissue: [] })
+    await f.manager.lock(key)
+
+    await expect(f.manager.openKey(key)).resolves.toMatchObject({ version: 1 })
+  })
+})
+
+describe('PIN attempts', () => {
+  const pin = bytes('right')
+  const wrong = bytes('wrong')
+  const cost = { m: 8, t: 1, p: 1 }
+
+  async function pinKey(f: Fixture): Promise<KeyAddress> {
+    return await f.manager.createKey({
+      ownerDID: f.ownerDID,
+      wrappings: [
+        [
+          { kind: 'did', recipientDID: f.ownerDID },
+          { kind: 'pin', input: pin, cost },
+        ],
+      ],
+    })
+  }
+
+  // One more wrong attempt reports what the throttle has left for the key.
+  async function remainingAfterOneMore(f: Fixture, key: KeyAddress): Promise<number> {
+    const error = await f.manager.unlock({ ...key, inputs: { pin: wrong } }).catch((e) => e)
+
+    expect(error).toMatchObject({ name: 'VaultPinRejected' })
+
+    return (error as VaultPinRejected).attemptsRemaining
+  }
+
+  test('a wrong PIN in reKeyEntry spends one attempt on the source and none on the target', async () => {
+    const f = await fixture()
+    const source = await pinKey(f)
+    const target = await pinKey(f)
+    const entry = await f.manager.putEntry({
+      ...source,
+      entryID: 'pinned',
+      plaintext: bytes('secret'),
+      inputs: { pin },
+      ...metadata,
+    })
+
+    await f.manager.lock(source)
+    await f.manager.lock(target)
+    await expect(
+      f.manager.reKeyEntry({ ...entry, toKeyID: target.keyID, inputs: { pin: wrong } }),
+    ).rejects.toMatchObject({ name: 'VaultPinRejected' })
+
+    expect(await remainingAfterOneMore(f, source)).toBe(DEFAULT_FREE_ATTEMPTS - 2)
+    expect(await remainingAfterOneMore(f, target)).toBe(DEFAULT_FREE_ATTEMPTS - 1)
+  })
+
+  test('a wrong PIN in rotate spends one attempt across two key versions', async () => {
+    const f = await fixture()
+    const key = await pinKey(f)
+    const kept = await f.manager.putEntry({
+      ...key,
+      entryID: 'kept',
+      plaintext: bytes('one'),
+      inputs: { pin },
+      ...metadata,
+    })
+
+    await f.manager.putEntry({
+      ...key,
+      entryID: 'moved',
+      plaintext: bytes('two'),
+      inputs: { pin },
+      ...metadata,
+    })
+    // Leaves one entry at version 1 while the other moves to version 2.
+    await f.manager.rotate({
+      ...key,
+      inputs: { pin },
+      excludedRecipients: [],
+      reissue: [{ entryID: kept.entryID, action: 'skip' }],
+    })
+    await f.manager.lock(key)
+    await expect(
+      f.manager.rotate({ ...key, inputs: { pin: wrong }, excludedRecipients: [], reissue: [] }),
+    ).rejects.toMatchObject({ name: 'VaultPinRejected' })
+
+    expect(await remainingAfterOneMore(f, key)).toBe(DEFAULT_FREE_ATTEMPTS - 2)
   })
 })

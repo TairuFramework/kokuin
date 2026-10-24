@@ -13,6 +13,15 @@ export type VaultRecordTable = {
   meta: Record<string, unknown>
 }
 
+export type VaultKeyBranchTable = {
+  owner_did: string
+  key_id: string
+  key_version: number
+  record_id: string
+  branch_id: string
+  op_jwt: string
+}
+
 export type VaultRecordsTables = VaultStoreTables & {
   vault_records: VaultRecordTable
   vault_decisions: {
@@ -29,13 +38,6 @@ export type VaultRecordsTables = VaultStoreTables & {
     key_version: number
     branch_id: string
   }
-  vault_key_branches: {
-    owner_did: string
-    key_id: string
-    key_version: number
-    record_id: string
-    branch_id: string
-    op_jwt: string
-  }
+  vault_key_branches: VaultKeyBranchTable
   vault_revocations: { owner_did: string; key_id: string; recipient_did: string }
 }

@@ -533,7 +533,13 @@ export function createRotateFunctions(
     if (params.mode === 'local') return { status: 'not-needed' }
 
     try {
-      const version = await ctx.locked([request], (tx) => rotateLocked(request, tx, true))
+      const version = await ctx.locked([request], async (tx) => {
+        // A projection naming the wrong record refuses every branch read as pending. Rebuild it
+        // from the signed records first, so repair sees the key's real branches.
+        await ctx.recordsFor(tx).rebuildKeyBranches(request)
+
+        return rotateLocked(request, tx, true)
+      })
 
       if (version === null) return { status: 'not-needed' }
 

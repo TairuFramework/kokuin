@@ -23,7 +23,7 @@ import type {
   VaultCoordinatorParams,
 } from './coordinator-types.js'
 import { VaultWriteConflict } from './record-context.js'
-import { settleAll } from './settle.js'
+import { settleAll, settledValue } from './settle.js'
 import type { KeyAddress, KeyRow, WrappingRow } from './types.js'
 
 export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoordinator {
@@ -252,16 +252,18 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
     async status(request): Promise<KeyStatus> {
       await ctx.authorize('status', 'read', request)
 
-      const [key, revoked] = await settleAll([
+      // Both reads run together. Their results are checked in the old order: key, suite, revocation.
+      const [keyRead, revokedRead] = await Promise.allSettled([
         ctx.key(request),
         open.revoked(request, params.store),
       ])
+      const key = settledValue(keyRead)
 
       if (!isSupportedSuite(key.suite)) return { state: 'unopenable' }
 
       const version = request.atVersion ?? key.version
 
-      if (revoked) {
+      if (settledValue(revokedRead)) {
         ctx.evict(request)
 
         return { state: 'unopenable' }

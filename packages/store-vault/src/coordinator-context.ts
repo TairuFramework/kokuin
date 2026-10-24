@@ -371,6 +371,10 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
     if (proofs.length === 0) throw new VaultRepairPending()
 
     const adapter = recordsFor(store).adapter
+    // A projection row that names no matching record is local corruption. `repairFork` rebuilds it.
+    const corrupt = (id: string, reason: string): void => {
+      params.records.onCorruptRow?.({ type: 'vault.key-branch', id, error: new Error(reason) })
+    }
 
     // Read only the projected proof records. Any mismatch fails closed, as a full scan would.
     for (const id of proofs) {
@@ -387,7 +391,10 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
 
       const record = decision?.copies[0]
 
-      if (record === undefined) continue
+      if (record === undefined) {
+        corrupt(id, 'Key-branch projection names a missing record')
+        continue
+      }
 
       const op = await verified(record)
 
@@ -395,13 +402,17 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
         op.claim.meta.keyID !== address.keyID ||
         op.claim.meta.keyVersion !== version ||
         op.claim.meta.branchID !== branchID
-      )
+      ) {
+        corrupt(id, 'Key-branch projection disagrees with its signed record')
         continue
+      }
 
       const decoded = decodeVaultRecord(record, op.claim.meta)
 
       if (decoded.type === 'vault.key-branch')
         return { branchID, branchRecordID: record.id, suite: decoded.payload.suite }
+
+      corrupt(id, 'Key-branch projection names a record of another type')
     }
 
     throw new VaultRepairPending()

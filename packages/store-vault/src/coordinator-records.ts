@@ -10,7 +10,7 @@ import { encodeVaultRecordPayload, VaultTampered } from '@kokuin/vault'
 import type { CoordinatorContext } from './coordinator-context.js'
 import { VaultNotFound } from './coordinator-context.js'
 import type { CoordinatorCall } from './coordinator-types.js'
-import { settleAll } from './settle.js'
+import { settleAll, settledValue } from './settle.js'
 import type { EntryRow, VaultStoreAPI, WrappingRow } from './types.js'
 
 type Branch = { branchID: string; branchRecordID: string }
@@ -161,13 +161,12 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
       // A task that fails before reading the decisions must not leave this rejection unhandled.
       decisionsRead.catch(() => {})
 
-      const keyRead = async () => {
-        const key = await tx.getKey(request)
-
-        return { key, branches: await ctx.branches(request, key?.version ?? 0, tx) }
-      }
-      const [current, ops] = await settleAll([
-        keyRead(),
+      const keyRead = tx.getKey(request)
+      const branchesRead = keyRead.then((key) => ctx.branches(request, key?.version ?? 0, tx))
+      // All reads run together. Results are checked in the old order: key, then each record,
+      // then, after signing, the branches.
+      const [keyResult, opsResult, branchesResult] = await Promise.allSettled([
+        keyRead,
         settleAll(
           request.records.map(async (record) => {
             const op = await ctx.verified(record)
@@ -183,7 +182,10 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
             return op
           }),
         ),
+        branchesRead,
       ])
+      const key = settledValue(keyResult)
+      const ops = settledValue(opsResult)
       const output: Array<SignedRecord> = []
 
       // Signing stays sequential: signer calls follow the caller's record order.
@@ -199,14 +201,16 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
         })
       }
 
+      const branches = settledValue(branchesResult)
+
       await ctx.write(
         tx,
         output,
         {
           key: {
             ...request,
-            expectedVersion: current.key?.version ?? null,
-            expectedBranches: current.branches.map((b) => b.branchID),
+            expectedVersion: key?.version ?? null,
+            expectedBranches: branches.map((b) => b.branchID),
           },
         },
         request,

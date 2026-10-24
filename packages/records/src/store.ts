@@ -27,6 +27,10 @@ export type RecordStoreAdapter = {
   /** True when already bound to a caller-owned transaction; required for inline transaction adapters. */
   isTransaction?: boolean
   transaction<R>(fn: (tx: RecordStoreAdapter) => Promise<R>): Promise<R>
+  /**
+   * Must accept concurrent calls on one adapter, including one bound to a transaction:
+   * `getRecordDecisions` and apply issue several at once when `getMany` is absent.
+   */
   get(key: RecordKey): Promise<RecordDecision | null>
   getMany?(keys: ReadonlyArray<RecordKey>): Promise<RecordDecisionMap>
   list(types: ReadonlyArray<string>): Promise<Array<RecordDecision>>
@@ -44,7 +48,11 @@ export function recordKeyText(key: RecordKey): string {
   return JSON.stringify([key.type, key.owner, key.id])
 }
 
-/** The stored decisions of `keys`, through `getMany` when the store has it, else concurrent `get`s. */
+/**
+ * The stored decisions of `keys`, through `getMany` when the store has it, else concurrent `get`s.
+ * The fallback waits for every `get`, so none is left running in the caller's transaction, then
+ * throws the first failure in key order.
+ */
 export async function getRecordDecisions(
   store: RecordStoreAdapter,
   keys: ReadonlyArray<RecordKey>,
@@ -57,11 +65,13 @@ export async function getRecordDecisions(
   if (unique.size === 0) return new Map()
   if (store.getMany !== undefined) return await store.getMany([...unique.values()])
   const entries = [...unique]
-  const found = await Promise.all(entries.map(([, key]) => store.get(key)))
+  const found = await Promise.allSettled(entries.map(([, key]) => store.get(key)))
   const decisions: RecordDecisionMap = new Map()
   for (const [index, [text]] of entries.entries()) {
-    const decision = found[index]
-    if (decision != null) decisions.set(text, decision)
+    const result = found[index]
+    if (result === undefined) continue
+    if (result.status === 'rejected') throw result.reason
+    if (result.value != null) decisions.set(text, result.value)
   }
   return decisions
 }
