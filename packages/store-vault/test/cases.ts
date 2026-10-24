@@ -8,11 +8,16 @@ import {
   withKeyLock,
   withKeyLocks,
 } from '@hozon/db'
-import { getSuite } from '@kokuin/vault'
+import { getSuite, VAULT_OP_KIND } from '@kokuin/vault'
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import type { EntryRow, KeyAddress, VaultStoreAPI, WrappingRow } from '../src/index.js'
-import { getVaultStore, vaultStoreDefinition } from '../src/index.js'
+import {
+  getVaultRecordsStore,
+  getVaultStore,
+  vaultRecordsStoreDefinition,
+  vaultStoreDefinition,
+} from '../src/index.js'
 
 vi.mock('@hozon/db', async (importOriginal) => {
   const actual = await importOriginal<typeof Hozon>()
@@ -29,7 +34,7 @@ export type StoreHarness = {
   cleanup(): Promise<void>
 }
 
-export async function openVaultTestDB(harness: StoreHarness) {
+export async function openVaultTestDB(harness: StoreHarness, replicated = false) {
   const adapter = await harness.createAdapter()
   const queries: Array<{ sql: string; parameters: ReadonlyArray<unknown> }> = []
   const dialect = adapter.dialect
@@ -60,7 +65,22 @@ export async function openVaultTestDB(harness: StoreHarness) {
   })
   const db = new HozonDB({ adapter, tablePrefix: 'vault_cases' })
   db.register(vaultStoreDefinition)
-  return { db, store: await getVaultStore(db), queries, kind: adapter.kind }
+  db.register({
+    name: 'rawVault',
+    migrations: {},
+    createAPI: (db: Kysely<Record<string, never>>) => db,
+  } satisfies StoreDefinition<Record<string, never>, Kysely<Record<string, never>>>)
+  if (replicated) {
+    db.register(vaultRecordsStoreDefinition)
+    await getVaultRecordsStore(db, VAULT_OP_KIND)
+  }
+  return {
+    db,
+    store: await getVaultStore(db),
+    queries,
+    kind: adapter.kind,
+    raw: await db.getStore<Kysely<Record<string, never>>>('rawVault'),
+  }
 }
 
 export function stamp(counter: number): string {

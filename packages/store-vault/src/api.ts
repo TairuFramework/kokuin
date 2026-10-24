@@ -10,6 +10,9 @@ import {
   withStoreTransaction,
 } from '@hozon/db'
 
+import { claimMode, VaultModeConflict, vaultDatabases } from './record-context.js'
+import { getVaultRecordsStore } from './record-definition.js'
+import type { VaultRecordsTables } from './record-tables.js'
 import type {
   VaultEntryTable,
   VaultKeyTable,
@@ -104,6 +107,32 @@ export function createVaultStore(
     }
     return withKeyLocks(context.provider, 'vault_keys', addresses.map(lockTuple), run)
   }
+  const localMode = async (
+    trx: Kysely<VaultStoreTables>,
+    type: 'vault.key' | 'vault.entry' | 'vault.wrapping',
+    owner: string,
+    id: string,
+  ): Promise<void> => {
+    const table =
+      type === 'vault.key'
+        ? 'vault_keys'
+        : type === 'vault.entry'
+          ? 'vault_entries'
+          : 'vault_wrappings'
+    const column =
+      type === 'vault.key' ? 'key_id' : type === 'vault.entry' ? 'entry_id' : 'wrapping_id'
+    const row = await trx
+      .selectFrom(table)
+      .select('mode')
+      .where('owner_did', '=', owner)
+      .where(column, '=', id)
+      .executeTakeFirst()
+    if (row?.mode === 'replicated') throw new VaultModeConflict()
+    if (context.provider.hasStore('vault-records')) {
+      await getVaultRecordsStore(context.provider)
+      await claimMode(trx as Kysely<VaultRecordsTables>, { type, owner, id }, 'local')
+    }
+  }
   const selectEntry = (trx: Kysely<VaultStoreTables>, address: EntryAddress) => {
     return trx
       .selectFrom('vault_entries')
@@ -128,6 +157,7 @@ export function createVaultStore(
   }
   const updateEntry = async (row: EntryRow, expectedHLC?: string): Promise<UpdateEntryResult> => {
     return locked([row], async (trx) => {
+      await localMode(trx, 'vault.entry', row.ownerDID, row.entryID)
       let update = trx
         .updateTable('vault_entries')
         .set(entryValues(row))
@@ -164,6 +194,7 @@ export function createVaultStore(
     },
     async putKey(row) {
       await locked([row], async (trx) => {
+        await localMode(trx, 'vault.key', row.ownerDID, row.keyID)
         const values = {
           owner_did: row.ownerDID,
           key_id: row.keyID,
@@ -207,6 +238,7 @@ export function createVaultStore(
     },
     async setKeyState(row) {
       await locked([row], async (trx) => {
+        await localMode(trx, 'vault.key', row.ownerDID, row.keyID)
         await trx
           .updateTable('vault_keys')
           .set({ state: row.state })
@@ -217,6 +249,7 @@ export function createVaultStore(
     },
     async setKeyVersion(row) {
       await locked([row], async (trx) => {
+        await localMode(trx, 'vault.key', row.ownerDID, row.keyID)
         await trx
           .updateTable('vault_keys')
           .set({ version: row.version })
@@ -228,6 +261,7 @@ export function createVaultStore(
     },
     async deleteKey(address) {
       await locked([address], async (trx) => {
+        await localMode(trx, 'vault.key', address.ownerDID, address.keyID)
         await trx
           .deleteFrom('vault_keys')
           .where('owner_did', '=', address.ownerDID)
@@ -237,6 +271,7 @@ export function createVaultStore(
     },
     async putWrapping(row) {
       await locked([row], async (trx) => {
+        await localMode(trx, 'vault.wrapping', row.ownerDID, row.wrappingID)
         const existing = await trx
           .selectFrom('vault_wrappings')
           .select('key_id')
@@ -299,6 +334,7 @@ export function createVaultStore(
       const row = await api.getWrapping(address)
       if (row == null) return
       await locked([row], async (trx) => {
+        await localMode(trx, 'vault.wrapping', row.ownerDID, row.wrappingID)
         await trx
           .deleteFrom('vault_wrappings')
           .where('owner_did', '=', row.ownerDID)
@@ -309,6 +345,16 @@ export function createVaultStore(
     },
     async deleteWrappingsBelowVersion(address) {
       await locked([address], async (trx) => {
+        const rows = await trx
+          .selectFrom('vault_wrappings')
+          .selectAll()
+          .where('owner_did', '=', address.ownerDID)
+          .where('key_id', '=', address.keyID)
+          .where('key_version', '<', address.keyVersion)
+          .execute()
+        for (const row of rows)
+          await localMode(trx, 'vault.wrapping', row.owner_did, row.wrapping_id)
+
         await trx
           .deleteFrom('vault_wrappings')
           .where('owner_did', '=', address.ownerDID)
@@ -319,6 +365,7 @@ export function createVaultStore(
     },
     async putEntry(row) {
       await locked([row], async (trx) => {
+        await localMode(trx, 'vault.entry', row.ownerDID, row.entryID)
         const existing = await selectEntry(trx, row).executeTakeFirst()
         if (existing != null && existing.key_id !== row.keyID)
           throw new Error('Entry belongs to another key')
@@ -339,6 +386,7 @@ export function createVaultStore(
       const source = await api.getEntry(row)
       if (source == null) return
       await locked([source, row], async (trx) => {
+        await localMode(trx, 'vault.entry', row.ownerDID, row.entryID)
         // UPDATE-only plus the source predicate prevents resurrection and stale reassociation.
         await trx
           .updateTable('vault_entries')
@@ -407,6 +455,7 @@ export function createVaultStore(
       const row = await api.getEntry(address)
       if (row == null) return
       await locked([row], async (trx) => {
+        await localMode(trx, 'vault.entry', row.ownerDID, row.entryID)
         await trx
           .deleteFrom('vault_entries')
           .where('owner_did', '=', row.ownerDID)
@@ -425,6 +474,7 @@ export function createVaultStore(
       })
     },
   }
+  vaultDatabases.set(api, { db: db as Kysely<VaultRecordsTables>, adapter, context })
   databases.set(api, db)
   return api
 }

@@ -653,6 +653,9 @@ importers:
       '@hozon/db':
         specifier: 'catalog:'
         version: 0.4.0(@logtape/logtape@2.4.2)
+      '@kokuin/records':
+        specifier: workspace:^
+        version: link:../records
       '@kokuin/vault':
         specifier: workspace:^
         version: link:../vault

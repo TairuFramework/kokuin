@@ -35,6 +35,7 @@
   "dependencies": {
     "@hozon/adapter": "catalog:",
     "@hozon/db": "catalog:",
+    "@kokuin/records": "workspace:^",
     "@kokuin/vault": "workspace:^"
   },
   "devDependencies": {
