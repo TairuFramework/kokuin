@@ -525,13 +525,25 @@ export function vaultKeyVersionReader(
   }
 }
 
+// One proof definition per params object. It closes over `params` only and keeps no state.
+const proofTypes = new WeakMap<VaultRecordTypeParams, RecordTypeDefinition>()
+
+function proofTypeFor(params: VaultRecordTypeParams): RecordTypeDefinition {
+  let definition = proofTypes.get(params)
+  if (definition === undefined) {
+    definition = createType(WRAPPING, params, false)
+    proofTypes.set(params, definition)
+  }
+  return definition
+}
+
 /** Proofs retain consumer authority checks but are never addressed to the local receiver. */
 export function vaultProofAuthorizer(
   params: VaultRecordTypeParams,
   store: RecordStoreAdapter,
   transportContext?: unknown,
 ): VisibilityContext['authorizeProof'] {
-  const wrapping = createType(WRAPPING, params, false)
+  const wrapping = proofTypeFor(params)
 
   return async (record, stored) => {
     if (record.type !== WRAPPING) return false

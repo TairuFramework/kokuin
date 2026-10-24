@@ -1,4 +1,5 @@
 import {
+  findMethodResolver,
   isVerifiedToken,
   type MethodRegistry,
   normalizeDID,
@@ -23,6 +24,37 @@ export type VerifiedRecordOp = {
   issuer: string
   claim: RecordClaim
   opHash: string
+}
+
+/** How many verified record ops {@link verifyRecordOp} keeps, least recently used evicted first. */
+export const RECORD_OP_MEMO_SIZE = 1024
+
+type OpMemoEntry = { iss: string; op: VerifiedRecordOp }
+
+// Module-level, so every store, adapter and chunk shares it. Only self-certifying issuers are kept:
+// an op token has no time claims, so verifying it is a pure function of its bytes and the op kind.
+const opMemo = new Map<string, OpMemoEntry>()
+
+/**
+ * Whether `iss` resolves from the token alone: `did:key` carries its key and a `did:peer:4`
+ * document is fixed by its hash. A registry entry for the method takes over resolution, and its
+ * keys may rotate, so such an issuer is never remembered across calls.
+ */
+function selfCertifying(iss: string, methods?: MethodRegistry): boolean {
+  if (!iss.startsWith('did:key:') && !iss.startsWith('did:peer:4')) return false
+  return methods == null || findMethodResolver(methods, iss) === undefined
+}
+
+/** A caller may change what it gets back. Never hand out the remembered object itself. */
+function copyOp(op: VerifiedRecordOp): VerifiedRecordOp {
+  // A claim is decoded from canonical JSON, so a JSON round trip copies it exactly.
+  const claim: RecordClaim = JSON.parse(JSON.stringify(op.claim))
+  return { issuer: op.issuer, claim, opHash: op.opHash }
+}
+
+/** Forget every remembered op. Test-only; not exported from the package. */
+export function clearRecordOpMemo(): void {
+  opMemo.clear()
 }
 
 /** Thrown when an identity signs an envelope that record-op verification cannot accept. */
@@ -172,6 +204,16 @@ export async function verifyRecordOp(
   if (!isCanonicalCompactToken(opJWT)) {
     return null
   }
+  const opHash = recordOpHash(opJWT)
+  // Keyed on the token's digest: the same bytes under the same kind verify the same way.
+  const memoKey = JSON.stringify([opKind, opHash])
+  const known = opMemo.get(memoKey)
+  if (known !== undefined && selfCertifying(known.iss, methods)) {
+    // Refreshed, so the least recently used entry is the one evicted.
+    opMemo.delete(memoKey)
+    opMemo.set(memoKey, known)
+    return copyOp(known.op)
+  }
   let verified: VerifiedToken<Record<string, unknown>>
   try {
     verified = await verifyToken<Record<string, unknown>>(opJWT, { methods })
@@ -188,7 +230,16 @@ export async function verifyRecordOp(
   if (decoded === null) {
     return null
   }
-  return { issuer: normalizeDID(iss), claim: decoded, opHash: recordOpHash(opJWT) }
+  const op = { issuer: normalizeDID(iss), claim: decoded, opHash }
+  // Only successes are kept. A refusal is recomputed on every call.
+  if (selfCertifying(iss, methods)) {
+    opMemo.set(memoKey, { iss, op: copyOp(op) })
+    if (opMemo.size > RECORD_OP_MEMO_SIZE) {
+      const oldest = opMemo.keys().next().value
+      if (oldest !== undefined) opMemo.delete(oldest)
+    }
+  }
+  return op
 }
 
 /**
@@ -204,7 +255,13 @@ export async function verifySignedRecord(
   opKind: string,
   methods?: MethodRegistry,
 ): Promise<VerifiedRecordOp | null> {
-  const verified = await verifyRecordOp(record.opJWT, opKind, methods)
+  return bindRecord(record, await verifyRecordOp(record.opJWT, opKind, methods))
+}
+
+function bindRecord(
+  record: SignedRecord,
+  verified: VerifiedRecordOp | null,
+): VerifiedRecordOp | null {
   if (verified === null) {
     return null
   }
@@ -219,4 +276,25 @@ export async function verifySignedRecord(
     return null
   }
   return verified
+}
+
+/**
+ * {@link verifySignedRecord} that verifies each distinct op token once for the verifier's
+ * lifetime, whatever its issuer's DID method. Scope one to a single operation, such as one apply
+ * chunk: a resolved issuer's keys may rotate between operations.
+ */
+export function createRecordVerifier(
+  opKind: string,
+  methods?: MethodRegistry,
+): (record: SignedRecord) => Promise<VerifiedRecordOp | null> {
+  const ops = new Map<string, Promise<VerifiedRecordOp | null>>()
+  return async (record) => {
+    let pending = ops.get(record.opJWT)
+    if (pending === undefined) {
+      pending = verifyRecordOp(record.opJWT, opKind, methods)
+      ops.set(record.opJWT, pending)
+    }
+    const op = await pending
+    return bindRecord(record, op === null ? null : copyOp(op))
+  }
 }

@@ -40,13 +40,9 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     if (params.mode !== 'replicated') return false
 
     const denied = await ctx.recordsFor(store).listRevocations(address)
+    const own = vaultRevocationRecordID(address.keyID, params.principal)
 
-    return denied.some((did) => {
-      return (
-        vaultRevocationRecordID(address.keyID, did) ===
-        vaultRevocationRecordID(address.keyID, params.principal)
-      )
-    })
+    return denied.some((did) => vaultRevocationRecordID(address.keyID, did) === own)
   }
 
   async function doOpen(

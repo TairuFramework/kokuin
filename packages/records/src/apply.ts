@@ -3,7 +3,7 @@ import type { HLCTimestamp } from '@sozai/hlc'
 
 import { parseBoundedHLC } from './clock.js'
 import type { RecordDecision } from './decision.js'
-import { type VerifiedRecordOp, verifySignedRecord } from './op.js'
+import { createRecordVerifier, type VerifiedRecordOp, verifySignedRecord } from './op.js'
 import { compareRecordOps, type EqualVersionDecision, type MergePolicy } from './policy.js'
 import {
   type RecordKey,
@@ -274,6 +274,8 @@ type ChunkContext = RecordReceiveContext & {
   methods?: MethodRegistry
   decisions: Map<string, DecisionSnapshot>
   dependencies: DependencyLists
+  /** Verifies each distinct op token once for this apply call. */
+  verify: (record: SignedRecord) => Promise<VerifiedRecordOp | null>
 }
 
 type DecisionSnapshot = {
@@ -289,7 +291,7 @@ async function snapshotOf(
   const verified = await Promise.all(
     (decision?.copies ?? []).map(async (copy) => ({
       copy,
-      op: await verifySignedRecord(copy, ctx.opKind, ctx.methods),
+      op: await ctx.verify(copy),
     })),
   )
   return { decision, verified, checkedPrior: false }
@@ -581,6 +583,7 @@ class RefusedCandidate extends Error {
 export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<ApplyResult> {
   const { records, store, types, nowMS, maxDriftMS, receiveClock } = params
   const ranks = rankTypes(types)
+  const verify = createRecordVerifier(params.opKind, params.methods)
   const rejected: ApplyResult['rejected'] = []
   const candidates: Array<Candidate> = []
   // Refused records await one batched read of the store, which may show them as replays.
@@ -596,7 +599,7 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
       rejected.push({ record, reason: 'unknown-type' })
       continue
     }
-    const op = await verifySignedRecord(record, params.opKind, params.methods)
+    const op = await verify(record)
     if (op === null) {
       rejected.push({ record, reason: 'signature' })
       continue
@@ -655,7 +658,7 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
       if (!verifiedStored.has(id)) {
         verifiedStored.add(id)
         for (const copy of prefetched.get(id)?.copies ?? []) {
-          const op = await verifySignedRecord(copy, params.opKind, params.methods)
+          const op = await verify(copy)
           if (op !== null && op.issuer !== op.claim.owner) await prefetchController(op.issuer)
         }
       }
@@ -721,6 +724,7 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
             candidate.definition.dependencies(candidate.record, candidate.op),
           ]),
         ),
+        verify,
       }
       // One batched read for every decision the chunk will consult: each record's own and its
       // dependencies'. Writes made by this chunk update these snapshots in place.

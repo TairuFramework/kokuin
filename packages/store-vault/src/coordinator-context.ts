@@ -157,10 +157,20 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
   const cache = createKeyCache(params.cache)
   const generations = new Map<string, { ownerDID: string; value: number }>()
   const cacheID = (address: KeyAddress) => JSON.stringify([address.ownerDID, address.keyID])
+  // One records object per store handle. It holds no per-call state: its adapter reads through the
+  // handle's own database, and lock state lives only on adapters built inside `transaction`.
+  const recordsByStore = new WeakMap<VaultStoreAPI, VaultRecords>()
   const recordsFor = (store: VaultStoreAPI): VaultRecords => {
     if (params.mode !== 'replicated') throw new TypeError('Local coordinator has no records path')
 
-    return createVaultRecords({ ...params.records, store, authority: params.authority })
+    let records = recordsByStore.get(store)
+
+    if (records === undefined) {
+      records = createVaultRecords({ ...params.records, store, authority: params.authority })
+      recordsByStore.set(store, records)
+    }
+
+    return records
   }
   const records = params.mode === 'replicated' ? recordsFor(params.store) : undefined
 

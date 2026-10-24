@@ -66,6 +66,24 @@ function isKeyVersion(value: unknown): value is number {
 type Holding = { keyID: string; owner: string }
 
 /**
+ * Key holdings checked so far in one {@link filterVisibleRecords} call. Holdings are checked in
+ * order, each at most once, until one answers the key asked about. The index lives only as long
+ * as that call, which writes nothing, so a revoked or replaced holding is never answered from it
+ * later.
+ */
+type HoldingIndex = {
+  records?: Promise<Array<SignedRecord>>
+  next: number
+  held: Set<string>
+}
+
+const holdingIndexes = new WeakMap<VisibilityContext, HoldingIndex>()
+
+function holdingID(owner: string, keyID: string): string {
+  return JSON.stringify([owner, keyID])
+}
+
+/**
  * Whether the responder's stored row for a proof's record leaves the proof standing: none,
  * one that no longer verifies (apply treats it as absent too), or a live row of the same
  * owner that does not order after the proof. A responder behind the requester still admits
@@ -186,6 +204,33 @@ async function isKeyHolder(claim: RecordClaim, ctx: VisibilityContext): Promise<
   ) {
     return false
   }
+  const index = holdingIndexes.get(ctx)
+  if (index !== undefined) {
+    const wanted = holdingID(claim.owner, keyID)
+    if (index.held.has(wanted)) {
+      return true
+    }
+    index.records ??= ctx.store
+      .list([...ctx.holderTypes.keys()])
+      .then((holdings) => [...holdings.flatMap((decision) => decision.copies), ...ctx.proofs])
+    const records = await index.records
+    while (index.next < records.length) {
+      const record = records[index.next]
+      index.next += 1
+      if (record === undefined) {
+        break
+      }
+      const holding = await checkedHolding(record, ctx)
+      if (holding === null) {
+        continue
+      }
+      index.held.add(holdingID(holding.owner, holding.keyID))
+      if (holding.keyID === keyID && holding.owner === claim.owner) {
+        return true
+      }
+    }
+    return false
+  }
   const holdings = await ctx.store.list([...ctx.holderTypes.keys()])
   for (const record of [...holdings.flatMap((decision) => decision.copies), ...ctx.proofs]) {
     const holding = await checkedHolding(record, ctx)
@@ -292,10 +337,25 @@ export async function filterVisibleRecords(
   types: ReadonlyMap<string, RecordTypeDefinition>,
   ctx: VisibilityContext,
 ): Promise<Array<SignedRecord>> {
+  // One context for this call: holdings and key versions are read once, then indexed.
+  const versions = new Map<string, Promise<number | null>>()
+  const scoped: VisibilityContext = {
+    ...ctx,
+    currentKeyVersion: (owner, keyID) => {
+      const id = holdingID(owner, keyID)
+      let version = versions.get(id)
+      if (version === undefined) {
+        version = ctx.currentKeyVersion(owner, keyID)
+        versions.set(id, version)
+      }
+      return version
+    },
+  }
+  holdingIndexes.set(scoped, { next: 0, held: new Set() })
   const visible: Array<SignedRecord> = []
   for (const record of records) {
     const hook = types.get(record.type)?.visibleTo
-    if (hook !== undefined && (await hook(record, ctx))) {
+    if (hook !== undefined && (await hook(record, scoped))) {
       visible.push(record)
     }
   }

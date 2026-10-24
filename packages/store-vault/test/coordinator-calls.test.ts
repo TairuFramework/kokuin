@@ -1,6 +1,7 @@
 import type { Kysely, StoreDefinition } from '@hozon/db'
 import { HozonDB, sql } from '@hozon/db'
 import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
+import type * as Token from '@kokuin/token'
 import { randomIdentity } from '@kokuin/token'
 import { getSuite, VAULT_OP_KIND } from '@kokuin/vault'
 import { createRuntime } from '@sozai/runtime'
@@ -15,6 +16,24 @@ import {
   vaultStoreDefinition,
 } from '../src/index.js'
 
+// Counts every token signature verification, the cost the memos below save.
+const verifications = vi.hoisted(() => ({ count: 0 }))
+
+vi.mock('@kokuin/token', async (importOriginal) => {
+  const actual = await importOriginal<typeof Token>()
+
+  return {
+    ...actual,
+    verifyToken: new Proxy(actual.verifyToken, {
+      apply(target, self, args) {
+        verifications.count += 1
+
+        return Reflect.apply(target, self, args)
+      },
+    }),
+  }
+})
+
 type Measured = {
   /** Statements executed, including transaction control. */
   total: number
@@ -24,6 +43,8 @@ type Measured = {
   batchGets: number
   /** `vault.key-branch` record rows read. */
   branchRows: number
+  /** Token signature verifications. */
+  verifies: number
   /** Most statements built and not yet finished at once. Above 1 means reads overlapped. */
   peak: number
 }
@@ -46,7 +67,14 @@ const runtime = createRuntime()
 
 async function fixture(): Promise<Fixture> {
   const adapter = new NodeSQLiteAdapter({ database: ':memory:' })
-  const stats: Measured = { total: 0, entryGets: 0, batchGets: 0, branchRows: 0, peak: 0 }
+  const stats: Measured = {
+    total: 0,
+    entryGets: 0,
+    batchGets: 0,
+    branchRows: 0,
+    verifies: 0,
+    peak: 0,
+  }
   const corruptRows: Array<CorruptRow> = []
   const tally = async <Result extends { rows: Array<unknown> }>(
     running: Promise<Result>,
@@ -182,9 +210,10 @@ async function fixture(): Promise<Fixture> {
       stats.batchGets = 0
       stats.branchRows = 0
       stats.peak = 0
+      verifications.count = 0
       await operation()
 
-      return { ...stats }
+      return { ...stats, verifies: verifications.count }
     },
     failClock(gate) {
       clockGate = gate
@@ -239,6 +268,7 @@ describe('coordinator store calls (replicated)', () => {
     const perEntry = {
       total: (rotate12.total - rotate4.total) / 8,
       entryGets: (rotate12.entryGets - rotate4.entryGets) / 8,
+      verifies: (rotate12.verifies - rotate4.verifies) / 8,
     }
 
     console.table({ put, update, read, open, list, reKey, delete: remove, rotate4, rotate12 })
@@ -250,6 +280,11 @@ describe('coordinator store calls (replicated)', () => {
     expect(rotate12.batchGets).toBe(rotate4.batchGets)
     expect(rotate12.branchRows).toBe(rotate4.branchRows)
     expect(perEntry.total).toBeLessThanOrEqual(12)
+
+    // Each signed op is verified once per process: a write verifies only the record it signs.
+    expect(perEntry.verifies).toBeLessThanOrEqual(1)
+    for (const measured of [put, update, reKey, remove])
+      expect(measured.verifies).toBeLessThanOrEqual(1)
 
     // Independent reads inside one transaction are requested together. Reads outside a
     // transaction, as in openKey, each take the single SQLite connection in turn.
@@ -291,6 +326,7 @@ describe('records apply reads (replicated)', () => {
       total: (large.total - small.total) / 8,
       entryGets: (large.entryGets - small.entryGets) / 8,
       branchRows: (large.branchRows - small.branchRows) / 8,
+      verifies: (large.verifies - small.verifies) / 8,
     }
 
     console.table({ apply4: small, apply12: large })
@@ -301,6 +337,9 @@ describe('records apply reads (replicated)', () => {
     expect(perEntry.branchRows).toBe(0)
     expect(large.batchGets).toBe(small.batchGets)
     expect(perEntry.total).toBeLessThanOrEqual(12)
+    // At most one verification per incoming token. These tokens were verified when the source
+    // wrote them, in this process, so the shared memo answers them all.
+    expect(perEntry.verifies).toBeLessThanOrEqual(1)
   })
 })
 
