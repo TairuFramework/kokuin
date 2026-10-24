@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/controller",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "did:kokuin controller key event log",
   "keywords": [
     "did",
