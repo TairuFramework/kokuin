@@ -171,6 +171,43 @@ describe('signRecordOp / verifyRecordOp', () => {
     expect(await verifyRecordOp(`${signed.opJWT}x`, TEST_OP_KIND)).toBeNull()
   })
 
+  test('one identity is called one at a time, in call order, and a failure frees the queue', async () => {
+    const identity = randomIdentity()
+    const order: Array<string> = []
+    let active = false
+    let failNext = true
+    const signer: SigningIdentity = {
+      ...identity,
+      async signToken(payload, options) {
+        if (active) throw new Error('Overlapping signer call')
+        active = true
+        try {
+          order.push(String(payload.claim))
+          await new Promise((resolve) => setTimeout(resolve, 1))
+          if (failNext) {
+            failNext = false
+            throw new Error('Device refused')
+          }
+          return await identity.signToken(payload, options)
+        } finally {
+          active = false
+        }
+      },
+    }
+    const claims = [1, 2, 3, 4].map((byte) => liveClaim(identity, new Uint8Array([byte])))
+    const results = await Promise.allSettled(
+      claims.map((claim) => signRecordOp(signer, claim, TEST_OP_KIND)),
+    )
+
+    expect(results.map((result) => result.status)).toEqual([
+      'rejected',
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+    ])
+    expect(order).toEqual(claims.map((claim) => toB64U(canonicalRecordClaim(claim))))
+  })
+
   test('the signed token carries the canonical claim bytes under the domain marker', async () => {
     const identity = randomIdentity()
     const claim = liveClaim(identity, new Uint8Array([7]))

@@ -18,13 +18,18 @@ would be a cycle.
 
 - `@kokuin/records` -- signed replicated records, merge policies, apply, visibility, and range reconciliation. No Hozon dependency. See [records](../reference/records.md).
 
+- `@kokuin/vault` -- content-key crypto, factor wrapping, codecs and five signed vault record definitions.
+  It depends on token, jwe and records, with no Hozon dependency. See [vault](../reference/vault.md).
+- `@kokuin/store-vault` -- local storage, optional replicated projections and authority-checked coordinators.
+  It depends on Hozon, records and vault. Transport and membership policy remain consumer-owned.
+
 - `@kokuin/store-controller` -- Hozon-backed `LogStore` for `did:kokuin:` event logs; `merge` is
   serialised per DID with hozon's key lock.
 - `@kokuin/store-delegation` -- Hozon-backed store for delegation tokens (with superseded grant
   history, so a delivered JTI stays revocable) and revocations, plus the revocation checker over
   `@kokuin/capability`. See [../reference/stores.md](../reference/stores.md).
 
-These two are the only published packages depending on hozon (`@hozon/db`, `@hozon/adapter`); the
+These three store packages are the only published packages depending on hozon (`@hozon/db`, `@hozon/adapter`); the
 rest of the repo stays free of it, so identity primitives never pull in a database. The `hlc` stamps
 they store are supplied by the caller, never generated here.
 
