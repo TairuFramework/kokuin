@@ -129,16 +129,22 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
       const opened = await open.open({ ...request, atVersion: key.version }, store)
       try {
         const wrappingID = params.runtime.getRandomID()
+        const factors = change(factorsFromDescriptors(existing.descriptors, request.inputs))
         const wrapped = await getSuite(opened.suite).wrap({
           runtime: params.runtime,
           contentKey: opened.contentKey,
-          factors: change(factorsFromDescriptors(existing.descriptors, request.inputs)),
+          factors,
           wrappingID,
           keyID: key.keyID,
           keyVersion: key.version,
           methods: params.methods,
         })
-        const row = { ...existing, wrappingID, ...wrapped }
+        const row = {
+          ...existing,
+          wrappingID,
+          ...wrapped,
+          recipientDID: recipientDIDForFactors(factors),
+        }
         if (params.mode === 'local') {
           await store.putWrapping(row)
           await store.deleteWrapping(existing)
@@ -200,7 +206,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
     },
     async lockAll(ownerDID, call = {}) {
       await ctx.authorize('lockAll', 'read', { ownerDID, ...call })
-      ctx.evictAll()
+      ctx.evictAll(ownerDID)
     },
     async status(request): Promise<KeyStatus> {
       await ctx.authorize('status', 'read', request)
@@ -363,10 +369,13 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
     },
     async readEntry(request) {
       await ctx.authorize('readEntry', 'read', request)
-      const row = await params.store.getEntry(request)
-      if (row === undefined) throw new VaultNotFound()
-      await ctx.authorize('readEntry', 'read', { ...request, keyID: row.keyID })
-      return open.decrypt(row, { ...row, inputs: request.inputs })
+      return ctx.read(async (store) => {
+        const row = await store.getEntry(request)
+        if (row === undefined) throw new VaultNotFound()
+        await ctx.authorize('readEntry', 'read', { ...request, keyID: row.keyID }, store)
+        await records.entryInfo(row, store)
+        return open.decrypt(row, { ...row, inputs: request.inputs }, store)
+      })
     },
     async getEntry(request) {
       await ctx.authorize('getEntry', 'read', request)

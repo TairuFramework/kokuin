@@ -192,9 +192,19 @@ export function createRotateFunctions(
           retained.filter((w) => w.provenance === winner.branchID).map(signature),
         )
         const addsRecipient = retained.some((w) => !winnerRecipients.has(signature(w)))
+        let unreadableProjection = false
+        for (const selection of selections) {
+          if (selection.row === undefined) continue
+          const branch = await ctx.branch(key, selection.keyVersion, store)
+          if (selection.branchID !== branch.branchID) {
+            unreadableProjection = true
+            break
+          }
+        }
         if (
           !addsEntry &&
           !addsRecipient &&
+          !unreadableProjection &&
           request.reissue.length === 0 &&
           request.excludedRecipients.length === 0
         )

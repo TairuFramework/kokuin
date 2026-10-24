@@ -57,8 +57,7 @@ export class VaultKeyLocked extends Error {
 export function createCoordinatorContext(params: VaultCoordinatorParams) {
   if (params.authority === undefined) throw new TypeError('CredentialAuthority is required')
   const cache = createKeyCache(params.cache)
-  const generations = new Map<string, number>()
-  let epoch = 0
+  const generations = new Map<string, { ownerDID: string; value: number }>()
   const cacheID = (address: KeyAddress) => JSON.stringify([address.ownerDID, address.keyID])
   const recordsFor = (store: VaultStoreAPI) => {
     if (params.mode !== 'replicated') throw new TypeError('Local coordinator has no records path')
@@ -288,16 +287,41 @@ export function createCoordinatorContext(params: VaultCoordinatorParams) {
       },
     )
   }
+  async function read<Result>(fn: (store: VaultStoreAPI) => Promise<Result>): Promise<Result> {
+    const database = vaultDatabases.get(params.store)
+    if (database === undefined) throw new TypeError('Coordinator requires a registered vault store')
+    return database.context.provider.withTransaction(async (provider) => {
+      const store = await getVaultStore(provider)
+      const transaction = vaultDatabases.get(store)
+      if (transaction === undefined)
+        throw new TypeError('Transaction-bound vault store is unavailable')
+      return withStoreTransaction(transaction.db, () => fn(store))
+    })
+  }
   function evict(address: KeyAddress) {
     const id = cacheID(address)
-    generations.set(id, (generations.get(id) ?? 0) + 1)
+    generations.set(id, {
+      ownerDID: address.ownerDID,
+      value: (generations.get(id)?.value ?? 0) + 1,
+    })
     cache.evict(id)
   }
-  function evictAll() {
-    epoch += 1
-    cache.evictAll()
+  function evictAll(ownerDID: string) {
+    for (const [id, generation] of generations) {
+      if (generation.ownerDID !== ownerDID) continue
+      generation.value += 1
+      cache.evict(id)
+    }
   }
-  const generation = (a: KeyAddress) => `${epoch}:${generations.get(cacheID(a)) ?? 0}`
+  function generation(address: KeyAddress) {
+    const id = cacheID(address)
+    let current = generations.get(id)
+    if (current === undefined) {
+      current = { ownerDID: address.ownerDID, value: 0 }
+      generations.set(id, current)
+    }
+    return String(current.value)
+  }
   return {
     params,
     cache,
@@ -315,6 +339,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams) {
     write,
     keyRecords,
     locked,
+    read,
     evict,
     evictAll,
     generation,

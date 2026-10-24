@@ -1,5 +1,5 @@
 import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
-import { recordClaimDigest, verifySignedRecord } from '@kokuin/records'
+import { recordClaimDigest, signRecordOp, verifySignedRecord } from '@kokuin/records'
 import { createIdentity, randomIdentity } from '@kokuin/token'
 import {
   getSuite,
@@ -23,6 +23,163 @@ let counter = 1000
 const nowMS = () => Date.parse('2026-10-01T01:00:00.000Z')
 const runtime = createRuntime()
 const cost = { m: 8, t: 1, p: 1 }
+
+test('replicated reads refuse replayed ciphertext beneath a newer signed entry decision', async () => {
+  const { sql } = await import('@hozon/db')
+  const f = await fixture('replicated')
+  const key = await f.manager.createKey({ ownerDID: f.identity.id })
+  const entry = await f.manager.putEntry({
+    ...key,
+    entryID: 'replay',
+    plaintext: bytes('old'),
+    ...metadata,
+  })
+  const old = await f.store.getEntry(entry)
+  if (!old) throw new Error('missing entry')
+  await f.manager.updateEntry({ ...entry, plaintext: bytes('new') })
+  expect(text(await f.manager.readEntry(entry))).toBe('new')
+  await sql`update ${sql.table('vault_entries')} set iv = ${old.iv}, ciphertext = ${old.ciphertext} where entry_id = ${entry.entryID}`.execute(
+    f.raw,
+  )
+  await expect(f.manager.readEntry(entry)).rejects.toBeInstanceOf(VaultTampered)
+})
+
+test('repair restores readable projections after concurrent preservation rotations', async () => {
+  const a = await fixture('replicated')
+  const b = await fixture('replicated', a.identity)
+  const key = await a.manager.createKey({ ownerDID: a.identity.id })
+  const entry = await a.manager.putEntry({
+    ...key,
+    entryID: 'preserved',
+    plaintext: bytes('same'),
+    ...metadata,
+  })
+  const types = [
+    'vault.key',
+    'vault.key-branch',
+    'vault.wrapping',
+    'vault.entry',
+    'vault.revocation',
+  ]
+  await b.manager.records.apply(
+    (await a.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+  )
+  await a.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })
+  await b.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })
+  const left = (await a.manager.records.listKeyBranches({ ...key, keyVersion: 2 }))[0]
+  const right = (await b.manager.records.listKeyBranches({ ...key, keyVersion: 2 }))[0]
+  if (!left || !right) throw new Error('missing branches')
+  const [winner, loser] =
+    recordClaimDigest(left.introducingOp.claim) > recordClaimDigest(right.introducingOp.claim)
+      ? [a, b]
+      : [b, a]
+  // A later entry decision on the losing branch retains the same plaintext and content intent.
+  const selected = (
+    await loser.manager.records.adapter.get({
+      type: 'vault.entry',
+      owner: key.ownerDID,
+      id: entry.entryID,
+    })
+  )?.copies[0]
+  if (!selected) throw new Error('missing entry record')
+  const op = await verifySignedRecord(selected, VAULT_OP_KIND)
+  if (!op) throw new Error('invalid entry record')
+  const hlc = await loser.params.nextHLC()
+  await loser.manager.records.apply([
+    {
+      ...selected,
+      hlc,
+      ...(await signRecordOp(loser.identity, { ...op.claim, hlc }, VAULT_OP_KIND)),
+    },
+  ])
+  await winner.manager.records.apply(
+    (await loser.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+  )
+  await expect(winner.manager.readEntry(entry)).rejects.toMatchObject({
+    name: 'VaultSupersededBranch',
+  })
+  expect(await winner.manager.repairFork({ ...key, excludedRecipients: [], reissue: [] })).toEqual({
+    status: 'rotated',
+    version: 3,
+  })
+  expect(text(await winner.manager.readEntry(entry))).toBe('same')
+})
+
+for (const mode of ['local', 'replicated'] as const) {
+  test(`factor edits restore recipient metadata when only the DID remains (${mode})`, async () => {
+    const f = await fixture(mode)
+    const pin = bytes('pin')
+    const key = await f.manager.createKey({
+      ownerDID: f.identity.id,
+      wrappings: [
+        [
+          { kind: 'did', recipientDID: f.identity.id },
+          { kind: 'pin', input: pin, cost },
+        ],
+      ],
+    })
+    await f.manager.removeFactor({ ...key, inputs: { pin }, kind: 'pin' })
+    expect((await f.store.listWrappings(key))[0]?.recipientDID).toBe(f.identity.id)
+  })
+
+  test(`owner lockAll preserves another owner's cached and in-flight keys (${mode})`, async () => {
+    const f = await fixture(mode)
+    const owner = randomIdentity().id
+    const own = await f.manager.createKey({ ownerDID: f.identity.id })
+    const ownPending = await f.manager.createKey({ ownerDID: f.identity.id })
+    const other = await f.manager.createKey({ ownerDID: owner })
+    const pending = await f.manager.createKey({ ownerDID: owner })
+    await f.manager.unlock(own)
+    await f.manager.unlock(other)
+    const unwrap = getSuite(1).unwrap.bind(getSuite(1))
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let reached = 0
+    vi.spyOn(getSuite(1), 'unwrap').mockImplementation(async (p) => {
+      reached += 1
+      await gate
+      return unwrap(p)
+    })
+    const opening = f.manager.openKey(pending)
+    const ownOpening = f.manager.openKey(ownPending)
+    await vi.waitFor(() => expect(reached).toBe(2))
+    await f.manager.lockAll(f.identity.id)
+    release()
+    ;(await opening).contentKey.fill(0)
+    ;(await ownOpening).contentKey.fill(0)
+    expect(await f.manager.status(own)).not.toMatchObject({ state: 'unlocked' })
+    expect(await f.manager.status(ownPending)).not.toMatchObject({ state: 'unlocked' })
+    expect(await f.manager.status(other)).toEqual({ state: 'unlocked' })
+    expect(await f.manager.status(pending)).toEqual({ state: 'unlocked' })
+  })
+
+  test(`factor edits keep passphrase-only access through an unrelated DID exclusion (${mode})`, async () => {
+    const f = await fixture(mode)
+    const passphrase = bytes('phrase')
+    const key = await f.manager.createKey({ ownerDID: f.identity.id })
+    await f.manager.addFactor({ ...key, factor: { kind: 'passphrase', input: passphrase, cost } })
+    await f.manager.removeFactor({ ...key, inputs: { passphrase }, kind: 'did' })
+    await f.manager.rotate({
+      ...key,
+      inputs: { passphrase },
+      excludedRecipients: [f.identity.id],
+      reissue: [],
+    })
+    const current = await f.store.listWrappings({ ...key, keyVersion: 2 })
+    expect(current).toHaveLength(1)
+    expect(current[0]?.recipientDID).toBeNull()
+    const reader = createVaultCoordinator({
+      ...f.params,
+      principal: randomIdentity().id,
+      identity: null,
+    })
+    const opened = await reader.openKey({ ...key, inputs: { passphrase } })
+    expect(opened.version).toBe(2)
+    opened.contentKey.fill(0)
+  })
+}
 
 afterEach(async () => {
   vi.restoreAllMocks()
