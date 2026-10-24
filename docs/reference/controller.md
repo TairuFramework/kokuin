@@ -489,8 +489,12 @@ Tombstones accumulate within a generation, increasing every carrying settlement'
 `MAX_EVENT_BYTES` limits epoch events only. Root-chain snapshot growth is bounded only by transport and storage limits.
 Root may prune tombstones at the cost of evidence. A reset starts a new generation.
 
-`resolveMemberHistoric(subject, { did, add, gen })` returns the pinned Ed25519 key and lease for verifying past-issued material.
-It is optional on `DIDMethodResolver`, and available on controller resolvers and their `frozen()` views.
+`resolveMemberHistoric(subject, { did, add, gen })` returns `{ key, lease, removed }`, including the pinned Ed25519 key.
+`removed` is always present. It is false only when the incarnation is present in the head and effective there.
+Every other resolving answer returns `removed: true`, including head tombstones and removals in the current epoch.
+An incarnation found only in an earlier chain state returns `removed: true`, whether root pruned a live entry or a tombstone.
+Anything not live in the head is not live for receipt.
+The method is optional on `DIDMethodResolver`, and available on controller resolvers and their `frozen()` views.
 Its absence must fail closed. It must never authenticate a live signer.
 
 The query generation must equal the head generation.
@@ -508,7 +512,12 @@ Concurrent add and denial branches admit the add in its undenied causal state, t
 That live incarnation refuses historic resolution. If subsequently removed, its admitted incarnation remains historic evidence, including after settlement.
 Root snapshots explicitly attest their replacement membership state. The fold cannot reconstruct unpublished events behind that attestation.
 
-Removal alone preserves historic verification within the generation. Revoking the member's grants belongs to the capability layer.
+The query proves incarnation and generation, never signing time.
+A removed incarnation can still sign new material claiming its old incarnation.
+Consumers must not accept its records for new receipt on this answer alone.
+Effective members re-endorse copies of its records they hold by signing them again.
+Consumers use the historic answer only to decide what to re-endorse and for audit.
+Revoking the member's grants belongs to the capability layer.
 A reset invalidates every old-generation query, including queries for incarnations carried into the new generation.
 A blind reset supplies no membership evidence for the new generation.
 A reset snapshot may re-admit an incarnation as live through root attestation, matching `resolveMember` behaviour.

@@ -327,7 +327,11 @@ describe('frozen()', () => {
     expect((await view.resolveDenySet?.(did))?.has(audience)).toBe(false)
     await expect(view.resolveMember?.(did, query)).resolves.toMatchObject({ lease: LEASE })
     await view.resolve(did, {})
-    await view.resolveMemberHistoric?.(did, query)
+    await expect(view.resolveMemberHistoric?.(did, query)).resolves.toEqual({
+      key: { alg: 'EdDSA', publicKey: ed25519.getPublicKey(m.privateKey) },
+      lease: LEASE,
+      removed: false,
+    })
     await view.resolveHistoric?.(did, {})
     await view.resolveAgreementKey?.(did)
     expect(store.loads()).toBe(1)
@@ -417,6 +421,87 @@ describe('historic management membership', () => {
       snapshot: { ...snapshotOf(headOf(log)), deny: [...deny] },
     })
   }
+
+  const carried = settle(withMember)
+  const carriedLog = { chain: [icp, carried], events: [] }
+  const carriedHead = headOf(carriedLog)
+  const removedAfterSettle = createRemove({
+    signer: root,
+    did,
+    head: carriedHead,
+    parents: [carriedHead.epoch],
+    add,
+  })
+  const tombstone = settle(removedLog)
+  const removedAfterSettleLog = { ...carriedLog, events: [removedAfterSettle] }
+  const droppedAfterRemoval = createRotate({
+    seed,
+    profile,
+    did,
+    prior: carried.event,
+    snapshot: snapshotOf(headOf(removedAfterSettleLog), { members: [add] }),
+  })
+  const prune = (prior: SignedEvent) =>
+    createRotate({ seed, profile, did, prior: prior.event, snapshot: { members: [], deny: [] } })
+  const historicCases: Array<[string, ControllerLog, boolean]> = [
+    ['effective member', withMember, false],
+    ['removed in the current epoch', removedLog, true],
+    ['added and removed before settlement', { chain: [icp, tombstone], events: [] }, true],
+    ['removed after settlement', { chain: [icp, carried], events: [removedAfterSettle] }, true],
+    ['pruned live member', { chain: [icp, carried, prune(carried)], events: [] }, true],
+    [
+      'removed in epoch then settled without tombstone',
+      { chain: [icp, carried, droppedAfterRemoval], events: [] },
+      true,
+    ],
+    ['pruned tombstone', { chain: [icp, tombstone, prune(tombstone)], events: [] }, true],
+    [
+      'removed then denied at settlement',
+      { chain: [icp, settle(removedLog, new Set([m.did]))], events: [] },
+      true,
+    ],
+  ]
+
+  describe.each([false, true])('removed flag with frozen=%s', (frozen) => {
+    test.each(historicCases)('%s', async (_label, log, removed) => {
+      const resolver = serving(log)
+      const view = frozen ? resolver.frozen() : resolver
+      await expect(view.resolveMemberHistoric?.(did, query)).resolves.toEqual({
+        key: { alg: 'EdDSA', publicKey: ed25519.getPublicKey(m.privateKey) },
+        lease: LEASE,
+        removed,
+      })
+    })
+
+    test('re-adding the same key keeps the old incarnation removed and the new one live', async () => {
+      const tombstoneLog = { chain: [icp, tombstone], events: [] }
+      const next = headOf(tombstoneLog)
+      const readded = createAdd({
+        seed,
+        profile,
+        did,
+        head: next,
+        parents: [next.epoch],
+        member: { did: m.did, key: m.key, lease: LEASE },
+      })
+      const newAdd = digest(readded)
+      expect(newAdd).not.toBe(add)
+      const resolver = serving({ ...tombstoneLog, events: [readded] })
+      const view = frozen ? resolver.frozen() : resolver
+      for (const [incarnation, removed] of [
+        [add, true],
+        [newAdd, false],
+      ] as const) {
+        await expect(
+          view.resolveMemberHistoric?.(did, { ...query, add: incarnation }),
+        ).resolves.toEqual({
+          key: { alg: 'EdDSA', publicKey: ed25519.getPublicKey(m.privateKey) },
+          lease: LEASE,
+          removed,
+        })
+      }
+    })
+  })
 
   test('removal preserves historic authority before and after settlement, including later denials', async () => {
     for (const log of [

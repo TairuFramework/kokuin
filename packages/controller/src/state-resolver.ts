@@ -4,6 +4,7 @@ import {
   type MemberQuery,
   normalizeDID,
   type ResolvedAgreementKey,
+  type ResolvedHistoricMember,
   type ResolvedMember,
   type ResolvedSigningKey,
   type ResolveIssuerHeader,
@@ -250,12 +251,12 @@ export function memberFrom(did: string, head: KeyState, query: MemberQuery): Res
   return { key: { alg: key.alg, publicKey: key.publicKey }, lease: member.lease }
 }
 
-/** Removed incarnations retain authority for past-issued material until a generation reset. */
+/** Incarnation evidence within the current generation, never proof of signing time. */
 export function historicMemberFrom(
   did: string,
   view: FoldedView,
   query: MemberQuery,
-): ResolvedMember {
+): ResolvedHistoricMember {
   const refuse = (cause?: unknown) =>
     new IssuerKeyNotFoundError(`Controller ${did} ${query.did} is ${MEMBER_NOT_HISTORIC}`, {
       cause,
@@ -277,7 +278,11 @@ export function historicMemberFrom(
     if (normalizeDID(member.did) !== normalizeDID(query.did)) throw refuse()
     const key = decodeKey(member.key)
     if (key.alg !== 'EdDSA') throw refuse()
-    return { key: { alg: key.alg, publicKey: key.publicKey }, lease: member.lease }
+    return {
+      key: { alg: key.alg, publicKey: key.publicKey },
+      lease: member.lease,
+      removed: current?.effective !== true,
+    }
   } catch (cause) {
     throw refuse(cause)
   }
@@ -337,7 +342,7 @@ export function resolverOver(load: (did: string) => Promise<FoldedView>): DIDMet
       // seed, never by resolution.
       return agreementKeysFrom(did, (await live(did)).head)
     },
-    async resolveMemberHistoric(subject: string, member: MemberQuery): Promise<ResolvedMember> {
+    async resolveMemberHistoric(subject: string, member: MemberQuery) {
       return historicMemberFrom(subject, await live(subject), member)
     },
     async resolveMember(subject: string, member: MemberQuery): Promise<ResolvedMember> {
