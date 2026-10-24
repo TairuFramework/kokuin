@@ -1,4 +1,13 @@
 export { createVaultStore } from './api.js'
+export { createVaultCoordinator } from './coordinator.js'
+export {
+  VaultKeyLocked,
+  VaultNotAuthorized,
+  VaultNotFound,
+  VaultRepairPending,
+  VaultSupersededBranch,
+} from './coordinator-context.js'
+export type * from './coordinator-types.js'
 export { getVaultStore, VAULT_STORE, vaultStoreDefinition } from './definition.js'
 export { VaultModeConflict, VaultWriteConflict } from './record-context.js'
 export {

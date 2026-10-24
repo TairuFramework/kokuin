@@ -64,3 +64,62 @@ A survivor's same-decision endorsement can replace a removed signer's copy witho
 
 `get` and `getMany` fail closed on unreadable decisions. `list` omits corrupt decisions and reports them through `onCorruptRow`.
 Generic reads never repair data or write history. Range leaves and fingerprints use the records package's functions.
+
+## Coordinators
+
+`createVaultCoordinator(params)` adds authority, opening, key lifecycle, rotation, repair and encrypted entry operations.
+Select `mode: 'local'` or `mode: 'replicated'` explicitly. Both require `CredentialAuthority`, a principal, runtime and `nextHLC`.
+Supply an agreement identity, or `null` for secret-only opening. Replicated mode additionally requires a signer and records configuration.
+Initialise the optional records store before constructing a replicated coordinator. Local coordinators need only the base store.
+
+The store-vault `CredentialAuthority` accepts unsigned operations and the vault's existing verified record requests.
+Unsigned requests use `source: 'local'` and include the selected mode, operation, verb, address and unchanged transport context.
+This includes replicated reads. No fabricated signed operation represents a local request.
+Record admission uses `source: 'record'`, verified fields and the transaction-bound records read port.
+Every public operation calls authority, including cached opens, missing entries, listings, repair and explicit re-endorsement.
+Reads use `read`. Persistent mutations use `administer`. Authority refusal stops the operation before database writes.
+Consumer metadata and effective membership remain consumer decisions. There is no default authority.
+
+`openKey` returns a private content-key buffer. The caller must erase that buffer after use.
+`unlock`, `lock`, `lockAll` and `status` manage the optional memory cache.
+Input-free opens share in-flight work. Input-bearing opens verify independently, even when a key is cached.
+All PIN-bearing opening paths share one throttle. Locks invalidate pending cache warming.
+Replicated opening selects authenticated branches by claim digest, then operation hash.
+It passes the signed wrapping's descriptor digest to unwrap. Local rows provide no independent trusted descriptor digest.
+
+`createKey` takes an explicit canonical owner DID and optional ordered wrapping factor sets.
+The default wrapping addresses the agreement identity in its resolvable form.
+`grant`, `addFactor` and `removeFactor` require administration and operate on the current version.
+A historical `atVersion` on those mutations refuses. `setKeyState` and `deleteKey` change lifecycle metadata.
+Replicated arbitration can refuse same-version reactivation after retirement. The coordinator reports that refusal as `VaultWriteConflict`.
+
+Entry operations accept explicit owner-qualified addresses, byte plaintext and public kind, label and string attributes.
+`putEntry` creates an absent address. Updates require an existing entry. HLC CAS returns updated, absent or superseded.
+`reKeyEntry` authorises both keys, preserves the entry address, and re-encrypts under the destination key.
+`getEntry`, `listEntries`, `listKeys`, `readEntry` and `openKey` never write or initiate recovery.
+Returned entry rows include stored provenance. No entry ID has application-specific meaning.
+
+`rotate` and `repairFork` require `excludedRecipients` and `reissue` arrays, including explicit empty arrays.
+Rotation carries generic plaintext and public metadata forward. It preserves content intent unless an instruction supplies another `contentHLC`.
+A reissue instruction names one entry and selects `preserve`, `replace`, `delete` or `skip`.
+`replace` supplies new plaintext. `consumer` optionally replaces signed opaque metadata.
+`skip` leaves the old entry untouched. Duplicate or unknown entry instructions refuse the whole operation.
+Replacement instructions target live entries. Tombstone preservation and explicit deletion require no plaintext.
+
+Exclusions match explicit recipients and DID factors. Replicated exclusions also publish permanent recipient denials through apply.
+Local exclusions delete existing matching wrappings. Local mode has no permanent revocation table.
+Repair uses received authenticated candidates, prior tombstones and vault branch proofs. It never discovers removed members.
+Repair returns rotated, not-needed or pending. Missing preservation factors leave the fork pending for an explicit retry.
+Received candidate history has no all-peers completeness guarantee.
+
+Replicated coordinators submit every signed output through `write` and apply, with key version, branch-set and entry HLC preconditions.
+They refuse parked, rejected or losing output and roll back the operation. There is no direct signed put.
+Retained wrapping factors and reissued entry projections are checked against signed evidence before they become new signed output.
+`reendorse({ ownerDID, keyID, records })` re-signs only named stored decisions, including key tombstones, without changing their claims or payloads.
+The configured signer represents the effective consumer member. The consumer decides which records require re-endorsement.
+
+Mutations hold hozon's complete key-lock set through their joined transaction, including cryptographic work.
+Create the coordinator from the host transaction's store when journal/outbox changes must commit together.
+Propagate errors out of the host transaction so it rolls back. Temporary keys and decrypted plaintext are erased on success and failure.
+`nextHLC` belongs to the host. It must provide canonical, increasing stamps and any required restart floor.
+Crypto-only hosts continue to use `@kokuin/vault` directly.

@@ -1,0 +1,323 @@
+import { withKeyLocks, withStoreTransaction } from '@hozon/db'
+import type { RecordKey, SignedRecord, VerifiedRecordOp } from '@kokuin/records'
+import {
+  recordClaimDigest,
+  recordPayloadDigest,
+  signRecordOp,
+  verifySignedRecord,
+} from '@kokuin/records'
+import type { VaultRecordMetas, VaultRecordPayloads, VaultRecordType } from '@kokuin/vault'
+import {
+  checkDescriptorDigest,
+  createKeyCache,
+  decodeVaultRecord,
+  encodeVaultRecordPayload,
+  selectWinningBranch,
+  VaultTampered,
+} from '@kokuin/vault'
+
+import type { CoordinatorCall, VaultCoordinatorParams } from './coordinator-types.js'
+import { getVaultStore } from './definition.js'
+import { VaultWriteConflict, vaultDatabases } from './record-context.js'
+import type { VaultWritePreconditions } from './records.js'
+import { createVaultRecords } from './records.js'
+import type { KeyAddress, KeyRow, VaultStoreAPI, WrappingRow } from './types.js'
+
+export class VaultNotAuthorized extends Error {
+  constructor(verb: 'read' | 'administer') {
+    super(`Vault ${verb} authority refused the operation`)
+    this.name = 'VaultNotAuthorized'
+  }
+}
+export class VaultNotFound extends Error {
+  constructor() {
+    super('Vault key, entry or authenticated evidence not found')
+    this.name = 'VaultNotFound'
+  }
+}
+export class VaultRepairPending extends Error {
+  constructor() {
+    super('Vault branch material is unavailable for repair')
+    this.name = 'VaultRepairPending'
+  }
+}
+export class VaultSupersededBranch extends Error {
+  constructor() {
+    super('Entry belongs to a superseded content-key branch')
+    this.name = 'VaultSupersededBranch'
+  }
+}
+export class VaultKeyLocked extends Error {
+  constructor() {
+    super('Vault key requires supplied factors')
+    this.name = 'VaultKeyLocked'
+  }
+}
+
+export function createCoordinatorContext(params: VaultCoordinatorParams) {
+  if (params.authority === undefined) throw new TypeError('CredentialAuthority is required')
+  const cache = createKeyCache(params.cache)
+  const generations = new Map<string, number>()
+  let epoch = 0
+  const cacheID = (address: KeyAddress) => JSON.stringify([address.ownerDID, address.keyID])
+  const recordsFor = (store: VaultStoreAPI) => {
+    if (params.mode !== 'replicated') throw new TypeError('Local coordinator has no records path')
+    return createVaultRecords({ ...params.records, store, authority: params.authority })
+  }
+  const records = params.mode === 'replicated' ? recordsFor(params.store) : undefined
+  async function authorize(
+    operation: string,
+    verb: 'read' | 'administer',
+    address: { ownerDID: string; keyID?: string; entryID?: string } & CoordinatorCall,
+    store = params.store,
+  ) {
+    const allowed = await params.authority.authorize({
+      source: 'local',
+      mode: params.mode,
+      operation,
+      verb,
+      owner: address.ownerDID,
+      issuer: params.principal,
+      keyID: address.keyID,
+      entryID: address.entryID,
+      transportContext: address.transportContext,
+      request: address,
+      store: {
+        getKey: (a) => store.getKey(a),
+        getEntry: (a) => store.getEntry(a),
+        listKeys: (a) => store.listKeys(a),
+        listWrappings: (a) => store.listWrappings(a),
+        listEntries: (a) => store.listEntries(a),
+      },
+    })
+    if (!allowed) throw new VaultNotAuthorized(verb)
+  }
+  async function key(address: KeyAddress, store = params.store): Promise<KeyRow> {
+    const row = await store.getKey(address)
+    if (row === undefined) throw new VaultNotFound()
+    return row
+  }
+  async function signed<Type extends VaultRecordType>(
+    type: Type,
+    address: { ownerDID: string; id: string },
+    payload: VaultRecordPayloads[Type] | null,
+    meta: VaultRecordMetas[Type],
+    hlc?: string,
+  ): Promise<SignedRecord> {
+    if (params.mode !== 'replicated') throw new TypeError('Local writes are unsigned')
+    const bytes = payload === null ? null : encodeVaultRecordPayload(type, payload)
+    const stamp = hlc ?? (await params.nextHLC())
+    const claim = {
+      type,
+      id: address.id,
+      owner: address.ownerDID,
+      hlc: stamp,
+      payloadDigest: recordPayloadDigest(bytes),
+      deleted: bytes === null,
+      meta,
+    }
+    return {
+      type,
+      id: address.id,
+      owner: address.ownerDID,
+      hlc: stamp,
+      payload: bytes,
+      ...(await signRecordOp(params.signer, claim, params.records.opKind)),
+    }
+  }
+  async function verified(record: SignedRecord): Promise<VerifiedRecordOp> {
+    if (params.mode !== 'replicated') throw new TypeError('Local rows have no signed evidence')
+    const op = await verifySignedRecord(record, params.records.opKind, params.records.methods)
+    if (op === null) throw new VaultNotFound()
+    return op
+  }
+  async function stored(address: RecordKey, store = params.store) {
+    const record = (await recordsFor(store).adapter.get(address))?.copies[0]
+    if (record === undefined) throw new VaultNotFound()
+    return { record, op: await verified(record) }
+  }
+  async function wrappingEvidence(row: WrappingRow, store = params.store) {
+    if (params.mode === 'local') return undefined
+    const evidence = await stored(
+      { type: 'vault.wrapping', owner: row.ownerDID, id: row.wrappingID },
+      store,
+    )
+    const decoded = decodeVaultRecord(evidence.record, evidence.op.claim.meta)
+    if (
+      decoded.type !== 'vault.wrapping' ||
+      decoded.meta.keyID !== row.keyID ||
+      decoded.meta.keyVersion !== row.keyVersion ||
+      decoded.meta.branchID !== row.provenance ||
+      decoded.meta.recipient !== row.recipientDID
+    )
+      throw new VaultTampered('Wrapping projection disagrees with authenticated metadata')
+    checkDescriptorDigest({
+      descriptors: row.descriptors,
+      expectedDescriptorDigest: decoded.payload.descriptorDigest,
+    })
+    const equal = (a: Uint8Array, b: Uint8Array) =>
+      a.length === b.length && a.every((v, i) => v === b[i])
+    if (!equal(row.iv, decoded.payload.iv) || !equal(row.wrappedKey, decoded.payload.wrappedKey))
+      throw new VaultTampered('Wrapping projection disagrees with authenticated ciphertext')
+    return { ...evidence, expectedDescriptorDigest: decoded.payload.descriptorDigest }
+  }
+  async function branches(address: KeyAddress, version: number, store = params.store) {
+    return params.mode === 'local'
+      ? []
+      : recordsFor(store).listKeyBranches({ ...address, keyVersion: version })
+  }
+  async function branch(
+    address: KeyAddress,
+    version: number,
+    store = params.store,
+    specific?: string,
+  ) {
+    if (params.mode === 'local')
+      return { branchID: '', branchRecordID: '', suite: (await key(address, store)).suite }
+    const rows = await branches(address, version, store)
+    if (rows.length === 0) throw new VaultRepairPending()
+    const winner = selectWinningBranch(rows.map((row) => row.introducingOp))
+    const branchID = specific ?? `${winner.claim.hlc}:${winner.opHash}`
+    const proof = rows.find((row) => row.branchID === branchID)
+    if (proof === undefined) throw new VaultRepairPending()
+    for (const decision of await recordsFor(store).adapter.list(['vault.key-branch'])) {
+      const record = decision.copies[0]
+      if (record === undefined || record.owner !== address.ownerDID) continue
+      const op = await verified(record)
+      if (
+        op.claim.meta.keyID !== address.keyID ||
+        op.claim.meta.keyVersion !== version ||
+        op.claim.meta.branchID !== branchID
+      )
+        continue
+      const decoded = decodeVaultRecord(record, op.claim.meta)
+      if (decoded.type === 'vault.key-branch')
+        return { branchID, branchRecordID: record.id, suite: decoded.payload.suite }
+    }
+    throw new VaultRepairPending()
+  }
+  async function write(
+    store: VaultStoreAPI,
+    output: Array<SignedRecord>,
+    preconditions: VaultWritePreconditions,
+    call: CoordinatorCall,
+  ) {
+    const result = await recordsFor(store).write({
+      records: output,
+      preconditions,
+      transportContext: call.transportContext,
+    })
+    if (result.rejected.length > 0 || result.parked.length > 0) throw new VaultWriteConflict()
+    for (const record of output) {
+      const selected = (await recordsFor(store).adapter.get(record))?.copies[0]
+      if (
+        selected === undefined ||
+        recordClaimDigest((await verified(selected)).claim) !==
+          recordClaimDigest((await verified(record)).claim)
+      )
+        throw new VaultWriteConflict()
+    }
+  }
+  async function keyRecords(
+    row: KeyRow,
+    store: VaultStoreAPI,
+    unique?: string,
+    consumer?: unknown,
+  ) {
+    const previous =
+      unique === undefined
+        ? await stored({ type: 'vault.key', owner: row.ownerDID, id: row.keyID }, store)
+        : undefined
+    const keyUnique = unique ?? previous?.op.claim.meta.keyUnique
+    if (typeof keyUnique !== 'string') throw new VaultNotFound()
+    const record = await signed(
+      'vault.key',
+      { ownerDID: row.ownerDID, id: row.keyID },
+      { suite: row.suite, state: row.state },
+      {
+        keyID: row.keyID,
+        keyUnique,
+        version: row.version,
+        state: row.state,
+        consumer: consumer === undefined ? (previous?.op.claim.meta.consumer ?? null) : consumer,
+      },
+    )
+    const op = await verified(record)
+    const branchID = `${record.hlc}:${record.opHash}`
+    const payload = {
+      authorDID: op.issuer,
+      hlc: record.hlc,
+      opJWT: record.opJWT,
+      opHash: record.opHash,
+      suite: row.suite,
+    }
+    const branchRecordID = recordPayloadDigest(
+      encodeVaultRecordPayload('vault.key-branch', payload),
+    )
+    if (branchRecordID === null) throw new Error('Branch has no payload digest')
+    const proof = await signed(
+      'vault.key-branch',
+      { ownerDID: row.ownerDID, id: branchRecordID },
+      payload,
+      {
+        keyID: row.keyID,
+        keyVersion: row.version,
+        branchID,
+        consumer: consumer ?? previous?.op.claim.meta.consumer ?? null,
+      },
+      record.hlc,
+    )
+    return { records: [record, proof], branchID, branchRecordID }
+  }
+  async function locked<Result>(
+    addresses: ReadonlyArray<KeyAddress>,
+    fn: (store: VaultStoreAPI) => Promise<Result>,
+  ): Promise<Result> {
+    const database = vaultDatabases.get(params.store)
+    if (database === undefined) throw new TypeError('Coordinator requires a registered vault store')
+    return withKeyLocks(
+      database.context.provider,
+      'vault_keys',
+      addresses.map((a) => [JSON.stringify([a.ownerDID, a.keyID])]),
+      async (provider) => {
+        const store = await getVaultStore(provider)
+        const transaction = vaultDatabases.get(store)
+        if (transaction === undefined)
+          throw new TypeError('Transaction-bound vault store is unavailable')
+        return withStoreTransaction(transaction.db, () => fn(store))
+      },
+    )
+  }
+  function evict(address: KeyAddress) {
+    const id = cacheID(address)
+    generations.set(id, (generations.get(id) ?? 0) + 1)
+    cache.evict(id)
+  }
+  function evictAll() {
+    epoch += 1
+    cache.evictAll()
+  }
+  const generation = (a: KeyAddress) => `${epoch}:${generations.get(cacheID(a)) ?? 0}`
+  return {
+    params,
+    cache,
+    cacheID,
+    records,
+    recordsFor,
+    authorize,
+    key,
+    signed,
+    verified,
+    stored,
+    wrappingEvidence,
+    branches,
+    branch,
+    write,
+    keyRecords,
+    locked,
+    evict,
+    evictAll,
+    generation,
+  }
+}
+export type CoordinatorContext = ReturnType<typeof createCoordinatorContext>

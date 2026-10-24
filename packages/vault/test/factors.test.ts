@@ -78,3 +78,19 @@ describe('factor helpers', () => {
     expect(descriptors[0]?.params.recipient).toBe(identity.longForm)
   })
 })
+
+test('public single-DID recipient uses its canonical form without changing factor resolution input', async () => {
+  const { recipientDIDForFactors } = await import('../src/index.js')
+  const identity = await createIdentity({
+    didMethod: 'peer:4',
+    keys: [
+      { purpose: 'sig', alg: 'EdDSA' },
+      { purpose: 'kem', alg: 'X25519' },
+    ],
+  })
+  const factors = [{ kind: 'did' as const, recipientDID: identity.longForm }]
+  expect(recipientDIDForFactors(factors)).toBe(identity.id)
+  expect(factors[0]?.recipientDID).toBe(identity.longForm)
+  expect(recipientDIDForFactors([])).toBeNull()
+  expect(recipientDIDForFactors([...factors, { kind: 'pin', input }])).toBeNull()
+})

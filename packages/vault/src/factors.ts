@@ -68,3 +68,9 @@ export function factorsFromDescriptors(
     return { kind: descriptor.kind, input, cost }
   })
 }
+
+/** Public recipient metadata uses equality form. Descriptors retain resolvable long forms. */
+export function recipientDIDForFactors(factors: ReadonlyArray<FactorInput>): string | null {
+  const factor = factors[0]
+  return factors.length === 1 && factor?.kind === 'did' ? normalizeDID(factor.recipientDID) : null
+}
