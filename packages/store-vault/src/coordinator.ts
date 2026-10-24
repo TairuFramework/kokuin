@@ -1,3 +1,4 @@
+import type { SignedRecord } from '@kokuin/records'
 import type { FactorInput } from '@kokuin/vault'
 import {
   createVaultKeyReference,
@@ -102,21 +103,16 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         })
 
         if (params.mode === 'replicated') {
-          // HLCs are allocated in factor-set order. `signRecordOp` calls the signer in that order,
-          // one at a time.
-          const hlcs: Array<string> = []
+          const output: Array<SignedRecord> = [...chain.records]
 
-          for (let index = 0; index < rows.length; index += 1) hlcs.push(await params.nextHLC())
-
-          const signed = await settleAll(
-            rows.map((row, index) => {
-              return records.wrapping(row, chain, request.consumer ?? null, hlcs[index])
-            }),
-          )
+          // Signing stays sequential: a failure stops the rest. HLC allocation and output order
+          // follow the factor sets.
+          for (const row of rows)
+            output.push(await records.wrapping(row, chain, request.consumer ?? null))
 
           await ctx.write(
             store,
-            [...chain.records, ...signed],
+            output,
             { key: { ...key, expectedVersion: null, expectedBranches: [] } },
             request,
           )
@@ -190,24 +186,18 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
           if (evidence === undefined) throw new VaultNotFound()
 
           const consumer = evidence.op.claim.meta.consumer
-          // HLCs in the old order. `signRecordOp` signs the two in that order, one at a time.
-          const replacementHLC = await params.nextHLC()
-          const deletionHLC = await params.nextHLC()
-          const [replacement, deletion] = await settleAll([
-            records.wrapping(row, branch, consumer, replacementHLC),
-            ctx.signed(
-              'vault.wrapping',
-              { ownerDID: key.ownerDID, id: existing.wrappingID },
-              null,
-              {
-                keyID: key.keyID,
-                keyVersion: key.version,
-                recipient: existing.recipientDID,
-                consumer,
-              },
-              deletionHLC,
-            ),
-          ])
+          const replacement = await records.wrapping(row, branch, consumer)
+          const deletion = await ctx.signed(
+            'vault.wrapping',
+            { ownerDID: key.ownerDID, id: existing.wrappingID },
+            null,
+            {
+              keyID: key.keyID,
+              keyVersion: key.version,
+              recipient: existing.recipientDID,
+              consumer,
+            },
+          )
 
           await ctx.write(
             store,

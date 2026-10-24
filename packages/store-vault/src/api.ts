@@ -188,25 +188,26 @@ export function createVaultStore(
     ]
   }
   // The last write of each address wins, as sequential writes would. One address written under
-  // two keys fails as the second sequential write would.
+  // two keys is reported, so the caller can fail as the second sequential write would, after the
+  // mode checks that write would have passed first.
   const lastWrites = <Row extends KeyAddress>(
     rows: ReadonlyArray<Row>,
     address: (row: Row) => string,
-    message: string,
-  ): Array<Row> => {
+  ): { rows: Array<Row>; rekeyed: boolean } => {
     const unique = new Map<string, Row>()
+    let rekeyed = false
 
     for (const row of rows) {
       const id = address(row)
       const previous = unique.get(id)
 
-      if (previous !== undefined && previous.keyID !== row.keyID) throw new Error(message)
+      if (previous !== undefined && previous.keyID !== row.keyID) rekeyed = true
 
       unique.delete(id)
       unique.set(id, row)
     }
 
-    return [...unique.values()]
+    return { rows: [...unique.values()], rekeyed }
   }
   const wrappingValues = (row: WrappingRow): WrappingValues => {
     return {
@@ -379,20 +380,20 @@ export function createVaultStore(
       await api.putWrappings([row])
     },
     async putWrappings(input) {
-      const rows = lastWrites(
-        input,
-        (row) => JSON.stringify([row.ownerDID, row.wrappingID]),
-        'Wrapping belongs to another key',
+      const { rows, rekeyed } = lastWrites(input, (row) =>
+        JSON.stringify([row.ownerDID, row.wrappingID]),
       )
 
       if (rows.length === 0) return
 
-      await locked(keysOf(rows), async (trx) => {
+      await locked(keysOf(input), async (trx) => {
         await localModes(
           trx,
           'vault.wrapping',
           rows.map((row) => ({ owner: row.ownerDID, id: row.wrappingID })),
         )
+
+        if (rekeyed) throw new Error('Wrapping belongs to another key')
 
         const keyOf = new Map(
           rows.map((row) => [JSON.stringify([row.ownerDID, row.wrappingID]), row.keyID]),
@@ -518,20 +519,20 @@ export function createVaultStore(
       await api.putEntries([row])
     },
     async putEntries(input) {
-      const rows = lastWrites(
-        input,
-        (row) => JSON.stringify([row.ownerDID, row.entryID]),
-        'Entry belongs to another key',
+      const { rows, rekeyed } = lastWrites(input, (row) =>
+        JSON.stringify([row.ownerDID, row.entryID]),
       )
 
       if (rows.length === 0) return
 
-      await locked(keysOf(rows), async (trx) => {
+      await locked(keysOf(input), async (trx) => {
         await localModes(
           trx,
           'vault.entry',
           rows.map((row) => ({ owner: row.ownerDID, id: row.entryID })),
         )
+
+        if (rekeyed) throw new Error('Entry belongs to another key')
 
         const keyOf = new Map(
           rows.map((row) => [JSON.stringify([row.ownerDID, row.entryID]), row.keyID]),

@@ -608,6 +608,8 @@ export function replicationCases(harness: StoreHarness): void {
         () => left.store.deleteWrappingsBelowVersion({ ...source.address, keyVersion: 2 }),
         // A replicated row anywhere in a batch refuses the batch.
         () => left.store.putEntries([storedEntry(source.address, { entryID: 'local-entry' }), row]),
+        // A replicated row reports its mode before a second key for it would refuse the batch.
+        () => left.store.putEntries([row, { ...row, keyID: 'other-key' }]),
         () => left.store.deleteEntries([entryAddress]),
         () => left.store.deleteWrappings([wrappingAddress]),
       ])

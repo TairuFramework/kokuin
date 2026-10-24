@@ -3,6 +3,7 @@ import type { HLCTimestamp } from '@sozai/hlc'
 
 import { parseBoundedHLC } from './clock.js'
 import type { RecordDecision } from './decision.js'
+import { settleLimited } from './limit.js'
 import { createRecordVerifier, type VerifiedRecordOp, verifySignedRecord } from './op.js'
 import { compareRecordOps, type EqualVersionDecision, type MergePolicy } from './policy.js'
 import {
@@ -695,23 +696,22 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
         }),
       )
     }
-    // Each candidate's controller and stored-copy reads run together, and shared reads are made
-    // once. The lock-key hooks then run one at a time, in candidate order, as before. Failures
-    // are thrown in candidate order: a candidate's reads, then its hook.
-    const reads = await Promise.allSettled(
-      active.map(async (candidate) => {
-        if (candidate.op.issuer !== candidate.op.claim.owner) {
-          await prefetchController(candidate.op.issuer)
-        }
-        const id = recordKeyText(candidate.record)
-        let storedChecked = verifiedStored.get(id)
-        if (storedChecked === undefined) {
-          storedChecked = verifyStored(id)
-          verifiedStored.set(id, storedChecked)
-        }
-        await storedChecked
-      }),
-    )
+    // Each candidate's controller and stored-copy reads run together, up to `CONCURRENCY_LIMIT`
+    // at once, and shared reads are made once. The lock-key hooks then run one at a time, in
+    // candidate order, as before. Failures are thrown in candidate order: a candidate's reads,
+    // then its hook.
+    const reads = await settleLimited(active, async (candidate) => {
+      if (candidate.op.issuer !== candidate.op.claim.owner) {
+        await prefetchController(candidate.op.issuer)
+      }
+      const id = recordKeyText(candidate.record)
+      let storedChecked = verifiedStored.get(id)
+      if (storedChecked === undefined) {
+        storedChecked = verifyStored(id)
+        verifiedStored.set(id, storedChecked)
+      }
+      await storedChecked
+    })
     for (const [index, candidate] of active.entries()) {
       const read = reads[index]
       if (read?.status === 'rejected') throw read.reason

@@ -5,6 +5,7 @@ import {
   type RecordTypeDefinition,
   type VisibilityContext,
 } from './apply.js'
+import { settleLimited } from './limit.js'
 import { type VerifiedRecordOp, verifySignedRecord } from './op.js'
 import { compareRecordOps } from './policy.js'
 import {
@@ -364,14 +365,12 @@ export async function filterVisibleRecords(
     },
   }
   holdingIndexes.set(scoped, { checks: [], held: new Set() })
-  // Records are checked together. They share the holding index, so each holding is still
-  // checked once. The first failure in record order is thrown.
-  const admitted = await Promise.allSettled(
-    records.map(async (record) => {
-      const hook = types.get(record.type)?.visibleTo
-      return hook !== undefined && (await hook(record, scoped))
-    }),
-  )
+  // Records are checked together, up to `CONCURRENCY_LIMIT` at once. They share the holding
+  // index, so each holding is still checked once. The first failure in record order is thrown.
+  const admitted = await settleLimited(records, async (record) => {
+    const hook = types.get(record.type)?.visibleTo
+    return hook !== undefined && (await hook(record, scoped))
+  })
   const visible: Array<SignedRecord> = []
   for (const [index, record] of records.entries()) {
     const result = admitted[index]

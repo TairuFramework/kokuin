@@ -1,4 +1,5 @@
 import type { RecordDecision } from './decision.js'
+import { settleLimited } from './limit.js'
 import type { RecordKey, SignedRecord } from './record.js'
 
 export type RecordLockKey = { type: string; key: string }
@@ -49,7 +50,8 @@ export function recordKeyText(key: RecordKey): string {
 }
 
 /**
- * The stored decisions of `keys`, through `getMany` when the store has it, else concurrent `get`s.
+ * The stored decisions of `keys`, through `getMany` when the store has it, else concurrent `get`s,
+ * at most `CONCURRENCY_LIMIT` at once.
  * The fallback waits for every `get`, so none is left running in the caller's transaction, then
  * throws the first failure in key order.
  */
@@ -65,7 +67,7 @@ export async function getRecordDecisions(
   if (unique.size === 0) return new Map()
   if (store.getMany !== undefined) return await store.getMany([...unique.values()])
   const entries = [...unique]
-  const found = await Promise.allSettled(entries.map(([, key]) => store.get(key)))
+  const found = await settleLimited(entries, ([, key]) => store.get(key))
   const decisions: RecordDecisionMap = new Map()
   for (const [index, [text]] of entries.entries()) {
     const result = found[index]

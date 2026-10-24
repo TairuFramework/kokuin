@@ -373,14 +373,12 @@ export function createRotateFunctions(
           }),
         ),
       ])
-      // HLCs are allocated in order: wrappings, then entries, then revocations. Entries decrypt and
-      // encrypt while earlier records sign; `signRecordOp` calls the signer one at a time, in this
-      // order. The output keeps it.
-      const signing: Array<Promise<SignedRecord>> = []
-      const sign = (task: Promise<SignedRecord>): void => {
-        // Awaited together below. A failure before then must not surface as unhandled.
-        task.catch(() => {})
-        signing.push(task)
+      // Signing stays sequential, so a failed signature stops the rest and a prompting signer is
+      // asked nothing after it. HLC allocation and output follow the order: wrappings, entries,
+      // then revocations.
+      const output: Array<SignedRecord> = [...chain.records]
+      const sign = async (task: Promise<SignedRecord>): Promise<void> => {
+        output.push(await task)
       }
       const wrappings: Array<WrappingRow> = []
 
@@ -401,7 +399,9 @@ export function createRotateFunctions(
 
           if (prior === undefined) throw new VaultNotFound()
 
-          sign(records.wrapping(row, chain, prior.op.claim.meta.consumer, await params.nextHLC()))
+          await sign(
+            records.wrapping(row, chain, prior.op.claim.meta.consumer, await params.nextHLC()),
+          )
         }
       }
 
@@ -438,7 +438,7 @@ export function createRotateFunctions(
           deletions.push(selected.entryID)
 
           if (params.mode === 'replicated')
-            sign(
+            await sign(
               ctx.signed(
                 'vault.entry',
                 { ownerDID: key.ownerDID, id: selected.entryID },
@@ -481,7 +481,8 @@ export function createRotateFunctions(
 
         entries.push(row)
 
-        if (params.mode === 'replicated') sign(records.entry(row, chain, contentHLC, consumer))
+        if (params.mode === 'replicated')
+          await sign(records.entry(row, chain, contentHLC, consumer))
       }
 
       if (params.mode === 'replicated') {
@@ -489,7 +490,7 @@ export function createRotateFunctions(
           const id = vaultRevocationRecordID(key.keyID, did)
           const revokedDID = id.slice(id.indexOf('/') + 1)
 
-          sign(
+          await sign(
             ctx.signed(
               'vault.revocation',
               { ownerDID: key.ownerDID, id },
@@ -499,8 +500,6 @@ export function createRotateFunctions(
             ),
           )
         }
-
-        const output = [...chain.records, ...(await settleAll(signing))]
 
         await ctx.write(
           store,

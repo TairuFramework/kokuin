@@ -149,8 +149,10 @@ const signingQueues = new WeakMap<SigningIdentity, Promise<unknown>>()
  * Sign a record claim under the caller's required replay domain `opKind`. The token carries the canonical claim bytes rather than the claim
  * as JSON members, so what a verifier reads back is byte-for-byte what was signed.
  *
- * Calls for one identity reach it one at a time, in the order they were made, so callers may
- * sign several records at once.
+ * Calls for one `SigningIdentity` object reach it one at a time, in the order they were made.
+ * The queue is per object: two objects for the same key are not serialised against each other.
+ * `signToken` must settle, since a call that never settles holds every later call for that
+ * object.
  *
  * @throws RecordClaimError when the claim is malformed.
  * @throws RecordOpSigningError when the identity produces an unverifiable record-op envelope.

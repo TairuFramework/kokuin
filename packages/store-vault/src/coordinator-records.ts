@@ -199,20 +199,21 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
       ])
       const key = settledValue(keyResult)
       const ops = settledValue(opsResult)
-      // Records are built together. `signRecordOp` calls the signer one at a time, in record order.
-      const output = await settleAll(
-        request.records.map(async (record, index) => {
-          const op = ops[index]
+      const output: Array<SignedRecord> = []
 
-          if (op === undefined) throw new VaultNotFound()
+      // Signing stays sequential: signer calls follow the caller's record order, and a failure
+      // stops the rest.
+      for (const [index, record] of request.records.entries()) {
+        const op = ops[index]
 
-          // Re-sign the entire original claim. Consumer evidence and content intent stay authenticated.
-          return {
-            ...record,
-            ...(await signRecordOp(params.signer, op.claim, params.records.opKind)),
-          }
-        }),
-      )
+        if (op === undefined) throw new VaultNotFound()
+
+        // Re-sign the entire original claim. Consumer evidence and content intent stay authenticated.
+        output.push({
+          ...record,
+          ...(await signRecordOp(params.signer, op.claim, params.records.opKind)),
+        })
+      }
 
       const branches = settledValue(branchesResult)
 

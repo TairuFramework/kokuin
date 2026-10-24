@@ -429,9 +429,8 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
         continue
       }
 
-      const op = settledValue(checks[index] as PromiseSettledResult<VerifiedRecordOp | null>)
-
-      if (op === null) throw new VaultNotFound()
+      // A present record was checked by `verified`, which throws rather than yield null.
+      const op = settledValue(checks[index] as PromiseSettledResult<VerifiedRecordOp>)
 
       if (
         op.claim.meta.keyID !== address.keyID ||
