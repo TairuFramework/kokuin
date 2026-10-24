@@ -45,10 +45,12 @@ function invalidArgon2Cost(cost: Argon2Cost): string | null {
   for (const name of ['m', 't', 'p'] as const) {
     const value = cost[name]
     const limits = ARGON2_COST_LIMITS[name]
+
     if (!Number.isSafeInteger(value) || value < limits.min || value > limits.max) {
       return `${name} must be an integer from ${limits.min} through ${limits.max}`
     }
   }
+
   return null
 }
 
@@ -138,6 +140,7 @@ function deriveKEK(
   keyVersion: number,
 ): Uint8Array {
   const info = fromUTF(`${WRAP_INFO_PREFIX}:${suiteID}:${keyID}:${keyVersion}`)
+
   return hkdf(sha256, concatBytes(...secrets), fromUTF(wrappingID), info, CONTENT_KEY_LENGTH)
 }
 
@@ -160,6 +163,7 @@ async function didFactorSecretForSender(
   const { sharedSecret, ephemeralPublicKey } = await deriveSharedSecretAsync(recipientDID, {
     methods: methods ?? [],
   })
+
   return {
     secret: sharedSecret,
     params: { recipient: recipientDID, epk: toB64(ephemeralPublicKey) },
@@ -172,11 +176,14 @@ async function secretFactorForSender(
   cost: Argon2Cost,
 ): Promise<{ secret: Uint8Array; params: Record<string, unknown> }> {
   const invalid = invalidArgon2Cost(cost)
+
   if (invalid != null) {
     throw new InvalidVaultFactors(`invalid Argon2 cost: ${invalid}`)
   }
+
   const salt = runtime.getRandomValues(new Uint8Array(SALT_LENGTH))
   const secret = await argon2idAsync(input, salt, { ...cost, dkLen: FACTOR_SECRET_LENGTH })
+
   return { secret, params: { salt: toB64(salt), ...cost } }
 }
 
@@ -188,7 +195,9 @@ async function secretFactorForRecipient(
   if (input == null) {
     throw new NoAvailableFactor(kind)
   }
+
   const { salt, m, t, p } = params
+
   if (
     typeof salt !== 'string' ||
     typeof m !== 'number' ||
@@ -197,11 +206,15 @@ async function secretFactorForRecipient(
   ) {
     throw new VaultTampered(`${kind} factor descriptor carries no usable Argon2 parameters`)
   }
+
   const invalid = invalidArgon2Cost({ m, t, p })
+
   if (invalid != null) {
     throw new VaultTampered(`${kind} factor descriptor has invalid Argon2 cost: ${invalid}`)
   }
+
   let decodedSalt: Uint8Array
+
   try {
     decodedSalt = fromB64(salt)
   } catch (cause) {
@@ -209,9 +222,11 @@ async function secretFactorForRecipient(
       cause,
     })
   }
+
   if (decodedSalt.length !== SALT_LENGTH) {
     throw new VaultTampered(`${kind} factor descriptor Argon2 salt must be ${SALT_LENGTH} bytes`)
   }
+
   return await argon2idAsync(input, decodedSalt, { m, t, p, dkLen: FACTOR_SECRET_LENGTH })
 }
 
@@ -222,13 +237,16 @@ export function validateFactorList(kinds: Array<string>): void {
   }
 
   const seen = new Set<string>()
+
   for (const kind of kinds) {
     if (kind === 'did') {
       continue
     }
+
     if (seen.has(kind)) {
       throw new InvalidVaultFactors(`duplicate "${kind}" factor`)
     }
+
     seen.add(kind)
   }
 
@@ -244,7 +262,9 @@ async function didFactorSecretForRecipient(
   if (identity == null) {
     throw new NoAvailableFactor('did')
   }
+
   const epk = params.epk
+
   if (typeof epk !== 'string') {
     throw new VaultTampered('did factor descriptor carries no epk')
   }
@@ -273,6 +293,7 @@ const suite1: VaultSuite = {
             factor.recipientDID,
             params.methods,
           )
+
           secrets.push(secret)
           descriptors.push({ kind: 'did', params: factorParams })
           break
@@ -284,6 +305,7 @@ const suite1: VaultSuite = {
             factor.input,
             factor.cost ?? DEFAULT_ARGON2_COST,
           )
+
           secrets.push(secret)
           descriptors.push({ kind: factor.kind, params: factorParams })
           break
@@ -299,6 +321,7 @@ const suite1: VaultSuite = {
       params.keyVersion,
     )
     const iv = params.runtime.getRandomValues(new Uint8Array(IV_LENGTH))
+
     return {
       descriptors,
       descriptorDigest: descriptorDigest(descriptors),
@@ -348,6 +371,7 @@ const suite1: VaultSuite = {
       params.keyID,
       params.keyVersion,
     )
+
     try {
       return gcm(kek, params.iv, wrappingAAD(params.descriptors)).decrypt(params.wrappedKey)
     } catch (cause) {
@@ -359,6 +383,7 @@ const suite1: VaultSuite = {
   encryptEntry(params) {
     const iv = params.runtime.getRandomValues(new Uint8Array(IV_LENGTH))
     const aad = entryAAD(SUITE_VAULT_1, params.keyID, params.keyVersion, params.entryID)
+
     return {
       iv,
       ciphertext: gcm(params.contentKey, iv, aad).encrypt(params.plaintext),
@@ -367,6 +392,7 @@ const suite1: VaultSuite = {
 
   decryptEntry(params) {
     const aad = entryAAD(SUITE_VAULT_1, params.keyID, params.keyVersion, params.entryID)
+
     try {
       return gcm(params.contentKey, params.iv, aad).decrypt(params.ciphertext)
     } catch (cause) {
@@ -382,9 +408,11 @@ const SUITES = new Map<number, VaultSuite>([[SUITE_VAULT_1, suite1]])
 
 export function getSuite(id: number): VaultSuite {
   const suite = SUITES.get(id)
+
   if (suite == null) {
     throw new UnsupportedVaultSuite(id)
   }
+
   return suite
 }
 
@@ -393,5 +421,7 @@ export function isSupportedSuite(id: number): boolean {
 }
 
 export type WrappedKey = WrapResult
+
 export type EncryptedEntry = EncryptEntryResult
+
 export type CryptoAddress = { keyID: string; keyVersion: number }

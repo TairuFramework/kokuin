@@ -44,20 +44,25 @@ export function createPinThrottle(params: PinThrottleParams = {}): PinThrottle {
   return {
     retryAfter(keyID) {
       const record = attempts.get(keyID)
+
       if (record == null) {
         return 0
       }
+
       const elapsed = now() - record.lastFailureAt
+
       return Math.max(0, delayAfter(record.failures) - elapsed)
     },
 
     attemptsRemaining(keyID) {
       const record = attempts.get(keyID)
+
       return Math.max(0, freeAttempts - (record?.failures ?? 0))
     },
 
     recordFailure(keyID) {
       const record = attempts.get(keyID)
+
       attempts.set(keyID, {
         failures: (record?.failures ?? 0) + 1,
         lastFailureAt: now(),

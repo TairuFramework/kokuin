@@ -8,17 +8,21 @@ function canonicalJSON(value: unknown): string {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value) ?? 'null'
   }
+
   if (Array.isArray(value)) {
     return `[${value.map(canonicalJSON).join(',')}]`
   }
-  const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
-    left < right ? -1 : left > right ? 1 : 0,
-  )
+
+  const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => {
+    return left < right ? -1 : left > right ? 1 : 0
+  })
+
   return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJSON(item)}`).join(',')}}`
 }
 
 export function digestParts(parts: Array<string>): string {
   const framed = parts.map((part) => `${part.length}:${part}`).join('')
+
   return toB64U(blake3(fromUTF(framed), { dkLen: 32 }))
 }
 
@@ -61,9 +65,10 @@ export function vaultWrappingDigest(wrapping: VaultWrappingDigestInput): string 
 }
 
 export function vaultEntriesDigest(entries: ReadonlyArray<VaultEntryDigestInput>): string {
-  const ordered = [...entries].sort((left, right) =>
-    left.entryID < right.entryID ? -1 : left.entryID > right.entryID ? 1 : 0,
-  )
+  const ordered = [...entries].sort((left, right) => {
+    return left.entryID < right.entryID ? -1 : left.entryID > right.entryID ? 1 : 0
+  })
+
   return digestParts(
     ordered.flatMap((entry) => [entry.entryID, entry.iv, entry.ciphertext, entry.hlc]),
   )

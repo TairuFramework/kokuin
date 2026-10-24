@@ -12,6 +12,7 @@ export type VaultRecordTable = {
   deleted: number
   meta: Record<string, unknown>
 }
+
 export type VaultRecordsTables = VaultStoreTables & {
   vault_records: VaultRecordTable
   vault_decisions: {

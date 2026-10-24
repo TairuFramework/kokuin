@@ -1,3 +1,4 @@
+import type { SignedRecord } from '@kokuin/records'
 import { recordPayloadDigest, signRecordOp } from '@kokuin/records'
 import { encodeVaultRecordPayload, VaultTampered } from '@kokuin/vault'
 
@@ -7,8 +8,37 @@ import type { CoordinatorCall } from './coordinator-types.js'
 import type { EntryRow, VaultStoreAPI, WrappingRow } from './types.js'
 
 type Branch = { branchID: string; branchRecordID: string }
-export function createRecordFunctions(ctx: CoordinatorContext) {
-  async function wrapping(row: WrappingRow, branch: Branch, consumer: unknown = null) {
+
+export type EntryInfo = {
+  contentHLC: string
+  consumer: unknown
+}
+
+export type RecordFunctions = {
+  wrapping(row: WrappingRow, branch: Branch, consumer?: unknown): Promise<SignedRecord>
+  entry(
+    row: EntryRow,
+    branch: Branch,
+    contentHLC: string,
+    consumer?: unknown,
+    deleted?: boolean,
+  ): Promise<SignedRecord>
+  entryInfo(row: EntryRow, store: VaultStoreAPI): Promise<EntryInfo>
+  reendorse(
+    request: {
+      ownerDID: string
+      keyID: string
+      records: ReadonlyArray<SignedRecord>
+    } & CoordinatorCall,
+  ): Promise<void>
+}
+
+export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions {
+  async function wrapping(
+    row: WrappingRow,
+    branch: Branch,
+    consumer: unknown = null,
+  ): Promise<SignedRecord> {
     return ctx.signed('vault.wrapping', { ownerDID: row.ownerDID, id: row.wrappingID }, row, {
       keyID: row.keyID,
       keyVersion: row.keyVersion,
@@ -18,13 +48,14 @@ export function createRecordFunctions(ctx: CoordinatorContext) {
       consumer,
     })
   }
+
   async function entry(
     row: EntryRow,
     branch: Branch,
     contentHLC: string,
     consumer: unknown = null,
     deleted = false,
-  ) {
+  ): Promise<SignedRecord> {
     return ctx.signed(
       'vault.entry',
       { ownerDID: row.ownerDID, id: row.entryID },
@@ -41,14 +72,17 @@ export function createRecordFunctions(ctx: CoordinatorContext) {
       row.hlc,
     )
   }
-  async function entryInfo(row: EntryRow, store: VaultStoreAPI) {
+
+  async function entryInfo(row: EntryRow, store: VaultStoreAPI): Promise<EntryInfo> {
     if (ctx.params.mode === 'local') return { contentHLC: row.hlc, consumer: null }
+
     const { op } = await ctx.stored(
       { type: 'vault.entry', owner: row.ownerDID, id: row.entryID },
       store,
     )
     const meta = op.claim.meta
     const attributes = meta.attributes
+
     if (
       op.claim.deleted ||
       op.claim.hlc !== row.hlc ||
@@ -65,37 +99,50 @@ export function createRecordFunctions(ctx: CoordinatorContext) {
       recordPayloadDigest(encodeVaultRecordPayload('vault.entry', row)) !== op.claim.payloadDigest
     )
       throw new VaultTampered('Entry projection disagrees with authenticated content')
+
     const contentHLC = op.claim.meta.contentHLC
+
     if (typeof contentHLC !== 'string') throw new VaultNotFound()
+
     return { contentHLC, consumer: op.claim.meta.consumer }
   }
+
   async function reendorse(
     request: {
       ownerDID: string
       keyID: string
-      records: ReadonlyArray<Parameters<CoordinatorContext['verified']>[0]>
+      records: ReadonlyArray<SignedRecord>
     } & CoordinatorCall,
   ) {
     await ctx.authorize('reendorse', 'administer', request)
+
     if (ctx.params.mode !== 'replicated')
       throw new TypeError('Re-endorsement requires replicated mode')
+
     const params = ctx.params
+
     await ctx.locked([request], async (tx) => {
       const key = await tx.getKey(request)
       const output = []
+
       for (const record of request.records) {
         const op = await ctx.verified(record)
+
         if (op.claim.owner !== request.ownerDID || op.claim.meta.keyID !== request.keyID)
           throw new TypeError('Re-endorsement is confined to the explicitly named key')
+
         const decision = await ctx.recordsFor(tx).adapter.get(record)
+
         if (!decision?.copies.some((copy) => copy.opHash === record.opHash))
           throw new VaultNotFound()
+
         // Re-sign the entire original claim. Consumer evidence and content intent stay authenticated.
         output.push({
           ...record,
           ...(await signRecordOp(params.signer, op.claim, params.records.opKind)),
         })
       }
+
       await ctx.write(
         tx,
         output,
@@ -112,6 +159,6 @@ export function createRecordFunctions(ctx: CoordinatorContext) {
       )
     })
   }
+
   return { wrapping, entry, entryInfo, reendorse }
 }
-export type RecordFunctions = ReturnType<typeof createRecordFunctions>

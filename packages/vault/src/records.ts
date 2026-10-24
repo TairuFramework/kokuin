@@ -15,7 +15,9 @@ export const VAULT_RECORD_TYPES = [
   'vault.entry',
   'vault.revocation',
 ] as const
+
 export type VaultRecordType = (typeof VAULT_RECORD_TYPES)[number]
+
 export type VaultRecordPayloads = {
   'vault.key': { suite: number; state: 'active' | 'retired' }
   'vault.key-branch': {
@@ -29,8 +31,11 @@ export type VaultRecordPayloads = {
   'vault.entry': EncryptEntryResult
   'vault.revocation': Record<string, never>
 }
+
 export type VaultEntryMetadata = { kind: string; label: string; attributes: Record<string, string> }
+
 type BranchReference = { branchID: string; branchRecordID: string }
+
 export type VaultRecordMetas = {
   'vault.key': {
     keyID: string
@@ -55,6 +60,7 @@ export type VaultRecordMetas = {
     Partial<VaultEntryMetadata>
   'vault.revocation': { keyID: string; revokedDID: string; consumer: unknown }
 }
+
 export type DecodedVaultRecord = {
   [Type in VaultRecordType]: {
     type: Type
@@ -71,6 +77,7 @@ export class VaultRecordPayloadError extends Error {
   #id: string
   constructor(params: { type: string; id: string; reason: string; cause?: unknown }) {
     const { type, id, reason, cause } = params
+
     super(`Vault record ${type} ${id}: ${reason}`, { cause })
     this.name = 'VaultRecordPayloadError'
     this.#type = type
@@ -90,12 +97,17 @@ export function vaultRevocationRecordID(keyID: string, recipientDID: string): st
 
 function plain(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+
   const prototype = Object.getPrototypeOf(value)
+
   return prototype === Object.prototype || prototype === null
 }
+
 const text = (value: unknown): value is string => typeof value === 'string' && value !== ''
-const count = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+const count = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
 function did(value: unknown): value is string {
   try {
     return typeof value === 'string' && normalizeDID(value) === value
@@ -103,6 +115,7 @@ function did(value: unknown): value is string {
     return false
   }
 }
+
 function base64(value: unknown, length: number): value is string {
   try {
     return (
@@ -114,14 +127,20 @@ function base64(value: unknown, length: number): value is string {
     return false
   }
 }
+
 function keyID(value: unknown): value is string {
   if (typeof value !== 'string' || !/^k[0-9a-z]+$/.test(value) || value.length > 57) return false
+
   let integer = 0n
+
   for (const character of value.slice(1))
     integer = integer * 36n + BigInt(Number.parseInt(character, 36))
+
   const hex = integer.toString(16)
+
   return hex.length === 72 && hex.startsWith('b6011f20') && `k${integer.toString(36)}` === value
 }
+
 function shape(
   value: Record<string, unknown>,
   required: Record<string, (v: unknown) => boolean>,
@@ -133,13 +152,15 @@ function shape(
     Object.entries(optional).every(([k, check]) => !Object.hasOwn(value, k) || check(value[k]))
   )
 }
+
 const consumer = { consumer: (_value: unknown) => true }
 const branch = { branchID: text, branchRecordID: (v: unknown) => base64(v, 32) }
 const entryMetadata = {
   kind: text,
   label: (v: unknown) => typeof v === 'string',
-  attributes: (v: unknown) =>
-    plain(v) && Object.values(v).every((value) => typeof value === 'string'),
+  attributes: (v: unknown) => {
+    return plain(v) && Object.values(v).every((value) => typeof value === 'string')
+  },
 }
 
 /** Structural metadata only. Consumer evidence is checked by the injected validator. */
@@ -148,8 +169,10 @@ export function vaultRecordMeta<Type extends VaultRecordType>(
   claim: RecordClaim,
 ): VaultRecordMetas[Type] | null {
   if (claim.type !== type || !plain(claim.meta)) return null
+
   const m = claim.meta
   let valid: boolean
+
   switch (type) {
     case 'vault.key':
       valid =
@@ -203,18 +226,23 @@ export function vaultRecordMeta<Type extends VaultRecordType>(
     default:
       return null
   }
+
   return valid ? (m as VaultRecordMetas[Type]) : null
 }
 
 function wire(type: VaultRecordType, payload: VaultRecordPayloads[VaultRecordType]): unknown {
   if (type === 'vault.wrapping') {
     const { descriptors, descriptorDigest, iv, wrappedKey } = payload as WrapResult
+
     return { descriptors, descriptorDigest, iv: toB64U(iv), wrappedKey: toB64U(wrappedKey) }
   }
+
   if (type === 'vault.entry') {
     const { iv, ciphertext } = payload as EncryptEntryResult
+
     return { iv: toB64U(iv), ciphertext: toB64U(ciphertext) }
   }
+
   return payload
 }
 
@@ -225,19 +253,29 @@ export function encodeVaultRecordPayload<Type extends VaultRecordType>(
 ): Uint8Array {
   return fromUTF(canonicalStringify(wire(type, payload)))
 }
+
 function bytes(value: unknown): Uint8Array {
   if (typeof value !== 'string') throw new Error('binary field is not a string')
+
   const decoded = fromB64U(value)
+
   if (toB64U(decoded) !== value) throw new Error('binary field is not canonical base64url')
+
   return decoded
 }
+
 const anything = (_value: unknown) => true
+
 function payloadOf(type: VaultRecordType, data: Uint8Array): VaultRecordPayloads[VaultRecordType] {
   const parsed: unknown = JSON.parse(toUTF(data))
+
   if (!plain(parsed)) throw new Error('payload is not an object')
+
   const canonical = fromUTF(canonicalStringify(parsed))
+
   if (canonical.length !== data.length || canonical.some((v, i) => v !== data[i]))
     throw new Error('payload is not canonical JSON')
+
   switch (type) {
     case 'vault.key':
       if (!shape(parsed, { suite: count, state: (v) => v === 'active' || v === 'retired' }))
@@ -258,15 +296,19 @@ function payloadOf(type: VaultRecordType, data: Uint8Array): VaultRecordPayloads
     case 'vault.wrapping': {
       if (
         !shape(parsed, {
-          descriptors: (v) =>
-            Array.isArray(v) &&
-            v.every((factor) => plain(factor) && shape(factor, { kind: text, params: plain })),
+          descriptors: (v) => {
+            return (
+              Array.isArray(v) &&
+              v.every((factor) => plain(factor) && shape(factor, { kind: text, params: plain }))
+            )
+          },
           descriptorDigest: (v) => base64(v, 32),
           iv: anything,
           wrappedKey: anything,
         })
       )
         throw new Error('wrapping payload fields')
+
       return {
         descriptors: parsed.descriptors as Array<FactorDescriptor>,
         descriptorDigest: parsed.descriptorDigest as string,
@@ -290,10 +332,13 @@ export function decodeVaultRecord(
   meta: Record<string, unknown>,
 ): DecodedVaultRecord {
   const { type, id, owner, hlc, payload } = record
+
   try {
     if (!(VAULT_RECORD_TYPES as ReadonlyArray<string>).includes(type))
       throw new Error('unknown record type')
+
     if (payload === null) throw new Error('a tombstone has no payload')
+
     const recordType = type as VaultRecordType
     const decodedMeta = vaultRecordMeta(recordType, {
       type,
@@ -304,9 +349,12 @@ export function decodeVaultRecord(
       deleted: false,
       payloadDigest: recordPayloadDigest(payload),
     })
+
     if (decodedMeta === null) throw new Error('record metadata')
+
     if (type === 'vault.key-branch' && id !== recordPayloadDigest(payload))
       throw new Error('record id is not the payload digest')
+
     return {
       type,
       id,

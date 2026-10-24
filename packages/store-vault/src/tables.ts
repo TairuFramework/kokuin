@@ -9,6 +9,7 @@ export type VaultKeyTable = {
   state: 'active' | 'retired'
   mode: Generated<'local' | 'replicated'>
 }
+
 export type VaultWrappingTable = {
   owner_did: string
   wrapping_id: string
@@ -22,6 +23,7 @@ export type VaultWrappingTable = {
   provenance: string
   mode: Generated<'local' | 'replicated'>
 }
+
 export type VaultEntryTable = {
   owner_did: string
   entry_id: string
@@ -36,6 +38,7 @@ export type VaultEntryTable = {
   provenance: string
   mode: Generated<'local' | 'replicated'>
 }
+
 export type VaultStoreTables = {
   vault_keys: VaultKeyTable
   vault_wrappings: VaultWrappingTable

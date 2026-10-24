@@ -9,6 +9,7 @@ export type VaultDatabase = {
   adapter: Adapter
   context: StoreContext
 }
+
 export const vaultDatabases = new WeakMap<VaultStoreAPI, VaultDatabase>()
 
 export class VaultModeConflict extends Error {
@@ -17,6 +18,7 @@ export class VaultModeConflict extends Error {
     this.name = 'VaultModeConflict'
   }
 }
+
 export class VaultWriteConflict extends Error {
   constructor() {
     super('Vault write preconditions no longer hold')
@@ -41,6 +43,7 @@ export async function claimMode(
     })
     .onConflict((oc) => oc.columns(['type', 'owner', 'id']).doNothing())
     .execute()
+
   const stored = await db
     .selectFrom('vault_decisions')
     .select('mode')
@@ -48,5 +51,6 @@ export async function claimMode(
     .where('owner', '=', key.owner)
     .where('id', '=', key.id)
     .executeTakeFirstOrThrow()
+
   if (stored.mode !== mode) throw new VaultModeConflict()
 }

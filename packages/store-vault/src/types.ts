@@ -1,10 +1,15 @@
 import type { EncryptEntryResult, VaultEntryMetadata, WrapResult } from '@kokuin/vault'
 
 export type KeyAddress = { ownerDID: string; keyID: string }
+
 export type EntryAddress = { ownerDID: string; entryID: string }
+
 export type WrappingAddress = { ownerDID: string; wrappingID: string }
+
 export type KeyRow = KeyAddress & { suite: number; version: number; state: 'active' | 'retired' }
+
 export type EntryMetadata = VaultEntryMetadata
+
 export type WrappingRow = KeyAddress &
   WrapResult &
   WrappingAddress & {
@@ -12,6 +17,7 @@ export type WrappingRow = KeyAddress &
     recipientDID: string | null
     provenance: string
   }
+
 export type EntryRow = KeyAddress &
   EntryAddress &
   EntryMetadata &
@@ -20,8 +26,11 @@ export type EntryRow = KeyAddress &
     hlc: string
     provenance: string
   }
+
 export type EntryFilter = KeyAddress & Partial<EntryMetadata>
+
 export type UpdateEntryResult = 'updated' | 'absent' | 'superseded'
+
 export type VaultStoreAPI = {
   isTransaction: boolean
   transaction<Result>(fn: (store: VaultStoreAPI) => Promise<Result>): Promise<Result>

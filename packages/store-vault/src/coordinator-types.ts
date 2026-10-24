@@ -1,4 +1,5 @@
-import type { SignedRecord, signRecordOp } from '@kokuin/records'
+import type { SignedRecord } from '@kokuin/records'
+import type { SigningIdentity } from '@kokuin/token'
 import type {
   FactorInput,
   FactorInputs,
@@ -40,19 +41,25 @@ export type CredentialAuthorityRequest =
         'getKey' | 'getEntry' | 'listKeys' | 'listWrappings' | 'listEntries'
       >
     }
+
 export type CredentialAuthority = {
   authorize(request: CredentialAuthorityRequest): Promise<boolean>
 }
+
 export type CoordinatorCall = { transportContext?: unknown }
+
 export type OpenKeyParams = KeyAddress &
   CoordinatorCall & { inputs?: FactorInputs; atVersion?: number }
+
 export type OpenedKey = { contentKey: Uint8Array; version: number; branchID: string; suite: number }
+
 export type CreateKeyParams = CoordinatorCall & {
   ownerDID: string
   wrappings?: Array<Array<FactorInput>>
   suite?: number
   consumer?: unknown
 }
+
 export type EntryWriteParams = KeyAddress &
   EntryAddress &
   CoordinatorCall &
@@ -61,20 +68,25 @@ export type EntryWriteParams = KeyAddress &
     inputs?: FactorInputs
     consumer?: unknown
   }
+
 export type EntryUpdateParams = EntryAddress &
   CoordinatorCall & { plaintext: Uint8Array; inputs?: FactorInputs }
+
 export type EntryReissue = { entryID: string; contentHLC?: string; consumer?: unknown } & (
   | { action: 'preserve' | 'skip' | 'delete' }
   | { action: 'replace'; plaintext: Uint8Array }
 )
+
 export type RotateKeyParams = OpenKeyParams & {
   excludedRecipients: ReadonlyArray<string>
   reissue: ReadonlyArray<EntryReissue>
   suite?: number
 }
+
 export type ForkRepairResult =
   | { status: 'rotated'; version: number }
   | { status: 'not-needed' | 'pending' }
+
 export type KeyStatus =
   | { state: 'unlocked' | 'available' | 'unopenable' }
   | { state: 'locked'; unlockOptions: Array<Array<SecretFactorKind>> }
@@ -90,15 +102,17 @@ type CommonParams = {
   cache?: KeyCacheParams
   pinThrottle?: PinThrottleParams
 }
+
 export type VaultCoordinatorParams = CommonParams &
   (
     | { mode: 'local' }
     | {
         mode: 'replicated'
-        signer: Parameters<typeof signRecordOp>[0]
+        signer: SigningIdentity
         records: Omit<VaultRecordsParams, 'store' | 'authority'>
       }
   )
+
 export type VaultCoordinator = {
   /** Replicated mode only. Receipt remains subject to the records authority callback. */
   get records(): VaultRecords

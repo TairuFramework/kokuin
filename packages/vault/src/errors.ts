@@ -6,7 +6,9 @@ export type VaultErrorCode =
   | 'VAULT_TAMPERED'
   | 'VAULT_SECRET_REJECTED'
   | 'VAULT_PIN_REJECTED'
+
 export type VaultErrorOptions = ErrorOptions & { code: VaultErrorCode }
+
 export class VaultError extends Error {
   #code: VaultErrorCode
 
@@ -28,6 +30,7 @@ export class NoAvailableFactor extends VaultError {
     super(`No available vault factor of kind "${kind}" on this device`, {
       code: 'VAULT_FACTOR_UNAVAILABLE',
     })
+
     this.name = 'NoAvailableFactor'
     this.#kind = kind
   }
@@ -74,10 +77,12 @@ export class VaultSecretRejected extends VaultError {
     options?: ErrorOptions & { keyID?: string; code?: VaultErrorCode },
   ) {
     const keyID = options?.keyID
+
     super(
       `Vault ${kinds.join(' and ')} rejected${keyID == null ? '' : ` for key ${keyID}`}. If the secret is known to be correct, the wrapping's factor descriptors or ciphertext may have been altered -- the two are indistinguishable at this point.`,
       { ...options, code: options?.code ?? 'VAULT_SECRET_REJECTED' },
     )
+
     this.name = 'VaultSecretRejected'
     this.#kinds = kinds
   }

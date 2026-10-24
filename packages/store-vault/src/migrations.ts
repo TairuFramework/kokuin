@@ -14,8 +14,10 @@ export function getVaultMigrations(ctx: MigrationContext): Record<string, Migrat
     column: Column,
   ): Column => {
     const required = column.notNull()
+
     return ctx.kind === 'postgres' ? required.modifyFront(sql`collate "C"`) : required
   }
+
   return {
     '0-init': {
       async up(db: Kysely<VaultStoreTables>) {
@@ -29,6 +31,7 @@ export function getVaultMigrations(ctx: MigrationContext): Record<string, Migrat
           .addColumn('mode', t.text, (c) => c.notNull().defaultTo('local'))
           .addPrimaryKeyConstraint(`${p}_vault_keys_pkey`, ['owner_did', 'key_id'])
           .execute()
+
         await db.schema
           .createTable('vault_wrappings')
           .addColumn('owner_did', t.text, (c) => c.notNull())
@@ -44,11 +47,13 @@ export function getVaultMigrations(ctx: MigrationContext): Record<string, Migrat
           .addColumn('mode', t.text, (c) => c.notNull().defaultTo('local'))
           .addPrimaryKeyConstraint(`${p}_vault_wrappings_pkey`, ['owner_did', 'wrapping_id'])
           .execute()
+
         await db.schema
           .createIndex(`${p}_vault_wrappings_key_idx`)
           .on('vault_wrappings')
           .columns(['owner_did', 'key_id', 'key_version'])
           .execute()
+
         await db.schema
           .createTable('vault_entries')
           .addColumn('owner_did', t.text, (c) => c.notNull())
@@ -65,6 +70,7 @@ export function getVaultMigrations(ctx: MigrationContext): Record<string, Migrat
           .addColumn('mode', t.text, (c) => c.notNull().defaultTo('local'))
           .addPrimaryKeyConstraint(`${p}_vault_entries_pkey`, ['owner_did', 'entry_id'])
           .execute()
+
         for (const column of ['kind', 'label'] as const) {
           await db.schema
             .createIndex(`${p}_vault_entries_${column}_idx`)
@@ -72,16 +78,19 @@ export function getVaultMigrations(ctx: MigrationContext): Record<string, Migrat
             .columns(['owner_did', 'key_id', column])
             .execute()
         }
+
         await db.schema
           .createIndex(`${p}_vault_entries_id_idx`)
           .on('vault_entries')
           .column('entry_id')
           .execute()
+
         await db.schema
           .createIndex(`${p}_vault_entries_hlc_idx`)
           .on('vault_entries')
           .column('hlc')
           .execute()
+
         if (ctx.kind === 'postgres') {
           await db.schema
             .createIndex(`${p}_vault_entries_attributes_idx`)

@@ -33,16 +33,22 @@ export function satisfiableFactors(
   identity: KeyAgreementIdentity | null,
 ): Array<SecretFactorKind> | null {
   const needed: Array<SecretFactorKind> = []
+
   for (const descriptor of descriptors) {
     if (isSecretFactorKind(descriptor.kind)) {
       needed.push(descriptor.kind)
       continue
     }
+
     if (descriptor.kind !== 'did') return null
+
     const recipient = descriptor.params.recipient
+
     if (identity === null || typeof recipient !== 'string') return null
+
     if (normalizeDID(recipient) !== normalizeDID(identity.id)) return null
   }
+
   return needed
 }
 
@@ -53,18 +59,25 @@ export function factorsFromDescriptors(
   return descriptors.map((descriptor) => {
     if (descriptor.kind === 'did') {
       const recipient = descriptor.params.recipient
+
       if (typeof recipient !== 'string')
         throw new VaultTampered('did factor descriptor carries no recipient')
+
       return { kind: 'did', recipientDID: recipient }
     }
+
     if (!isSecretFactorKind(descriptor.kind)) throw new NoAvailableFactor(descriptor.kind)
+
     const input = inputs?.[descriptor.kind]
+
     if (input == null) throw new NoAvailableFactor(descriptor.kind)
+
     const { m, t, p } = descriptor.params
     const cost =
       typeof m === 'number' && typeof t === 'number' && typeof p === 'number'
         ? { m, t, p }
         : undefined
+
     return { kind: descriptor.kind, input, cost }
   })
 }
@@ -72,5 +85,6 @@ export function factorsFromDescriptors(
 /** Public recipient metadata uses equality form. Descriptors retain resolvable long forms. */
 export function recipientDIDForFactors(factors: ReadonlyArray<FactorInput>): string | null {
   const factor = factors[0]
+
   return factors.length === 1 && factor?.kind === 'did' ? normalizeDID(factor.recipientDID) : null
 }
