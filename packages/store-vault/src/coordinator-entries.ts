@@ -4,15 +4,43 @@ import type { CoordinatorContext } from './coordinator-context.js'
 import { VaultNotFound } from './coordinator-context.js'
 import type { OpenFunctions } from './coordinator-open.js'
 import type { RecordFunctions } from './coordinator-records.js'
-import type { CoordinatorCall, EntryUpdateParams, EntryWriteParams } from './coordinator-types.js'
+import type {
+  CoordinatorCall,
+  EntryUpdateParams,
+  EntryWriteParams,
+  OpenedKey,
+} from './coordinator-types.js'
 import { VaultWriteConflict } from './record-context.js'
-import type { EntryAddress, EntryRow, VaultStoreAPI } from './types.js'
+import { settleAll } from './settle.js'
+import type { EntryAddress, EntryRow, UpdateEntryResult, VaultStoreAPI } from './types.js'
+
+export type ReKeyEntryParams = EntryAddress &
+  CoordinatorCall & { toKeyID: string; inputs?: EntryUpdateParams['inputs'] }
+
+export type EntryFunctions = {
+  putEntry(request: EntryWriteParams): Promise<EntryAddress>
+  deleteEntry(request: EntryAddress & CoordinatorCall): Promise<void>
+  reKeyEntry(request: ReKeyEntryParams): Promise<void>
+  updateEntry(request: EntryUpdateParams): Promise<void>
+  updateEntryIfPresent(request: EntryUpdateParams): Promise<'updated' | 'absent'>
+  updateEntryIfUnchanged(
+    request: EntryUpdateParams & { expectedHLC: string },
+  ): Promise<UpdateEntryResult>
+}
+
+const zeroKey = (opened: OpenedKey): void => {
+  opened.contentKey.fill(0)
+}
+
+const zeroBytes = (bytes: Uint8Array): void => {
+  bytes.fill(0)
+}
 
 export function createEntryFunctions(
   ctx: CoordinatorContext,
   open: OpenFunctions,
   records: RecordFunctions,
-) {
+): EntryFunctions {
   const { params } = ctx
 
   async function save(
@@ -21,7 +49,7 @@ export function createEntryFunctions(
     call: CoordinatorCall,
     expectedHLC: string | null,
     consumer: unknown,
-  ) {
+  ): Promise<void> {
     if (params.mode === 'local') {
       await store.putEntry(row)
 
@@ -29,16 +57,20 @@ export function createEntryFunctions(
     }
 
     const key = await ctx.key(row, store)
-    const branch = await ctx.branch(key, key.version, store)
+    const [branch, branches] = await settleAll([
+      ctx.branch(key, key.version, store),
+      ctx.branches(key, key.version, store),
+    ])
+    const record = await records.entry(row, branch, row.hlc, consumer)
 
     await ctx.write(
       store,
-      [await records.entry(row, branch, row.hlc, consumer)],
+      [record],
       {
         key: {
           ...key,
           expectedVersion: key.version,
-          expectedBranches: (await ctx.branches(key, key.version, store)).map((b) => b.branchID),
+          expectedBranches: branches.map((b) => b.branchID),
         },
         entry: { ...row, expectedHLC },
       },
@@ -54,11 +86,12 @@ export function createEntryFunctions(
 
       if (current !== undefined) throw new VaultWriteConflict()
 
-      const key = await ctx.key(request, store)
-      const opened = await open.open(request, store)
+      const [key, opened, hlc] = await settleAll(
+        [ctx.key(request, store), open.open(request, store), params.nextHLC()],
+        [undefined, zeroKey],
+      )
 
       try {
-        const hlc = await params.nextHLC()
         const encrypted = getSuite(opened.suite).encryptEntry({
           ...request,
           runtime: params.runtime,
@@ -85,7 +118,7 @@ export function createEntryFunctions(
   async function update(
     request: EntryUpdateParams & { expectedHLC?: string },
     operation: string,
-  ): Promise<'updated' | 'absent' | 'superseded'> {
+  ): Promise<UpdateEntryResult> {
     await ctx.authorize(operation, 'administer', request)
 
     const observed = await params.store.getEntry(request)
@@ -104,13 +137,20 @@ export function createEntryFunctions(
 
       await ctx.authorize(operation, 'administer', { ...request, keyID: existing.keyID }, store)
 
-      const opened = await open.open({ ...existing, inputs: request.inputs }, store)
+      const [opened, hlc, info] = await settleAll(
+        [
+          open.open({ ...existing, inputs: request.inputs }, store),
+          params.nextHLC(),
+          records.entryInfo(existing, store),
+        ],
+        [zeroKey],
+      )
 
       try {
         const row = {
           ...existing,
           keyVersion: opened.version,
-          hlc: await params.nextHLC(),
+          hlc,
           provenance: opened.branchID,
           ...getSuite(opened.suite).encryptEntry({
             ...existing,
@@ -120,7 +160,6 @@ export function createEntryFunctions(
             plaintext: request.plaintext,
           }),
         }
-        const info = await records.entryInfo(existing, store)
 
         await save(row, store, request, existing.hlc, info.consumer)
 
@@ -131,7 +170,7 @@ export function createEntryFunctions(
     })
   }
 
-  async function deleteEntry(request: EntryAddress & CoordinatorCall) {
+  async function deleteEntry(request: EntryAddress & CoordinatorCall): Promise<void> {
     await ctx.authorize('deleteEntry', 'administer', request)
 
     const observed = await params.store.getEntry(request)
@@ -153,14 +192,22 @@ export function createEntryFunctions(
         return
       }
 
-      const key = await ctx.key(existing, store)
-      const branch = await ctx.branch(existing, key.version, store)
-      const info = await records.entryInfo(existing, store)
-      const row = { ...existing, hlc: await params.nextHLC(), keyVersion: key.version }
+      const keyBranch = async () => {
+        const key = await ctx.key(existing, store)
+
+        return { key, branch: await ctx.branch(existing, key.version, store) }
+      }
+      const [{ key, branch }, info, hlc] = await settleAll([
+        keyBranch(),
+        records.entryInfo(existing, store),
+        params.nextHLC(),
+      ])
+      const row = { ...existing, hlc, keyVersion: key.version }
+      const record = await records.entry(row, branch, row.hlc, info.consumer, true)
 
       await ctx.write(
         store,
-        [await records.entry(row, branch, row.hlc, info.consumer, true)],
+        [record],
         {
           key: { ...key, expectedVersion: key.version },
           entry: { ...request, expectedHLC: existing.hlc },
@@ -170,10 +217,7 @@ export function createEntryFunctions(
     })
   }
 
-  async function reKeyEntry(
-    request: EntryAddress &
-      CoordinatorCall & { toKeyID: string; inputs?: EntryUpdateParams['inputs'] },
-  ) {
+  async function reKeyEntry(request: ReKeyEntryParams): Promise<void> {
     await ctx.authorize('reKeyEntry', 'administer', request)
 
     const observed = await params.store.getEntry(request)
@@ -182,8 +226,10 @@ export function createEntryFunctions(
 
     const target = { ownerDID: request.ownerDID, keyID: request.toKeyID }
 
-    await ctx.authorize('reKeyEntry', 'administer', { ...request, keyID: observed.keyID })
-    await ctx.authorize('reKeyEntry', 'administer', { ...request, keyID: target.keyID })
+    await settleAll([
+      ctx.authorize('reKeyEntry', 'administer', { ...request, keyID: observed.keyID }),
+      ctx.authorize('reKeyEntry', 'administer', { ...request, keyID: target.keyID }),
+    ])
     await ctx.locked([observed, target], async (store) => {
       const existing = await store.getEntry(request)
 
@@ -194,35 +240,38 @@ export function createEntryFunctions(
       )
         throw new VaultWriteConflict()
 
-      const plaintext = await open.decrypt(existing, { ...existing, inputs: request.inputs }, store)
+      const decrypting = open.decrypt(existing, { ...existing, inputs: request.inputs }, store)
+      // A rejected source PIN must not also spend an attempt on the target key's throttle.
+      const opening =
+        request.inputs?.pin === undefined
+          ? open.open({ ...target, inputs: request.inputs }, store)
+          : decrypting.then(() => open.open({ ...target, inputs: request.inputs }, store))
+      const [plaintext, opened, info, hlc] = await settleAll(
+        [decrypting, opening, records.entryInfo(existing, store), params.nextHLC()],
+        [zeroBytes, zeroKey],
+      )
 
       try {
-        const opened = await open.open({ ...target, inputs: request.inputs }, store)
-
-        try {
-          const info = await records.entryInfo(existing, store)
-          const row: EntryRow = {
-            ...existing,
+        const row: EntryRow = {
+          ...existing,
+          ...target,
+          keyVersion: opened.version,
+          hlc,
+          provenance: opened.branchID,
+          ...getSuite(opened.suite).encryptEntry({
             ...target,
             keyVersion: opened.version,
-            hlc: await params.nextHLC(),
-            provenance: opened.branchID,
-            ...getSuite(opened.suite).encryptEntry({
-              ...target,
-              keyVersion: opened.version,
-              entryID: existing.entryID,
-              contentKey: opened.contentKey,
-              runtime: params.runtime,
-              plaintext,
-            }),
-          }
-
-          if (params.mode === 'local') await store.moveEntry(row)
-          else await save(row, store, request, existing.hlc, info.consumer)
-        } finally {
-          opened.contentKey.fill(0)
+            entryID: existing.entryID,
+            contentKey: opened.contentKey,
+            runtime: params.runtime,
+            plaintext,
+          }),
         }
+
+        if (params.mode === 'local') await store.moveEntry(row)
+        else await save(row, store, request, existing.hlc, info.consumer)
       } finally {
+        opened.contentKey.fill(0)
         plaintext.fill(0)
       }
     })
@@ -232,7 +281,7 @@ export function createEntryFunctions(
     putEntry,
     deleteEntry,
     reKeyEntry,
-    async updateEntry(request: EntryUpdateParams) {
+    async updateEntry(request: EntryUpdateParams): Promise<void> {
       if ((await update(request, 'updateEntry')) !== 'updated') throw new VaultNotFound()
     },
     async updateEntryIfPresent(request: EntryUpdateParams): Promise<'updated' | 'absent'> {
@@ -242,7 +291,9 @@ export function createEntryFunctions(
 
       return result
     },
-    updateEntryIfUnchanged: (request: EntryUpdateParams & { expectedHLC: string }) => {
+    updateEntryIfUnchanged: (
+      request: EntryUpdateParams & { expectedHLC: string },
+    ): Promise<UpdateEntryResult> => {
       return update(request, 'updateEntryIfUnchanged')
     },
   }

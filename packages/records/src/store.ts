@@ -44,7 +44,7 @@ export function recordKeyText(key: RecordKey): string {
   return JSON.stringify([key.type, key.owner, key.id])
 }
 
-/** The stored decisions of `keys`, through `getMany` when the store has it, else one `get` each. */
+/** The stored decisions of `keys`, through `getMany` when the store has it, else concurrent `get`s. */
 export async function getRecordDecisions(
   store: RecordStoreAdapter,
   keys: ReadonlyArray<RecordKey>,
@@ -56,10 +56,12 @@ export async function getRecordDecisions(
   }
   if (unique.size === 0) return new Map()
   if (store.getMany !== undefined) return await store.getMany([...unique.values()])
+  const entries = [...unique]
+  const found = await Promise.all(entries.map(([, key]) => store.get(key)))
   const decisions: RecordDecisionMap = new Map()
-  for (const [text, key] of unique) {
-    const decision = await store.get(key)
-    if (decision !== null) decisions.set(text, decision)
+  for (const [index, [text]] of entries.entries()) {
+    const decision = found[index]
+    if (decision != null) decisions.set(text, decision)
   }
   return decisions
 }

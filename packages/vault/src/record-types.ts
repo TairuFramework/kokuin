@@ -238,9 +238,11 @@ function dependencies(
 async function keyOwnerMatches(
   params: VaultRecordTypeParams,
   op: VerifiedRecordOp,
-  store: RecordStoreAdapter,
+  ctx: RecordAuthorizeContext,
 ): Promise<boolean> {
-  const decision = await store.get({
+  // Apply serves the chunk's batched view. Holder proofs outside apply read the store.
+  const read = ctx.decision ?? ((key: RecordKey) => ctx.store.get(key))
+  const decision = await read({
     type: KEY,
     owner: op.claim.owner,
     id: op.claim.meta.keyID as string,
@@ -379,7 +381,7 @@ function createType(
 
       if (!validStructure(type, op) || !recordPayloadMatches(ctx.record, op.claim)) return false
 
-      if (type !== KEY && !(await keyOwnerMatches(params, op, ctx.store))) return false
+      if (type !== KEY && !(await keyOwnerMatches(params, op, ctx))) return false
 
       if (type === BRANCH) return await authorizeBranch(params, op, ctx)
 

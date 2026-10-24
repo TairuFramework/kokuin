@@ -8,11 +8,12 @@ import {
   vaultRevocationRecordID,
 } from '@kokuin/vault'
 
-import type { CoordinatorContext } from './coordinator-context.js'
+import type { CoordinatorContext, KeyBranch, WrappingEvidence } from './coordinator-context.js'
 import { VaultKeyLocked, VaultNotFound, VaultRepairPending } from './coordinator-context.js'
 import type { OpenFunctions } from './coordinator-open.js'
 import type { RecordFunctions } from './coordinator-records.js'
 import type { ForkRepairResult, RotateKeyParams } from './coordinator-types.js'
+import { settleAll } from './settle.js'
 import type { EntryRow, KeyRow, VaultStoreAPI, WrappingRow } from './types.js'
 
 type Selection = {
@@ -25,14 +26,21 @@ type Selection = {
   branchID: string
 }
 
+type SourceKey = { contentKey: Uint8Array; suite: number }
+
+export type RotateFunctions = {
+  rotate(request: RotateKeyParams): Promise<number>
+  repairFork(request: RotateKeyParams): Promise<ForkRepairResult>
+}
+
 export function createRotateFunctions(
   ctx: CoordinatorContext,
   open: OpenFunctions,
   records: RecordFunctions,
-) {
+): RotateFunctions {
   const { params } = ctx
 
-  function excluded(row: WrappingRow, recipients: ReadonlyArray<string>) {
+  function excluded(row: WrappingRow, recipients: ReadonlyArray<string>): boolean {
     const denied = new Set(recipients.map((did) => vaultRevocationRecordID(row.keyID, did)))
 
     return [
@@ -42,22 +50,74 @@ export function createRotateFunctions(
   }
 
   async function currentEntries(key: KeyRow, store: VaultStoreAPI): Promise<Array<Selection>> {
-    const result: Array<Selection> = []
+    const rows = await store.listEntries(key)
+    const infos = await records.entryInfos(rows, store)
 
-    for (const row of await store.listEntries(key)) {
-      const info = await records.entryInfo(row, store)
+    return rows.map((row, index) => {
+      const info = infos[index]
 
-      result.push({
+      if (info === undefined) throw new VaultNotFound()
+
+      return {
         entryID: row.entryID,
         row,
         ...info,
         opHash: '',
         keyVersion: row.keyVersion,
         branchID: row.provenance,
-      })
+      }
+    })
+  }
+
+  async function candidate(key: KeyRow, record: SignedRecord): Promise<Selection> {
+    const op = await ctx.verified(record)
+    const meta = op.claim.meta
+
+    if (
+      op.claim.owner !== key.ownerDID ||
+      meta.keyID !== key.keyID ||
+      typeof meta.contentHLC !== 'string' ||
+      typeof meta.keyVersion !== 'number'
+    )
+      throw new VaultRepairPending()
+
+    let row: EntryRow | undefined
+
+    if (!op.claim.deleted) {
+      const decoded = decodeVaultRecord(record, meta)
+
+      if (
+        decoded.type !== 'vault.entry' ||
+        decoded.meta.kind === undefined ||
+        decoded.meta.label === undefined ||
+        decoded.meta.attributes === undefined ||
+        decoded.meta.branchID === undefined
+      )
+        throw new VaultRepairPending()
+
+      row = {
+        ownerDID: key.ownerDID,
+        keyID: key.keyID,
+        entryID: record.id,
+        keyVersion: meta.keyVersion,
+        hlc: record.hlc,
+        provenance: decoded.meta.branchID,
+        kind: decoded.meta.kind,
+        label: decoded.meta.label,
+        attributes: decoded.meta.attributes,
+        ...decoded.payload,
+      }
     }
 
-    return result
+    return {
+      entryID: record.id,
+      row,
+      contentHLC: meta.contentHLC,
+      consumer: meta.consumer,
+      opHash: record.opHash,
+      keyVersion: meta.keyVersion,
+      branchID: typeof meta.branchID === 'string' ? meta.branchID : '',
+    }
   }
 
   async function candidates(
@@ -65,65 +125,19 @@ export function createRotateFunctions(
     store: VaultStoreAPI,
   ): Promise<Map<string, Array<Selection>>> {
     const api = ctx.recordsFor(store)
-    const values = [
-      ...(await api.listEntryCandidates({ ...key, keyVersion: key.version })),
-      ...(await api.listPriorEntryTombstones({ ...key, beforeVersion: key.version })),
-    ]
+    const [current, prior] = await settleAll([
+      api.listEntryCandidates({ ...key, keyVersion: key.version }),
+      api.listPriorEntryTombstones({ ...key, beforeVersion: key.version }),
+    ])
+    // Checks run together; the first failure in record order still wins.
+    const values = await settleAll([...current, ...prior].map((record) => candidate(key, record)))
     const grouped = new Map<string, Array<Selection>>()
 
-    for (const record of values) {
-      const op = await ctx.verified(record)
-      const meta = op.claim.meta
-
-      if (
-        op.claim.owner !== key.ownerDID ||
-        meta.keyID !== key.keyID ||
-        typeof meta.contentHLC !== 'string' ||
-        typeof meta.keyVersion !== 'number'
-      )
-        throw new VaultRepairPending()
-
-      let row: EntryRow | undefined
-
-      if (!op.claim.deleted) {
-        const decoded = decodeVaultRecord(record, meta)
-
-        if (
-          decoded.type !== 'vault.entry' ||
-          decoded.meta.kind === undefined ||
-          decoded.meta.label === undefined ||
-          decoded.meta.attributes === undefined ||
-          decoded.meta.branchID === undefined
-        )
-          throw new VaultRepairPending()
-
-        row = {
-          ownerDID: key.ownerDID,
-          keyID: key.keyID,
-          entryID: record.id,
-          keyVersion: meta.keyVersion,
-          hlc: record.hlc,
-          provenance: decoded.meta.branchID,
-          kind: decoded.meta.kind,
-          label: decoded.meta.label,
-          attributes: decoded.meta.attributes,
-          ...decoded.payload,
-        }
-      }
-
-      const value = {
-        entryID: record.id,
-        row,
-        contentHLC: meta.contentHLC,
-        consumer: meta.consumer,
-        opHash: record.opHash,
-        keyVersion: meta.keyVersion,
-        branchID: typeof meta.branchID === 'string' ? meta.branchID : '',
-      }
-      const list = grouped.get(record.id) ?? []
+    for (const value of values) {
+      const list = grouped.get(value.entryID) ?? []
 
       list.push(value)
-      grouped.set(record.id, list)
+      grouped.set(value.entryID, list)
     }
 
     return grouped
@@ -150,46 +164,77 @@ export function createRotateFunctions(
 
     if (repair && branches.length < 2) return null
 
-    const winner = await ctx.branch(key, key.version, store)
+    const wrappingsRead = async () => {
+      const existing = await store.listWrappings(key)
+      const current = existing.filter((w) => w.keyVersion === key.version)
+
+      return { existing, current, evidence: await ctx.wrappingEvidences(current, store) }
+    }
+    // Ordered settling keeps the original precedence: branch, then wrapping, then entry failures.
+    const [winner, wrappingState, currentSelections] = await settleAll([
+      ctx.branch(key, key.version, store),
+      wrappingsRead(),
+      currentEntries(key, store),
+    ])
     const expectedBranches = branches.map((b) => b.branchID)
-    const existingWrappings = await store.listWrappings(key)
-    const currentWrappings = existingWrappings.filter((w) => w.keyVersion === key.version)
-
-    for (const wrapping of currentWrappings) await ctx.wrappingEvidence(wrapping, store)
-
-    let retained = currentWrappings.filter((w) => !excluded(w, request.excludedRecipients))
-    let selections = await currentEntries(key, store)
-    const keys = new Map<string, { contentKey: Uint8Array; suite: number }>()
+    const existingWrappings = wrappingState.existing
+    const evidence = new Map<string, WrappingEvidence>(
+      wrappingState.evidence.map((item) => [item.record.id, item]),
+    )
+    let retained = wrappingState.current.filter((w) => !excluded(w, request.excludedRecipients))
+    let selections = currentSelections
+    const keys = new Map<string, Promise<SourceKey>>()
+    const pending: Array<Promise<unknown>> = []
     const plaintexts: Array<Uint8Array> = []
+    let pinGate: Promise<unknown> = Promise.resolve()
     let generated: Uint8Array | undefined
 
     try {
-      const decrypt = async (selection: Selection): Promise<Uint8Array | null> => {
-        if (selection.row === undefined) return null
-
-        const row = selection.row
-        const identity = JSON.stringify([row.keyVersion, row.provenance])
-        let source = keys.get(identity)
-
-        if (source === undefined) {
+      const openSource = (row: EntryRow): Promise<SourceKey> => {
+        const run = async (): Promise<SourceKey> => {
           const opened = await open.open(
             { ...request, atVersion: row.keyVersion },
             store,
             params.mode === 'replicated' ? row.provenance : undefined,
           )
 
-          source = { contentKey: opened.contentKey, suite: opened.suite }
-          keys.set(identity, source)
+          return { contentKey: opened.contentKey, suite: opened.suite }
         }
 
-        const plaintext = getSuite(source.suite).decryptEntry({
-          ...row,
-          contentKey: source.contentKey,
-        })
+        if (request.inputs?.pin === undefined) return run()
 
-        plaintexts.push(plaintext)
+        // PIN opens stay one at a time: a rejected PIN stops later attempts, spending one try.
+        const gated = pinGate.then(run)
 
-        return plaintext
+        pinGate = gated
+
+        return gated
+      }
+      const decrypt = (selection: Selection): Promise<Uint8Array | null> => {
+        const task = (async () => {
+          if (selection.row === undefined) return null
+
+          const row = selection.row
+          const identity = JSON.stringify([row.keyVersion, row.provenance])
+          let source = keys.get(identity)
+
+          // Cache the promise, not the key: concurrent decrypts must share one open.
+          if (source === undefined) {
+            source = openSource(row)
+            keys.set(identity, source)
+          }
+
+          const { contentKey, suite } = await source
+          const plaintext = getSuite(suite).decryptEntry({ ...row, contentKey })
+
+          plaintexts.push(plaintext)
+
+          return plaintext
+        })()
+
+        pending.push(task)
+
+        return task
       }
 
       if (repair) {
@@ -218,8 +263,7 @@ export function createRotateFunctions(
             continue
           }
 
-          const a = await decrypt(chosen)
-          const b = await decrypt(winning)
+          const [a, b] = await settleAll([decrypt(chosen), decrypt(winning)])
 
           if (
             (a === null) !== (b === null) ||
@@ -239,13 +283,20 @@ export function createRotateFunctions(
         )
         const addsRecipient = retained.some((w) => !winnerRecipients.has(signature(w)))
         let unreadableProjection = false
+        const versionBranches = new Map<number, Promise<KeyBranch>>()
 
         for (const selection of selections) {
           if (selection.row === undefined) continue
 
-          const branch = await ctx.branch(key, selection.keyVersion, store)
+          // Selections share few key versions. Read each version's branch once.
+          let branch = versionBranches.get(selection.keyVersion)
 
-          if (selection.branchID !== branch.branchID) {
+          if (branch === undefined) {
+            branch = ctx.branch(key, selection.keyVersion, store)
+            versionBranches.set(selection.keyVersion, branch)
+          }
+
+          if (selection.branchID !== (await branch).branchID) {
             unreadableProjection = true
             break
           }
@@ -288,61 +339,79 @@ export function createRotateFunctions(
       const suite = getSuite(request.suite ?? key.suite)
       const next = { ...key, version: key.version + 1, suite: suite.id }
 
-      generated = suite.generateContentKey(params.runtime)
+      const contentKey = suite.generateContentKey(params.runtime)
 
-      const output: Array<SignedRecord> = []
-      const chain =
+      generated = contentKey
+
+      // Key records and wraps are independent. Wrapping IDs are drawn in retained order.
+      const [chain, wrapped] = await settleAll([
         params.mode === 'replicated'
-          ? await ctx.keyRecords(next, store)
-          : { records: [], branchID: '', branchRecordID: '' }
+          ? ctx.keyRecords(next, store)
+          : Promise.resolve({ records: [], branchID: '', branchRecordID: '' }),
+        settleAll(
+          retained.map(async (previous) => {
+            const wrappingID = params.runtime.getRandomID()
+            const result = await suite.wrap({
+              runtime: params.runtime,
+              contentKey,
+              factors: factorsFromDescriptors(previous.descriptors, request.inputs),
+              wrappingID,
+              keyID: key.keyID,
+              keyVersion: next.version,
+              methods: params.methods,
+            })
 
-      output.push(...chain.records)
-
+            return { previous, wrappingID, result }
+          }),
+        ),
+      ])
+      const output: Array<SignedRecord> = [...chain.records]
       const wrappings: Array<WrappingRow> = []
 
-      for (const previous of retained) {
-        const wrappingID = params.runtime.getRandomID()
-        const wrapped = await suite.wrap({
-          runtime: params.runtime,
-          contentKey: generated,
-          factors: factorsFromDescriptors(previous.descriptors, request.inputs),
-          wrappingID,
-          keyID: key.keyID,
-          keyVersion: next.version,
-          methods: params.methods,
-        })
+      // Signing stays sequential: HLC allocation and output order follow the retained order.
+      for (const { previous, wrappingID, result } of wrapped) {
         const row = {
           ...next,
           wrappingID,
           keyVersion: next.version,
           recipientDID: previous.recipientDID,
           provenance: chain.branchID,
-          ...wrapped,
+          ...result,
         }
 
         wrappings.push(row)
 
         if (params.mode === 'replicated') {
-          const { op } = await ctx.stored(
-            { type: 'vault.wrapping', owner: previous.ownerDID, id: previous.wrappingID },
-            store,
-          )
+          const prior = evidence.get(previous.wrappingID)
 
-          output.push(await records.wrapping(row, chain, op.claim.meta.consumer))
+          if (prior === undefined) throw new VaultNotFound()
+
+          output.push(await records.wrapping(row, chain, prior.op.claim.meta.consumer))
         }
       }
 
       const entries: Array<EntryRow> = []
       const deletions: Array<string> = []
 
-      for (const selected of selections) {
+      const reissued = selections.map((selected) => {
         const instruction = instructions.get(selected.entryID)
-
-        if (instruction?.action === 'skip') continue
-
         const deleting =
           instruction?.action === 'delete' ||
           (selected.row === undefined && instruction?.action !== 'replace')
+        const decrypting =
+          instruction?.action === 'skip' || deleting || instruction?.action === 'replace'
+            ? undefined
+            : decrypt(selected)
+
+        // Awaited in selection order below. An earlier failure must not surface as unhandled.
+        decrypting?.catch(() => {})
+
+        return { selected, instruction, deleting, decrypting }
+      })
+
+      for (const { selected, instruction, deleting, decrypting } of reissued) {
+        if (instruction?.action === 'skip') continue
+
         const contentHLC = instruction?.contentHLC ?? selected.contentHLC
         const consumer =
           instruction !== undefined && Object.hasOwn(instruction, 'consumer')
@@ -375,13 +444,13 @@ export function createRotateFunctions(
         }
 
         const plaintext =
-          instruction?.action === 'replace' ? instruction.plaintext : await decrypt(selected)
+          instruction?.action === 'replace' ? instruction.plaintext : await decrypting
 
         if (plaintext === null || selected.row === undefined) throw new VaultRepairPending()
 
         const encrypted = suite.encryptEntry({
           runtime: params.runtime,
-          contentKey: generated,
+          contentKey,
           plaintext,
           keyID: key.keyID,
           keyVersion: next.version,
@@ -435,13 +504,18 @@ export function createRotateFunctions(
 
       return next.version
     } finally {
-      for (const source of keys.values()) source.contentKey.fill(0)
+      // Let every started decrypt settle first, so no key or plaintext arrives after zeroing.
+      await Promise.allSettled(pending)
+
+      for (const source of await Promise.allSettled(keys.values()))
+        if (source.status === 'fulfilled') source.value.contentKey.fill(0)
+
       for (const plaintext of plaintexts) plaintext.fill(0)
       generated?.fill(0)
     }
   }
 
-  async function rotate(request: RotateKeyParams) {
+  async function rotate(request: RotateKeyParams): Promise<number> {
     await ctx.authorize('rotate', 'administer', request)
 
     const version = await ctx.locked([request], (tx) => rotateLocked(request, tx, false))

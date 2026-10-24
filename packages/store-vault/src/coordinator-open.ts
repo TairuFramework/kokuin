@@ -17,6 +17,7 @@ import {
   VaultSupersededBranch,
 } from './coordinator-context.js'
 import type { OpenedKey, OpenKeyParams } from './coordinator-types.js'
+import { settleAll } from './settle.js'
 import type { EntryRow, VaultStoreAPI } from './types.js'
 
 export type OpenFunctions = {
@@ -35,7 +36,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
   const throttle = createPinThrottle(params.pinThrottle)
   const inFlight = new Map<string, Promise<void>>()
 
-  async function revoked(address: OpenKeyParams, store: VaultStoreAPI) {
+  async function revoked(address: OpenKeyParams, store: VaultStoreAPI): Promise<boolean> {
     if (params.mode !== 'replicated') return false
 
     const denied = await ctx.recordsFor(store).listRevocations(address)
@@ -54,12 +55,13 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     generation: string,
     specific?: string,
   ): Promise<OpenedKey> {
-    const key = await ctx.key(address, store)
+    // Independent guards. Ordered settling keeps a missing key ahead of a revocation.
+    const [key, denied] = await settleAll([ctx.key(address, store), revoked(address, store)])
     const version = address.atVersion ?? key.version
 
     if (version > key.version || version < 1) throw new VaultNotFound()
 
-    if (await revoked(address, store)) {
+    if (denied) {
       ctx.evict(address)
 
       throw new VaultNotFound()

@@ -1,10 +1,16 @@
-import type { SignedRecord } from '@kokuin/records'
-import { recordPayloadDigest, signRecordOp } from '@kokuin/records'
+import type { SignedRecord, VerifiedRecordOp } from '@kokuin/records'
+import {
+  getRecordDecisions,
+  recordKeyText,
+  recordPayloadDigest,
+  signRecordOp,
+} from '@kokuin/records'
 import { encodeVaultRecordPayload, VaultTampered } from '@kokuin/vault'
 
 import type { CoordinatorContext } from './coordinator-context.js'
 import { VaultNotFound } from './coordinator-context.js'
 import type { CoordinatorCall } from './coordinator-types.js'
+import { settleAll } from './settle.js'
 import type { EntryRow, VaultStoreAPI, WrappingRow } from './types.js'
 
 type Branch = { branchID: string; branchRecordID: string }
@@ -24,6 +30,8 @@ export type RecordFunctions = {
     deleted?: boolean,
   ): Promise<SignedRecord>
   entryInfo(row: EntryRow, store: VaultStoreAPI): Promise<EntryInfo>
+  /** Batched {@link entryInfo}: one record read, results and the first failure in row order. */
+  entryInfos(rows: ReadonlyArray<EntryRow>, store: VaultStoreAPI): Promise<Array<EntryInfo>>
   reendorse(
     request: {
       ownerDID: string
@@ -73,13 +81,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
     )
   }
 
-  async function entryInfo(row: EntryRow, store: VaultStoreAPI): Promise<EntryInfo> {
-    if (ctx.params.mode === 'local') return { contentHLC: row.hlc, consumer: null }
-
-    const { op } = await ctx.stored(
-      { type: 'vault.entry', owner: row.ownerDID, id: row.entryID },
-      store,
-    )
+  function checkEntry(row: EntryRow, op: VerifiedRecordOp): EntryInfo {
     const meta = op.claim.meta
     const attributes = meta.attributes
 
@@ -107,13 +109,45 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
     return { contentHLC, consumer: op.claim.meta.consumer }
   }
 
+  async function entryInfo(row: EntryRow, store: VaultStoreAPI): Promise<EntryInfo> {
+    if (ctx.params.mode === 'local') return { contentHLC: row.hlc, consumer: null }
+
+    const { op } = await ctx.stored(
+      { type: 'vault.entry', owner: row.ownerDID, id: row.entryID },
+      store,
+    )
+
+    return checkEntry(row, op)
+  }
+
+  async function entryInfos(
+    rows: ReadonlyArray<EntryRow>,
+    store: VaultStoreAPI,
+  ): Promise<Array<EntryInfo>> {
+    if (ctx.params.mode === 'local')
+      return rows.map((row) => ({ contentHLC: row.hlc, consumer: null }))
+
+    const evidence = await ctx.storedMany(
+      rows.map((row) => ({ type: 'vault.entry', owner: row.ownerDID, id: row.entryID })),
+      store,
+    )
+
+    return rows.map((row, index) => {
+      const item = evidence[index]
+
+      if (item === undefined) throw new VaultNotFound()
+
+      return checkEntry(row, item.op)
+    })
+  }
+
   async function reendorse(
     request: {
       ownerDID: string
       keyID: string
       records: ReadonlyArray<SignedRecord>
     } & CoordinatorCall,
-  ) {
+  ): Promise<void> {
     await ctx.authorize('reendorse', 'administer', request)
 
     if (ctx.params.mode !== 'replicated')
@@ -122,19 +156,41 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
     const params = ctx.params
 
     await ctx.locked([request], async (tx) => {
-      const key = await tx.getKey(request)
-      const output = []
+      const decisionsRead = getRecordDecisions(ctx.recordsFor(tx).adapter, request.records)
 
-      for (const record of request.records) {
-        const op = await ctx.verified(record)
+      // A task that fails before reading the decisions must not leave this rejection unhandled.
+      decisionsRead.catch(() => {})
 
-        if (op.claim.owner !== request.ownerDID || op.claim.meta.keyID !== request.keyID)
-          throw new TypeError('Re-endorsement is confined to the explicitly named key')
+      const keyRead = async () => {
+        const key = await tx.getKey(request)
 
-        const decision = await ctx.recordsFor(tx).adapter.get(record)
+        return { key, branches: await ctx.branches(request, key?.version ?? 0, tx) }
+      }
+      const [current, ops] = await settleAll([
+        keyRead(),
+        settleAll(
+          request.records.map(async (record) => {
+            const op = await ctx.verified(record)
 
-        if (!decision?.copies.some((copy) => copy.opHash === record.opHash))
-          throw new VaultNotFound()
+            if (op.claim.owner !== request.ownerDID || op.claim.meta.keyID !== request.keyID)
+              throw new TypeError('Re-endorsement is confined to the explicitly named key')
+
+            const decision = (await decisionsRead).get(recordKeyText(record))
+
+            if (!decision?.copies.some((copy) => copy.opHash === record.opHash))
+              throw new VaultNotFound()
+
+            return op
+          }),
+        ),
+      ])
+      const output: Array<SignedRecord> = []
+
+      // Signing stays sequential: signer calls follow the caller's record order.
+      for (const [index, record] of request.records.entries()) {
+        const op = ops[index]
+
+        if (op === undefined) throw new VaultNotFound()
 
         // Re-sign the entire original claim. Consumer evidence and content intent stay authenticated.
         output.push({
@@ -149,10 +205,8 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
         {
           key: {
             ...request,
-            expectedVersion: key?.version ?? null,
-            expectedBranches: (await ctx.branches(request, key?.version ?? 0, tx)).map(
-              (b) => b.branchID,
-            ),
+            expectedVersion: current.key?.version ?? null,
+            expectedBranches: current.branches.map((b) => b.branchID),
           },
         },
         request,
@@ -160,5 +214,5 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
     })
   }
 
-  return { wrapping, entry, entryInfo, reendorse }
+  return { wrapping, entry, entryInfo, entryInfos, reendorse }
 }

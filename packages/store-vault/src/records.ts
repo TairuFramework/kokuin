@@ -1,5 +1,5 @@
 import type { Kysely } from '@hozon/db'
-import { withKeyLocks, withStoreTransaction } from '@hozon/db'
+import { chunk, withKeyLocks, withStoreTransaction } from '@hozon/db'
 import type {
   ApplyRecordChunkParams,
   ApplyResult,
@@ -11,6 +11,7 @@ import type {
 } from '@kokuin/records'
 import {
   applyRecordChunk,
+  getRecordDecisions,
   recordClaimDigest,
   recordKeyText,
   recordPayloadMatches,
@@ -37,6 +38,7 @@ import {
 } from './record-context.js'
 import { getVaultRecordsStore } from './record-definition.js'
 import type { VaultRecordsTables, VaultRecordTable } from './record-tables.js'
+import { settleAll } from './settle.js'
 import type { EntryAddress, KeyAddress, VaultStoreAPI, WrappingRow } from './types.js'
 
 export class VaultRecordRowError extends Error {
@@ -71,6 +73,8 @@ export type VaultRecordsParams = Omit<VaultRecordTypeParams, 'portsFor'> & {
 
 export type VaultKeyBranch = {
   branchID: string
+  /** The `vault.key-branch` record that projected this branch. */
+  branchRecordID: string
   introducingOp: VerifiedRecordOp
 }
 
@@ -107,6 +111,9 @@ type Bound = VaultDatabase & {
   locks?: Array<HeldLock>
 }
 
+// Keyed OR predicates per getMany statement, within SQLite's default bind limit.
+const GET_MANY_CHUNK = 160
+
 const boundAdapters = new WeakMap<RecordStoreAdapter, Bound>()
 const acceptedKinds = new WeakMap<VaultStoreAPI, string>()
 
@@ -116,6 +123,20 @@ function supported(type: string): boolean {
 
 function json(value: unknown): unknown {
   return typeof value === 'string' ? JSON.parse(value) : value
+}
+
+function groupRows(rows: Array<VaultRecordTable>): Map<string, Array<VaultRecordTable>> {
+  const groups = new Map<string, Array<VaultRecordTable>>()
+
+  for (const row of rows) {
+    const key = recordKeyText(row)
+    const group = groups.get(key) ?? []
+
+    group.push(row)
+    groups.set(key, group)
+  }
+
+  return groups
 }
 
 function whereKey(db: Kysely<VaultRecordsTables>, key: RecordKey) {
@@ -184,16 +205,16 @@ async function decision(
   const copies: Array<SignedRecord> = []
   let selected: { contentDigest: string; decisionHLC: string } | undefined
   let failure: unknown
+  // Checks run together. Results are consumed in row order, as the sequential checks were.
+  const results = await Promise.allSettled(rows.map((row) => checked(row, bound)))
 
-  for (const row of rows) {
-    let value: CheckedRecord | null
-
-    try {
-      value = await checked(row, bound)
-    } catch (error) {
-      failure ??= error
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      failure ??= result.reason
       continue
     }
+
+    const value = result.value
 
     if (value === null) continue
 
@@ -522,18 +543,14 @@ function makeAdapter(bound: Bound): RecordStoreAdapter {
       const wanted = new Map(
         keys.filter((key) => supported(key.type)).map((key) => [recordKeyText(key), key]),
       )
-      const result = new Map<string, RecordDecision>()
-      const addresses = [...wanted.values()]
-
-      for (let start = 0; start < addresses.length; start += 160) {
-        const chunk = addresses.slice(start, start + 160)
-        const rows = await withStoreTransaction(db, async (tx) => {
+      const loadChunk = async (addresses: Array<RecordKey>): Promise<Array<VaultRecordTable>> => {
+        return withStoreTransaction(db, async (tx) => {
           return tx
             .selectFrom('vault_records')
             .selectAll()
             .where((eb) => {
               return eb.or(
-                chunk.map((key) => {
+                addresses.map((key) => {
                   return eb.and([
                     eb('type', '=', key.type),
                     eb('owner', '=', key.owner),
@@ -545,21 +562,16 @@ function makeAdapter(bound: Bound): RecordStoreAdapter {
             .orderBy('op_hash')
             .execute()
         })
-        const groups = new Map<string, Array<VaultRecordTable>>()
+      }
+      const chunks = await settleAll(chunk(wanted.values(), GET_MANY_CHUNK).map(loadChunk))
+      const groups = [...groupRows(chunks.flat())]
+      const decisions = await settleAll(groups.map(([, rows]) => decision(rows, bound)))
+      const result = new Map<string, RecordDecision>()
 
-        for (const row of rows) {
-          const key = recordKeyText(row)
-          const group = groups.get(key) ?? []
+      for (const [index, [key]] of groups.entries()) {
+        const value = decisions[index]
 
-          group.push(row)
-          groups.set(key, group)
-        }
-
-        for (const [key, rows] of groups) {
-          const value = await decision(rows, bound)
-
-          if (value !== null) result.set(key, value)
-        }
+        if (value !== null && value !== undefined) result.set(key, value)
       }
 
       return result
@@ -582,30 +594,25 @@ function makeAdapter(bound: Bound): RecordStoreAdapter {
           .orderBy('op_hash')
           .execute()
       })
-      const groups = new Map<string, Array<VaultRecordTable>>()
-
-      for (const row of rows) {
-        const key = recordKeyText(row)
-        const group = groups.get(key) ?? []
-
-        group.push(row)
-        groups.set(key, group)
-      }
-
+      const groups = [...groupRows(rows).values()]
+      const decisions = await Promise.allSettled(groups.map((group) => decision(group, bound)))
       const result: Array<RecordDecision> = []
 
-      for (const rows of groups.values()) {
-        try {
-          const value = await decision(rows, bound)
+      // Callbacks and non-row failures keep group order.
+      for (const [index, outcome] of decisions.entries()) {
+        if (outcome.status === 'fulfilled') {
+          if (outcome.value !== null) result.push(outcome.value)
 
-          if (value !== null) result.push(value)
-        } catch (error) {
-          if (!(error instanceof VaultRecordRowError)) throw error
-
-          const row = rows[0]
-
-          if (row !== undefined) bound.params.onCorruptRow?.({ type: row.type, id: row.id, error })
+          continue
         }
+
+        const error: unknown = outcome.reason
+
+        if (!(error instanceof VaultRecordRowError)) throw error
+
+        const row = groups[index]?.[0]
+
+        if (row !== undefined) bound.params.onCorruptRow?.({ type: row.type, id: row.id, error })
       }
 
       return result
@@ -656,10 +663,12 @@ function makeAdapter(bound: Bound): RecordStoreAdapter {
         typeof op.claim.meta.version === 'string' ? op.claim.meta.version : op.claim.hlc
       const same = previous?.contentDigest === contentDigest && previous.decisionHLC === decisionHLC
       const incomingSigner = recordSignerKey(op.issuer, record.opJWT)
+      // One check per prior row, shared by both passes. The first failure in row order wins.
+      const priors = await settleAll(previousRows.map((row) => checked(row, bound)))
       let keepHash = record.opHash
 
-      for (const row of previousRows) {
-        const prior = await checked(row, bound)
+      for (const [index, row] of previousRows.entries()) {
+        const prior = priors[index] ?? null
 
         if (
           same &&
@@ -680,8 +689,8 @@ function makeAdapter(bound: Bound): RecordStoreAdapter {
 
         await projection(record, op, bound)
       } else {
-        for (const row of previousRows) {
-          const prior = await checked(row, bound)
+        for (const [index, row] of previousRows.entries()) {
+          const prior = priors[index] ?? null
 
           if (
             prior === null ||
@@ -806,17 +815,16 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         : query.where('key_version', '=', version)
 
       const rows = await query.orderBy('id').orderBy('op_hash').execute()
-      const result: Array<SignedRecord> = []
 
-      for (const row of rows) {
-        const value = await checked(row, bound)
+      return settleAll(
+        rows.map(async (row) => {
+          const value = await checked(row, bound)
 
-        if (value === null) throw new VaultRecordRowError(row)
+          if (value === null) throw new VaultRecordRowError(row)
 
-        result.push(value.copy)
-      }
-
-      return result
+          return value.copy
+        }),
+      )
     })
   }
   const api: VaultRecords = {
@@ -837,42 +845,53 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         if (expectedKey === undefined && expectedEntry === undefined)
           throw new TypeError('Signed writes require a key or entry precondition')
 
-        const addresses: Array<KeyAddress> = []
+        const [old, observedEntry] = await settleAll([
+          getRecordDecisions(tx, request.records),
+          expectedEntry === undefined
+            ? Promise.resolve(undefined)
+            : inner.store.getEntry(expectedEntry),
+        ])
+        const recordAddresses = await settleAll(
+          request.records.map(async (record) => {
+            const op = await verifySignedRecord(record, params.opKind, params.methods)
 
-        for (const record of request.records) {
-          const op = await verifySignedRecord(record, params.opKind, params.methods)
-
-          if (
-            op !== null &&
-            !(
-              (expectedKey !== undefined &&
-                expectedKey.ownerDID === op.claim.owner &&
-                expectedKey.keyID === op.claim.meta.keyID) ||
-              (expectedEntry !== undefined &&
-                record.type === 'vault.entry' &&
-                expectedEntry.ownerDID === record.owner &&
-                expectedEntry.entryID === record.id)
+            if (
+              op !== null &&
+              !(
+                (expectedKey !== undefined &&
+                  expectedKey.ownerDID === op.claim.owner &&
+                  expectedKey.keyID === op.claim.meta.keyID) ||
+                (expectedEntry !== undefined &&
+                  record.type === 'vault.entry' &&
+                  expectedEntry.ownerDID === record.owner &&
+                  expectedEntry.entryID === record.id)
+              )
             )
-          )
-            throw new TypeError('Every signed output requires an address precondition')
+              throw new TypeError('Every signed output requires an address precondition')
 
-          if (op !== null && typeof op.claim.meta.keyID === 'string')
-            addresses.push({ ownerDID: record.owner, keyID: op.claim.meta.keyID })
+            const found: Array<KeyAddress> = []
 
-          const old = await tx.get(record)
+            if (op !== null && typeof op.claim.meta.keyID === 'string')
+              found.push({ ownerDID: record.owner, keyID: op.claim.meta.keyID })
 
-          for (const copy of old?.copies ?? []) {
-            const prior = await verifySignedRecord(copy, params.opKind, params.methods)
+            const copies = old.get(recordKeyText(record))?.copies ?? []
+            const priors = await settleAll(
+              copies.map((copy) => verifySignedRecord(copy, params.opKind, params.methods)),
+            )
 
-            if (typeof prior?.claim.meta.keyID === 'string')
-              addresses.push({ ownerDID: copy.owner, keyID: prior.claim.meta.keyID })
-          }
-        }
+            for (const [index, prior] of priors.entries()) {
+              const copy = copies[index]
+
+              if (copy !== undefined && typeof prior?.claim.meta.keyID === 'string')
+                found.push({ ownerDID: copy.owner, keyID: prior.claim.meta.keyID })
+            }
+
+            return found
+          }),
+        )
+        const addresses: Array<KeyAddress> = recordAddresses.flat()
 
         if (expectedKey !== undefined) addresses.push(expectedKey)
-
-        const observedEntry =
-          expectedEntry === undefined ? undefined : await inner.store.getEntry(expectedEntry)
 
         if (observedEntry !== undefined) addresses.push(observedEntry)
 
@@ -888,44 +907,52 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         const heldKeys = new Set(
           addresses.map((address) => JSON.stringify([address.ownerDID, address.keyID])),
         )
+        // Authoritative reads follow the lock. They are independent of each other.
+        const keyCheck = async (): Promise<boolean> => {
+          if (expectedKey === undefined) return true
 
-        for (const record of request.records) {
-          const current = await tx.get(record)
-
-          for (const copy of current?.copies ?? []) {
-            const op = await verifySignedRecord(copy, params.opKind, params.methods)
-
-            if (op !== null && !heldKeys.has(JSON.stringify([op.claim.owner, op.claim.meta.keyID])))
-              throw new VaultWriteConflict()
-          }
-        }
-
-        if (expectedEntry !== undefined) {
-          const current = await inner.store.getEntry(expectedEntry)
-
-          if (current?.keyID !== observedEntry?.keyID) throw new VaultWriteConflict()
-        }
-
-        if (expectedKey !== undefined) {
           const row = await inner.store.getKey(expectedKey)
 
-          if ((row?.version ?? null) !== expectedKey.expectedVersion) throw new VaultWriteConflict()
+          if ((row?.version ?? null) !== expectedKey.expectedVersion) return false
 
-          if (expectedKey.expectedBranches !== undefined) {
-            const branches = await createVaultRecords({
-              ...params,
-              store: inner.store,
-            }).listKeyBranches({ ...expectedKey, keyVersion: expectedKey.expectedVersion ?? 0 })
-            const current = branches.map((branch) => branch.branchID).sort()
-            const expected = [...expectedKey.expectedBranches].sort()
+          if (expectedKey.expectedBranches === undefined) return true
 
-            if (JSON.stringify(current) !== JSON.stringify(expected)) throw new VaultWriteConflict()
-          }
+          const branches = await createVaultRecords({
+            ...params,
+            store: inner.store,
+          }).listKeyBranches({ ...expectedKey, keyVersion: expectedKey.expectedVersion ?? 0 })
+          const current = branches.map((branch) => branch.branchID).sort()
+          const expected = [...expectedKey.expectedBranches].sort()
+
+          return JSON.stringify(current) === JSON.stringify(expected)
         }
+        const [current, currentEntry, keyMatches] = await settleAll([
+          getRecordDecisions(tx, request.records),
+          expectedEntry === undefined
+            ? Promise.resolve(undefined)
+            : inner.store.getEntry(expectedEntry),
+          keyCheck(),
+        ])
+        const currentOps = await settleAll(
+          request.records.flatMap((record) => {
+            return (current.get(recordKeyText(record))?.copies ?? []).map((copy) => {
+              return verifySignedRecord(copy, params.opKind, params.methods)
+            })
+          }),
+        )
+
+        for (const op of currentOps)
+          if (op !== null && !heldKeys.has(JSON.stringify([op.claim.owner, op.claim.meta.keyID])))
+            throw new VaultWriteConflict()
+
+        if (expectedEntry !== undefined && currentEntry?.keyID !== observedEntry?.keyID)
+          throw new VaultWriteConflict()
+
+        if (!keyMatches) throw new VaultWriteConflict()
 
         if (
           expectedEntry !== undefined &&
-          ((await inner.store.getEntry(expectedEntry))?.hlc ?? null) !== expectedEntry.expectedHLC
+          (currentEntry?.hlc ?? null) !== expectedEntry.expectedHLC
         )
           throw new VaultWriteConflict()
 
@@ -933,7 +960,6 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
       })
     },
     async listKeyBranches(address) {
-      await assertDomain(bound)
       await assertDomain(bound)
 
       return withStoreTransaction(bound.db, async (tx) => {
@@ -945,10 +971,13 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
           .where('key_version', '=', address.keyVersion)
           .orderBy('branch_id')
           .execute()
+        const ops = await settleAll(
+          rows.map((row) => verifyRecordOp(row.op_jwt, params.opKind, params.methods)),
+        )
         const result: Array<VaultKeyBranch> = []
 
-        for (const row of rows) {
-          const op = await verifyRecordOp(row.op_jwt, params.opKind, params.methods)
+        for (const [index, row] of rows.entries()) {
+          const op = ops[index] ?? null
 
           if (
             op === null ||
@@ -963,7 +992,7 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
               id: row.record_id,
             })
 
-          result.push({ branchID: row.branch_id, introducingOp: op })
+          result.push({ branchID: row.branch_id, branchRecordID: row.record_id, introducingOp: op })
         }
 
         return result

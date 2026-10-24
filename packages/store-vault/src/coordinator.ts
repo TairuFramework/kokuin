@@ -23,6 +23,7 @@ import type {
   VaultCoordinatorParams,
 } from './coordinator-types.js'
 import { VaultWriteConflict } from './record-context.js'
+import { settleAll } from './settle.js'
 import type { KeyAddress, KeyRow, WrappingRow } from './types.js'
 
 export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoordinator {
@@ -61,38 +62,47 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
 
     if (wrappings.length === 0) throw new TypeError('At least one wrapping is required')
 
+    const factorSets = wrappings
     const contentKey = suite.generateContentKey(params.runtime)
 
     try {
       await ctx.locked([key], async (store) => {
         if ((await store.getKey(key)) !== undefined) throw new VaultWriteConflict()
 
-        const chain =
+        // Key records and wraps are independent. Wrapping IDs are drawn in factor-set order.
+        const [chain, wrapped] = await settleAll([
           params.mode === 'replicated'
-            ? await ctx.keyRecords(key, store, keyUnique, request.consumer)
-            : { records: [], branchID: '', branchRecordID: '' }
+            ? ctx.keyRecords(key, store, keyUnique, request.consumer)
+            : Promise.resolve({ records: [], branchID: '', branchRecordID: '' }),
+          settleAll(
+            factorSets.map(async (factors) => {
+              const wrappingID = params.runtime.getRandomID()
+              const result = await suite.wrap({
+                runtime: params.runtime,
+                contentKey,
+                factors,
+                wrappingID,
+                keyID: key.keyID,
+                keyVersion: 1,
+                methods: params.methods,
+              })
+
+              return { factors, wrappingID, result }
+            }),
+          ),
+        ])
         const output: Array<SignedRecord> = [...chain.records]
         const rows: Array<WrappingRow> = []
 
-        for (const factors of wrappings) {
-          const wrappingID = params.runtime.getRandomID()
-          const wrapped = await suite.wrap({
-            runtime: params.runtime,
-            contentKey,
-            factors,
-            wrappingID,
-            keyID: key.keyID,
-            keyVersion: 1,
-            methods: params.methods,
-          })
-          const did = recipientDIDForFactors(factors)
+        // Signing stays sequential: HLC allocation and output order follow the factor sets.
+        for (const { factors, wrappingID, result } of wrapped) {
           const row = {
             ...key,
             wrappingID,
             keyVersion: 1,
-            recipientDID: did,
+            recipientDID: recipientDIDForFactors(factors),
             provenance: chain.branchID,
-            ...wrapped,
+            ...result,
           }
 
           rows.push(row)
@@ -123,11 +133,14 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
   async function rewrap(
     request: OpenKeyParams,
     change: (factors: Array<FactorInput>) => Array<FactorInput>,
-  ) {
+  ): Promise<void> {
     await ctx.locked([request], async (store) => {
       const key = await ctx.key(request, store)
-      const branch = await ctx.branch(request, key.version, store)
-      const wrappings = await store.listWrappings({ ...key, keyVersion: key.version })
+      const [branch, branches, wrappings] = await settleAll([
+        ctx.branch(request, key.version, store),
+        ctx.branches(key, key.version, store),
+        store.listWrappings({ ...key, keyVersion: key.version }),
+      ])
       const rows = wrappings.filter((w) => {
         return (
           (params.mode === 'local' || w.provenance === branch.branchID) &&
@@ -145,8 +158,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
       if (request.atVersion !== undefined && request.atVersion !== key.version)
         throw new VaultWriteConflict()
 
-      await ctx.wrappingEvidence(existing, store)
-
+      const evidence = await ctx.wrappingEvidence(existing, store)
       const opened = await open.open({ ...request, atVersion: key.version }, store)
 
       try {
@@ -172,11 +184,11 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
           await store.putWrapping(row)
           await store.deleteWrapping(existing)
         } else {
-          const previous = await ctx.stored(
-            { type: 'vault.wrapping', owner: key.ownerDID, id: existing.wrappingID },
-            store,
-          )
-          const replacement = await records.wrapping(row, branch, previous.op.claim.meta.consumer)
+          // The verified evidence already holds the prior wrapping's authenticated metadata.
+          if (evidence === undefined) throw new VaultNotFound()
+
+          const consumer = evidence.op.claim.meta.consumer
+          const replacement = await records.wrapping(row, branch, consumer)
           const deletion = await ctx.signed(
             'vault.wrapping',
             { ownerDID: key.ownerDID, id: existing.wrappingID },
@@ -185,7 +197,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
               keyID: key.keyID,
               keyVersion: key.version,
               recipient: existing.recipientDID,
-              consumer: previous.op.claim.meta.consumer,
+              consumer,
             },
           )
 
@@ -196,9 +208,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
               key: {
                 ...key,
                 expectedVersion: key.version,
-                expectedBranches: (await ctx.branches(key, key.version, store)).map(
-                  (b) => b.branchID,
-                ),
+                expectedBranches: branches.map((b) => b.branchID),
               },
             },
             request,
@@ -242,13 +252,16 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
     async status(request): Promise<KeyStatus> {
       await ctx.authorize('status', 'read', request)
 
-      const key = await ctx.key(request)
+      const [key, revoked] = await settleAll([
+        ctx.key(request),
+        open.revoked(request, params.store),
+      ])
 
       if (!isSupportedSuite(key.suite)) return { state: 'unopenable' }
 
       const version = request.atVersion ?? key.version
 
-      if (await open.revoked(request, params.store)) {
+      if (revoked) {
         ctx.evict(request)
 
         return { state: 'unopenable' }
@@ -284,18 +297,17 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
     async setKeyState(request) {
       await ctx.authorize('setKeyState', 'administer', request)
       await ctx.locked([request], async (store) => {
-        const key = await ctx.key(request, store)
-
         if (params.mode === 'local') {
+          await ctx.key(request, store)
           await store.setKeyState(request)
 
           return
         }
 
-        const previous = await ctx.stored(
-          { type: 'vault.key', owner: key.ownerDID, id: key.keyID },
-          store,
-        )
+        const [key, previous] = await settleAll([
+          ctx.key(request, store),
+          ctx.stored({ type: 'vault.key', owner: request.ownerDID, id: request.keyID }, store),
+        ])
         const record = await ctx.signed(
           'vault.key',
           { ownerDID: key.ownerDID, id: key.keyID },
@@ -318,18 +330,17 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
     async deleteKey(request) {
       await ctx.authorize('deleteKey', 'administer', request)
       await ctx.locked([request], async (store) => {
-        const key = await ctx.key(request, store)
-
         if (params.mode === 'local') {
+          await ctx.key(request, store)
           await store.deleteKey(request)
 
           return
         }
 
-        const previous = await ctx.stored(
-          { type: 'vault.key', owner: key.ownerDID, id: key.keyID },
-          store,
-        )
+        const [key, previous] = await settleAll([
+          ctx.key(request, store),
+          ctx.stored({ type: 'vault.key', owner: request.ownerDID, id: request.keyID }, store),
+        ])
         const keyUnique = previous.op.claim.meta.keyUnique
 
         if (typeof keyUnique !== 'string') throw new VaultNotFound()
@@ -355,11 +366,15 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
     async grant(request) {
       await ctx.authorize('grant', 'administer', request)
       await ctx.locked([request], async (store) => {
-        const key = await ctx.key(request, store)
+        const [key, revocations] = await settleAll([
+          ctx.key(request, store),
+          params.mode === 'replicated'
+            ? ctx.recordsFor(store).listRevocations(request)
+            : Promise.resolve([]),
+        ])
 
         if (
-          params.mode === 'replicated' &&
-          (await ctx.recordsFor(store).listRevocations(request)).some((did) => {
+          revocations.some((did) => {
             return (
               vaultRevocationRecordID(key.keyID, did) ===
               vaultRevocationRecordID(key.keyID, request.recipientDID)
@@ -397,18 +412,20 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
 
           if (params.mode === 'local') await store.putWrapping(row)
           else {
-            const branch = await ctx.branch(key, key.version, store)
+            const [branch, branches] = await settleAll([
+              ctx.branch(key, key.version, store),
+              ctx.branches(key, key.version, store),
+            ])
+            const record = await records.wrapping(row, branch)
 
             await ctx.write(
               store,
-              [await records.wrapping(row, branch)],
+              [record],
               {
                 key: {
                   ...key,
                   expectedVersion: key.version,
-                  expectedBranches: (await ctx.branches(key, key.version, store)).map(
-                    (b) => b.branchID,
-                  ),
+                  expectedBranches: branches.map((b) => b.branchID),
                 },
               },
               request,

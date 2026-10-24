@@ -1,7 +1,9 @@
 import { withKeyLocks, withStoreTransaction } from '@hozon/db'
-import type { RecordKey, SignedRecord, VerifiedRecordOp } from '@kokuin/records'
+import type { RecordDecision, RecordKey, SignedRecord, VerifiedRecordOp } from '@kokuin/records'
 import {
+  getRecordDecisions,
   recordClaimDigest,
+  recordKeyText,
   recordPayloadDigest,
   signRecordOp,
   verifySignedRecord,
@@ -25,7 +27,8 @@ import type { CoordinatorCall, VaultCoordinatorParams } from './coordinator-type
 import { getVaultStore } from './definition.js'
 import { VaultWriteConflict, vaultDatabases } from './record-context.js'
 import type { VaultKeyBranch, VaultRecords, VaultWritePreconditions } from './records.js'
-import { createVaultRecords } from './records.js'
+import { createVaultRecords, VaultRecordRowError } from './records.js'
+import { settleAll } from './settle.js'
 import type { KeyAddress, KeyRow, VaultStoreAPI, WrappingRow } from './types.js'
 
 export class VaultNotAuthorized extends Error {
@@ -104,7 +107,17 @@ export type CoordinatorContext = {
   ): Promise<SignedRecord>
   verified(record: SignedRecord): Promise<VerifiedRecordOp>
   stored(address: RecordKey, store?: VaultStoreAPI): Promise<StoredRecordEvidence>
+  /** One batched read. Throws the first missing or unverifiable record in address order. */
+  storedMany(
+    addresses: ReadonlyArray<RecordKey>,
+    store?: VaultStoreAPI,
+  ): Promise<Array<StoredRecordEvidence>>
   wrappingEvidence(row: WrappingRow, store?: VaultStoreAPI): Promise<WrappingEvidence | undefined>
+  /** Replicated evidence for each row, in row order, from one batched read. Empty in local mode. */
+  wrappingEvidences(
+    rows: ReadonlyArray<WrappingRow>,
+    store?: VaultStoreAPI,
+  ): Promise<Array<WrappingEvidence>>
   branches(
     address: KeyAddress,
     version: number,
@@ -237,16 +250,24 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
     return { record, op: await verified(record) }
   }
 
-  async function wrappingEvidence(
-    row: WrappingRow,
+  async function storedMany(
+    addresses: ReadonlyArray<RecordKey>,
     store = params.store,
-  ): Promise<WrappingEvidence | undefined> {
-    if (params.mode === 'local') return undefined
+  ): Promise<Array<StoredRecordEvidence>> {
+    const decisions = await getRecordDecisions(recordsFor(store).adapter, addresses)
 
-    const evidence = await stored(
-      { type: 'vault.wrapping', owner: row.ownerDID, id: row.wrappingID },
-      store,
+    return settleAll(
+      addresses.map(async (address) => {
+        const record = decisions.get(recordKeyText(address))?.copies[0]
+
+        if (record === undefined) throw new VaultNotFound()
+
+        return { record, op: await verified(record) }
+      }),
     )
+  }
+
+  function checkWrapping(row: WrappingRow, evidence: StoredRecordEvidence): WrappingEvidence {
     const decoded = decodeVaultRecord(evidence.record, evidence.op.claim.meta)
 
     if (
@@ -271,6 +292,40 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
       throw new VaultTampered('Wrapping projection disagrees with authenticated ciphertext')
 
     return { ...evidence, expectedDescriptorDigest: decoded.payload.descriptorDigest }
+  }
+
+  async function wrappingEvidences(
+    rows: ReadonlyArray<WrappingRow>,
+    store = params.store,
+  ): Promise<Array<WrappingEvidence>> {
+    if (params.mode === 'local') return []
+
+    const evidence = await storedMany(
+      rows.map((row) => ({ type: 'vault.wrapping', owner: row.ownerDID, id: row.wrappingID })),
+      store,
+    )
+
+    return rows.map((row, index) => {
+      const item = evidence[index]
+
+      if (item === undefined) throw new VaultNotFound()
+
+      return checkWrapping(row, item)
+    })
+  }
+
+  async function wrappingEvidence(
+    row: WrappingRow,
+    store = params.store,
+  ): Promise<WrappingEvidence | undefined> {
+    if (params.mode === 'local') return undefined
+
+    const evidence = await stored(
+      { type: 'vault.wrapping', owner: row.ownerDID, id: row.wrappingID },
+      store,
+    )
+
+    return checkWrapping(row, evidence)
   }
 
   async function branches(
@@ -298,14 +353,31 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
 
     const winner = selectWinningBranch(rows.map((row) => row.introducingOp))
     const branchID = specific ?? `${winner.claim.hlc}:${winner.opHash}`
-    const proof = rows.find((row) => row.branchID === branchID)
+    const proofs = rows
+      .filter((row) => row.branchID === branchID)
+      .map((row) => row.branchRecordID)
+      .sort()
 
-    if (proof === undefined) throw new VaultRepairPending()
+    if (proofs.length === 0) throw new VaultRepairPending()
 
-    for (const decision of await recordsFor(store).adapter.list(['vault.key-branch'])) {
-      const record = decision.copies[0]
+    const adapter = recordsFor(store).adapter
 
-      if (record === undefined || record.owner !== address.ownerDID) continue
+    // Read only the projected proof records. Any mismatch fails closed, as a full scan would.
+    for (const id of proofs) {
+      let decision: RecordDecision | null
+
+      try {
+        decision = await adapter.get({ type: 'vault.key-branch', owner: address.ownerDID, id })
+      } catch (error) {
+        if (!(error instanceof VaultRecordRowError)) throw error
+
+        params.records.onCorruptRow?.({ type: 'vault.key-branch', id, error })
+        continue
+      }
+
+      const record = decision?.copies[0]
+
+      if (record === undefined) continue
 
       const op = await verified(record)
 
@@ -339,18 +411,20 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
 
     if (result.rejected.length > 0 || result.parked.length > 0) throw new VaultWriteConflict()
 
-    for (const record of output) {
-      const selected = (await recordsFor(store).adapter.get(record))?.copies[0]
+    const decisions = await getRecordDecisions(recordsFor(store).adapter, output)
 
-      if (selected === undefined) throw new VaultWriteConflict()
+    await settleAll(
+      output.map(async (record) => {
+        const selected = decisions.get(recordKeyText(record))?.copies[0]
 
-      const selectedOp = await verified(selected)
-      const selectedDigest = recordClaimDigest(selectedOp.claim)
-      const expectedOp = await verified(record)
-      const expectedDigest = recordClaimDigest(expectedOp.claim)
+        if (selected === undefined) throw new VaultWriteConflict()
 
-      if (selectedDigest !== expectedDigest) throw new VaultWriteConflict()
-    }
+        const [selectedOp, expectedOp] = await settleAll([verified(selected), verified(record)])
+
+        if (recordClaimDigest(selectedOp.claim) !== recordClaimDigest(expectedOp.claim))
+          throw new VaultWriteConflict()
+      }),
+    )
   }
 
   async function keyRecords(
@@ -493,7 +567,9 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
     signed,
     verified,
     stored,
+    storedMany,
     wrappingEvidence,
+    wrappingEvidences,
     branches,
     branch,
     write,
