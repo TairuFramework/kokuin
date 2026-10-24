@@ -26,6 +26,10 @@
   dir: packages/capability
   intents:
     - warm-eagles-itch
+"@kokuin/capability@0.5.2":
+  dir: packages/capability
+  intents:
+    - canonical-deny-set
 "@kokuin/controller@0.1.0":
   dir: packages/controller
   intents:
@@ -42,6 +46,10 @@
   dir: packages/controller
   intents:
     - device-revoke-indices
+"@kokuin/controller@0.2.4":
+  dir: packages/controller
+  intents:
+    - smart-tables-dress
 "@kokuin/deterministic@0.2.4":
   dir: packages/deterministic
   intents:
@@ -74,10 +82,18 @@
   dir: packages/store-controller
   intents:
     - large-bees-unite
+"@kokuin/store-controller@0.4.0":
+  dir: packages/store-controller
+  intents:
+    - little-queens-teach
 "@kokuin/store-delegation@0.1.1":
   dir: packages/store-delegation
   intents:
     - quiet-owls-nap
+"@kokuin/store-delegation@0.3.0":
+  dir: packages/store-delegation
+  intents:
+    - wet-mice-repair
 "@kokuin/token@0.4.0":
   dir: packages/token
   intents:
@@ -100,3 +116,7 @@
   dir: packages/token
   intents:
     - fresh-crabs-flow
+"@kokuin/token@0.6.2":
+  dir: packages/token
+  intents:
+    - shiny-beds-decide

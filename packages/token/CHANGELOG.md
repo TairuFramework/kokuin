@@ -1,5 +1,11 @@
 # @kokuin/token
 
+## 0.6.2
+
+### Patch Changes
+
+- `DIDMethodResolver` gains optional `resolveMemberHistoric`.
+
 ## 0.6.1
 
 ### Patch Changes
