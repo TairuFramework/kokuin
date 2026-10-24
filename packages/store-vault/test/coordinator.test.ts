@@ -1,5 +1,5 @@
 import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
-import { recordClaimDigest, signRecordOp, verifySignedRecord } from '@kokuin/records'
+import { recordClaimDigest, verifySignedRecord } from '@kokuin/records'
 import { createIdentity, randomIdentity } from '@kokuin/token'
 import {
   getSuite,
@@ -73,7 +73,6 @@ test('repair restores readable projections after concurrent preservation rotatio
     recordClaimDigest(left.introducingOp.claim) > recordClaimDigest(right.introducingOp.claim)
       ? [a, b]
       : [b, a]
-  // A later entry decision on the losing branch retains the same plaintext and content intent.
   const selected = (
     await loser.manager.records.adapter.get({
       type: 'vault.entry',
@@ -82,19 +81,13 @@ test('repair restores readable projections after concurrent preservation rotatio
     })
   )?.copies[0]
   if (!selected) throw new Error('missing entry record')
-  const op = await verifySignedRecord(selected, VAULT_OP_KIND)
-  if (!op) throw new Error('invalid entry record')
-  const hlc = await loser.params.nextHLC()
-  await loser.manager.records.apply([
-    {
-      ...selected,
-      hlc,
-      ...(await signRecordOp(loser.identity, { ...op.claim, hlc }, VAULT_OP_KIND)),
-    },
-  ])
   await winner.manager.records.apply(
     (await loser.manager.records.adapter.list(types)).flatMap((d) => d.copies),
   )
+  // Entry and key decisions have independent digest winners. Force the unreadable projection.
+  await winner.manager.records.adapter.transaction(async (tx) => {
+    await tx.putCopy(selected)
+  })
   await expect(winner.manager.readEntry(entry)).rejects.toMatchObject({
     name: 'VaultSupersededBranch',
   })
