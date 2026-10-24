@@ -280,7 +280,7 @@ type KeyState = {
   recovery: string // the inception's commitment, carried unchanged for the log's life
   deny: ReadonlySet<string> // both spellings
   members: ReadonlyMap<string, MemberState> // keyed by add digest
-  tombstones: ReadonlyMap<string, MemberEntry> // snapshot u, keyed by add digest
+  tombstones?: ReadonlyMap<string, MemberEntry> // snapshot u, keyed by add digest
   epoch: string // digest of the chain event that opened this epoch
   saturated: boolean
   digest: string // digest of the chain event that produced this state
@@ -481,9 +481,13 @@ A removal flag inside `m` would instead expose removed members as live to older 
 `KeyState.members` keeps its 0.2 behaviour: chain states contain only live snapshot entries, in snapshot order.
 The head also holds members removed by epoch events, with `removed: true` and `effective: false`.
 Snapshot tombstones never enter either `members` map.
-`KeyState.tombstones` holds them separately as `MemberEntry` values keyed by add digest.
+`KeyState.tombstones` optionally holds them separately as `MemberEntry` values keyed by add digest.
+The fold always supplies this map. Readers treat an omitted map on caller-built states as empty.
 The head carries the last chain state's tombstones.
-Renewal or removal of a tombstone cannot restore its authority. Its signatures cannot authorise epoch events.
+The epoch fold keeps its 0.2 behaviour and ignores snapshot tombstones in causal membership.
+Root renewal or removal of a tombstoned add refuses because its target is not a member.
+Tombstoned signers refuse because they are not members. A live member may revoke a tombstoned incarnation's DID.
+This denial does not invalidate the removed incarnation's historic evidence, including when a settlement checkpoints the denial.
 Tombstones obey the same Ed25519, DID pin and root-key exclusion rules as live entries.
 An add digest cannot occur twice across `m` and `u`. A new live incarnation may share a removed incarnation's pin.
 
@@ -528,4 +532,5 @@ A blind reset supplies no membership evidence for the new generation.
 A reset snapshot may re-admit an incarnation as live through root attestation, matching `resolveMember` behaviour.
 Only then can its unchanged add digest resolve under the new generation.
 A reset must never carry `u`, even an empty list: nobody has been removed in the new generation.
-`createReset` throws for non-empty `removed` snapshots. The fold refuses any reset carrying `u` with `RESET_HAS_TOMBSTONES`.
+`createReset` silently drops `snapshot.removed`, so `createReset(seed, profile, gen, snapshotOf(head))` works after removal.
+The fold still refuses any reset carrying `u` with `RESET_HAS_TOMBSTONES`.

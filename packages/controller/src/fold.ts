@@ -81,8 +81,8 @@ export type KeyState = {
    * event's snapshot `m`, in snapshot order. The head also holds epoch removals.
    */
   members: ReadonlyMap<string, MemberState>
-  /** Removed incarnations from snapshot `u`, keyed by add digest, separate from `members`. */
-  tombstones: ReadonlyMap<string, MemberEntry>
+  /** Removed incarnations from snapshot `u`. The fold fills this map; absent means empty. */
+  tombstones?: ReadonlyMap<string, MemberEntry>
   /**
    * Digest of the chain event that opened the epoch this state belongs to. Every chain event opens
    * one, so for a chain state this is its own `digest`; epoch events name it as their `e`.
@@ -544,7 +544,7 @@ export function snapshotOf(
     const entries = member.removed ? removed : members
     entries.push({ did: member.did, key: member.key, add: member.add, lease: member.lease })
   }
-  for (const member of state.tombstones.values()) {
+  for (const member of state.tombstones?.values() ?? []) {
     if (droppedMembers.has(member.add)) continue
     removed.push({ did: member.did, key: member.key, add: member.add, lease: member.lease })
   }

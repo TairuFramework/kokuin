@@ -267,9 +267,9 @@ export function historicMemberFrom(
   if (current !== undefined && !current.removed && !current.effective) throw refuse()
   const historic = view.states.findLast(
     (state) =>
-      state.gen === query.gen && (state.members.has(query.add) || state.tombstones.has(query.add)),
+      state.gen === query.gen && (state.members.has(query.add) || state.tombstones?.has(query.add)),
   )
-  const tombstone = view.head.tombstones.get(query.add) ?? historic?.tombstones.get(query.add)
+  const tombstone = view.head.tombstones?.get(query.add) ?? historic?.tombstones?.get(query.add)
   const member =
     current ??
     (tombstone === undefined

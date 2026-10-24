@@ -676,7 +676,7 @@ describe('historic management membership', () => {
     ).resolves.toMatchObject({ lease: LEASE })
   })
 
-  test('tombstones survive renewal and cannot sign removal, renewal or revocation', () => {
+  test('tombstones refuse root renewal and cannot sign removal, renewal or revocation', () => {
     const rot = settle(removedLog)
     const nextChain = [icp, rot]
     const next = headOf({ chain: nextChain, events: [] })
@@ -689,7 +689,7 @@ describe('historic management membership', () => {
     for (const event of events) {
       const result = foldLog(did, { chain: nextChain, events: [event] })
       expect(result.ok && result.head.members.has(add)).toBe(false)
-      expect(result.ok && result.head.tombstones.get(add)).toMatchObject({ lease: LEASE })
+      expect(result.ok && result.head.tombstones?.get(add)).toMatchObject({ lease: LEASE })
       expect(result.ok && result.rejected).toBe(1)
       expect(result.ok && result.head.deny.size).toBe(0)
     }
@@ -701,9 +701,12 @@ describe('historic management membership', () => {
       add,
       lease: LEASE + 1,
     })
+    const result = foldLog(did, { chain: nextChain, events: [renewal] })
+    expect(result.ok && result.applied).toEqual([])
+    expect(result.ok && result.rejected).toBe(1)
     const renewed = headOf({ chain: nextChain, events: [renewal] })
     expect(renewed.members.has(add)).toBe(false)
-    expect(renewed.tombstones.get(add)).toEqual(next.tombstones.get(add))
+    expect(renewed.tombstones?.get(add)).toEqual(next.tombstones?.get(add))
     expect(snapshotOf(next, { members: [add] }).removed ?? []).toEqual([])
   })
 })

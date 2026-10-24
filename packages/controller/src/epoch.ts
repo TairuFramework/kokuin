@@ -156,10 +156,6 @@ function anchorState(anchor: KeyState): EpochState {
     })
     if (member.removed) state.removed.add(member.add)
   }
-  for (const member of anchor.tombstones.values()) {
-    state.added.set(member.add, member)
-    state.removed.add(member.add)
-  }
   for (const entry of anchor.deny) state.deny.add(entry)
   return state
 }
@@ -559,7 +555,6 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail | Fo
 
   const members = new Map<string, MemberState>()
   for (const [add, entry] of union.added) {
-    if (anchor.tombstones.has(add)) continue
     const lease = Math.max(entry.lease, union.leases.get(add) ?? 0)
     const removed = union.removed.has(add)
     const effective = !removed && !isDenied(union.deny, entry, matches)

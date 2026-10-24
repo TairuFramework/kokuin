@@ -82,11 +82,11 @@ describe('snapshot removed incarnations', () => {
       if (comparison === undefined) throw new Error('fixture states must align')
       expect([...state.members]).toEqual([...comparison.members])
       expect(state.members.has(entry.add)).toBe(index === 1)
-      expect(state.tombstones.has(entry.add)).toBe(index >= 2)
+      expect(state.tombstones?.has(entry.add)).toBe(index >= 2)
     }
     expect([...withRemoved.head.members]).toEqual([...withoutRemoved.head.members])
     expect(withRemoved.head.members.has(entry.add)).toBe(false)
-    expect([...withRemoved.head.tombstones.values()]).toEqual([entry])
+    expect([...(withRemoved.head.tombstones?.values() ?? [])]).toEqual([entry])
     expect(snapshotOf(withRemoved.head)).toEqual({ members: [live], removed: [entry], deny: [] })
     expect(snapshotOf(withRemoved.head, { members: [entry.add] })).toEqual({
       members: [live],
@@ -115,7 +115,7 @@ describe('snapshot removed incarnations', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.head.members.has(entry.add)).toBe(false)
-    expect(result.head.tombstones.get(entry.add)).toEqual(entry)
+    expect(result.head.tombstones?.get(entry.add)).toEqual(entry)
     expect(result.head.members.get('new-add')).toMatchObject({ removed: false, effective: true })
   })
   test('malformed tombstones and duplicate incarnations fail closed', () => {
@@ -152,13 +152,35 @@ describe('snapshot removed incarnations', () => {
 })
 
 describe('tombstones in resets', () => {
-  test('createReset refuses tombstones because a new generation has no removed incarnations', () => {
-    expect(() => createReset(seed, 0, 1, { members: [], removed: [entry], deny: [] })).toThrow(
-      /new generation.*removed incarnations/,
-    )
-    const reset = createReset(seed, 0, 1, { members: [entry], removed: [], deny: [] })
+  test('createReset drops removed incarnations from snapshotOf after a removal', () => {
+    const admitted = createRotate({
+      seed,
+      profile: 0,
+      did,
+      prior: icp.event,
+      snapshot: { members: [entry], deny: [] },
+    })
+    const before = foldLog(did, { chain: [icp, admitted], events: [] })
+    if (!before.ok) throw new Error(before.reason)
+    const removal = createRemove({
+      signer: { root: { seed, profile: 0 } },
+      did,
+      head: before.head,
+      parents: [before.head.epoch],
+      add: entry.add,
+    })
+    const after = foldLog(did, { chain: [icp, admitted], events: [removal] })
+    if (!after.ok) throw new Error(after.reason)
+    const snapshot = snapshotOf(after.head)
+    expect(snapshot.removed).toEqual([entry])
+    const reset = createReset(seed, 0, 1, snapshot)
     expect('u' in reset.event).toBe(false)
-    expect(foldLog(did, { chain: [icp, reset], events: [] }).ok).toBe(true)
+    const result = foldLog(did, { chain: [icp, admitted, reset], events: [] })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.head.gen).toBe(1)
+    expect(snapshotOf(result.head)).toEqual({ members: [], deny: [] })
+    expect(snapshot.removed).toEqual([entry])
   })
   test('a recovery-signed reset refuses the tombstone field regardless of its value', () => {
     const reset = createReset(seed, 0, 1, { members: [entry], deny: [] })

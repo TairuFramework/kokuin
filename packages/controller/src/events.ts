@@ -493,7 +493,8 @@ export function verifyRotate(
  * duplicity — which only the recovery-key holder can cause, and a reset at a higher generation
  * resolves. Members keep their `add` references, but every grant names its generation, so every
  * grant minted under the prior one still dies. The snapshot is checked against the **new**
- * generation's keys, and no retired-key denial of the old one need carry over.
+ * generation's keys, and no retired-key denial of the old one need carry over. Removed incarnations
+ * are silently dropped: nobody has been removed in the new generation.
  *
  * The root need not know the current generation, only eventually exceed it (no attacker can author a
  * competing reset at any generation): a blind root starts at `gen = 1` and retries higher if it
@@ -507,10 +508,6 @@ export function createReset(
 ): SignedEvent<RotateEvent> {
   if (gen < 1) {
     throw new Error(`Reset: gen must be >= 1, got ${gen}`)
-  }
-
-  if ((snapshot?.removed?.length ?? 0) > 0) {
-    throw new Error('Reset: a new generation has no removed incarnations to carry')
   }
 
   const inception = createInception(seed, profile)
