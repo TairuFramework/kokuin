@@ -1,7 +1,7 @@
 # Rust crypto backend (mobile first) — design
 
 **Date:** 2026-10-24
-**Status:** design, awaiting approval (builder check done)
+**Status:** approved for implementation on 2026-10-25, subject to the benchmark gate
 
 ## Intent
 
