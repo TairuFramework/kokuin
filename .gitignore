@@ -4,4 +4,8 @@ node_modules
 .turbo
 .superpowers
 target
+packages/crypto-native/prebuilt
+packages/crypto-native/android/.cxx
+packages/crypto-native/android/build
+tests/e2e-expo/android
 lib

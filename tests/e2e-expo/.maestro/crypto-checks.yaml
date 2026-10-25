@@ -1,0 +1,10 @@
+appId: dev.kokuin.e2e
+---
+- launchApp
+- scrollUntilVisible:
+    element: "Run crypto checks"
+    direction: DOWN
+- tapOn: "Run crypto checks"
+- extendedWaitUntil:
+    visible: "Crypto checks: OK"
+    timeout: 30000

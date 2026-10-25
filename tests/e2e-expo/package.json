@@ -9,11 +9,16 @@
     "ios": "expo run:ios",
     "ios:release": "expo run:ios --no-bundler --configuration Release",
     "start": "expo start",
-    "test": "MAESTRO_CLI_NO_ANALYTICS=true MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true maestro test .maestro/"
+    "test": "MAESTRO_CLI_NO_ANALYTICS=true MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true maestro test .maestro/",
+    "test:types": "tsc --noEmit",
+    "test:unit": "vitest run crypto"
   },
   "dependencies": {
+    "@kokuin/crypto-native": "workspace:^",
     "@kokuin/expo": "workspace:^",
     "@kokuin/token": "workspace:^",
+    "@noble/curves": "catalog:",
+    "@noble/hashes": "catalog:",
     "@sozai/runtime-expo": "catalog:",
     "expo": "catalog:",
     "expo-status-bar": "catalog:",

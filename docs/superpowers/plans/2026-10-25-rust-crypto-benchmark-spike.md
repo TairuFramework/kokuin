@@ -7,6 +7,15 @@
 **Stage:** executing
 **Mode:** tasks
 
+**Execution state:** paused at Paul's request. The native bridge and benchmark harness are work in progress.
+
+Task 1 was committed as `690a03c`. Rust cross-builds and both native app builds succeeded during Task 2.
+Runtime smoke tests have not passed yet. Task 3 has an evaluator and harness, without physical-device measurements.
+The benchmark gate remains pending. Existing public APIs have not been migrated.
+
+Resume with simulator/emulator smoke tests, then collect Release Hermes measurements on physical iPhone and Android devices.
+Finish benchmark metadata capture, native test scripting and final review before treating the spike as complete.
+
 **Architecture:** build an isolated Rust core and minimal Nitro binding inside kokuin. Compare complete native calls against strict noble on Hermes. Keep all existing consumers unchanged until the gate passes.
 
 **Tech Stack:** Rust, ed25519-dalek, curve25519-dalek, p256, blake3, zeroize, cbindgen, Nitro Modules, Expo 58, React Native 0.88.

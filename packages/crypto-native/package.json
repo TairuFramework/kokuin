@@ -1,0 +1,30 @@
+{
+  "name": "@kokuin/crypto-native",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Private Nitro crypto benchmark spike",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "main": "lib/index.js",
+  "react-native": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "scripts": {
+    "build": "pnpm run build:types && pnpm run build:js",
+    "build:js": "swc src -d lib --config-file ../../node_modules/@kigu/dev/swc.json --strip-leading-paths",
+    "build:types": "tsc --emitDeclarationOnly --skipLibCheck",
+    "codegen": "nitrogen",
+    "test:types": "tsc --noEmit --skipLibCheck -p tsconfig.test.json",
+    "test:unit": "vitest run"
+  },
+  "devDependencies": {
+    "nitrogen": "0.37.1",
+    "react-native-nitro-modules": "0.37.1"
+  },
+  "peerDependencies": {
+    "react-native": "*",
+    "react-native-nitro-modules": "0.37.1"
+  }
+}

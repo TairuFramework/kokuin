@@ -1,0 +1,9 @@
+{
+  "$schema": "https://nitro.margelo.com/nitro.schema.json",
+  "cxxNamespace": ["kokuin", "crypto"],
+  "ios": { "iosModuleName": "KokuinCrypto" },
+  "android": { "androidNamespace": ["kokuin", "crypto"], "androidCxxLibName": "KokuinCrypto" },
+  "autolinking": {
+    "Crypto": { "all": { "language": "c++", "implementationClassName": "HybridCrypto" } }
+  }
+}
