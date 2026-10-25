@@ -19,7 +19,11 @@ vi.mock('@noble/curves/ed25519.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('@noble/curves/ed25519.js')>()
   return {
     ...original,
-    ed25519: { ...original.ed25519, verify: vi.fn(original.ed25519.verify) },
+    ed25519: {
+      ...original.ed25519,
+      sign: vi.fn(original.ed25519.sign),
+      verify: vi.fn(original.ed25519.verify),
+    },
   }
 })
 vi.mock('@noble/curves/nist.js', async (importOriginal) => {
@@ -27,7 +31,15 @@ vi.mock('@noble/curves/nist.js', async (importOriginal) => {
   return { ...original, p256: { ...original.p256, verify: vi.fn(original.p256.verify) } }
 })
 
+const ed25519Sign = vi.mocked(ed25519.sign)
 const ed25519Verify = vi.mocked(ed25519.verify)
+// The pass-through implementations the mocks were created with: the real noble functions.
+const actual = {
+  ed25519: {
+    sign: ed25519Sign.getMockImplementation() as typeof ed25519.sign,
+    verify: ed25519Verify.getMockImplementation() as typeof ed25519.verify,
+  },
+}
 const p256Verify = vi.mocked(p256.verify)
 
 function signed(message = new TextEncoder().encode('hello')) {
@@ -39,6 +51,7 @@ function signed(message = new TextEncoder().encode('hello')) {
 
 beforeEach(() => {
   clearVerifiedSignatureMemo()
+  ed25519Sign.mockClear()
   ed25519Verify.mockClear()
   p256Verify.mockClear()
 })
@@ -193,21 +206,22 @@ describe('memoizeVerifier()', () => {
 })
 
 describe('getVerifier()', () => {
-  test('default EdDSA verifier is memoized', () => {
+  test('default EdDSA verifier is memoized', async () => {
     const verify = getVerifier('EdDSA')
     const { publicKey, signature, message } = signed()
-    expect(verify(signature, message, publicKey)).toBe(true)
+    // A miss yields to the event loop first, so it is asynchronous; a hit answers synchronously.
+    await expect(verify(signature, message, publicKey)).resolves.toBe(true)
     expect(verify(signature, message, publicKey)).toBe(true)
     expect(ed25519Verify).toHaveBeenCalledTimes(1)
   })
 
-  test('default ES256 verifier is memoized', () => {
+  test('default ES256 verifier is memoized', async () => {
     const privateKey = p256.utils.randomSecretKey()
     const publicKey = p256.getPublicKey(privateKey)
     const message = new TextEncoder().encode('hello')
     const signature = p256.sign(message, privateKey, { lowS: true })
     const verify = getVerifier('ES256')
-    expect(verify(signature, message, publicKey)).toBe(true)
+    await expect(verify(signature, message, publicKey)).resolves.toBe(true)
     expect(verify(signature, message, publicKey)).toBe(true)
     expect(p256Verify).toHaveBeenCalledTimes(1)
   })
@@ -246,5 +260,66 @@ describe('verifyToken() with the memo', () => {
     await verifyToken(copy())
     await verifyToken(copy())
     expect(ed25519Verify).toHaveBeenCalledTimes(1)
+  })
+})
+
+function busy(ms: number): void {
+  const end = Date.now() + ms
+  while (Date.now() < end) {
+    // Stand-in for slow curve math (20-35 ms per operation on a phone).
+  }
+}
+
+describe('cooperative yields', () => {
+  test('a run of verifications lets a timer scheduled before it fire', async () => {
+    const identity = randomIdentity()
+    const tokens = await Promise.all(
+      Array.from({ length: 20 }, (_, i) => identity.signToken({ i })),
+    )
+    ed25519Verify.mockImplementation((signature, message, publicKey) => {
+      busy(2)
+      return actual.ed25519.verify(signature, message, publicKey)
+    })
+    try {
+      let done = 0
+      let firedAfter = -1
+      setTimeout(() => {
+        firedAfter = done
+      }, 0)
+      for (const token of tokens) {
+        await verifyToken(JSON.parse(JSON.stringify(token)))
+        done++
+      }
+      expect(ed25519Verify).toHaveBeenCalledTimes(tokens.length)
+      expect(firedAfter).toBeGreaterThanOrEqual(0)
+      expect(firedAfter).toBeLessThan(tokens.length)
+    } finally {
+      ed25519Verify.mockImplementation(actual.ed25519.verify)
+    }
+  })
+
+  test('a run of signatures lets a timer scheduled before it fire', async () => {
+    const identity = randomIdentity()
+    ed25519Sign.mockImplementation((message, secretKey) => {
+      busy(2)
+      return actual.ed25519.sign(message, secretKey)
+    })
+    try {
+      const count = 20
+      let done = 0
+      let firedAfter = -1
+      setTimeout(() => {
+        firedAfter = done
+      }, 0)
+      for (let i = 0; i < count; i++) {
+        await identity.signToken({ i })
+        done++
+      }
+      expect(ed25519Sign).toHaveBeenCalledTimes(count)
+      expect(firedAfter).toBeGreaterThanOrEqual(0)
+      expect(firedAfter).toBeLessThan(count)
+    } finally {
+      ed25519Sign.mockImplementation(actual.ed25519.sign)
+    }
   })
 })
