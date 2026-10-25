@@ -90,6 +90,10 @@
   dir: packages/store-controller
   intents:
     - little-queens-teach
+"@kokuin/store-controller@0.4.1":
+  dir: packages/store-controller
+  intents:
+    - controller-host-operations
 "@kokuin/store-delegation@0.1.1":
   dir: packages/store-delegation
   intents:
