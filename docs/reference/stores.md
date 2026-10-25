@@ -1,6 +1,6 @@
 # Stores
 
-Two Hozon-backed persistence packages for the identity layer. Each is a `StoreDefinition` for
+Three Hozon-backed persistence packages for the identity layer. Each is a `StoreDefinition` for
 [`@hozon/db`](https://github.com/TairuFramework/hozon), so it runs unchanged on `@hozon/node-sqlite`
 and `@hozon/postgres`.
 
@@ -8,6 +8,7 @@ and `@hozon/postgres`.
 | -------------------------- | -------------------------------------------- | ----------------------------------- |
 | `@kokuin/store-controller` | `did:kokuin:` signed event logs              | `ControllerStoreAPI` (a `LogStore`) |
 | `@kokuin/store-delegation` | delegation tokens and capability revocations | `DelegationStoreAPI`                |
+| `@kokuin/store-vault` | encrypted entries, wrappings and optional signed records | `VaultStoreAPI` |
 
 ## Registration
 
@@ -249,6 +250,16 @@ Behaviour worth knowing:
   "not revoked" until the log catches up.
 - `add` on that backend is a no-op. Revocations enter the store through `addRevocation`, which needs
   an `hlc` and the capability cross-check this adapter does not have.
+
+## `@kokuin/store-vault`
+
+`vaultStoreDefinition` registers local key, wrapping and entry storage.
+`vaultRecordsStoreDefinition` adds optional replicated decisions, signed copies, branch proofs, candidates and permanent recipient revocations.
+`createVaultCoordinator` supplies authority-checked crypto orchestration in explicit local or replicated mode.
+
+The [vault reference](./vault.md) defines registration, replay domains, authority, lock mapping, rotation, repair and authenticated reads.
+Vault methods join host transactions through `withStoreTransaction` and share owner-qualified key locks.
+The crypto package `@kokuin/vault` has no Hozon dependency.
 
 ## `tablePrefix` and the legacy names
 

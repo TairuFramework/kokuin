@@ -20,10 +20,14 @@ const TEST_OP_KIND = 'test/record-op'
 
 const NOW = Date.now()
 
-async function makeRecord(identity: SigningIdentity, id: string): Promise<SignedRecord> {
+async function makeRecord(
+  identity: SigningIdentity,
+  id: string,
+  type = 'test.value',
+): Promise<SignedRecord> {
   const payload = new Uint8Array([1])
   const claim = {
-    type: 'test.value',
+    type,
     id,
     owner: normalizeDID(identity.id),
     hlc: HLC.serialize({ wallTime: NOW, counter: 0, nodeID: identity.id }),
@@ -170,5 +174,59 @@ describe('applyRecordChunk reads the store in batches', () => {
       { record: last, reason: 'unauthorized' },
     ])
     expect(events).toEqual(['store:getMany:3'])
+  })
+
+  test('reads decisions for records and dependencies once, and sees records stored earlier', async () => {
+    const identity = randomIdentity()
+    const parentRecord = await makeRecord(identity, 'p', 'test.parent')
+    const children = await Promise.all(
+      Array.from({ length: 20 }, (_, index) => makeRecord(identity, `c${index}`)),
+    )
+    const parentKey = { type: 'test.parent', owner: parentRecord.owner, id: 'p' }
+    const seen: Array<boolean> = []
+    const types = new Map([
+      ['test.parent', valueType({ type: 'test.parent' })],
+      [
+        'test.value',
+        valueType({
+          dependsOn: ['test.parent'],
+          dependencies: () => [parentKey],
+          authorize: async (_op, ctx) => {
+            const decision = await (ctx.decision ?? ((key) => ctx.store.get(key)))(parentKey)
+            seen.push(decision !== null)
+            return decision !== null
+          },
+        }),
+      ],
+    ])
+    const run = async (store: RecordStoreAdapter) => {
+      seen.length = 0
+      return await applyRecordChunk({
+        opKind: TEST_OP_KIND,
+        // The parent arrives last; type order stores it first.
+        records: [...children, parentRecord],
+        store,
+        types,
+        nowMS: NOW,
+        maxDriftMS: 60_000,
+        receiveClock: () => {},
+        resolveController: async () => null,
+        verifyCapability: async () => false,
+      })
+    }
+
+    const { store, events } = batchStore()
+    const result = await run(store)
+    expect(result).toEqual({ applied: 21, parked: [], rejected: [], conflicts: [] })
+    expect(seen).toEqual(children.map(() => true))
+    // One batched read inside the transaction covers 21 records and their shared dependency.
+    expect(events.filter((event) => event.startsWith('tx:'))).toEqual(['tx:getMany:21'])
+
+    // Without getMany, the same chunk falls back to one read per distinct key.
+    const { store: plain } = batchStore()
+    const fallback: RecordStoreAdapter = { ...plain, getMany: undefined }
+    fallback.transaction = async (fn) => await fn(fallback)
+    expect(await run(fallback)).toEqual({ applied: 21, parked: [], rejected: [], conflicts: [] })
+    expect(seen).toEqual(children.map(() => true))
   })
 })
