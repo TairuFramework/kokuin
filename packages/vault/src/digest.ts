@@ -35,7 +35,6 @@ export type VaultKeyDigestInput = {
 
 export type VaultWrappingDigestInput = {
   wrappingID: string
-
   recipientDID: string | null
   iv: string
   wrappedKey: string
@@ -56,7 +55,6 @@ export function vaultKeyDigest(key: VaultKeyDigestInput): string {
 export function vaultWrappingDigest(wrapping: VaultWrappingDigestInput): string {
   return digestParts([
     wrapping.wrappingID,
-
     wrapping.recipientDID ?? '',
     wrapping.iv,
     wrapping.wrappedKey,

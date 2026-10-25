@@ -80,7 +80,6 @@ export type WrapParams = {
   wrappingID: string
   keyID: string
   keyVersion: number
-
   methods?: MethodRegistry
 }
 
@@ -93,7 +92,6 @@ export type WrapResult = {
   descriptorDigest: string
   descriptors: Array<FactorDescriptor>
   iv: Uint8Array
-
   wrappedKey: Uint8Array
 }
 
@@ -104,7 +102,6 @@ export type UnwrapParams = {
   descriptorDigest?: string
   identity: KeyAgreementIdentity | null
   descriptors: Array<FactorDescriptor>
-
   inputs?: FactorInputs
   iv: Uint8Array
   wrappedKey: Uint8Array
