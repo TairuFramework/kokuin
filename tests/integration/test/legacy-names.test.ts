@@ -12,7 +12,12 @@ import { type RawDB, rawStore } from '../src/helpers.js'
 const PREFIX = 'legacy'
 
 function harness(b: Backend) {
-  return { name: b.name, createAdapter: () => b.createAdapter(), cleanup: () => b.cleanup() }
+  return {
+    name: b.name,
+    createAdapter: () => b.createAdapter(),
+    reopen: () => b.reopen({ pragmas: { busyTimeout: 0 } }),
+    cleanup: () => b.cleanup(),
+  }
 }
 
 async function tableNames(raw: RawDB, kind: 'sqlite' | 'postgres'): Promise<Array<string>> {
