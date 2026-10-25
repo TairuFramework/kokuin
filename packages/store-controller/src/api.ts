@@ -12,6 +12,10 @@ import type { ControllerStoreTables } from './tables.js'
 // Typed against `@kokuin/controller`'s `LogStore` so a drift in that interface
 // surfaces here as a type error rather than at a call site.
 export type ControllerStoreAPI = LogStore & {
+  /** Shares merge's DID lock until host commit/rollback, or until this standalone call returns. */
+  getForUpdate(did: string): Promise<ControllerLog | undefined>
+  /** Updates only observation time. Unknown DIDs are a no-op. */
+  markObserved(did: string, at?: Date): Promise<void>
   /** Last explicit store write, including a locally seeded controller log. */
   getObservedAt(did: string): Promise<Date | undefined>
 }
@@ -46,6 +50,19 @@ export function createControllerStore(
   adapter: Adapter,
   context: StoreContext,
 ): ControllerStoreAPI {
+  async function withLockedDatabase<Result>(
+    did: string,
+    fn: (trx: Kysely<ControllerStoreTables>) => Promise<Result>,
+  ): Promise<Result> {
+    return await withKeyLock(context.provider, 'controller_logs', [did], async (tx) => {
+      // Standalone calls must use the transaction opened by the locked provider.
+      const store = (await tx.getStore('controller')) as ControllerStoreAPI
+      const trx = storeDatabases.get(store)
+      if (trx == null) throw new Error('Controller store database is unavailable')
+      return await fn(trx)
+    })
+  }
+
   const api: ControllerStoreAPI = {
     async get(did: string): Promise<ControllerLog | undefined> {
       const row = await db
@@ -54,6 +71,25 @@ export function createControllerStore(
         .where('did', '=', did)
         .executeTakeFirst()
       return row == null ? undefined : decodeLog(row.log)
+    },
+
+    async getForUpdate(did: string): Promise<ControllerLog | undefined> {
+      return await withLockedDatabase(did, async (trx) => {
+        let query = trx.selectFrom('controller_logs').select('log').where('did', '=', did)
+        if (adapter.kind === 'postgres') query = query.forUpdate()
+        const row = await query.executeTakeFirst()
+        return row == null ? undefined : decodeLog(row.log)
+      })
+    },
+
+    async markObserved(did: string, at = new Date()): Promise<void> {
+      await withLockedDatabase(did, async (trx) => {
+        await trx
+          .updateTable('controller_logs')
+          .set({ updated_at: adapter.encodeTimestamp(at) as number })
+          .where('did', '=', did)
+          .execute()
+      })
     },
 
     async getObservedAt(did: string): Promise<Date | undefined> {
@@ -82,11 +118,7 @@ export function createControllerStore(
       did: string,
       update: (current: ControllerLog | undefined) => Promise<ControllerLog>,
     ): Promise<ControllerLog> {
-      return await withKeyLock(context.provider, 'controller_logs', [did], async (tx) => {
-        // Resolve through the locked provider so standalone calls use its new transaction.
-        const store = (await tx.getStore('controller')) as ControllerStoreAPI
-        const trx = storeDatabases.get(store)
-        if (trx == null) throw new Error('Controller store database is unavailable')
+      return await withLockedDatabase(did, async (trx) => {
         const lock = adapter.kind === 'postgres'
         const values = (next: ControllerLog) => ({
           did,

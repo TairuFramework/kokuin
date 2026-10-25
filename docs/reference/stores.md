@@ -27,12 +27,12 @@ const delegations = await getDelegationStore(db)
 
 Registering runs the `0-init` migration for that store. `createControllerStore(db, adapter,
 context)` takes hozon's store context, whose provider must have the controller store registered: a
-merge resolves the store again on its locked transaction. `createDelegationStore(db, adapter,
+locked operation resolves the store again on its transaction. `createDelegationStore(db, adapter,
 context)` also requires hozon's store context, with the delegation store registered on its provider.
 Both factories resolve the locked transaction's store to obtain its Kysely instance.
 
 Store methods that read then write join a caller's enclosing transaction instead of opening a
-nested one. Controller merges and delegation-token arbitration use `withKeyLock`.
+nested one. Controller locked reads, merges, observation refreshes and delegation-token arbitration use `withKeyLock`.
 Revocation upserts use `withStoreTransaction`. No statement binds more than 500 parameters.
 
 ## `@kokuin/store-controller`
@@ -46,12 +46,24 @@ Revocation upserts use `withStoreTransaction`. No statement binds more than 500 
 | `did`        | text      | primary key                                                                                                                                                |
 | `log`        | json      | the accepted `ControllerLog` (`{ chain, events }`); a row written before the log split is a bare event array, read back as that chain with no epoch events |
 | `created_at` | timestamp | defaults to now                                                                                                                                            |
-| `updated_at` | timestamp | set on every `merge` write                                                                                                                                 |
+| `updated_at` | timestamp | set on every `merge` write or explicit `markObserved`                                                                                                                                 |
 
 ### API
 
-`ControllerStoreAPI` is `@kokuin/controller`'s `LogStore` plus one method:
+`ControllerStoreAPI` extends `@kokuin/controller`'s `LogStore`:
+
 - `get(did)`: the stored log, or `undefined`.
+- `getForUpdate(did): Promise<ControllerLog | undefined>`: reads under the same DID key lock as `merge`, including absent DIDs.
+  It holds the database lock until the host transaction commits or rolls back.
+  Outside a host transaction, it opens its own transaction and releases the lock before returning.
+  Postgres also uses `FOR UPDATE` for existing rows. Other DIDs can merge in independent Postgres transactions.
+  SQLite reserves its single writer, so independent writes wait regardless of DID.
+  Within one host transaction, operations for different DIDs do not share a key queue.
+- `markObserved(did, at?: Date): Promise<void>`: updates only `updated_at`, defaulting to the current time.
+  It preserves stored log bytes and `created_at`, returns no change signal, and does nothing for an unknown DID.
+  It shares merge's key lock and joins host transactions, including their rollback.
+  Timestamp precision follows the adapter. SQLite stores whole seconds.
+  Call it explicitly after accepting an identical presentation. An unchanged `merge` still writes nothing.
 - `merge(did, update)`: writes what `update` makes of the stored log and returns it, the read and
   the write in one transaction, joining an enclosing one. It holds
   `withKeyLock(provider, 'controller_logs', [did])`, which serialises concurrent merges for that DID,
