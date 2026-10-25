@@ -1,23 +1,14 @@
 import { blake3 } from '@noble/hashes/blake3.js'
 import { fromUTF, toB64U } from '@sozai/codec'
+import { canonicalize } from '@sozai/json'
 
 import { VaultTampered } from './errors.js'
 import type { FactorDescriptor } from './factors.js'
 
-function canonicalJSON(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value) ?? 'null'
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJSON).join(',')}]`
-  }
-
-  const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => {
-    return left < right ? -1 : left > right ? 1 : 0
-  })
-
-  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJSON(item)}`).join(',')}}`
+function descriptorJSON(descriptors: ReadonlyArray<FactorDescriptor>): string {
+  const json = canonicalize(descriptors)
+  if (json == null) throw new TypeError('Factor descriptors have no JSON representation')
+  return json
 }
 
 export function digestParts(parts: Array<string>): string {
@@ -58,7 +49,7 @@ export function vaultWrappingDigest(wrapping: VaultWrappingDigestInput): string 
     wrapping.recipientDID ?? '',
     wrapping.iv,
     wrapping.wrappedKey,
-    canonicalJSON(wrapping.factors),
+    descriptorJSON(wrapping.factors),
   ])
 }
 
@@ -78,7 +69,7 @@ export function vaultEntryDigest(entry: VaultEntryDigestInput): string {
 
 /** Same canonical descriptor encoding and length framing as the wrapping digest. */
 export function descriptorDigest(descriptors: Array<FactorDescriptor>): string {
-  return digestParts([canonicalJSON(descriptors)])
+  return digestParts([descriptorJSON(descriptors)])
 }
 
 export function checkDescriptorDigest(params: {

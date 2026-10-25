@@ -727,6 +727,9 @@ importers:
       '@sozai/hlc':
         specifier: 'catalog:'
         version: 0.1.0
+      '@sozai/json':
+        specifier: 'catalog:'
+        version: 0.3.0
       '@sozai/runtime':
         specifier: 'catalog:'
         version: 0.1.0
