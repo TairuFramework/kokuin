@@ -78,6 +78,10 @@
   dir: packages/otel
   intents:
     - fresh-crabs-flow
+"@kokuin/records@0.2.0":
+  dir: packages/records
+  intents:
+    - record-reads-and-verification
 "@kokuin/store-controller@0.2.0":
   dir: packages/store-controller
   intents:
