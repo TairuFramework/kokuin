@@ -120,3 +120,8 @@
   dir: packages/token
   intents:
     - shiny-beds-decide
+"@kokuin/token@0.6.3":
+  dir: packages/token
+  intents:
+    - proud-trees-pretend
+    - spicy-jobs-hug
