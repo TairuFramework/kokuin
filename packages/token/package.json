@@ -40,6 +40,7 @@
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@scure/base": "catalog:",
+    "@sozai/async": "catalog:",
     "@sozai/codec": "catalog:",
     "@sozai/otel": "catalog:",
     "@sozai/schema": "catalog:"
