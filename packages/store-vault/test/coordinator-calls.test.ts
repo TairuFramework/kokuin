@@ -31,6 +31,9 @@ import {
   vaultStoreDefinition,
 } from '../src/index.js'
 
+// Call-count tests sign and verify many records; slow CI runners need more than the default 5 s.
+const CALL_COUNT_TIMEOUT = 30_000
+
 // Counts every token signature verification, the cost the memos below save.
 const verifications = vi.hoisted(() => ({ count: 0 }))
 
@@ -295,7 +298,9 @@ async function keyWithEntries(f: Fixture, count: number): Promise<KeyAddress> {
 }
 
 describe('coordinator store calls (replicated)', () => {
-  test('entry, open and rotate operations batch reads and overlap independent calls', async () => {
+  test('entry, open and rotate operations batch reads and overlap independent calls', {
+    timeout: CALL_COUNT_TIMEOUT,
+  }, async () => {
     const f = await fixture()
     const key = await keyWithEntries(f, 1)
     const target = await f.manager.createKey({ ownerDID: f.ownerDID })
@@ -382,7 +387,9 @@ describe('records apply reads (replicated)', () => {
     return measured
   }
 
-  test('an incoming chunk batches its decision, dependency and owner reads', async () => {
+  test('an incoming chunk batches its decision, dependency and owner reads', {
+    timeout: CALL_COUNT_TIMEOUT,
+  }, async () => {
     const small = await applyCost(4)
     const large = await applyCost(12)
     const perEntry = {
@@ -470,7 +477,9 @@ describe('visibility filter (replicated)', () => {
     return measured
   }
 
-  test('filtering N records reads holdings and key versions once', async () => {
+  test('filtering N records reads holdings and key versions once', {
+    timeout: CALL_COUNT_TIMEOUT,
+  }, async () => {
     const small = await filterCost(4)
     const large = await filterCost(12)
     const perRecord = {
@@ -489,7 +498,9 @@ describe('visibility filter (replicated)', () => {
 })
 
 describe('signer calls (replicated)', () => {
-  test('a signer that refuses overlapping calls signs every write', async () => {
+  test('a signer that refuses overlapping calls signs every write', {
+    timeout: CALL_COUNT_TIMEOUT,
+  }, async () => {
     let exclusive: ExclusiveSigner | undefined
     const f = await fixture('replicated', (identity) => {
       exclusive = exclusiveSigner(identity)
@@ -593,7 +604,9 @@ describe('key-branch lookup', () => {
     return id
   }
 
-  test('a replicated write reads a constant number of branch records', async () => {
+  test('a replicated write reads a constant number of branch records', {
+    timeout: CALL_COUNT_TIMEOUT,
+  }, async () => {
     const f = await fixture()
     const key = await keyWithEntries(f, 0)
     const write = (entryID: string) => {
