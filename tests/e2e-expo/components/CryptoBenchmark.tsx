@@ -1,6 +1,8 @@
 import { createSpikeCrypto } from '@kokuin/crypto-native'
+import { File, Paths } from 'expo-file-system'
+import { isAvailableAsync, shareAsync } from 'expo-sharing'
 import { useRef, useState } from 'react'
-import { Button, Platform, Share, Switch, Text, TextInput, View } from 'react-native'
+import { Button, Platform, Switch, Text, TextInput, View } from 'react-native'
 
 import { runBenchmarkMatrix } from '../crypto/benchmark'
 import { checkSpikeCrypto } from '../crypto/checks'
@@ -61,9 +63,21 @@ export default function CryptoBenchmark() {
   }
 
   async function exportSamples() {
-    await Share.share({
-      message: JSON.stringify({ samples: samples.current, gate: evaluateGate(samples.current) }),
-    })
+    setRunning(true)
+    try {
+      const file = new File(Paths.cache, `kokuin-crypto-benchmark-${Date.now()}.json`)
+      file.write(JSON.stringify({ samples: samples.current, gate: evaluateGate(samples.current) }))
+      if (!(await isAvailableAsync())) throw new Error('File sharing unavailable')
+      await shareAsync(file.uri, {
+        mimeType: 'application/json',
+        UTI: 'public.json',
+        dialogTitle: 'Export crypto benchmark',
+      })
+    } catch (error) {
+      setStatus(`Export failed: ${String(error)}`)
+    } finally {
+      setRunning(false)
+    }
   }
 
   return (

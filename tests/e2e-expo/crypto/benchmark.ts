@@ -2,9 +2,9 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
 import { blake3 } from '@noble/hashes/blake3.js'
 
-import { type BenchmarkCell, type BenchmarkSample, benchmarkCells } from './gate.js'
+import { type BenchmarkCell, type BenchmarkSample, benchmarkCells } from './gate'
 import type { SpikeCrypto, VerifyItem } from './spike.js'
-import { strictNoble } from './strict-noble.js'
+import { strictNoble } from './strict-noble'
 
 export type BenchmarkMetadata = Pick<
   BenchmarkSample,

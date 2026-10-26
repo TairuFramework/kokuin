@@ -16,8 +16,9 @@
     "build:js": "swc src -d lib --config-file ../../node_modules/@kigu/dev/swc.json --strip-leading-paths",
     "build:types": "tsc --emitDeclarationOnly --skipLibCheck",
     "codegen": "nitrogen",
+    "test:native": "node ../../scripts/test-crypto-native.mjs",
     "test:types": "tsc --noEmit --skipLibCheck -p tsconfig.test.json",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run && node --test ../../scripts/crypto-artifacts.test.mjs"
   },
   "devDependencies": {
     "nitrogen": "0.37.1",

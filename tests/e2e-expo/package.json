@@ -5,9 +5,9 @@
   "main": "index.ts",
   "scripts": {
     "android": "expo run:android",
-    "android:release": "expo run:android --no-bundler --variant release",
+    "android:release": "node ../../scripts/prepare-crypto-e2e.mjs android && expo run:android --no-bundler --variant release",
     "ios": "expo run:ios",
-    "ios:release": "expo run:ios --no-bundler --configuration Release",
+    "ios:release": "node ../../scripts/prepare-crypto-e2e.mjs ios && expo run:ios --no-bundler --configuration Release",
     "start": "expo start",
     "test": "MAESTRO_CLI_NO_ANALYTICS=true MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true maestro test .maestro/",
     "test:types": "tsc --noEmit",
@@ -21,9 +21,12 @@
     "@noble/hashes": "catalog:",
     "@sozai/runtime-expo": "catalog:",
     "expo": "catalog:",
+    "expo-file-system": "catalog:",
+    "expo-sharing": "catalog:",
     "expo-status-bar": "catalog:",
     "react": "catalog:",
-    "react-native": "catalog:"
+    "react-native": "catalog:",
+    "react-native-nitro-modules": "0.37.1"
   },
   "devDependencies": {
     "@types/react": "catalog:",

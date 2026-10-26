@@ -4,11 +4,14 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { sourceFingerprint, stampArtifacts } from './crypto-artifacts.mjs'
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const prebuilt = join(root, 'packages/crypto-native/prebuilt')
 const platform = process.argv[2]
 if (platform !== 'ios' && platform !== 'android')
   throw new Error('Usage: node scripts/build-crypto-native.mjs ios|android')
+const fingerprint = sourceFingerprint(root)
 
 function run(command, args, env = {}) {
   execFileSync(command, args, { cwd: root, stdio: 'inherit', env: { ...process.env, ...env } })
@@ -48,9 +51,18 @@ if (platform === 'ios') {
     output,
   ])
 } else {
-  const sdk = process.env.ANDROID_HOME ?? join(homedir(), 'Library/Android/sdk')
+  const sdk =
+    process.env.ANDROID_HOME ??
+    join(homedir(), process.platform === 'darwin' ? 'Library/Android/sdk' : 'Android/Sdk')
   const ndk = process.env.KOKUIN_ANDROID_NDK ?? join(sdk, 'ndk/27.1.12297006')
-  const bin = join(ndk, 'toolchains/llvm/prebuilt/darwin-x86_64/bin')
+  const host =
+    process.platform === 'darwin'
+      ? 'darwin-x86_64'
+      : process.platform === 'linux'
+        ? 'linux-x86_64'
+        : null
+  if (host === null) throw new Error('Android cross-builds require macOS or Linux')
+  const bin = join(ndk, 'toolchains/llvm/prebuilt', host, 'bin')
   for (const [target, abi, compiler] of [
     ['aarch64-linux-android', 'arm64-v8a', 'aarch64-linux-android24-clang'],
     ['x86_64-linux-android', 'x86_64', 'x86_64-linux-android24-clang'],
@@ -68,3 +80,5 @@ if (platform === 'ios') {
     cpSync(library, join(output, 'libkokuin_crypto_ffi.a'))
   }
 }
+
+stampArtifacts(root, platform, fingerprint)

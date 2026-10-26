@@ -1,0 +1,31 @@
+name: Rust crypto checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  crypto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+      - name: Test crypto core and C ABI
+        run: cargo test --workspace --locked
+      - name: Check Rust warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Check native ownership with sanitizers
+        run: node scripts/test-crypto-native.mjs
+      - name: Test artifact freshness
+        run: node --test scripts/crypto-artifacts.test.mjs
+      - name: Check generated C header
+        run: git diff --exit-code -- packages/crypto-native/cpp/generated/kokuin_crypto.h

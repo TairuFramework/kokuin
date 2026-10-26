@@ -1,20 +1,20 @@
 # Rust Crypto Benchmark Spike Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** determine whether strict Rust crypto improves real-device latency before changing existing public APIs.
 
 **Stage:** executing
 **Mode:** tasks
 
-**Execution state:** paused at Paul's request. The native bridge and benchmark harness are work in progress.
+**Execution state:** Tasks 1 and 2 verified. Benchmark tooling is ready. Physical-device measurements remain pending.
 
 Task 1 was committed as `690a03c`. Rust cross-builds and both native app builds succeeded during Task 2.
-Runtime smoke tests have not passed yet. Task 3 has an evaluator and harness, without physical-device measurements.
+Release runtime checks and all three existing Maestro flows pass on both iOS and Android. Task 3 has no physical-device measurements.
 The benchmark gate remains pending. Existing public APIs have not been migrated.
 
-Resume with simulator/emulator smoke tests, then collect Release Hermes measurements on physical iPhone and Android devices.
-Finish benchmark metadata capture, native test scripting and final review before treating the spike as complete.
+Resume with Release Hermes measurements on physical iPhone and Android devices.
+Paul confirmed on 2026-10-26 that physical phones are unavailable. Keep the gate pending and leave public APIs unchanged.
 
 **Architecture:** build an isolated Rust core and minimal Nitro binding inside kokuin. Compare complete native calls against strict noble on Hermes. Keep all existing consumers unchanged until the gate passes.
 
@@ -81,17 +81,17 @@ Produce `verify(algorithm: Algorithm, signature: &[u8], message: &[u8], public_k
 Produce `hash_blake3(input: &[u8], output_len: usize) -> Result<Vec<u8>, CryptoError>`.
 Expose `Algorithm::{Ed25519, Es256}`. Batch methods loop over these single-operation functions without algebraic batching.
 
-- [ ] Add `smoke.rs` cases for RFC 8032 empty-message signing, valid verification, mutated messages and identity-point rejection.
-- [ ] Add ES256 cases for compact low-S signatures, their high-S twins and raw-message versus prehash confusion.
-- [ ] Add official blake3 empty-input outputs at lengths 16, 32 and 64.
-- [ ] Run `cargo test -p kokuin-crypto --test smoke`. Expect failure before implementation.
-- [ ] Implement canonical A/R decoding, non-small-order torsion-free checks, canonical S and dalek strict verification.
-- [ ] Implement compact P-256 parsing, SEC1 key parsing, explicit high-S rejection and exactly one SHA-256 hash.
-- [ ] Implement Ed25519 seed signing and blake3 output, with zeroising signing-key ownership.
-- [ ] Implement the identical strict noble baseline in `strict-noble.ts`, including both A and R checks.
-- [ ] Pin the Rust toolchain and crate versions in lockfiles after successful host tests.
-- [ ] Run `cargo test --workspace --locked`. Expect every known-answer and rejection case to pass.
-- [ ] Commit this independently testable baseline as `feat: add strict Rust crypto benchmark core`.
+- [x] Add `smoke.rs` cases for RFC 8032 empty-message signing, valid verification, mutated messages and identity-point rejection.
+- [x] Add ES256 cases for compact low-S signatures, their high-S twins and raw-message versus prehash confusion.
+- [x] Add official blake3 empty-input outputs at lengths 16, 32 and 64.
+- [x] Run `cargo test -p kokuin-crypto --test smoke`. Expect failure before implementation.
+- [x] Implement canonical A/R decoding, non-small-order torsion-free checks, canonical S and dalek strict verification.
+- [x] Implement compact P-256 parsing, SEC1 key parsing, explicit high-S rejection and exactly one SHA-256 hash.
+- [x] Implement Ed25519 seed signing and blake3 output, with zeroising signing-key ownership.
+- [x] Implement the identical strict noble baseline in `strict-noble.ts`, including both A and R checks.
+- [x] Pin the Rust toolchain and crate versions in lockfiles after successful host tests.
+- [x] Run `cargo test --workspace --locked`. Expect every known-answer and rejection case to pass.
+- [x] Commit this independently testable baseline as `feat: add strict Rust crypto benchmark core`.
 
 ### Task 2: expose complete, safe async calls through Nitro
 
@@ -102,21 +102,21 @@ Produce explicit `createSpikeCrypto()` construction that throws when native regi
 The C ABI uses pointer/length descriptors and integer status codes. Rust owns output allocations and exports their release function.
 Verification failure is a boolean result. Invalid requests and infrastructure failures are statuses converted into Promise rejections.
 
-- [ ] Add failing ABI tests for empty buffers, invalid lengths, offset overflow, unknown algorithms and mixed-validity verification batches.
-- [ ] Add native ownership tests for successful signing, early rejection and worker-dispatch failure cleanup.
-- [ ] Add mobile checks using padded backing buffers, nonzero offsets and immediate caller mutation after invocation.
-- [ ] Run `cargo test -p kokuin-crypto-ffi --locked`. Expect missing-ABI failures before implementation.
-- [ ] Generate the C header with cbindgen and implement checked descriptors, Rust output allocation and matching release.
-- [ ] Prevent Rust panics from unwinding across C. Translate recoverable failures without terminating the app.
-- [ ] Copy all input views synchronously into native owners before dispatching `Promise<T>::async` work.
-- [ ] Use a zeroising C++ owner for seed-bearing copies and zeroising Rust owners for seed temporaries.
-- [ ] Attach native output allocation release to the returned owning Nitro buffer's lifetime.
-- [ ] Add cross-build and link configuration for the proposed iOS slices and Android ABIs.
-- [ ] Pin Nitro and native tool versions after successful iOS and Android link checks.
-- [ ] Build the Expo development client with `pnpm --filter e2e-expo ios` and `pnpm --filter e2e-expo android`.
-- [ ] Run smoke checks on both platforms. Expect exact baseline parity, immutable input snapshots and no stale output pointers.
-- [ ] Run native ownership tests with sanitizers on a supported host. Expect no leaks or invalid access.
-- [ ] Commit the binding as `feat: add async Nitro crypto benchmark binding`.
+- [x] Add failing ABI tests for empty buffers, invalid lengths, offset overflow, unknown algorithms and mixed-validity verification batches.
+- [x] Add native ownership tests for successful signing, early rejection and worker-dispatch failure cleanup.
+- [x] Add mobile checks using padded backing buffers, nonzero offsets and immediate caller mutation after invocation.
+- [x] Run `cargo test -p kokuin-crypto-ffi --locked`. Expect missing-ABI failures before implementation.
+- [x] Generate the C header with cbindgen and implement checked descriptors, Rust output allocation and matching release.
+- [x] Prevent Rust panics from unwinding across C. Translate recoverable failures without terminating the app.
+- [x] Copy all input views synchronously into native owners before dispatching `Promise<T>::async` work.
+- [x] Use a zeroising C++ owner for seed-bearing copies and zeroising Rust owners for seed temporaries.
+- [x] Attach native output allocation release to the returned owning Nitro buffer's lifetime.
+- [x] Add cross-build and link configuration for the proposed iOS slices and Android ABIs.
+- [x] Pin Nitro and native tool versions after successful iOS and Android link checks.
+- [x] Build the Expo development client with `pnpm --filter e2e-expo ios` and `pnpm --filter e2e-expo android`.
+- [x] Run smoke checks on both platforms. Expect exact baseline parity, immutable input snapshots and no stale output pointers.
+- [x] Run native ownership tests with sanitizers on a supported host. Expect no leaks or invalid access.
+- [x] Commit the binding as `feat: add async Nitro crypto benchmark binding`.
 
 ### Task 3: run and record the real-device gate
 

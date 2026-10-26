@@ -47,6 +47,37 @@ fn rejects_identity_points_and_invalid_lengths() {
 }
 
 #[test]
+fn rejects_cofactored_mixed_order_forgeries() {
+    // Same independently derived A=B+T / R=B+T vectors as the mobile smoke checks.
+    let message = b"kokuin strict subgroup";
+    let base = "5866666666666666666666666666666666666666666666666666666666666666";
+    let mixed = "5252cc0a7f208133b620acbd4537eba2a4123bf0a8c2e4f980c3b31bb69765ea";
+    for (key, signature) in [
+        (
+            mixed,
+            concat!(
+                "5866666666666666666666666666666666666666666666666666666666666666",
+                "e40b5648f51a424e5f78c79ee627dc7b037e5599acbe1982974fd875780ac50d"
+            ),
+        ),
+        (
+            base,
+            concat!(
+                "5252cc0a7f208133b620acbd4537eba2a4123bf0a8c2e4f980c3b31bb69765ea",
+                "107269cbc9715cb07137d25ed92e5af805b1a2668b19fef789f2487a3c2eee02"
+            ),
+        ),
+    ] {
+        assert!(!verify(
+            Algorithm::Ed25519,
+            &bytes(signature),
+            message,
+            &bytes(key)
+        ));
+    }
+}
+
+#[test]
 fn verifies_compact_low_s_p256_without_double_hashing() {
     let key = bytes("036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296");
     let message = b"kokuin crypto spike";
