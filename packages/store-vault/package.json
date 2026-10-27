@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/store-vault",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Hozon-backed local vault storage",
   "keywords": [
     "vault",
