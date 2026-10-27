@@ -1,7 +1,7 @@
 # Crypto consumer package verification
 
 **Date:** 2026-10-27
-**Package implementation:** `8809b08`
+**Package implementation:** `2eeddba`
 **Performance gate:** pending
 
 Both public providers were packed at version 0.1.0 and installed into independent fixtures outside the monorepo.
@@ -17,8 +17,14 @@ No packages were published during this verification.
 - Packed manifests contained published dependency ranges rather than workspace, link or file references.
 - Independent Android and iOS Release clients built with Cargo absent from PATH.
 - Both clients passed shared conformance against noble and native providers through the Maestro completion marker.
+- Each client ran 15 cases per provider, including caller-array resizing during native batch execution.
 - Package tests rejected altered binaries, missing platform registration files and omitted licence notices.
 - Factory tests rejected missing native registration and incompatible ABIs.
+- Independent review found two material issues. Batch membership and complete generated-file validation now have regression coverage.
+- All 92 repository tasks passed against the latest merged main using `pnpm test --concurrency=1`.
+
+The initial parallel run stopped when Vitest processes collided while clearing their shared cache directory.
+The serial run passed without product changes. Rust tests and native sanitizer checks also passed.
 
 The iOS target was an iPhone 18 Pro simulator running iOS 27.0.
 The Android target was the Pixel_9a emulator running Android API 36.
@@ -40,5 +46,6 @@ These checks establish standalone installation and correctness. They do not esta
 Existing token, controller and records APIs have not migrated to provider injection.
 The expanded adversarial corpus and coordinated breaking release remain conditional rollout work.
 The new cross-build and package workflow has not yet run remotely.
+Portable runtime checks used Node. A fresh browser runtime check was not performed.
 
 See [provider instructions](crypto-provider.md) for reproduction and installation.

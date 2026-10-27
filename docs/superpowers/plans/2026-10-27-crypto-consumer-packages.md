@@ -4,8 +4,12 @@
 
 **Goal:** make standalone noble and native providers installable without migrating existing consumer APIs.
 
-**Stage:** executing
+**Stage:** qa
 **Mode:** tasks
+
+**Execution state:** standalone packages implemented and independently reviewed. Consumer acceptance remains open.
+Packed consumer Release builds and all 15 conformance cases per provider passed on iOS simulator and Android emulator.
+Existing API migration and physical-device performance measurements remain gated in the parent plans.
 
 **Architecture:** publish a shared provider contract with strict noble operations and an explicit Nitro provider.
 Native packages contain prebuilt Rust libraries, generated bindings and dependency licences.
@@ -89,8 +93,8 @@ Mobile consumers must link shipped libraries without invoking Cargo.
 - [x] Run shared conformance checks on simulator and emulator where tooling permits.
 - [x] Document installation, explicit construction, supported targets and unmeasured performance.
 - [x] Run repository, Rust, native ownership and packaging checks.
-- [ ] Obtain one fresh review of the final changes and address material findings.
-- [ ] Commit validated consumer adoption tooling and record any environmental limitations.
+- [x] Obtain one fresh review of the final changes and address material findings.
+- [x] Commit validated consumer adoption tooling and record any environmental limitations.
 
 ## Deferred work
 
