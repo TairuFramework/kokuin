@@ -1,12 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
+import * as multibase from '../src/multibase.js'
 import {
   assertDocWithinMaxSize,
+  clearPeer4DecodeMemo,
   type DIDDoc,
   decodePeer4,
   encodePeer4,
   getPeer4ShortForm,
   isPeer4,
+  PEER4_DECODE_MEMO_SIZE,
   validateDIDDoc,
 } from '../src/peer4.js'
 
@@ -99,6 +102,73 @@ describe('decodePeer4', () => {
     const decoded = decodePeer4(longForm)
     expect(decoded.doc).toEqual(doc)
     expect(decoded.shortForm).toBe(longForm.split(':').slice(0, 3).join(':'))
+  })
+
+  it('reuses successful decodes for the same long form', () => {
+    clearPeer4DecodeMemo()
+    const { longForm } = encodePeer4(doc)
+    const decode = vi.spyOn(multibase, 'decodeMultibase')
+
+    const first = decodePeer4(longForm)
+    const second = decodePeer4(longForm)
+
+    expect(second).toEqual(first)
+    expect(decode).toHaveBeenCalledTimes(2)
+    decode.mockRestore()
+  })
+
+  it('returns a fresh doc object for each cached decode', () => {
+    clearPeer4DecodeMemo()
+    const { longForm } = encodePeer4(doc)
+
+    const first = decodePeer4(longForm)
+    first.doc.authentication?.push('changed')
+    const second = decodePeer4(longForm)
+
+    expect(second.doc).not.toBe(first.doc)
+    expect(second.doc.authentication).toEqual(['#key-0'])
+  })
+
+  it('rechecks maxDocSize on a cache hit', () => {
+    clearPeer4DecodeMemo()
+    const { longForm } = encodePeer4(doc)
+    decodePeer4(longForm)
+    const docSize = new TextEncoder().encode(JSON.stringify(doc)).length
+
+    expect(() => decodePeer4(longForm, { maxDocSize: docSize - 1 })).toThrow(
+      `did:peer:4 doc too large: ${docSize} > ${docSize - 1}`,
+    )
+  })
+
+  it('does not cache hash mismatches', () => {
+    clearPeer4DecodeMemo()
+    const { longForm } = encodePeer4(doc)
+    const idx = longForm.indexOf(':z', 'did:peer:4'.length) + 2
+    const tampered = `${longForm.slice(0, idx)}A${longForm.slice(idx + 1)}`
+    const decode = vi.spyOn(multibase, 'decodeMultibase')
+
+    expect(() => decodePeer4(tampered)).toThrow('did:peer:4 hash mismatch')
+    expect(() => decodePeer4(tampered)).toThrow('did:peer:4 hash mismatch')
+    expect(decode).toHaveBeenCalledTimes(2)
+    decode.mockRestore()
+  })
+
+  it('evicts the least recently used entry at the cache bound', () => {
+    clearPeer4DecodeMemo()
+    const longForms = Array.from(
+      { length: PEER4_DECODE_MEMO_SIZE + 1 },
+      (_, index) => encodePeer4({ ...doc, authentication: [`#key-${index}`] }).longForm,
+    )
+    const decode = vi.spyOn(multibase, 'decodeMultibase')
+
+    for (const longForm of longForms) decodePeer4(longForm)
+    const firstCallCount = decode.mock.calls.length
+    const [oldest] = longForms
+    if (oldest == null) throw new Error('expected a long form')
+    decodePeer4(oldest)
+
+    expect(decode.mock.calls.length).toBe(firstCallCount + 2)
+    decode.mockRestore()
   })
 
   it('rejects a long form with mismatched hash', () => {
