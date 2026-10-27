@@ -107,6 +107,7 @@ Records operations enforce that binding when they run.
 `records.write({ records, preconditions, transportContext })` submits signed local output through the same engine.
 Key preconditions compare expected version, including `null` for absence, and an optional complete branch set.
 Entry preconditions compare exact HLC, including `null` for absence. Every output needs a covering precondition.
+`preconditions.copy` compares the selected output address against `expectedOpHash` after acquiring the key locks.
 Preconditions and apply share the transaction and key locks.
 The exposed adapter's `putCopy` and `pruneCopy` are trusted engine ports requiring an adapter transaction.
 Untrusted records enter through apply.
@@ -161,7 +162,7 @@ Refusal throws `VaultNotAuthorized` before persistent writes. Record refusal pre
 | Coordinator verb | Operations |
 | --- | --- |
 | `read` | `openKey`, `unlock`, `lock`, `lockAll`, `status`, `listKeys`, `readEntry`, `getEntry`, `listEntries` |
-| `administer` | `createKey`, `setKeyState`, `deleteKey`, `grant`, `addFactor`, `removeFactor`, `rotate`, `repairFork`, `putEntry`, `updateEntry`, `updateEntryIfPresent`, `updateEntryIfUnchanged`, `deleteEntry`, `reKeyEntry`, `reendorse` |
+| `administer` | `createKey`, `setKeyState`, `deleteKey`, `grant`, `addFactor`, `removeFactor`, `rotate`, `repairFork`, `putEntry`, `updateEntry`, `updateEntryIfPresent`, `updateEntryIfUnchanged`, `deleteEntry`, `reKeyEntry`, `refreshEntry`, `refreshWrapping`, `reendorse` |
 
 Unsigned requests use `source: 'local'`, even for replicated reads.
 They carry mode, operation, verb, owner, principal as issuer, optional key/entry IDs, original request and unchanged `transportContext`.
@@ -204,16 +205,39 @@ Local mode ignores this signed metadata input.
 | --- | --- | --- |
 | `createKey` | Key, branch and initial wrappings | `null` |
 | `grant` | New wrapping | `null` |
+| `refreshWrapping` | Existing wrapping with a newer operation HLC | Explicit evidence is required |
 | `setKeyState`, `deleteKey` | Key decision or tombstone | Previous key evidence |
 | `addFactor`, `removeFactor` | Replacement wrapping and previous wrapping's tombstone | Previous wrapping evidence |
 | `putEntry` | New entry | `null` |
-| `updateEntry`, `updateEntryIfPresent`, `updateEntryIfUnchanged`, `deleteEntry`, `reKeyEntry` | Entry decision or tombstone | Previous entry evidence |
+| `updateEntry`, `updateEntryIfPresent`, `updateEntryIfUnchanged`, `deleteEntry`, `reKeyEntry`, `refreshEntry` | Entry decision or tombstone | Previous entry evidence |
 | `rotate`, `repairFork` | New key, branch, retained wrappings and recipient revocations | Previous key evidence for key/branch, previous wrapping evidence for each wrapping, `null` for revocations |
 
 Rotation's top-level `consumer` does not replace entry evidence.
 Each `reissue[].consumer` continues to control only its named entry, independently of the top-level input.
 Supplied evidence passes through existing metadata validation and authority callbacks during signed apply.
 Re-endorsement preserves exact stored claims, including consumer evidence. It has no metadata replacement input.
+
+`refreshEntry({ ownerDID, entryID, expectedHLC, inputs?, consumer? })` re-encrypts authenticated stored plaintext at the current key version.
+It preserves signed `contentHLC` and public metadata, allocating only a new operation HLC.
+It decrypts the entry's actual version and branch, without accepting caller plaintext or a content stamp.
+Omitted `consumer` inherits authenticated evidence. Supplied evidence describes the current call.
+It returns `updated`, `absent` or `superseded`. Key changes, branch changes and failed write preconditions refuse atomically.
+Same-version entry refresh can lose the existing claim-digest tie-break and throw `VaultWriteConflict`.
+Refresh does not change entry merge ordering or advance the key solely to win a tie.
+Revoked callers cannot refresh. Deletion and newer content never become an insertion or restored consent.
+
+`refreshWrapping({ ownerDID, keyID, wrappingID, expectedOpHash, consumer })` refreshes evidence in replicated mode without opening the content key.
+It preserves the wrapping ID, payload, descriptors, recipient, version and branch, and signs a strictly newer operation HLC.
+The selected signed copy must match `expectedOpHash` before writing and under the write precondition.
+It refuses deleted, historical, superseded or revoked material, and returns the accepted signed copy.
+Consumers can bind that exact copy to an envelope within their enclosing host transaction.
+
+`rotate({ ..., sourceVersion })` retains eligible factors and recipients from an explicitly named, authenticated source version.
+The output version remains the current version plus one. Omission retains the existing current-version selection.
+The source must open successfully, and retained secret factors require supplied inputs.
+Permanent revocations and explicit exclusions suppress historical recipients. Missing preservation material rolls back the operation.
+A concurrent current-version advance refuses the explicit-source rotation.
+The consumer selects its highest openable source, distinguishing unavailable material from rejected secrets and denied authority.
 
 Both `rotate` and `repairFork` require explicit `excludedRecipients` and `reissue` arrays, including empty arrays.
 Rotation generates a new content key, increments version, re-wraps retained factors and re-encrypts selected entries.
@@ -260,6 +284,12 @@ No statement binds more than 500 parameters. Hosts supply canonical increasing H
 Generic reads never repair data, acquire write locks or write history.
 Replicated `readEntry` uses a joined read transaction and compares projection fields against the selected signed entry.
 Checks include HLC, key/version, provenance, kind, label, attributes and the payload digest of encoded IV/ciphertext.
+The optional coordinator port `authorizeEquivalentBranch({ entry, entryBranch, winningBranch })` can approve reads from a superseded entry branch.
+All three records and the entry projection are authenticated before the callback.
+Only an explicit `true` permits decryption through the entry's own branch. Without approval, reads retain `VaultSupersededBranch`.
+The consumer validates matching signed repair markers and decides whether another repair is needed.
+Approval does not bypass read authority, owner/version binding or revocation checks. Reads never write or advance key versions.
+
 A stale ciphertext replay beneath a newer signed decision throws `VaultTampered` before returning plaintext.
 Retained wrapping projections are checked against signed descriptors, recipient, branch and ciphertext before opening or rotation.
 Replicated unwrap receives the signed wrapping's trusted descriptor digest. Local rows supply no independent trusted digest.

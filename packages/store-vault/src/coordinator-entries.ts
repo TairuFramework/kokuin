@@ -9,6 +9,7 @@ import type {
   EntryUpdateParams,
   EntryWriteParams,
   OpenedKey,
+  RefreshEntryParams,
 } from './coordinator-types.js'
 import { VaultWriteConflict } from './record-context.js'
 import { settleAll } from './settle.js'
@@ -18,6 +19,7 @@ export type ReKeyEntryParams = EntryAddress &
   CoordinatorCall & { toKeyID: string; inputs?: EntryUpdateParams['inputs']; consumer?: unknown }
 
 export type EntryFunctions = {
+  refreshEntry(request: RefreshEntryParams): Promise<UpdateEntryResult>
   putEntry(request: EntryWriteParams): Promise<EntryAddress>
   deleteEntry(request: EntryAddress & CoordinatorCall & { consumer?: unknown }): Promise<void>
   reKeyEntry(request: ReKeyEntryParams): Promise<void>
@@ -176,6 +178,81 @@ export function createEntryFunctions(
     })
   }
 
+  async function refreshEntry(request: RefreshEntryParams): Promise<UpdateEntryResult> {
+    await ctx.authorize('refreshEntry', 'administer', request)
+    const observed = await params.store.getEntry(request)
+    if (observed === undefined) return 'absent'
+
+    return ctx.locked([observed], async (store) => {
+      const existing = await store.getEntry(request)
+      if (existing === undefined) return 'absent'
+      if (existing.keyID !== observed.keyID) throw new VaultWriteConflict()
+      if (existing.hlc !== request.expectedHLC) return 'superseded'
+      await ctx.authorize(
+        'refreshEntry',
+        'administer',
+        { ...request, keyID: existing.keyID },
+        store,
+      )
+      const info = await records.entryInfo(existing, store)
+      const key = await ctx.key(existing, store)
+      const branches = await ctx.branches(key, key.version, store)
+      const branch = await ctx.branch(key, key.version, store)
+      const plaintext = await open.decrypt(
+        existing,
+        { ...existing, inputs: request.inputs },
+        store,
+        true,
+      )
+      try {
+        const opened = await open.open({ ...existing, inputs: request.inputs }, store)
+        try {
+          const row: EntryRow = {
+            ...existing,
+            keyVersion: opened.version,
+            provenance: opened.branchID,
+            hlc: await params.nextHLC(),
+            ...getSuite(opened.suite).encryptEntry({
+              ...existing,
+              keyVersion: opened.version,
+              runtime: params.runtime,
+              contentKey: opened.contentKey,
+              plaintext,
+            }),
+          }
+          const consumer = request.consumer === undefined ? info.consumer : request.consumer
+          if (await open.revoked(existing, store)) throw new VaultNotFound()
+          if (params.mode === 'local') {
+            const current = await ctx.key(key, store)
+            if (current.version !== key.version) throw new VaultWriteConflict()
+            const result = await store.updateEntryIfUnchanged({ ...row, expectedHLC: existing.hlc })
+            if (result !== 'updated') throw new VaultWriteConflict()
+          } else {
+            await ctx.write(
+              store,
+              [await records.entry(row, branch, info.contentHLC, consumer)],
+              {
+                key: {
+                  ...key,
+                  expectedVersion: key.version,
+                  expectedBranches: branches.map((b) => b.branchID),
+                },
+                entry: { ...row, expectedHLC: existing.hlc },
+              },
+              request,
+            )
+          }
+          if (await open.revoked(existing, store)) throw new VaultNotFound()
+          return 'updated'
+        } finally {
+          opened.contentKey.fill(0)
+        }
+      } finally {
+        plaintext.fill(0)
+      }
+    })
+  }
+
   async function deleteEntry(
     request: EntryAddress & CoordinatorCall & { consumer?: unknown },
   ): Promise<void> {
@@ -299,6 +376,7 @@ export function createEntryFunctions(
   }
 
   return {
+    refreshEntry,
     putEntry,
     deleteEntry,
     reKeyEntry,

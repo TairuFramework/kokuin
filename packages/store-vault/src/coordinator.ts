@@ -1,7 +1,9 @@
 import type { SignedRecord } from '@kokuin/records'
+import { compareRecordDecisionHLC } from '@kokuin/records'
 import type { FactorInput } from '@kokuin/vault'
 import {
   createVaultKeyReference,
+  decodeVaultRecord,
   factorsFromDescriptors,
   getSuite,
   isSupportedSuite,
@@ -439,6 +441,82 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         }
       })
     },
+    async refreshWrapping(request) {
+      await ctx.authorize('refreshWrapping', 'administer', request)
+      if (params.mode !== 'replicated')
+        throw new TypeError('Wrapping refresh requires replicated mode')
+      return ctx.locked([request], async (store) => {
+        await ctx.authorize('refreshWrapping', 'administer', request, store)
+        const key = await ctx.key(request, store)
+        const row = await store.getWrapping(request)
+        if (
+          row === undefined ||
+          row.keyID !== key.keyID ||
+          row.keyVersion !== key.version ||
+          key.state !== 'active'
+        )
+          throw new VaultNotFound()
+        const [branch, branches, evidence, revocations] = await settleAll([
+          ctx.branch(key, key.version, store),
+          ctx.branches(key, key.version, store),
+          ctx.wrappingEvidence(row, store),
+          ctx.recordsFor(store).listRevocations(key),
+        ])
+        if (
+          row.provenance !== branch.branchID ||
+          evidence === undefined ||
+          (await open.revoked(request, store))
+        )
+          throw new VaultNotFound()
+        const recipients = [
+          row.recipientDID,
+          ...row.descriptors.filter((d) => d.kind === 'did').map((d) => d.params.recipient),
+        ]
+        if (
+          revocations.some((did) =>
+            recipients.some(
+              (recipient) =>
+                typeof recipient === 'string' &&
+                vaultRevocationRecordID(key.keyID, recipient) ===
+                  vaultRevocationRecordID(key.keyID, did),
+            ),
+          )
+        )
+          throw new VaultNotFound()
+        if (evidence.record.opHash !== request.expectedOpHash) throw new VaultWriteConflict()
+        const decoded = decodeVaultRecord(evidence.record, evidence.op.claim.meta)
+        if (decoded.type !== 'vault.wrapping') throw new VaultNotFound()
+        const hlc = await params.nextHLC()
+        if (compareRecordDecisionHLC(hlc, evidence.record.hlc) <= 0) throw new VaultWriteConflict()
+        const record = await ctx.signed(
+          'vault.wrapping',
+          { ownerDID: key.ownerDID, id: row.wrappingID },
+          decoded.payload,
+          { ...decoded.meta, consumer: request.consumer },
+          hlc,
+        )
+        await ctx.write(
+          store,
+          [record],
+          {
+            key: {
+              ...key,
+              expectedVersion: key.version,
+              expectedBranches: branches.map((b) => b.branchID),
+            },
+            copy: {
+              type: record.type,
+              owner: record.owner,
+              id: record.id,
+              expectedOpHash: request.expectedOpHash,
+            },
+          },
+          request,
+        )
+        if (await open.revoked(request, store)) throw new VaultNotFound()
+        return record
+      })
+    },
     async addFactor(request) {
       await ctx.authorize('addFactor', 'administer', request)
       await rewrap(request, (factors) => [...factors, request.factor])
@@ -462,7 +540,29 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         await ctx.authorize('readEntry', 'read', { ...request, keyID: row.keyID }, store)
         await records.entryInfo(row, store)
 
-        return open.decrypt(row, { ...row, inputs: request.inputs }, store)
+        let specific = false
+        if (params.mode === 'replicated' && params.authorizeEquivalentBranch !== undefined) {
+          const winning = await ctx.branch(row, row.keyVersion, store)
+          if (winning.branchID !== row.provenance) {
+            const own = await ctx.branch(row, row.keyVersion, store, row.provenance)
+            const [entry, entryBranch, winningBranch] = await ctx.storedMany(
+              [
+                { type: 'vault.entry', owner: row.ownerDID, id: row.entryID },
+                { type: 'vault.key-branch', owner: row.ownerDID, id: own.branchRecordID },
+                { type: 'vault.key-branch', owner: row.ownerDID, id: winning.branchRecordID },
+              ],
+              store,
+            )
+            if (!entry || !entryBranch || !winningBranch) throw new VaultNotFound()
+            specific =
+              (await params.authorizeEquivalentBranch({
+                entry: entry.record,
+                entryBranch: entryBranch.record,
+                winningBranch: winningBranch.record,
+              })) === true
+          }
+        }
+        return open.decrypt(row, { ...row, inputs: request.inputs }, store, specific)
       })
     },
     async getEntry(request) {
