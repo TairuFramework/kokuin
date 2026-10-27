@@ -26,7 +26,6 @@ versioning:
   # into it.
   ignore:
     - '@kokuin/crypto-conformance'
-    - '@kokuin/crypto-native'
     - '@kokuin/controller-conformance'
     - '@kokuin/keystore-conformance'
     - '@kokuin/ledger-tests'

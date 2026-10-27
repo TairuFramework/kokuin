@@ -1,8 +1,12 @@
 {
   "name": "@kokuin/crypto-native",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Private Nitro crypto benchmark spike",
+  "version": "0.1.0",
+  "description": "Explicit asynchronous native crypto provider for React Native",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TairuFramework/kokuin",
+    "directory": "packages/crypto-native"
+  },
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -11,14 +15,37 @@
   "main": "lib/index.js",
   "react-native": "lib/index.js",
   "types": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "cpp/*.hpp",
+    "cpp/HybridCrypto.cpp",
+    "cpp/generated/*.h",
+    "nitrogen/generated",
+    "KokuinCrypto.podspec",
+    "react-native.config.js",
+    "android/build.gradle",
+    "android/CMakeLists.txt",
+    "android/cpp-adapter.cpp",
+    "android/src",
+    "prebuilt/ios/KokuinCrypto.xcframework",
+    "prebuilt/android",
+    "prebuilt/ios.json",
+    "prebuilt/android.json",
+    "prebuilt/THIRD_PARTY_LICENSES.txt",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "pnpm run build:types && pnpm run build:js",
     "build:js": "swc src -d lib --config-file ../../node_modules/@kigu/dev/swc.json --strip-leading-paths",
     "build:types": "tsc --emitDeclarationOnly --skipLibCheck",
     "codegen": "nitrogen",
+    "prepack": "pnpm run build && node ../../scripts/crypto-notices.mjs && pnpm run test:package",
+    "prepublishOnly": "pnpm run test:package",
+    "test": "pnpm run test:types && pnpm run test:unit",
     "test:native": "node ../../scripts/test-crypto-native.mjs",
+    "test:package": "node ../../scripts/check-crypto-package.mjs",
     "test:types": "tsc --noEmit --skipLibCheck -p tsconfig.test.json",
-    "test:unit": "vitest run && node --test ../../scripts/crypto-artifacts.test.mjs"
+    "test:unit": "vitest run && node --test ../../scripts/crypto-artifacts.test.mjs ../../scripts/check-crypto-package.test.mjs ../../scripts/crypto-notices.test.mjs"
   },
   "dependencies": {
     "@kokuin/crypto": "workspace:^"
@@ -28,7 +55,10 @@
     "react-native-nitro-modules": "0.37.1"
   },
   "peerDependencies": {
-    "react-native": "*",
+    "react-native": "^0.88.0",
     "react-native-nitro-modules": "0.37.1"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

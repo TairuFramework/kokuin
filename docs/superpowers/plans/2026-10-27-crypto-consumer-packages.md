@@ -66,13 +66,13 @@ Create dependency licence generation and explicit package file lists.
 Keep the benchmark factory available until its callers migrate.
 Package validation rejects missing slices, stale fingerprints, missing generated glue and missing licence notices.
 
-- [ ] Add tests for construction failures, corrupt responses, missing artifacts and stale packed inputs.
-- [ ] Watch those tests fail before implementing the public factory and packaging checks.
-- [ ] Set public package metadata, tested peer ranges and explicit distribution files.
-- [ ] Include iOS device/simulator and both Android libraries with generated glue and licence notices.
-- [ ] Require successful artifact validation before packing or publishing.
-- [ ] Build and pack both public packages. Inspect their contents and rewritten dependency ranges.
-- [ ] Commit the native distribution preparation.
+- [x] Add tests for construction failures, corrupt responses, missing artifacts and stale packed inputs.
+- [x] Watch those tests fail before implementing the public factory and packaging checks.
+- [x] Set public package metadata, tested peer ranges and explicit distribution files.
+- [x] Include iOS device/simulator and both Android libraries with generated glue and licence notices.
+- [x] Require successful artifact validation before packing or publishing.
+- [x] Build and pack both public packages. Inspect their contents and rewritten dependency ranges.
+- [x] Commit the native distribution preparation.
 
 ### Task 3: verify consumer installation and document adoption
 
