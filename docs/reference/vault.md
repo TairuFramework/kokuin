@@ -195,6 +195,26 @@ Replicated retirement outranks same-version activation. A refused reactivation p
 Entry operations accept opaque byte plaintext and public metadata, without application-specific IDs.
 `reKeyEntry` authorises both keys and re-encrypts while preserving the entry address.
 
+
+Replicated mutations accept optional `consumer?: unknown` for the current caller's signed `meta.consumer`.
+`undefined` preserves existing behaviour. `null` explicitly clears evidence.
+Local mode ignores this signed metadata input.
+
+| Mutation | Signed output receiving `consumer` | Behaviour when `undefined` |
+| --- | --- | --- |
+| `createKey` | Key, branch and initial wrappings | `null` |
+| `grant` | New wrapping | `null` |
+| `setKeyState`, `deleteKey` | Key decision or tombstone | Previous key evidence |
+| `addFactor`, `removeFactor` | Replacement wrapping and previous wrapping's tombstone | Previous wrapping evidence |
+| `putEntry` | New entry | `null` |
+| `updateEntry`, `updateEntryIfPresent`, `updateEntryIfUnchanged`, `deleteEntry`, `reKeyEntry` | Entry decision or tombstone | Previous entry evidence |
+| `rotate`, `repairFork` | New key, branch, retained wrappings and recipient revocations | Previous key evidence for key/branch, previous wrapping evidence for each wrapping, `null` for revocations |
+
+Rotation's top-level `consumer` does not replace entry evidence.
+Each `reissue[].consumer` continues to control only its named entry, independently of the top-level input.
+Supplied evidence passes through existing metadata validation and authority callbacks during signed apply.
+Re-endorsement preserves exact stored claims, including consumer evidence. It has no metadata replacement input.
+
 Both `rotate` and `repairFork` require explicit `excludedRecipients` and `reissue` arrays, including empty arrays.
 Rotation generates a new content key, increments version, re-wraps retained factors and re-encrypts selected entries.
 Exclusions match explicit recipients and DID factors through normalised DID equality.

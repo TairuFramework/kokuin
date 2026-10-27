@@ -129,7 +129,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
   }
 
   async function rewrap(
-    request: OpenKeyParams,
+    request: OpenKeyParams & { consumer?: unknown },
     change: (factors: Array<FactorInput>) => Array<FactorInput>,
   ): Promise<void> {
     await ctx.locked([request], async (store) => {
@@ -185,7 +185,8 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
           // The verified evidence already holds the prior wrapping's authenticated metadata.
           if (evidence === undefined) throw new VaultNotFound()
 
-          const consumer = evidence.op.claim.meta.consumer
+          const consumer =
+            request.consumer === undefined ? evidence.op.claim.meta.consumer : request.consumer
           const replacement = await records.wrapping(row, branch, consumer)
           const deletion = await ctx.signed(
             'vault.wrapping',
@@ -318,7 +319,8 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
             keyUnique: previous.op.claim.meta.keyUnique as string,
             version: key.version,
             state: request.state,
-            consumer: previous.op.claim.meta.consumer,
+            consumer:
+              request.consumer === undefined ? previous.op.claim.meta.consumer : request.consumer,
           },
         )
 
@@ -354,7 +356,8 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
             keyUnique,
             version: key.version,
             state: 'deleted',
-            consumer: previous.op.claim.meta.consumer,
+            consumer:
+              request.consumer === undefined ? previous.op.claim.meta.consumer : request.consumer,
           },
         )
 
@@ -416,7 +419,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
               ctx.branch(key, key.version, store),
               ctx.branches(key, key.version, store),
             ])
-            const record = await records.wrapping(row, branch)
+            const record = await records.wrapping(row, branch, request.consumer)
 
             await ctx.write(
               store,

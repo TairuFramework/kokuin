@@ -354,7 +354,7 @@ export function createRotateFunctions(
       // Key records and wraps are independent. Wrapping IDs are drawn in retained order.
       const [chain, wrapped] = await settleAll([
         params.mode === 'replicated'
-          ? ctx.keyRecords(next, store)
+          ? ctx.keyRecords(next, store, undefined, request.consumer)
           : Promise.resolve({ records: [], branchID: '', branchRecordID: '' }),
         settleAll(
           retained.map(async (previous) => {
@@ -400,7 +400,12 @@ export function createRotateFunctions(
           if (prior === undefined) throw new VaultNotFound()
 
           await sign(
-            records.wrapping(row, chain, prior.op.claim.meta.consumer, await params.nextHLC()),
+            records.wrapping(
+              row,
+              chain,
+              request.consumer === undefined ? prior.op.claim.meta.consumer : request.consumer,
+              await params.nextHLC(),
+            ),
           )
         }
       }
@@ -495,7 +500,7 @@ export function createRotateFunctions(
               'vault.revocation',
               { ownerDID: key.ownerDID, id },
               {},
-              { keyID: key.keyID, revokedDID, consumer: null },
+              { keyID: key.keyID, revokedDID, consumer: request.consumer ?? null },
               await params.nextHLC(),
             ),
           )
