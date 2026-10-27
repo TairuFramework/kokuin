@@ -6,11 +6,17 @@ import {
   getSuite,
   isSecretFactorKind,
   NoAvailableFactor,
+  satisfiableFactors,
   vaultRevocationRecordID,
 } from '@kokuin/vault'
 
 import type { CoordinatorContext, KeyBranch, WrappingEvidence } from './coordinator-context.js'
-import { VaultKeyLocked, VaultNotFound, VaultRepairPending } from './coordinator-context.js'
+import {
+  VaultKeyLocked,
+  VaultNotFound,
+  VaultRepairPending,
+  VaultSecretUnverifiable,
+} from './coordinator-context.js'
 import type { OpenFunctions } from './coordinator-open.js'
 import type { RecordFunctions } from './coordinator-records.js'
 import type { ForkRepairResult, RotateKeyParams } from './coordinator-types.js'
@@ -381,6 +387,34 @@ export function createRotateFunctions(
         if (!previous.descriptors.some((descriptor) => isSecretFactorKind(descriptor.kind)))
           continue
 
+        const foreignDID = previous.descriptors.find((descriptor) => {
+          return (
+            descriptor.kind === 'did' &&
+            typeof descriptor.params.recipient === 'string' &&
+            satisfiableFactors([descriptor], params.identity) === null
+          )
+        })
+
+        if (foreignDID !== undefined) {
+          const refusal = new VaultSecretUnverifiable({
+            wrappingID: previous.wrappingID,
+            recipientDID: String(foreignDID.params.recipient),
+            factorKinds: previous.descriptors.map((descriptor) => descriptor.kind),
+          })
+          if (!request.trustUnverifiableSecrets) throw refusal
+          if (
+            previous.descriptors.some(
+              (descriptor) =>
+                isSecretFactorKind(descriptor.kind) && request.inputs?.[descriptor.kind] == null,
+            )
+          )
+            throw refusal
+
+          // Validate supported descriptors and required inputs before trusting an unopenable wrap.
+          factorsFromDescriptors(previous.descriptors, request.inputs)
+          continue
+        }
+
         const verified = await open.open(
           { ...request, atVersion: previous.keyVersion },
           store,
@@ -624,6 +658,17 @@ export function createRotateFunctions(
 
       return { status: 'rotated', version }
     } catch (error) {
+      if (error instanceof VaultSecretUnverifiable)
+        return {
+          status: 'pending',
+          reason: 'secret-unverifiable',
+          wrapping: {
+            wrappingID: error.wrappingID,
+            recipientDID: error.recipientDID,
+            factorKinds: error.factorKinds,
+          },
+        }
+
       if (
         error instanceof VaultRepairPending ||
         error instanceof VaultKeyLocked ||

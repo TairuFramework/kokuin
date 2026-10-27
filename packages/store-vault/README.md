@@ -138,6 +138,16 @@ Permanent revocations and explicit exclusions suppress historical recipients. Mi
 A concurrent current-version advance refuses the explicit-source rotation.
 The consumer selects its highest openable source, distinguishing unavailable material from rejected secrets and denied authority.
 
+Retained foreign DID wrappings with secret factors cannot authenticate those secrets without the recipient's private key.
+By default, `rotate` throws `VaultSecretUnverifiable` with `wrappingID`, `recipientDID` and `factorKinds`, without writes.
+For this refusal, `repairFork` returns `{ status: 'pending', reason: 'secret-unverifiable', wrapping: { wrappingID, recipientDID, factorKinds } }`.
+`trustUnverifiableSecrets: true` explicitly permits re-wrapping these foreign wrappings using supplied inputs without verification.
+Every required secret input must still be supplied. Missing foreign inputs refuse rotation or leave repair pending.
+Missing repair inputs can return the existing `{ status: 'pending' }` outcome before wrapping diagnostics are available.
+Own-DID and secret-only wrappings still verify their secrets. Wrong verifiable secrets still refuse the operation.
+The option also applies with `sourceVersion`. Excluded and permanently revoked recipients remain excluded.
+WARNING: a wrong trusted secret locks that recipient out of later versions until it recovers.
+
 `rotate` and `repairFork` require `excludedRecipients` and `reissue` arrays, including explicit empty arrays.
 Replicated rotation carries generic plaintext and public metadata forward, preserving content intent unless an instruction supplies another `contentHLC`.
 Local rotation stores a fresh entry HLC and ignores `contentHLC` and `consumer` instructions.

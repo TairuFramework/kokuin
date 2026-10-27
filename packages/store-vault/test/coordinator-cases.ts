@@ -352,6 +352,253 @@ export function coordinatorCases(harness: StoreHarness): void {
     })
 
     for (const mode of ['local', 'replicated'] as const) {
+      for (const sourceVersion of [undefined, 1]) {
+        test(`foreign secret rotation refuses by default without writes (${mode}, source=${sourceVersion})`, async () => {
+          const f = await fixture(mode)
+          const recipient = randomIdentity()
+          const key = await f.manager.createKey({
+            ownerDID: f.identity.id,
+            wrappings: [
+              [{ kind: 'did', recipientDID: f.identity.id }],
+              [
+                { kind: 'did', recipientDID: recipient.id },
+                { kind: 'passphrase', input: bytes('recovery'), cost },
+              ],
+            ],
+          })
+          const before = await f.store.listWrappings(key)
+          const foreign = before.find((w) => w.descriptors.length === 2)
+          const offset = f.queries.length
+          await expect(
+            f.manager.rotate({
+              ...key,
+              sourceVersion,
+              excludedRecipients: [],
+              reissue: [],
+              inputs: { passphrase: bytes('recovery') },
+            }),
+          ).rejects.toMatchObject({
+            name: 'VaultSecretUnverifiable',
+            wrappingID: foreign?.wrappingID,
+            recipientDID: recipient.id,
+            factorKinds: ['did', 'passphrase'],
+          })
+          expect(
+            f.queries.slice(offset).filter((q) => {
+              // Hozon acquires SQLite's write lock with a zero-row DELETE.
+              return /^(insert|update|delete) /i.test(q.sql) && !q.sql.endsWith(' WHERE 1 = 0')
+            }),
+          ).toEqual([])
+          expect((await f.store.getKey(key))?.version).toBe(1)
+          expect(await f.store.listWrappings(key)).toEqual(before)
+        })
+
+        test.each(['owner-secret', 'foreign-did', 'foreign-secret'] as const)(
+          `rotation retains %s access (${mode}, source=${sourceVersion})`,
+          async (scenario) => {
+            const f = await fixture(mode)
+            const recipient = scenario === 'owner-secret' ? f.identity : randomIdentity()
+            const key = await f.manager.createKey({
+              ownerDID: f.identity.id,
+              wrappings: [
+                [{ kind: 'did', recipientDID: f.identity.id }],
+                [
+                  { kind: 'did', recipientDID: recipient.id },
+                  ...(scenario === 'foreign-did'
+                    ? []
+                    : [{ kind: 'passphrase' as const, input: bytes('recovery'), cost }]),
+                ],
+              ],
+            })
+            const entry = await f.manager.putEntry({
+              ...key,
+              entryID: 'retained',
+              ...metadata,
+              plaintext: bytes('preserved'),
+            })
+            expect(
+              await f.manager.rotate({
+                ...key,
+                sourceVersion,
+                excludedRecipients: [],
+                reissue: [],
+                inputs: { passphrase: bytes('recovery') },
+                trustUnverifiableSecrets: scenario === 'foreign-secret',
+              }),
+            ).toBe(2)
+            expect(await f.store.listWrappings({ ...key, keyVersion: 2 })).toHaveLength(2)
+            const reader = createVaultCoordinator({
+              ...f.params,
+              identity: recipient,
+              principal: recipient.id,
+            })
+            expect(
+              text(await reader.readEntry({ ...entry, inputs: { passphrase: bytes('recovery') } })),
+            ).toBe('preserved')
+          },
+        )
+      }
+
+      test.each(['own-did', 'secret-only', 'missing-foreign'] as const)(
+        `trusting foreign secrets still refuses %s input (${mode})`,
+        async (scenario) => {
+          const f = await fixture(mode)
+          const recipient = randomIdentity()
+          const key = await f.manager.createKey({
+            ownerDID: f.identity.id,
+            wrappings: [
+              [{ kind: 'did', recipientDID: f.identity.id }],
+              [
+                { kind: 'did', recipientDID: recipient.id },
+                { kind: 'passphrase', input: bytes('recovery'), cost },
+              ],
+              ...(scenario === 'missing-foreign'
+                ? []
+                : [
+                    [
+                      ...(scenario === 'own-did'
+                        ? [{ kind: 'did' as const, recipientDID: f.identity.id }]
+                        : []),
+                      { kind: 'passphrase' as const, input: bytes('recovery'), cost },
+                    ],
+                  ]),
+            ],
+          })
+          const before = await f.store.listWrappings(key)
+          const offset = f.queries.length
+          await expect(
+            f.manager.rotate({
+              ...key,
+              excludedRecipients: [],
+              reissue: [],
+              trustUnverifiableSecrets: true,
+              inputs: scenario === 'missing-foreign' ? {} : { passphrase: bytes('wrong') },
+            }),
+          ).rejects.toMatchObject({
+            name:
+              scenario === 'missing-foreign' ? 'VaultSecretUnverifiable' : 'VaultSecretRejected',
+          })
+          expect(
+            f.queries.slice(offset).filter((q) => {
+              // Hozon acquires SQLite's write lock with a zero-row DELETE.
+              return /^(insert|update|delete) /i.test(q.sql) && !q.sql.endsWith(' WHERE 1 = 0')
+            }),
+          ).toEqual([])
+          expect((await f.store.getKey(key))?.version).toBe(1)
+          expect(await f.store.listWrappings(key)).toEqual(before)
+        },
+      )
+
+      test(`excluded foreign secret needs no input and is not retained (${mode})`, async () => {
+        const f = await fixture(mode)
+        const recipient = randomIdentity()
+        const key = await f.manager.createKey({
+          ownerDID: f.identity.id,
+          wrappings: [
+            [{ kind: 'did', recipientDID: f.identity.id }],
+            [
+              { kind: 'did', recipientDID: recipient.id },
+              { kind: 'passphrase', input: bytes('recovery'), cost },
+            ],
+          ],
+        })
+        await f.manager.rotate({
+          ...key,
+          excludedRecipients: [recipient.id],
+          reissue: [],
+          trustUnverifiableSecrets: true,
+        })
+        if (mode === 'replicated') {
+          await f.manager.rotate({
+            ...key,
+            sourceVersion: 1,
+            excludedRecipients: [],
+            reissue: [],
+            trustUnverifiableSecrets: true,
+          })
+        }
+        const version = mode === 'replicated' ? 3 : 2
+        const retained = await f.store.listWrappings({ ...key, keyVersion: version })
+        expect(retained).toHaveLength(1)
+        expect(retained[0]?.descriptors).toMatchObject([
+          { kind: 'did', params: { recipient: f.identity.id } },
+        ])
+      })
+    }
+
+    test('foreign secret fork repair stays pending until explicitly trusted', async () => {
+      const a = await fixture('replicated')
+      const b = await fixture('replicated', a.identity)
+      const recipient = randomIdentity()
+      const key = await a.manager.createKey({
+        ownerDID: a.identity.id,
+        wrappings: [
+          [{ kind: 'did', recipientDID: a.identity.id }],
+          [
+            { kind: 'did', recipientDID: recipient.id },
+            { kind: 'passphrase', input: bytes('recovery'), cost },
+          ],
+        ],
+      })
+      const entry = await a.manager.putEntry({
+        ...key,
+        entryID: 'forked',
+        ...metadata,
+        plaintext: bytes('preserved'),
+      })
+      const types = [
+        'vault.key',
+        'vault.key-branch',
+        'vault.wrapping',
+        'vault.entry',
+        'vault.revocation',
+      ]
+      await b.manager.records.apply(
+        (await a.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+      )
+      const request = {
+        ...key,
+        excludedRecipients: [],
+        reissue: [],
+        inputs: { passphrase: bytes('recovery') },
+        trustUnverifiableSecrets: true,
+      }
+      await a.manager.rotate(request)
+      await b.manager.rotate(request)
+      await a.manager.records.apply(
+        (await b.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+      )
+      // A replacement makes repair necessary regardless of branch digest order.
+      const repair = {
+        ...request,
+        reissue: [
+          { entryID: entry.entryID, action: 'replace' as const, plaintext: bytes('repaired') },
+        ],
+      }
+      const before = await a.manager.records.adapter.list(types)
+      expect(
+        await a.manager.repairFork({ ...repair, trustUnverifiableSecrets: false }),
+      ).toMatchObject({
+        status: 'pending',
+        reason: 'secret-unverifiable',
+        wrapping: { recipientDID: recipient.id, factorKinds: ['did', 'passphrase'] },
+      })
+      expect(await a.manager.records.adapter.list(types)).toEqual(before)
+      expect((await a.store.getKey(key))?.version).toBe(2)
+      expect(await a.manager.repairFork({ ...repair, inputs: {} })).toMatchObject({
+        status: 'pending',
+      })
+      expect(await a.manager.records.adapter.list(types)).toEqual(before)
+      expect(await a.manager.repairFork(repair)).toEqual({ status: 'rotated', version: 3 })
+      const reader = createVaultCoordinator({
+        ...a.params,
+        identity: recipient,
+        principal: recipient.id,
+      })
+      expect(text(await reader.readEntry({ ...entry, inputs: request.inputs }))).toBe('repaired')
+    }, 30_000)
+
+    for (const mode of ['local', 'replicated'] as const) {
       test(`factor edits restore recipient metadata when only the DID remains (${mode})`, async () => {
         const f = await fixture(mode)
         const pin = bytes('pin')

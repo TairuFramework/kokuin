@@ -5,6 +5,7 @@ export {
   VaultNotAuthorized,
   VaultNotFound,
   VaultRepairPending,
+  VaultSecretUnverifiable,
   VaultSupersededBranch,
 } from './coordinator-context.js'
 export type * from './coordinator-types.js'
