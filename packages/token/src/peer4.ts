@@ -63,6 +63,27 @@ const BASE58_EXPANSION = 1.3658
 // A SHA-256 multihash is 34 bytes: 47 base58 characters plus the multibase 'z'.
 const MAX_HASH_ENCODED = 64
 
+/** Maximum number of successful long-form decodes kept in the LRU. */
+export const PEER4_DECODE_MEMO_SIZE = 512
+
+type Peer4DecodeMemoEntry = {
+  docJSON: string
+  docByteSize: number
+  shortForm: string
+}
+
+const peer4DecodeMemo = new Map<string, Peer4DecodeMemoEntry>()
+
+function rememberPeer4Decode(longForm: string, entry: Peer4DecodeMemoEntry): void {
+  peer4DecodeMemo.delete(longForm)
+  peer4DecodeMemo.set(longForm, entry)
+  while (peer4DecodeMemo.size > PEER4_DECODE_MEMO_SIZE) {
+    const oldest = peer4DecodeMemo.keys().next().value
+    if (oldest === undefined) break
+    peer4DecodeMemo.delete(oldest)
+  }
+}
+
 export type DecodePeer4Options = {
   /** Maximum allowed size of the canonical doc bytes. Default 4 KiB. */
   maxDocSize?: number
@@ -140,6 +161,16 @@ export function decodePeer4(
     throw new Error(`did:peer:4 encoded doc too large: ${encodedDoc.length} > ${maxEncoded}`)
   }
 
+  const known = peer4DecodeMemo.get(longForm)
+  if (known !== undefined) {
+    if (known.docByteSize > maxSize) {
+      throw new Error(`did:peer:4 doc too large: ${known.docByteSize} > ${maxSize}`)
+    }
+    peer4DecodeMemo.delete(longForm)
+    peer4DecodeMemo.set(longForm, known)
+    return { longForm, shortForm: known.shortForm, doc: JSON.parse(known.docJSON) as DIDDoc }
+  }
+
   const hashBytes = decodeMultibase(hashEncoded)
   if (!verifyMultihash(hashBytes, fromUTF(encodedDoc))) {
     throw new Error('did:peer:4 hash mismatch')
@@ -160,7 +191,17 @@ export function decodePeer4(
   }
 
   const shortForm = `${PEER4_PREFIX}${hashEncoded}`
+  rememberPeer4Decode(longForm, {
+    docJSON: toUTF(docBytes),
+    docByteSize: docBytes.length,
+    shortForm,
+  })
   return { longForm, shortForm, doc }
+}
+
+/** @internal */
+export function clearPeer4DecodeMemo(): void {
+  peer4DecodeMemo.clear()
 }
 
 /**

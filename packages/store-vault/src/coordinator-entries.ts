@@ -15,11 +15,11 @@ import { settleAll } from './settle.js'
 import type { EntryAddress, EntryRow, UpdateEntryResult, VaultStoreAPI } from './types.js'
 
 export type ReKeyEntryParams = EntryAddress &
-  CoordinatorCall & { toKeyID: string; inputs?: EntryUpdateParams['inputs'] }
+  CoordinatorCall & { toKeyID: string; inputs?: EntryUpdateParams['inputs']; consumer?: unknown }
 
 export type EntryFunctions = {
   putEntry(request: EntryWriteParams): Promise<EntryAddress>
-  deleteEntry(request: EntryAddress & CoordinatorCall): Promise<void>
+  deleteEntry(request: EntryAddress & CoordinatorCall & { consumer?: unknown }): Promise<void>
   reKeyEntry(request: ReKeyEntryParams): Promise<void>
   updateEntry(request: EntryUpdateParams): Promise<void>
   updateEntryIfPresent(request: EntryUpdateParams): Promise<'updated' | 'absent'>
@@ -161,7 +161,13 @@ export function createEntryFunctions(
           }),
         }
 
-        await save(row, store, request, existing.hlc, info.consumer)
+        await save(
+          row,
+          store,
+          request,
+          existing.hlc,
+          request.consumer === undefined ? info.consumer : request.consumer,
+        )
 
         return 'updated'
       } finally {
@@ -170,7 +176,9 @@ export function createEntryFunctions(
     })
   }
 
-  async function deleteEntry(request: EntryAddress & CoordinatorCall): Promise<void> {
+  async function deleteEntry(
+    request: EntryAddress & CoordinatorCall & { consumer?: unknown },
+  ): Promise<void> {
     await ctx.authorize('deleteEntry', 'administer', request)
 
     const observed = await params.store.getEntry(request)
@@ -203,7 +211,13 @@ export function createEntryFunctions(
         params.nextHLC(),
       ])
       const row = { ...existing, hlc, keyVersion: key.version }
-      const record = await records.entry(row, branch, row.hlc, info.consumer, true)
+      const record = await records.entry(
+        row,
+        branch,
+        row.hlc,
+        request.consumer === undefined ? info.consumer : request.consumer,
+        true,
+      )
 
       await ctx.write(
         store,
@@ -269,7 +283,14 @@ export function createEntryFunctions(
         }
 
         if (params.mode === 'local') await store.moveEntry(row)
-        else await save(row, store, request, existing.hlc, info.consumer)
+        else
+          await save(
+            row,
+            store,
+            request,
+            existing.hlc,
+            request.consumer === undefined ? info.consumer : request.consumer,
+          )
       } finally {
         opened.contentKey.fill(0)
         plaintext.fill(0)

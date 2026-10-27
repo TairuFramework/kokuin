@@ -531,7 +531,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
         keyID: row.keyID,
         keyVersion: row.version,
         branchID,
-        consumer: consumer ?? previous?.op.claim.meta.consumer ?? null,
+        consumer: consumer === undefined ? (previous?.op.claim.meta.consumer ?? null) : consumer,
       },
       record.hlc,
     )
