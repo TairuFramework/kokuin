@@ -6,7 +6,8 @@ Both packages are prepared at version 0.1.0. Publishing is a separate step.
 
 Provider injection into existing token, controller and records APIs remains pending.
 Applications can use the standalone methods or accept the structural provider contract in their own code.
-Physical-device performance measurements remain pending.
+The complete physical-device benchmark gate remains pending.
+An [exploratory physical Android probe](crypto-benchmarks/2026-10-27-android-probe/README.md) records initial results.
 
 ## Installation
 

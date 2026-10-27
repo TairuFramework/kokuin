@@ -49,3 +49,10 @@ The new cross-build and package workflow has not yet run remotely.
 Portable runtime checks used Node. A fresh browser runtime check was not performed.
 
 See [provider instructions](crypto-provider.md) for reproduction and installation.
+
+## Physical Android update
+
+The connected Galaxy A35 subsequently passed the shared conformance suite and an exploratory timing probe.
+An ARM64-only build issue found during preparation was corrected and verified through another physical conformance run.
+The [physical probe report](crypto-benchmarks/2026-10-27-android-probe/README.md) preserves its raw samples and limitations.
+The complete two-platform performance gate remains pending.

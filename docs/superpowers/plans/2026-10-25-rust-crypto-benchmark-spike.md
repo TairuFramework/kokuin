@@ -7,14 +7,17 @@
 **Stage:** executing
 **Mode:** tasks
 
-**Execution state:** Tasks 1 and 2 verified. Benchmark tooling is ready. Physical-device measurements remain pending.
+**Execution state:** Tasks 1 and 2 verified. An exploratory physical Android probe is recorded. The complete two-platform gate remains pending.
 
 Task 1 was committed as `690a03c`. Rust cross-builds and both native app builds succeeded during Task 2.
-Release runtime checks and all three existing Maestro flows pass on both iOS and Android. Task 3 has no physical-device measurements.
+Release runtime checks and all three existing Maestro flows pass on both iOS and Android.
+Task 3 has exploratory physical Android measurements. Full gate measurements remain pending.
 The benchmark gate remains pending. Existing public APIs have not been migrated.
 
 Resume with Release Hermes measurements on physical iPhone and Android devices.
-Paul confirmed on 2026-10-26 that physical phones are unavailable. Keep the gate pending and leave public APIs unchanged.
+Paul connected a physical Galaxy A35 on 2026-10-27. Correctness passed and a reduced-count timing probe completed.
+Results live in `docs/reference/crypto-benchmarks/2026-10-27-android-probe/`.
+The complete Android matrix and physical iPhone measurements remain pending. Leave existing public APIs unchanged.
 
 **Architecture:** build an isolated Rust core and minimal Nitro binding inside kokuin. Compare complete native calls against strict noble on Hermes. Keep all existing consumers unchanged until the gate passes.
 

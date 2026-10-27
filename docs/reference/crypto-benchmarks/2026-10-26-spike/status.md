@@ -73,3 +73,9 @@ Full-size file export on physical devices and Linux mobile CI execution remain u
 The Rust host workflow and existing mobile workflows provide CI checks after this checkpoint is pushed.
 
 See [benchmark instructions](../../crypto-benchmark-spike.md) for preparation, metric definitions and thresholds.
+
+## Physical Android update: 2026-10-27
+
+A connected Galaxy A35 passed physical conformance and completed an exploratory timing probe.
+The [probe report](../2026-10-27-android-probe/README.md) preserves the raw results and device conditions.
+The complete Android matrix and physical iOS measurements remain pending.
