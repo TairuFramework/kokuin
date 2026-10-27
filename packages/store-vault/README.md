@@ -145,6 +145,9 @@ A reissue instruction names one entry and selects `preserve`, `replace`, `delete
 `replace` supplies new plaintext. In replicated mode, `consumer` optionally replaces signed opaque metadata.
 `skip` leaves the old entry untouched. Duplicate or unknown entry instructions refuse the whole operation.
 Replacement instructions target live entries. Tombstone preservation and explicit deletion require no plaintext.
+A `preserve` instruction without `contentHLC` does not itself require repair, even with a `consumer` override.
+Repair applies that evidence when reissue is otherwise needed, or returns not-needed without writes.
+Other actions and `contentHLC` overrides retain their repair-forcing behaviour. Plain `rotate` always advances the version.
 
 Exclusions match explicit recipients and DID factors. Replicated exclusions also publish permanent recipient denials through apply.
 Local exclusions delete existing matching wrappings. Local mode has no permanent revocation table.

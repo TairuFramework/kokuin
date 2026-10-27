@@ -1,6 +1,6 @@
 import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
 import type { SignedRecord } from '@kokuin/records'
-import { verifySignedRecord } from '@kokuin/records'
+import { recordDecisionDigest, signRecordOp, verifySignedRecord } from '@kokuin/records'
 import { randomIdentity } from '@kokuin/token'
 import { selectWinningBranch, VAULT_OP_KIND } from '@kokuin/vault'
 import { createRuntime } from '@sozai/runtime'
@@ -100,6 +100,176 @@ afterEach(async () => {
 })
 
 describe('SQLite coordinator refresh', () => {
+  async function preservationFork(addEntries = false) {
+    const a = await fixture()
+    const b = await fixture(a.identity)
+    const key = await a.manager.createKey({ ownerDID: a.identity.id })
+    const entry = await a.manager.putEntry({
+      ...key,
+      entryID: 'same-content',
+      plaintext: bytes('unchanged'),
+      consumer: { caller: 'previous' },
+      ...metadata,
+    })
+    expect((await b.manager.records.apply(await copies(a))).rejected).toEqual([])
+    if (addEntries) {
+      for (const [f, entryID] of [
+        [a, 'a-only'],
+        [b, 'b-only'],
+      ] as const)
+        await f.manager.putEntry({ ...key, entryID, plaintext: bytes(entryID), ...metadata })
+    }
+    for (const f of [a, b]) await f.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })
+    const fromA = await copies(a)
+    const fromB = await copies(b)
+    const keyA = fromA.find((record) => record.type === 'vault.key')
+    const keyB = fromB.find((record) => record.type === 'vault.key')
+    if (!keyA || !keyB) throw new Error('Missing fork keys')
+    const [winning, losing] =
+      (await recordDecisionDigest(keyA, VAULT_OP_KIND)) >
+      (await recordDecisionDigest(keyB, VAULT_OP_KIND))
+        ? [fromA, fromB]
+        : [fromB, fromA]
+    const winningEntry = winning.find((record) => record.id === entry.entryID)
+    const losingEntry = losing.find((record) => record.id === entry.entryID)
+    if (!winningEntry || !losingEntry) throw new Error('Missing fork entries')
+    const winningOp = await verifySignedRecord(winningEntry, VAULT_OP_KIND)
+    const losingOp = await verifySignedRecord(losingEntry, VAULT_OP_KIND)
+    if (!winningOp || !losingOp) throw new Error('Invalid fork entries')
+    expect(winningOp.claim.meta.contentHLC).toBe(losingOp.claim.meta.contentHLC)
+    for (const f of [a, b]) expect(await f.manager.readEntry(entry)).toEqual(bytes('unchanged'))
+    let losingVariant: SignedRecord | undefined
+    let variant: SignedRecord | undefined
+    for (let attempt = 0; attempt < 128; attempt++) {
+      const hlc = stamp(++counter)
+      const candidate = {
+        ...winningEntry,
+        hlc,
+        ...(await signRecordOp(a.identity, { ...winningOp.claim, hlc }, VAULT_OP_KIND)),
+      }
+      const otherHLC = stamp(++counter)
+      const other = {
+        ...losingEntry,
+        hlc: otherHLC,
+        ...(await signRecordOp(a.identity, { ...losingOp.claim, hlc: otherHLC }, VAULT_OP_KIND)),
+      }
+      if (
+        (await recordDecisionDigest(candidate, VAULT_OP_KIND)) >
+          (await recordDecisionDigest(other, VAULT_OP_KIND)) &&
+        candidate.opHash < other.opHash
+      ) {
+        losingVariant = other
+        variant = candidate
+        break
+      }
+    }
+    if (!variant || !losingVariant)
+      throw new Error('Missing opposite projection/candidate ordering')
+    // Admission selects the winning branch, while repair compares the losing branch's plaintext.
+    const incoming = [...fromA, ...fromB].filter((record) => record.id !== entry.entryID)
+    incoming.push(variant, losingVariant)
+    const f = await fixture(a.identity)
+    const applied = await f.manager.records.apply(incoming)
+    expect(applied.rejected).toEqual([])
+    expect(applied.parked).toEqual([])
+    expect((await f.store.getEntry(entry))?.provenance).toBe(winningOp.claim.meta.branchID)
+    expect(await f.manager.records.listEntryCandidates({ ...key, keyVersion: 2 })).toEqual(
+      expect.arrayContaining([variant, losingVariant]),
+    )
+    return { f, key, entry }
+  }
+
+  test(
+    'evidenceOnlyPreserveKeepsRepairNotNeeded',
+    async () => {
+      const { f, key, entry } = await preservationFork()
+      const before = await copies(f)
+      const row = await f.store.getEntry(entry)
+      const wrappings = await f.store.listWrappings(key)
+      f.queries.length = 0
+      expect(await f.manager.repairFork({ ...key, excludedRecipients: [], reissue: [] })).toEqual({
+        status: 'not-needed',
+      })
+      const result = await f.manager.repairFork({
+        ...key,
+        excludedRecipients: [],
+        consumer: { caller: 'current' },
+        reissue: [{ entryID: entry.entryID, action: 'preserve', consumer: { caller: 'current' } }],
+      })
+      expect(result).toEqual({ status: 'not-needed' })
+      // SQLite's key lock reserves the writer with a zero-row DELETE.
+      const writes = f.queries.filter((query) => {
+        return /^(insert|update|delete)/i.test(query.sql) && !/where 1 = 0$/i.test(query.sql)
+      })
+      expect(writes.map((query) => query.sql)).toEqual([])
+      expect(await copies(f)).toEqual(before)
+      expect(await f.store.getEntry(entry)).toEqual(row)
+      expect(await f.store.listWrappings(key)).toEqual(wrappings)
+      expect((await f.store.getKey(key))?.version).toBe(2)
+    },
+    REPAIR_EXCHANGE_TIMEOUT,
+  )
+
+  test(
+    'evidenceOnlyPreserveStillValidatesInstructions',
+    async () => {
+      const { f, key, entry } = await preservationFork()
+      const instruction = { entryID: entry.entryID, action: 'preserve', consumer: null } as const
+      for (const reissue of [[instruction, instruction], [{ ...instruction, entryID: 'unknown' }]])
+        await expect(
+          f.manager.repairFork({ ...key, excludedRecipients: [], reissue }),
+        ).rejects.toThrow(TypeError)
+      expect((await f.store.getKey(key))?.version).toBe(2)
+    },
+    REPAIR_EXCHANGE_TIMEOUT,
+  )
+
+  test(
+    'evidenceOnlyPreserveAppliesEvidenceWhenRepairNeeded',
+    async () => {
+      const { f, key, entry } = await preservationFork(true)
+      expect(
+        await f.manager.repairFork({
+          ...key,
+          excludedRecipients: [],
+          consumer: { caller: 'key' },
+          reissue: [
+            { entryID: entry.entryID, action: 'preserve', consumer: { caller: 'current' } },
+          ],
+        }),
+      ).toEqual({ status: 'rotated', version: 3 })
+      const record = await selected(f, 'vault.entry', key.ownerDID, entry.entryID)
+      expect((await verifySignedRecord(record, VAULT_OP_KIND))?.claim.meta.consumer).toEqual({
+        caller: 'current',
+      })
+      expect(await f.manager.readEntry(entry)).toEqual(bytes('unchanged'))
+      for (const entryID of ['a-only', 'b-only'])
+        expect(await f.manager.readEntry({ ...key, entryID })).toEqual(bytes(entryID))
+    },
+    REPAIR_EXCHANGE_TIMEOUT,
+  )
+
+  test(
+    'contentHLCPreserveStillForcesRepair',
+    async () => {
+      const { f, key, entry } = await preservationFork()
+      const contentHLC = stamp(++counter)
+      expect(
+        await f.manager.repairFork({
+          ...key,
+          excludedRecipients: [],
+          reissue: [{ entryID: entry.entryID, action: 'preserve', contentHLC }],
+        }),
+      ).toEqual({ status: 'rotated', version: 3 })
+      const record = await selected(f, 'vault.entry', key.ownerDID, entry.entryID)
+      expect((await verifySignedRecord(record, VAULT_OP_KIND))?.claim.meta.contentHLC).toBe(
+        contentHLC,
+      )
+      expect(await f.manager.readEntry(entry)).toEqual(bytes('unchanged'))
+    },
+    REPAIR_EXCHANGE_TIMEOUT,
+  )
+
   test('refreshEntry preserves authenticated intent and public metadata at the current version', async () => {
     const f = await fixture()
     const key = await f.manager.createKey({ ownerDID: f.identity.id })
