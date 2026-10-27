@@ -397,8 +397,29 @@ importers:
 
   packages/controller-conformance: {}
 
+  packages/crypto:
+    dependencies:
+      '@noble/curves':
+        specifier: 'catalog:'
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 'catalog:'
+        version: 2.4.0
+
+  packages/crypto-conformance:
+    dependencies:
+      '@kokuin/crypto':
+        specifier: workspace:^
+        version: link:../crypto
+      '@noble/hashes':
+        specifier: 'catalog:'
+        version: 2.4.0
+
   packages/crypto-native:
     dependencies:
+      '@kokuin/crypto':
+        specifier: workspace:^
+        version: link:../crypto
       react-native:
         specifier: '*'
         version: 0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1)
@@ -808,6 +829,12 @@ importers:
 
   tests/e2e-expo:
     dependencies:
+      '@kokuin/crypto':
+        specifier: workspace:^
+        version: link:../../packages/crypto
+      '@kokuin/crypto-conformance':
+        specifier: workspace:^
+        version: link:../../packages/crypto-conformance
       '@kokuin/crypto-native':
         specifier: workspace:^
         version: link:../../packages/crypto-native

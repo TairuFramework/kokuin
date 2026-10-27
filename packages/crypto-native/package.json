@@ -20,6 +20,9 @@
     "test:types": "tsc --noEmit --skipLibCheck -p tsconfig.test.json",
     "test:unit": "vitest run && node --test ../../scripts/crypto-artifacts.test.mjs"
   },
+  "dependencies": {
+    "@kokuin/crypto": "workspace:^"
+  },
   "devDependencies": {
     "nitrogen": "0.37.1",
     "react-native-nitro-modules": "0.37.1"

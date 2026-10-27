@@ -1,3 +1,4 @@
+import { cryptoConformance } from '@kokuin/crypto-conformance'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
@@ -11,6 +12,7 @@ function equal(actual: Uint8Array, expected: Uint8Array): void {
 }
 
 export async function checkSpikeCrypto(native: SpikeCrypto): Promise<void> {
+  for (const entry of cryptoConformance(native)) await entry.run()
   const seed = hexToBytes('9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60')
   const message = new Uint8Array()
   const key = ed25519.getPublicKey(seed)

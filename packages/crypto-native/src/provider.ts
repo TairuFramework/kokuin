@@ -1,13 +1,6 @@
-import type { ByteView, Crypto, CryptoRequest } from './Crypto.nitro.js'
+import type { CryptoAlgorithm, CryptoProvider, SignItem, VerifyItem } from '@kokuin/crypto'
 
-export type CryptoAlgorithm = 'EdDSA' | 'ES256'
-export type SignItem = { privateKey: Uint8Array; message: Uint8Array }
-export type VerifyItem = {
-  alg: CryptoAlgorithm
-  signature: Uint8Array
-  message: Uint8Array
-  publicKey: Uint8Array
-}
+import type { ByteView, Crypto, CryptoRequest } from './Crypto.nitro.js'
 
 const EMPTY = new Uint8Array()
 
@@ -74,7 +67,7 @@ function verified(bytes: Uint8Array): boolean {
   return bytes[0] === 1
 }
 
-export function providerFor(bridge: Pick<Crypto, 'abiVersion' | 'execute'>) {
+export function providerFor(bridge: Pick<Crypto, 'abiVersion' | 'execute'>): CryptoProvider {
   if (bridge.abiVersion !== 1) throw new Error('Native crypto ABI mismatch')
   return {
     async sign(alg: 'EdDSA', privateKey: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
