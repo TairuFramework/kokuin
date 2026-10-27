@@ -14,6 +14,9 @@ const bytes = (value: string) => new TextEncoder().encode(value)
 const metadata = { kind: 'blob', label: 'Grant', attributes: { device: 'self' } }
 const types = ['vault.key', 'vault.key-branch', 'vault.wrapping', 'vault.entry', 'vault.revocation']
 let counter = 1000
+// Two full repair exchanges across every survivor exceed the default 5 s on CI runners.
+const REPAIR_EXCHANGE_TIMEOUT = 30_000
+
 const databases: Array<Awaited<ReturnType<typeof openVaultTestDB>>> = []
 async function fixture(identity = randomIdentity()) {
   const db = await openVaultTestDB(
@@ -459,6 +462,7 @@ describe('SQLite coordinator refresh', () => {
         expect((await f.store.getKey(key))?.version).toBe(3)
       }
     },
+    REPAIR_EXCHANGE_TIMEOUT,
   )
 
   test('refresh refuses tampered projections and denied current authority before signing', async () => {
