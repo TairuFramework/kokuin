@@ -364,6 +364,48 @@ describe('keyHolder', () => {
     expect(await visibleIDs(stored, forC)).toEqual([])
   })
 
+  test('one filter call lists and checks each holding once, with the same answers', async () => {
+    const w = world()
+    const one = await keyRecords(w, 'key-1', 3)
+    const two = await keyRecords(w, 'key-2', 3)
+    const holdings = [
+      await wrappingFor(w, 'key-1', 3, w.cDID),
+      await wrappingFor(w, 'key-2', 2, w.bDID),
+      await wrappingFor(w, 'key-1', 3, w.bDID),
+    ]
+    const stored = [one.key, one.branch, ...one.entries, two.key, two.branch, ...two.entries]
+    const { store } = memoryStore([...stored, ...holdings])
+    const base = contextFor(w, { peerDID: w.b.id }, { store })
+    let lists = 0
+    let checks = 0
+    const ctx: VisibilityContext = {
+      ...base,
+      store: {
+        ...store,
+        list: async (types) => {
+          lists += 1
+          return await store.list(types)
+        },
+      },
+      authorizeProof: async (record, held) => {
+        checks += 1
+        return await base.authorizeProof(record, held)
+      },
+    }
+    const expected = ids([one.key, one.branch, ...one.entries])
+
+    expect(await visibleIDs(stored, ctx)).toEqual(expected)
+    // Eight keyHolder records, three holdings: one list, and each holding checked at most once.
+    expect(lists).toBe(1)
+    expect(checks).toBeLessThanOrEqual(holdings.length)
+    // Asked record by record, outside one filter call, the answers are the same.
+    const oneByOne = []
+    for (const record of stored)
+      if (await visibleTo(record, RULES[record.type] ?? [], ctx)) oneByOne.push(record)
+    expect(ids(oneByOne)).toEqual(expected)
+    expect(lists).toBeGreaterThan(1)
+  })
+
   test('a valid self-addressed proof stands in for a wrapping the responder lacks', async () => {
     const w = world()
     const one = await keyRecords(w, 'key-1', 3)

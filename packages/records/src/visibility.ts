@@ -1,10 +1,11 @@
 import { normalizeDID } from '@kokuin/token'
 
 import {
-  isDependencyUnsatisfied,
+  isDependencyUnsatisfiedBy,
   type RecordTypeDefinition,
   type VisibilityContext,
 } from './apply.js'
+import { settleLimited } from './limit.js'
 import { type VerifiedRecordOp, verifySignedRecord } from './op.js'
 import { compareRecordOps } from './policy.js'
 import {
@@ -13,6 +14,7 @@ import {
   recordPayloadMatches,
   type SignedRecord,
 } from './record.js'
+import { getRecordDecisions, recordKeyText } from './store.js'
 
 /**
  * A built-in visibility rule. Each reads the record's verified claim:
@@ -64,6 +66,24 @@ function isKeyVersion(value: unknown): value is number {
 
 /** The key a holding proves the requester holds, and whose key it is. */
 type Holding = { keyID: string; owner: string }
+
+/**
+ * Key holdings checked so far in one {@link filterVisibleRecords} call. Holdings are checked in
+ * order, each at most once, until one answers the key asked about. One promise per holding lets
+ * concurrent checks share it. The index lives only as long as that call, which writes nothing, so
+ * a revoked or replaced holding is never answered from it later.
+ */
+type HoldingIndex = {
+  records?: Promise<Array<SignedRecord>>
+  checks: Array<Promise<Holding | null>>
+  held: Set<string>
+}
+
+const holdingIndexes = new WeakMap<VisibilityContext, HoldingIndex>()
+
+function holdingID(owner: string, keyID: string): string {
+  return JSON.stringify([owner, keyID])
+}
 
 /**
  * Whether the responder's stored row for a proof's record leaves the proof standing: none,
@@ -121,12 +141,12 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
     return null
   }
   // A proof is weighed against the row the responder holds for the same record, so a
-  // revoked, superseded or taken-over wrapping cannot stand in for the live one.
-  const storedDecision = await ctx.store.get({
-    type: proof.type,
-    owner: op.claim.owner,
-    id: proof.id,
-  })
+  // revoked, superseded or taken-over wrapping cannot stand in for the live one. That row and
+  // the proof's dependencies are read in one batch.
+  const storedKey = { type: proof.type, owner: op.claim.owner, id: proof.id }
+  const dependencies = definition.dependencies(proof, op)
+  const decisions = await getRecordDecisions(ctx.store, [storedKey, ...dependencies])
+  const storedDecision = decisions.get(recordKeyText(storedKey)) ?? null
   const storedRecord = storedDecision?.copies[0] ?? null
   const storedOp =
     storedRecord === null ? null : await verifySignedRecord(storedRecord, ctx.opKind, ctx.methods)
@@ -135,10 +155,18 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
   }
   // A proof the responder cannot check for lack of a dependency earns nothing, the same as
   // one that fails, rather than parking as it would in apply.
-  for (const dependency of definition.dependencies(proof, op)) {
-    if (await isDependencyUnsatisfied(dependency, ctx.store, ctx.opKind, ctx.methods)) {
-      return null
-    }
+  const unsatisfied = await Promise.all(
+    dependencies.map((dependency) =>
+      isDependencyUnsatisfiedBy(
+        dependency,
+        decisions.get(recordKeyText(dependency)) ?? null,
+        ctx.opKind,
+        ctx.methods,
+      ),
+    ),
+  )
+  if (unsatisfied.includes(true)) {
+    return null
   }
   const authorized = await ctx.authorizeProof(proof, storedOp === null ? null : storedRecord)
   return authorized ? { keyID, owner: op.claim.owner } : null
@@ -184,6 +212,33 @@ async function isKeyHolder(claim: RecordClaim, ctx: VisibilityContext): Promise<
     (keyVersion !== undefined && !isKeyVersion(keyVersion)) ||
     ctx.holderTypes.size === 0
   ) {
+    return false
+  }
+  const index = holdingIndexes.get(ctx)
+  if (index !== undefined) {
+    const wanted = holdingID(claim.owner, keyID)
+    if (index.held.has(wanted)) {
+      return true
+    }
+    index.records ??= ctx.store
+      .list([...ctx.holderTypes.keys()])
+      .then((holdings) => [...holdings.flatMap((decision) => decision.copies), ...ctx.proofs])
+    const records = await index.records
+    for (const [position, record] of records.entries()) {
+      let check = index.checks[position]
+      if (check === undefined) {
+        check = checkedHolding(record, ctx)
+        index.checks[position] = check
+      }
+      const holding = await check
+      if (holding === null) {
+        continue
+      }
+      index.held.add(holdingID(holding.owner, holding.keyID))
+      if (holding.keyID === keyID && holding.owner === claim.owner) {
+        return true
+      }
+    }
     return false
   }
   const holdings = await ctx.store.list([...ctx.holderTypes.keys()])
@@ -286,18 +341,42 @@ export function visibilityRules(
  *
  * A responder runs this over its records before it fingerprints, splits or lists a range and
  * before it answers a fetch, so a hidden record changes none of them.
+ *
+ * Records are checked together: the `visibleTo` hooks, and the context's resolvers and store,
+ * must accept concurrent calls. The first failure in record order is thrown.
  */
 export async function filterVisibleRecords(
   records: ReadonlyArray<SignedRecord>,
   types: ReadonlyMap<string, RecordTypeDefinition>,
   ctx: VisibilityContext,
 ): Promise<Array<SignedRecord>> {
-  const visible: Array<SignedRecord> = []
-  for (const record of records) {
+  // One context for this call: holdings and key versions are read once, then indexed.
+  const versions = new Map<string, Promise<number | null>>()
+  const scoped: VisibilityContext = {
+    ...ctx,
+    currentKeyVersion: (owner, keyID) => {
+      const id = holdingID(owner, keyID)
+      let version = versions.get(id)
+      if (version === undefined) {
+        version = ctx.currentKeyVersion(owner, keyID)
+        versions.set(id, version)
+      }
+      return version
+    },
+  }
+  holdingIndexes.set(scoped, { checks: [], held: new Set() })
+  // Records are checked together, up to `CONCURRENCY_LIMIT` at once. They share the holding
+  // index, so each holding is still checked once. The first failure in record order is thrown.
+  const admitted = await settleLimited(records, async (record) => {
     const hook = types.get(record.type)?.visibleTo
-    if (hook !== undefined && (await hook(record, ctx))) {
-      visible.push(record)
-    }
+    return hook !== undefined && (await hook(record, scoped))
+  })
+  const visible: Array<SignedRecord> = []
+  for (const [index, record] of records.entries()) {
+    const result = admitted[index]
+    if (result === undefined) continue
+    if (result.status === 'rejected') throw result.reason
+    if (result.value) visible.push(record)
   }
   return visible
 }

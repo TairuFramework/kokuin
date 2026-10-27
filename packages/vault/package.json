@@ -1,0 +1,53 @@
+{
+  "name": "@kokuin/vault",
+  "version": "0.1.0",
+  "description": "Database-free content keys, ordered factor wrapping and authenticated byte encryption",
+  "keywords": [
+    "vault",
+    "encryption",
+    "keys"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TairuFramework/kokuin",
+    "directory": "packages/vault"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "type": "module",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib/*"
+  ],
+  "scripts": {
+    "build": "pnpm run build:clean && pnpm run build:js && pnpm run build:types",
+    "build:clean": "del-cli lib",
+    "build:js": "del-cli 'lib/**/*.js' && swc src -d ./lib --config-file ../../node_modules/@kigu/dev/swc.json --strip-leading-paths",
+    "build:types": "del-cli 'lib/**/*.d.ts' 'lib/**/*.d.ts.map' && tsc --emitDeclarationOnly --skipLibCheck",
+    "prepublishOnly": "pnpm run build",
+    "test": "pnpm run test:types && pnpm run test:unit",
+    "test:types": "tsc --noEmit --skipLibCheck -p tsconfig.test.json",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@kokuin/jwe": "workspace:^",
+    "@kokuin/records": "workspace:^",
+    "@kokuin/token": "workspace:^",
+    "@noble/ciphers": "catalog:",
+    "@noble/hashes": "catalog:",
+    "@sozai/codec": "catalog:",
+    "@sozai/hlc": "catalog:",
+    "@sozai/json": "catalog:",
+    "@sozai/runtime": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

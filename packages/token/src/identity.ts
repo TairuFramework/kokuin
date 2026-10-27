@@ -1,5 +1,6 @@
 import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
+import { maybeYield } from '@sozai/async'
 import { b64uFromJSON, fromUTF, toB64U } from '@sozai/codec'
 import { withSpan } from '@sozai/otel'
 
@@ -120,6 +121,8 @@ function buildSigningIdentity(
         const fullPayload = { ...payload, iss: id }
         const data = `${b64uFromJSON(fullHeader)}.${b64uFromJSON(fullPayload)}`
 
+        // Signing is ~30 ms of synchronous curve math on a phone: let the event loop run first.
+        await maybeYield()
         return {
           header: fullHeader,
           payload: fullPayload,
@@ -438,6 +441,8 @@ function buildIdentity(
     } as SignedHeader
     const fullPayload = { ...payload, iss }
     const data = `${b64uFromJSON(header)}.${b64uFromJSON(fullPayload)}`
+    // Signing is ~30 ms of synchronous curve math on a phone: let the event loop run first.
+    await maybeYield()
     return {
       header: header as SignedHeader & Record<string, unknown>,
       payload: fullPayload as Payload & { iss: string },

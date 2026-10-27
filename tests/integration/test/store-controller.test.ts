@@ -16,6 +16,7 @@ describe.each(backends())('$name', (b) => {
   controllerStoreCases({
     name: b.name,
     createAdapter: () => b.createAdapter(),
+    reopen: () => b.reopen({ pragmas: { busyTimeout: 0 } }),
     cleanup: () => b.cleanup(),
   })
 })

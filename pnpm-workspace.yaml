@@ -44,7 +44,7 @@ catalog:
   '@hozon/postgres': ^0.2.0
   '@opentelemetry/api': ^1.10.0
   '@opentelemetry/sdk-trace': ^3.0.0
-  '@sozai/async': ^0.4.1
+  '@sozai/async': ^0.4.2
   '@sozai/codec': ^0.4.3
   '@sozai/hlc': ^0.1.0
   '@sozai/json': ^0.3.0
@@ -68,7 +68,7 @@ catalog:
   '@vitejs/plugin-react': ^6.1.2
   electron: ^45.0.0
   electron-store: ^12.0.0
-  expo: ^58.0.17
+  expo: ^58.0.19
   expo-crypto: ^58.0.7
   expo-file-system: ~58.0.10
   expo-sharing: ~58.0.20

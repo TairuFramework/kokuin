@@ -1,5 +1,13 @@
 # @kokuin/token
 
+## 0.6.3
+
+### Patch Changes
+
+- The default EdDSA and ES256 verifiers remember positive results: a signature already verified over byte-equal message bytes, under the same algorithm and public key, is answered without re-running the curve math. Process-wide LRU of 8192 entries; messages over 16 KiB are never remembered; failures and thrown errors are never remembered. A verifier passed through the `verifiers` option is called as given, every time.
+
+- Cooperative yields: the default verifiers await `maybeYield()` from `@sozai/async` before the curve math on a memo miss (a hit stays synchronous and never yields), and both `signToken` implementations await it before `ed25519.sign`, so a run of signs or verifies lets timers, I/O and rendering in between. Default verifiers returned by `getVerifier` now answer a miss with a promise. Caller-supplied `verifiers` are called as given, without a yield. Adds a dependency on `@sozai/async` ^0.4.2.
+
 ## 0.6.2
 
 ### Patch Changes

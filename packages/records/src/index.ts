@@ -28,6 +28,8 @@ export {
   type VerifiedRecordCopy,
 } from './decision.js'
 export {
+  createRecordVerifier,
+  RECORD_OP_MEMO_SIZE,
   RecordOpSigningError,
   signRecordOp,
   type VerifiedRecordOp,

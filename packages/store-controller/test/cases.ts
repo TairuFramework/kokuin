@@ -1,6 +1,7 @@
 import type { Adapter } from '@hozon/adapter'
-import { HozonDB, type Kysely } from '@hozon/db'
+import { HozonDB, type Kysely, sql, withKeyLock } from '@hozon/db'
 import {
+  authoritativeLog,
   type ControllerLog,
   createAdd,
   createControllerResolver,
@@ -27,6 +28,7 @@ import {
 export type StoreHarness = {
   name: string
   createAdapter(): Promise<Adapter>
+  reopen(): Promise<Adapter>
   cleanup(): Promise<void>
 }
 
@@ -181,6 +183,8 @@ export function controllerStoreCases(
   const { tablePrefix } = options
   let db: HozonDB
   let store: ControllerStoreAPI
+  let competingDB: HozonDB
+  let competingStore: ControllerStoreAPI
   let adapter: Adapter
   let rows: Kysely<ControllerStoreTables>
 
@@ -201,9 +205,13 @@ export function controllerStoreCases(
     })
     store = await getControllerStore(db)
     rows = await db.getStore<Kysely<ControllerStoreTables>>('controller-rows')
+    competingDB = new HozonDB({ adapter: await harness.reopen(), tablePrefix })
+    competingDB.register(controllerStoreDefinition)
+    competingStore = await getControllerStore(competingDB)
   }, 60_000)
 
   afterAll(async () => {
+    await competingDB?.close()
     await db?.close()
     await harness.cleanup()
   })
@@ -233,6 +241,214 @@ export function controllerStoreCases(
 
   test('get returns undefined for an unknown DID', async () => {
     expect(await store.get('did:kokuin:unknown')).toBeUndefined()
+  })
+
+  test('getForUpdate outside a transaction reads without retaining a lock', async () => {
+    const { did, log } = buildRotatedLog(new Uint8Array(32).fill(20))
+    expect(await store.getForUpdate(did)).toBeUndefined()
+    await put(did, log)
+    expect(await store.getForUpdate(did)).toEqual(chainOnly(log))
+    await put(did, log.slice(0, 1))
+    expect(await store.getForUpdate(did)).toEqual(chainOnly(log.slice(0, 1)))
+  })
+
+  test.each([
+    ['commit', 'stored', 21],
+    ['rollback', 'stored', 22],
+    ['commit', 'missing', 32],
+    ['rollback', 'missing', 33],
+  ] as const)(
+    'getForUpdate holds a competing merge until host %s for a %s DID',
+    async (outcome, state, seedByte) => {
+      const { did, log } = buildRotatedLog(new Uint8Array(32).fill(seedByte))
+      if (state === 'stored') await put(did, log)
+      let entered = false
+      let writer: Promise<ControllerLog> | undefined
+      const rollback = new Error('rollback locked read')
+      try {
+        const host = db.withTransaction(async (tx) => {
+          const locked = await getControllerStore(tx)
+          // This must be the host transaction's first locking operation.
+          expect(await locked.getForUpdate(did)).toEqual(
+            state === 'stored' ? chainOnly(log) : undefined,
+          )
+          writer = (async () => {
+            // Retry SQLite's writer reservation without blocking the host's event loop.
+            for (;;) {
+              try {
+                return await competingStore.merge(did, async () => {
+                  entered = true
+                  return chainOnly(log.slice(0, 1))
+                })
+              } catch (error) {
+                if (
+                  adapter.kind !== 'sqlite' ||
+                  !(error instanceof Error) ||
+                  !error.message.includes('database is locked')
+                ) {
+                  throw error
+                }
+                await new Promise((resolve) => setTimeout(resolve, 10))
+              }
+            }
+          })()
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          expect(entered).toBe(false)
+          expect(await locked.get(did)).toEqual(state === 'stored' ? chainOnly(log) : undefined)
+          if (outcome === 'rollback') throw rollback
+        })
+        if (outcome === 'rollback') await expect(host).rejects.toBe(rollback)
+        else await host
+      } finally {
+        await writer
+      }
+      expect(entered).toBe(true)
+      expect(await store.get(did)).toEqual(chainOnly(log.slice(0, 1)))
+    },
+  )
+
+  test.each(['stored', 'missing'] as const)(
+    'getForUpdate uses the merge key lock for a %s DID without blocking another DID',
+    async (state) => {
+      const { did, log } = buildRotatedLog(new Uint8Array(32).fill(state === 'stored' ? 23 : 24))
+      const other = buildRotatedLog(new Uint8Array(32).fill(state === 'stored' ? 25 : 26))
+      if (state === 'stored') await put(did, log)
+      await db.withTransaction(async (tx) => {
+        const locked = await getControllerStore(tx)
+        const acquired = Promise.withResolvers<void>()
+        const release = Promise.withResolvers<void>()
+        const holder = withKeyLock(tx, 'controller_logs', [did], async () => {
+          acquired.resolve()
+          await release.promise
+        })
+        await acquired.promise
+        let read = false
+        const reader = locked.getForUpdate(did).then((current) => {
+          read = true
+          return current
+        })
+        try {
+          await locked.merge(other.did, async () => chainOnly(other.log))
+          await new Promise((resolve) => setTimeout(resolve, 50))
+          expect(read).toBe(false)
+          expect(await locked.get(other.did)).toEqual(chainOnly(other.log))
+        } finally {
+          release.resolve()
+          await holder
+          await reader
+        }
+        expect(await reader).toEqual(state === 'stored' ? chainOnly(log) : undefined)
+      })
+    },
+  )
+
+  test('getForUpdate allows another DID to merge in an independent Postgres transaction', async ({
+    skip,
+  }) => {
+    // SQLite has one writer for the entire database, regardless of DID.
+    if (adapter.kind !== 'postgres') {
+      skip()
+      return
+    }
+    const { did, log } = buildRotatedLog(new Uint8Array(32).fill(27))
+    const other = buildRotatedLog(new Uint8Array(32).fill(28))
+    await put(did, log)
+    await db.withTransaction(async (tx) => {
+      const locked = await getControllerStore(tx)
+      await locked.getForUpdate(did)
+      await store.merge(other.did, async () => chainOnly(other.log))
+      expect(await locked.get(did)).toEqual(chainOnly(log))
+    })
+    expect(await store.get(other.did)).toEqual(chainOnly(other.log))
+  })
+
+  test.each(['explicit', 'default'] as const)(
+    'markObserved with %s time refreshes an unchanged log without reporting a change',
+    async (time) => {
+      const { did, log } = buildRotatedLog(new Uint8Array(32).fill(time === 'explicit' ? 29 : 30))
+      await put(did, log)
+      const past = new Date('2020-01-01T00:00:00.000Z')
+      await rows
+        .updateTable('controller_logs')
+        .set({ updated_at: adapter.encodeTimestamp(past) as number })
+        .where('did', '=', did)
+        .execute()
+      const snapshot = async () => {
+        return await rows
+          .selectFrom('controller_logs')
+          .select([sql<string>`cast(log as text)`.as('bytes'), 'created_at'])
+          .where('did', '=', did)
+          .executeTakeFirstOrThrow()
+      }
+      const before = await snapshot()
+      const at = new Date('2030-01-02T03:04:05.000Z')
+      const started = Date.now()
+      await db.withTransaction(async (tx) => {
+        const logs = await getControllerStore(tx)
+        let changed = true
+        await logs.merge(did, async (current) => {
+          const next = authoritativeLog({
+            did,
+            loaded: chainOnly(log),
+            seen: current,
+            context: 'sync',
+          }).log
+          changed = next !== current
+          return next
+        })
+        expect(changed).toBe(false)
+        expect(await logs.markObserved(did, time === 'explicit' ? at : undefined)).toBeUndefined()
+      })
+      const observed = (await store.getObservedAt(did))?.getTime()
+      if (time === 'explicit') expect(observed).toBe(at.getTime())
+      else {
+        expect(observed).toBeGreaterThanOrEqual(Math.floor(started / 1000) * 1000)
+        expect(observed).toBeLessThanOrEqual(Date.now())
+      }
+      expect(await snapshot()).toEqual(before)
+      expect(await store.get(did)).toEqual(chainOnly(log))
+    },
+  )
+
+  test('markObserved preserves legacy log bytes and the creation time', async () => {
+    const { did, log } = buildRotatedLog(new Uint8Array(32).fill(34))
+    await insertUnstamped(did, log)
+    const snapshot = async () => {
+      return await rows
+        .selectFrom('controller_logs')
+        .select([sql<string>`cast(log as text)`.as('bytes'), 'created_at'])
+        .where('did', '=', did)
+        .executeTakeFirstOrThrow()
+    }
+    const before = await snapshot()
+    const at = new Date('2030-02-03T04:05:06.000Z')
+    await store.markObserved(did, at)
+    expect(await store.getObservedAt(did)).toEqual(at)
+    expect(await snapshot()).toEqual(before)
+    expect(await store.get(did)).toEqual(chainOnly(log))
+  })
+
+  test('markObserved on an unknown DID is a no-op', async () => {
+    const did = 'did:kokuin:unobserved'
+    expect(await store.markObserved(did)).toBeUndefined()
+    expect(await store.get(did)).toBeUndefined()
+    expect(await store.getObservedAt(did)).toBeUndefined()
+  })
+
+  test('markObserved joins a host transaction and rolls back with it', async () => {
+    const { did, log } = buildRotatedLog(new Uint8Array(32).fill(31))
+    await put(did, log)
+    const before = await store.getObservedAt(did)
+    const at = new Date('2030-01-01T00:00:00.000Z')
+    await expect(
+      db.withTransaction(async (tx) => {
+        const logs = await getControllerStore(tx)
+        await logs.markObserved(did, at)
+        expect(await logs.getObservedAt(did)).toEqual(at)
+        throw new Error('rollback observation')
+      }),
+    ).rejects.toThrow('rollback observation')
+    expect(await store.getObservedAt(did)).toEqual(before)
   })
 
   test('merge writes what the update returns: a shorter later log overwrites a longer stored one', async () => {
