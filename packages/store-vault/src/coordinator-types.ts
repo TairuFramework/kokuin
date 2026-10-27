@@ -72,12 +72,19 @@ export type EntryWriteParams = KeyAddress &
 export type EntryUpdateParams = EntryAddress &
   CoordinatorCall & { plaintext: Uint8Array; inputs?: FactorInputs; consumer?: unknown }
 
+export type RefreshEntryParams = EntryAddress &
+  CoordinatorCall & { expectedHLC: string; inputs?: FactorInputs; consumer?: unknown }
+
+export type RefreshWrappingParams = KeyAddress &
+  CoordinatorCall & { wrappingID: string; expectedOpHash: string; consumer: unknown }
+
 export type EntryReissue = { entryID: string; contentHLC?: string; consumer?: unknown } & (
   | { action: 'preserve' | 'skip' | 'delete' }
   | { action: 'replace'; plaintext: Uint8Array }
 )
 
 export type RotateKeyParams = OpenKeyParams & {
+  sourceVersion?: number
   excludedRecipients: ReadonlyArray<string>
   reissue: ReadonlyArray<EntryReissue>
   consumer?: unknown
@@ -101,6 +108,11 @@ type CommonParams = {
   nextHLC(): Promise<string>
   methods?: WrapParams['methods']
   cache?: KeyCacheParams
+  authorizeEquivalentBranch?(request: {
+    entry: SignedRecord
+    entryBranch: SignedRecord
+    winningBranch: SignedRecord
+  }): Promise<boolean>
   pinThrottle?: PinThrottleParams
 }
 
@@ -131,6 +143,8 @@ export type VaultCoordinator = {
   grant(params: OpenKeyParams & { recipientDID: string; consumer?: unknown }): Promise<void>
   addFactor(params: OpenKeyParams & { factor: FactorInput; consumer?: unknown }): Promise<void>
   removeFactor(params: OpenKeyParams & { kind: string; consumer?: unknown }): Promise<void>
+  refreshEntry(params: RefreshEntryParams): Promise<UpdateEntryResult>
+  refreshWrapping(params: RefreshWrappingParams): Promise<SignedRecord>
   rotate(params: RotateKeyParams): Promise<number>
   repairFork(params: RotateKeyParams): Promise<ForkRepairResult>
   putEntry(params: EntryWriteParams): Promise<EntryAddress>

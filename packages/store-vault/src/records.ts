@@ -36,6 +36,7 @@ export { vaultRecordPortsFor } from './records-ports.js'
 export { VaultRecordRowError } from './records-rows.js'
 
 export type VaultWritePreconditions = {
+  copy?: { type: string; owner: string; id: string; expectedOpHash: string }
   key?: KeyAddress & { expectedVersion: number | null; expectedBranches?: ReadonlyArray<string> }
   entry?: EntryAddress & { expectedHLC: string | null }
 }
@@ -275,6 +276,14 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         for (const op of currentOps)
           if (op !== null && !heldKeys.has(JSON.stringify([op.claim.owner, op.claim.meta.keyID])))
             throw new VaultWriteConflict()
+
+        const expectedCopy = request.preconditions.copy
+        if (
+          expectedCopy !== undefined &&
+          current.get(recordKeyText(expectedCopy))?.copies[0]?.opHash !==
+            expectedCopy.expectedOpHash
+        )
+          throw new VaultWriteConflict()
 
         const currentEntry = settledValue(entryRead)
 
