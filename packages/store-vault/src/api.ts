@@ -343,6 +343,18 @@ export function createVaultStore(
         return rows.map(keyRow)
       })
     },
+    async listKeyOwners(keyID) {
+      return read(async (trx) => {
+        const rows = await trx
+          .selectFrom('vault_keys')
+          .select('owner_did')
+          .where('key_id', '=', keyID)
+          .orderBy('owner_did')
+          .execute()
+
+        return rows.map((row) => row.owner_did)
+      })
+    },
     async setKeyState(row) {
       await locked([row], async (trx) => {
         await localMode(trx, 'vault.key', row.ownerDID, row.keyID)
