@@ -85,15 +85,24 @@ export type EntryReissue = { entryID: string; contentHLC?: string; consumer?: un
 
 export type RotateKeyParams = OpenKeyParams & {
   sourceVersion?: number
+  /** Trust supplied secrets only when a retained DID factor cannot be opened by this identity. */
+  trustUnverifiableSecrets?: boolean
   excludedRecipients: ReadonlyArray<string>
   reissue: ReadonlyArray<EntryReissue>
   consumer?: unknown
   suite?: number
 }
 
+export type UnverifiableWrapping = {
+  wrappingID: string
+  recipientDID: string
+  factorKinds: Array<string>
+}
+
 export type ForkRepairResult =
   | { status: 'rotated'; version: number }
   | { status: 'not-needed' | 'pending' }
+  | { status: 'pending'; reason: 'secret-unverifiable'; wrapping: UnverifiableWrapping }
 
 export type KeyStatus =
   | { state: 'unlocked' | 'available' | 'unopenable' }

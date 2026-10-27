@@ -23,7 +23,11 @@ import {
   VaultTampered,
 } from '@kokuin/vault'
 
-import type { CoordinatorCall, VaultCoordinatorParams } from './coordinator-types.js'
+import type {
+  CoordinatorCall,
+  UnverifiableWrapping,
+  VaultCoordinatorParams,
+} from './coordinator-types.js'
 import { getVaultStore } from './definition.js'
 import { VaultWriteConflict, vaultDatabases } from './record-context.js'
 import type { VaultKeyBranch, VaultRecords, VaultWritePreconditions } from './records.js'
@@ -42,6 +46,28 @@ export class VaultNotFound extends Error {
   constructor() {
     super('Vault key, entry or authenticated evidence not found')
     this.name = 'VaultNotFound'
+  }
+}
+
+export class VaultSecretUnverifiable extends Error {
+  #wrapping: UnverifiableWrapping
+
+  constructor(wrapping: UnverifiableWrapping) {
+    super('Retained foreign DID wrapping requires explicit trust and supplied secret inputs')
+    this.name = 'VaultSecretUnverifiable'
+    this.#wrapping = { ...wrapping, factorKinds: [...wrapping.factorKinds] }
+  }
+
+  get wrappingID(): string {
+    return this.#wrapping.wrappingID
+  }
+
+  get recipientDID(): string {
+    return this.#wrapping.recipientDID
+  }
+
+  get factorKinds(): Array<string> {
+    return [...this.#wrapping.factorKinds]
   }
 }
 
