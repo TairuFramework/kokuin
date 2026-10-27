@@ -79,11 +79,8 @@ export function providerFor(bridge: Pick<Crypto, 'abiVersion' | 'execute'>): Cry
     },
     async signBatch(alg: 'EdDSA', items: Array<SignItem>): Promise<Array<Uint8Array>> {
       if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
-      return decode(
-        await bridge.execute(items.map((item) => signingRequest(alg, item))),
-        items.length,
-        64,
-      )
+      const requests = items.map((item) => signingRequest(alg, item))
+      return decode(await bridge.execute(requests), requests.length, 64)
     },
     async verify(
       alg: CryptoAlgorithm,
@@ -100,18 +97,16 @@ export function providerFor(bridge: Pick<Crypto, 'abiVersion' | 'execute'>): Cry
       )
     },
     async verifyBatch(items: Array<VerifyItem>): Promise<Array<boolean>> {
-      return decode(await bridge.execute(items.map(verifyRequest)), items.length, 1).map(verified)
+      const requests = items.map(verifyRequest)
+      return decode(await bridge.execute(requests), requests.length, 1).map(verified)
     },
     async blake3(input: Uint8Array, dkLen: number): Promise<Uint8Array> {
       return decode(await bridge.execute([hashRequest(input, dkLen)]), 1, dkLen)[0] as Uint8Array
     },
     async blake3Batch(inputs: Array<Uint8Array>, dkLen: number): Promise<Array<Uint8Array>> {
       hashRequest(EMPTY, dkLen)
-      return decode(
-        await bridge.execute(inputs.map((input) => hashRequest(input, dkLen))),
-        inputs.length,
-        dkLen,
-      )
+      const requests = inputs.map((input) => hashRequest(input, dkLen))
+      return decode(await bridge.execute(requests), requests.length, dkLen)
     },
   }
 }

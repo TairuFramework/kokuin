@@ -25,6 +25,14 @@ function fixture(t) {
   ])
     write(name)
   for (const name of [
+    'lib/provider.js',
+    'lib/provider.d.ts',
+    'lib/Crypto.nitro.js',
+    'lib/Crypto.nitro.d.ts',
+    'nitrogen/generated/ios/KokuinCrypto-Swift-Cxx-Bridge.cpp',
+    'nitrogen/generated/ios/KokuinCrypto-Swift-Cxx-Bridge.hpp',
+    'nitrogen/generated/ios/KokuinCrypto-Swift-Cxx-Umbrella.hpp',
+    'nitrogen/generated/ios/KokuinCryptoAutolinking.swift',
     'lib/index.js',
     'lib/index.d.ts',
     'LICENSE',
@@ -38,11 +46,15 @@ function fixture(t) {
     'react-native.config.js',
     'nitrogen/generated/shared/c++/HybridCryptoSpec.hpp',
     'nitrogen/generated/shared/c++/HybridCryptoSpec.cpp',
+    'nitrogen/generated/shared/c++/CryptoRequest.hpp',
+    'nitrogen/generated/shared/c++/ByteView.hpp',
     'nitrogen/generated/ios/KokuinCrypto+autolinking.rb',
     'nitrogen/generated/ios/KokuinCryptoAutolinking.mm',
     'nitrogen/generated/android/KokuinCrypto+autolinking.cmake',
     'nitrogen/generated/android/KokuinCrypto+autolinking.gradle',
     'nitrogen/generated/android/KokuinCryptoOnLoad.cpp',
+    'nitrogen/generated/android/KokuinCryptoOnLoad.hpp',
+    'nitrogen/generated/android/kotlin/com/margelo/nitro/kokuin/crypto/KokuinCryptoOnLoad.kt',
     'android/build.gradle',
     'android/CMakeLists.txt',
     'android/cpp-adapter.cpp',
@@ -89,3 +101,16 @@ test('rejects missing platform registration files', (t) => {
   rmSync(join(root, 'packages/crypto-native/nitrogen/generated/android/KokuinCryptoOnLoad.cpp'))
   assert.throws(() => checkCryptoPackage(root), /KokuinCryptoOnLoad/)
 })
+
+for (const name of [
+  'shared/c++/CryptoRequest.hpp',
+  'shared/c++/ByteView.hpp',
+  'android/KokuinCryptoOnLoad.hpp',
+  'android/kotlin/com/margelo/nitro/kokuin/crypto/KokuinCryptoOnLoad.kt',
+]) {
+  test(`rejects an omitted generated binding: ${name}`, (t) => {
+    const { root } = fixture(t)
+    rmSync(join(root, 'packages/crypto-native/nitrogen/generated', name))
+    assert.throws(() => checkCryptoPackage(root), /Missing package file/)
+  })
+}

@@ -42,6 +42,34 @@ async function rejects(operation: Promise<unknown>, errorType: typeof TypeError)
 export function cryptoConformance(provider: CryptoProvider): Array<CryptoConformanceCase> {
   const cases: Array<CryptoConformanceCase> = [
     {
+      name: 'batch array membership is captured before suspension',
+      async run() {
+        const signing = [{ privateKey: hexToBytes(SEED), message: new Uint8Array() }]
+        const signed = provider.signBatch('EdDSA', signing)
+        signing.length = 0
+        const signatures = await signed
+        assert(signatures.length === 1, 'signing batch membership changed')
+        equal(signatures[0] as Uint8Array, hexToBytes(SIGNATURE))
+        const item = {
+          alg: 'EdDSA' as const,
+          signature: hexToBytes(SIGNATURE),
+          message: new Uint8Array(),
+          publicKey: hexToBytes(KEY),
+        }
+        const verification = [item]
+        const verified = provider.verifyBatch(verification)
+        verification.push(item)
+        const results = await verified
+        assert(results.length === 1 && results[0] === true, 'verification batch membership changed')
+        const inputs = [new Uint8Array()]
+        const hashed = provider.blake3Batch(inputs, 16)
+        inputs.pop()
+        const hashes = await hashed
+        assert(hashes.length === 1, 'hashing batch membership changed')
+        equal(hashes[0] as Uint8Array, hexToBytes(HASH).subarray(0, 16))
+      },
+    },
+    {
       name: 'RFC 8032 signing and verification',
       async run() {
         const message = new Uint8Array()

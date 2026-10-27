@@ -40,3 +40,45 @@ test('validates every signing item before dispatching any seed', async () => {
     ]),
   ).rejects.toThrow(TypeError)
 })
+
+test('signing batch membership is fixed before native dispatch', async () => {
+  const provider = providerFor({
+    abiVersion: 1,
+    execute: async () => [new Uint8Array(64).fill(1).buffer, new Uint8Array(64).fill(2).buffer],
+  })
+  const items = [
+    { privateKey: new Uint8Array(32), message: new Uint8Array() },
+    { privateKey: new Uint8Array(32), message: new Uint8Array() },
+  ]
+  const operation = provider.signBatch('EdDSA', items)
+  items.length = 0
+  expect(await operation).toEqual([new Uint8Array(64).fill(1), new Uint8Array(64).fill(2)])
+})
+
+test('verification batch membership ignores later caller additions', async () => {
+  const provider = providerFor({
+    abiVersion: 1,
+    execute: async () => [new Uint8Array([1]).buffer],
+  })
+  const item = {
+    alg: 'EdDSA' as const,
+    publicKey: new Uint8Array(32),
+    signature: new Uint8Array(64),
+    message: new Uint8Array(),
+  }
+  const items = [item]
+  const operation = provider.verifyBatch(items)
+  items.push(item)
+  expect(await operation).toEqual([true])
+})
+
+test('hash batch membership ignores later caller removals', async () => {
+  const provider = providerFor({
+    abiVersion: 1,
+    execute: async () => [new Uint8Array(32).fill(3).buffer],
+  })
+  const inputs = [new Uint8Array()]
+  const operation = provider.blake3Batch(inputs, 32)
+  inputs.pop()
+  expect(await operation).toEqual([new Uint8Array(32).fill(3)])
+})

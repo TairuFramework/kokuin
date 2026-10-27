@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { nativePackageFiles } from './check-crypto-package.mjs'
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const directory = mkdtempSync(join(tmpdir(), 'kokuin-crypto-consumer-'))
 const packages = join(directory, 'packages')
@@ -22,25 +24,7 @@ for (const name of ['crypto', 'crypto-native', 'crypto-conformance']) {
 }
 const nativeArchive = tarballs['@kokuin/crypto-native']
 const contents = execFileSync('tar', ['-tf', nativeArchive], { encoding: 'utf8' })
-for (const name of [
-  'lib/index.js',
-  'lib/index.d.ts',
-  'LICENSE',
-  'prebuilt/THIRD_PARTY_LICENSES.txt',
-  'prebuilt/ios/KokuinCrypto.xcframework/Info.plist',
-  'prebuilt/ios/KokuinCrypto.xcframework/ios-arm64/libkokuin_crypto_ffi.a',
-  'prebuilt/ios/KokuinCrypto.xcframework/ios-arm64_x86_64-simulator/libkokuin_crypto_ffi.a',
-  'prebuilt/android/arm64-v8a/libkokuin_crypto_ffi.a',
-  'prebuilt/android/x86_64/libkokuin_crypto_ffi.a',
-  'cpp/CryptoWorker.hpp',
-  'cpp/OwnedBytes.hpp',
-  'cpp/HybridCrypto.cpp',
-  'cpp/generated/kokuin_crypto.h',
-  'nitrogen/generated/ios/KokuinCrypto+autolinking.rb',
-  'nitrogen/generated/android/KokuinCrypto+autolinking.cmake',
-  'android/build.gradle',
-  'android/CMakeLists.txt',
-])
+for (const name of nativePackageFiles)
   assert.ok(contents.split('\n').includes(`package/${name}`), `Missing packed file: ${name}`)
 assert.ok(!contents.includes('/cpp/test/'), 'Packed native test sources')
 assert.ok(!contents.includes('Cargo.toml'), 'Packed Rust build workspace')
