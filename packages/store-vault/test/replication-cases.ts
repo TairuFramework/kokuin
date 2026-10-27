@@ -1083,9 +1083,27 @@ export function replicationCases(harness: StoreHarness): void {
       }
     })
 
+    test('key owner lookup includes local and replicated rows for the same key ID', async () => {
+      const source = await chain(owner)
+      await seed(source)
+      await left.store.putKey({
+        ...source.address,
+        ownerDID: 'did:peer:4short:long',
+        suite: 1,
+        version: 1,
+        state: 'active',
+      })
+      expect(await left.store.listKeyOwners(source.address.keyID)).toEqual([
+        owner.id,
+        'did:peer:4short:long',
+      ])
+      expect(await right.store.listKeyOwners(source.address.keyID)).toEqual([owner.id])
+    })
+
     test('a key tombstone outranks activation at the same version and remains a signed decision', async () => {
       const source = await chain(owner)
       await seed(source)
+      expect(await right.store.listKeyOwners(source.address.keyID)).toEqual([owner.id])
       const op = await verified(source.key)
       const deleted = await signed(owner, {
         ...op.claim,
@@ -1100,6 +1118,7 @@ export function replicationCases(harness: StoreHarness): void {
       await exchange(right.records.adapter, left.records)
       for (const current of [left, right]) {
         expect(await current.store.getKey(source.address)).toBeUndefined()
+        expect(await current.store.listKeyOwners(source.address.keyID)).toEqual([])
         expect((await current.records.adapter.get(deleted))?.copies[0]?.payload).toBeNull()
       }
     })

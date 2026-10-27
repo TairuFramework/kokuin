@@ -59,6 +59,13 @@ This path requires no store, coordinator, operation signer or replicated history
 `vaultStoreDefinition` registers the `vault` store. `getVaultStore(provider)` returns `VaultStoreAPI`.
 The base tables are `vault_keys`, `vault_wrappings` and `vault_entries`, under Hozon's configured table prefix.
 Addresses require an explicit `ownerDID`. Base storage preserves owner and recipient spellings.
+
+`listKeyOwners(keyID)` returns distinct owner DIDs verbatim in database owner order, matching `listEntryOwners(entryID)`.
+It reads matching base rows in local and replicated mode. Deleted rows and signed tombstones are excluded.
+The lookup only reads and joins the caller's transaction, including uncommitted rows.
+Results identify candidates without granting authority.
+Callers must verify each candidate, for example `createVaultKeyID(owner, unique) === keyID`, and apply their own authority checks.
+
 Rows contain public key/version/state metadata, ordered descriptors, IVs and opaque encrypted bytes.
 Entry `kind`, `label` and string `attributes` remain public.
 Filters combine exact kind/label equality with conjunctive attribute-subset matching, without decryption.

@@ -3,6 +3,13 @@
 Local vault persistence for hozon. Register `vaultStoreDefinition`, then call `getVaultStore(provider)`.
 All addresses require an explicit owner DID. Owners and recipients round-trip verbatim.
 
+`listKeyOwners(keyID)` returns distinct owner DIDs verbatim in database owner order, matching `listEntryOwners(entryID)`.
+It reads matching base rows in local and replicated mode. Deleted rows and signed tombstones are excluded.
+The lookup only reads and joins the caller's transaction, including uncommitted rows.
+Results identify candidates without granting authority.
+Callers must verify each candidate, for example `createVaultKeyID(owner, unique) === keyID`, and apply their own authority checks.
+
+
 Keys contain public suite, version and state metadata. Wrappings and entries contain opaque encrypted bytes.
 Entry `kind`, `label` and string attributes remain public. Filters combine exact kind/label equality with conjunctive attribute-subset matching.
 
