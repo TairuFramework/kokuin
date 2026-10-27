@@ -213,8 +213,8 @@ catalogs:
       specifier: ^2.4.0
       version: 2.4.0
     '@sozai/async':
-      specifier: ^0.4.2
-      version: 0.4.2
+      specifier: ^0.4.3
+      version: 0.4.3
     '@sozai/codec':
       specifier: ^0.4.3
       version: 0.4.3
@@ -330,7 +330,7 @@ importers:
         version: 2.4.0
       '@sozai/async':
         specifier: 'catalog:'
-        version: 0.4.2
+        version: 0.4.3
       '@sozai/codec':
         specifier: 'catalog:'
         version: 0.4.3
@@ -686,7 +686,7 @@ importers:
         version: 2.4.0
       '@sozai/async':
         specifier: 'catalog:'
-        version: 0.4.2
+        version: 0.4.3
       '@sozai/codec':
         specifier: 'catalog:'
         version: 0.4.3
@@ -2419,8 +2419,8 @@ packages:
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
 
-  '@sozai/async@0.4.2':
-    resolution: {integrity: sha512-2JPfxlYCnWTdG1fMC0FtP+uAaFVVBVGp0eLt6tB5wuFIATkOn8x+qdxBfGb4XazfkSXG2zbkaxyaGxZRTWADgg==}
+  '@sozai/async@0.4.3':
+    resolution: {integrity: sha512-8Yc+4zLoQgOb/9OZcJq+OCouy8s0SuFX71VRwJznvXGKwu9YMRuFZbaPSDuwoefJX3hDzwtJ2Mnypd+BuCmEqw==}
 
   '@sozai/codec@0.4.3':
     resolution: {integrity: sha512-C2WtBwspVIRtCS4AS4qXTQUxgTN2RjzKH/eK6nInh0/MeCZUBtkxrp40GwKy6VCA3lim2Ta8bFNXet9l8QbxCg==}
@@ -6636,7 +6636,7 @@ snapshots:
   '@hozon/db@0.5.0(@logtape/logtape@2.4.2)':
     dependencies:
       '@hozon/adapter': 0.2.1
-      '@sozai/async': 0.4.2
+      '@sozai/async': 0.4.3
       '@sozai/log': 0.4.0(@logtape/logtape@2.4.2)
       kysely: 0.29.7
     transitivePeerDependencies:
@@ -7117,7 +7117,7 @@ snapshots:
 
   '@sindresorhus/merge-streams@4.0.0': {}
 
-  '@sozai/async@0.4.2': {}
+  '@sozai/async@0.4.3': {}
 
   '@sozai/codec@0.4.3':
     dependencies:
@@ -7129,7 +7129,7 @@ snapshots:
 
   '@sozai/lock@0.1.2':
     dependencies:
-      '@sozai/async': 0.4.2
+      '@sozai/async': 0.4.3
 
   '@sozai/log@0.4.0(@logtape/logtape@2.4.2)':
     dependencies:
