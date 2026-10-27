@@ -21,7 +21,7 @@ console.log(
         ios: artifactsCurrent(root, 'ios'),
         android: artifactsCurrent(root, 'android'),
       },
-      rustc: run('rustc', ['--version']),
+      rustc: run('pnpm', ['exec', 'rustc', '--version']),
       xcode: process.platform === 'darwin' ? run('xcodebuild', ['-version']) : null,
       pnpm: run('pnpm', ['--version']),
       packages: Object.fromEntries(

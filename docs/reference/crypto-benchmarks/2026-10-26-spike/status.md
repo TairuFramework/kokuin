@@ -44,6 +44,21 @@ Native inputs use arrays of buffer views and synchronous copies before one worke
 Private-key copies use zeroising owners. Returned buffers own Rust allocations until JavaScript releases them.
 Build manifests record source fingerprints and binary hashes, preventing stale Rust libraries from qualifying as current artifacts.
 
+## Toolchain setup update: 2026-10-27
+
+pnpm 12.15.0 now installs Cargo dependencies, Rust 1.99.1, clippy, rustfmt, llvm-tools and all five mobile targets.
+Native build scripts and the Rust host workflow use the pnpm-managed toolchain.
+The separate rustup preparation step has been removed.
+llvm-tools supplies the macOS shared library required by rust-objcopy without rustup's loader environment.
+
+- Frozen installation and offline reinstallation passed without changing either lockfile.
+- All nine Rust tests, formatting, clippy and native sanitizer checks passed.
+- Forced Release recompilation passed for all five mobile targets without warnings.
+- Both artifact manifests matched their source fingerprints and binary hashes.
+- All 76 repository test tasks passed through Turbo's cache.
+
+The updated GitHub workflow has not run remotely. Physical-device measurements remain pending.
+
 ## Remaining gate work
 
 1. Capture clean-revision build metadata using `node scripts/crypto-benchmark-info.mjs`.

@@ -19,8 +19,19 @@ function run(command, args, env = {}) {
 
 function build(target, env = {}) {
   run(
-    'cargo',
-    ['build', '-p', 'kokuin-crypto-ffi', '--release', '--locked', '--target', target],
+    'pnpm',
+    [
+      'exec',
+      'cargo',
+      'build',
+      '-p',
+      'kokuin-crypto-ffi',
+      '--release',
+      '--locked',
+      '--offline',
+      '--target',
+      target,
+    ],
     env,
   )
   return join(root, 'target', target, 'release/libkokuin_crypto_ffi.a')

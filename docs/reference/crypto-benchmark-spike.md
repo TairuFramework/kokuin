@@ -7,15 +7,20 @@ Existing token, controller and record APIs remain unchanged until physical-devic
 
 1. Install dependencies with `pnpm install --frozen-lockfile`.
 2. Build JavaScript packages with `pnpm run build`.
-3. Install the Rust cross-compilation targets below.
-4. Build iOS binaries with `node scripts/build-crypto-native.mjs ios`.
-5. Build Android binaries with `node scripts/build-crypto-native.mjs android`.
-6. Regenerate stale Expo projects with `pnpm --filter e2e-expo exec expo prebuild --no-install`.
-7. Build Release clients with `pnpm --filter e2e-expo ios:release` and `pnpm --filter e2e-expo android:release`.
+3. Build iOS binaries with `node scripts/build-crypto-native.mjs ios`.
+4. Build Android binaries with `node scripts/build-crypto-native.mjs android`.
+5. Regenerate stale Expo projects with `pnpm --filter e2e-expo exec expo prebuild --no-install`.
+6. Build Release clients with `pnpm --filter e2e-expo ios:release` and `pnpm --filter e2e-expo android:release`.
 
-```sh
-rustup target add --toolchain 1.99.1 aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-linux-android x86_64-linux-android
-```
+pnpm 12.15.0 installs the crates locked in `Cargo.lock` and the toolchain declared in `rust-toolchain.toml`.
+The toolchain includes Rust 1.99.1, clippy, rustfmt, llvm-tools and all five mobile targets.
+llvm-tools supplies the shared library required by rust-objcopy on macOS without rustup's loader environment.
+This avoids the [Rust distribution loader issue](https://github.com/rust-lang/rust/issues/163947).
+The first install downloads these targets on every host, including hosts running only JavaScript checks.
+Run Rust commands through `pnpm exec` to select the managed toolchain without requiring rustup.
+Cargo still compiles the crates. `Cargo.lock` and `pnpm-lock.yaml` remain independent.
+pnpm's Cargo support is experimental. Its generated sources and toolchain links live in ignored `.pnpm/` directories.
+The optional include in `.cargo/config.toml` selects those sources and permits normal Cargo fetching when absent.
 
 The Android builder uses NDK `27.1.12297006`. `KOKUIN_ANDROID_NDK` overrides its path.
 The binaries target iOS 16.4 and Android API 24.
@@ -31,8 +36,8 @@ After Rust or build-recipe changes, the preparation helper requires the Rust too
 ## Correctness checks
 
 ```sh
-cargo test --workspace --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
+pnpm exec cargo test --workspace --locked --offline
+pnpm exec cargo clippy --workspace --all-targets --locked --offline -- -D warnings
 pnpm --filter @kokuin/crypto-native test:native
 pnpm test
 ```

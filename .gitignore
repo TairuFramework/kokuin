@@ -1,4 +1,5 @@
 node_modules
+.pnpm
 .DS_Store
 *.log
 .turbo

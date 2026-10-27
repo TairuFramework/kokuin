@@ -1,4 +1,12 @@
 [toolchain]
 channel = "1.99.1"
 profile = "minimal"
-components = ["clippy", "rustfmt"]
+# llvm-tools supplies libLLVM beside rust-objcopy on macOS without rustup's loader environment.
+components = ["clippy", "rustfmt", "llvm-tools"]
+targets = [
+  "aarch64-apple-ios",
+  "aarch64-apple-ios-sim",
+  "x86_64-apple-ios",
+  "aarch64-linux-android",
+  "x86_64-linux-android",
+]

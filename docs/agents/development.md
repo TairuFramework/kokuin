@@ -8,3 +8,7 @@ workflow and the `docs/agents/plans/` lifecycle.
 
 Identity layer: token, capability, and per-environment keystores. The `KeyEntry` / `KeyStore`
 contracts live in `@kokuin/token`.
+
+`pnpm install --frozen-lockfile` installs Cargo dependencies and the pinned Rust toolchain, including mobile targets.
+Run Rust commands through `pnpm exec`.
+Native build and benchmark instructions live in [the crypto spike reference](../reference/crypto-benchmark-spike.md).

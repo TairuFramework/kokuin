@@ -13,11 +13,6 @@ if (artifactsCurrent(root, platform)) {
   console.log(`Using prebuilt ${platform} crypto libraries`)
 } else {
   const run = (command, args) => execFileSync(command, args, { cwd: root, stdio: 'inherit' })
-  const targets =
-    platform === 'ios'
-      ? ['aarch64-apple-ios', 'aarch64-apple-ios-sim', 'x86_64-apple-ios']
-      : ['aarch64-linux-android', 'x86_64-linux-android']
-  run('rustup', ['target', 'add', '--toolchain', '1.99.1', ...targets])
   if (platform === 'android' && !process.env.KOKUIN_ANDROID_NDK) {
     const sdk =
       process.env.ANDROID_HOME ??

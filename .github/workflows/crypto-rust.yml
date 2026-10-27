@@ -12,17 +12,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
-      - name: Install pinned Rust toolchain
-        run: rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
+          cache: pnpm
+      - name: Install dependencies and pinned Rust toolchain
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Check Rust formatting
-        run: cargo fmt --all --check
+        run: pnpm exec cargo fmt --all --check
       - name: Test crypto core and C ABI
-        run: cargo test --workspace --locked
+        run: pnpm exec cargo test --workspace --locked --offline
       - name: Check Rust warnings
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: pnpm exec cargo clippy --workspace --all-targets --locked --offline -- -D warnings
       - name: Check native ownership with sanitizers
         run: node scripts/test-crypto-native.mjs
       - name: Test artifact freshness

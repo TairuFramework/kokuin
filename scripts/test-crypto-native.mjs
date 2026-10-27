@@ -7,10 +7,14 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const directory = mkdtempSync(join(tmpdir(), 'kokuin-native-test-'))
 try {
-  execFileSync('cargo', ['build', '-p', 'kokuin-crypto-ffi', '--locked'], {
-    cwd: root,
-    stdio: 'inherit',
-  })
+  execFileSync(
+    'pnpm',
+    ['exec', 'cargo', 'build', '-p', 'kokuin-crypto-ffi', '--locked', '--offline'],
+    {
+      cwd: root,
+      stdio: 'inherit',
+    },
+  )
   const binary = join(directory, 'ownership-test')
   execFileSync(
     'c++',
