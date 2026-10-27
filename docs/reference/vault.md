@@ -257,6 +257,11 @@ In replicated mode, optional `contentHLC` replaces content intent and optional `
 Without those fields, replicated re-encryption preserves their previous values. Local rotation stores a fresh entry HLC and ignores both fields.
 Replacement of a tombstone is unsupported.
 
+A `preserve` instruction without `contentHLC` does not itself require repair, even when it supplies `consumer`.
+If repair is otherwise needed, reissue applies that evidence to the named entry.
+Otherwise, repair returns `{ status: 'not-needed' }` without writes.
+Other actions and `contentHLC` overrides retain their repair-forcing behaviour. Plain `rotate` always advances the version.
+
 Repair uses authenticated branches, received entry candidates and prior tombstones.
 It can rotate when the selected entry projection belongs to a losing branch, even when competing plaintexts agree.
 It returns `{ status: 'rotated', version }`, `{ status: 'not-needed' }` or `{ status: 'pending' }`.

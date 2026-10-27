@@ -211,6 +211,7 @@ export function createRotateFunctions(
     )
     if (request.sourceVersion !== undefined && retained.length === 0) throw new VaultNotFound()
     let selections = currentSelections
+    let repairNeeded = true
     const keys = new Map<string, Promise<SourceKey>>()
     const pending: Array<Promise<unknown>> = []
     const plaintexts: Array<Uint8Array> = []
@@ -338,14 +339,15 @@ export function createRotateFunctions(
           }
         }
 
-        if (
-          !addsEntry &&
-          !addsRecipient &&
-          !unreadableProjection &&
-          request.reissue.length === 0 &&
-          request.excludedRecipients.length === 0
-        )
-          return null
+        repairNeeded =
+          addsEntry ||
+          addsRecipient ||
+          unreadableProjection ||
+          request.reissue.some(
+            (instruction) =>
+              instruction.action !== 'preserve' || instruction.contentHLC !== undefined,
+          ) ||
+          request.excludedRecipients.length !== 0
 
         const unique = new Map<string, WrappingRow>()
 
@@ -371,6 +373,8 @@ export function createRotateFunctions(
         [...instructions.keys()].some((id) => !selections.some((s) => s.entryID === id))
       )
         throw new TypeError('Reissue instructions must name distinct existing entries')
+
+      if (repair && !repairNeeded) return null
 
       // Opening one alternative does not authenticate secrets on the other retained wrappings.
       for (const previous of retained) {
