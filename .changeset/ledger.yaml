@@ -106,6 +106,10 @@
   dir: packages/store-vault
   intents:
     - vault-consumer-evidence
+"@kokuin/store-vault@0.2.0":
+  dir: packages/store-vault
+  intents:
+    - vault-coordinator-capabilities
 "@kokuin/token@0.4.0":
   dir: packages/token
   intents:
