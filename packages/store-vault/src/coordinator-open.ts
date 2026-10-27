@@ -21,7 +21,12 @@ import { settledValue } from './settle.js'
 import type { EntryRow, VaultStoreAPI } from './types.js'
 
 export type OpenFunctions = {
-  open(address: OpenKeyParams, store?: VaultStoreAPI, specific?: string): Promise<OpenedKey>
+  open(
+    address: OpenKeyParams,
+    store?: VaultStoreAPI,
+    specific?: string,
+    wrappingID?: string,
+  ): Promise<OpenedKey>
   decrypt(
     row: EntryRow | undefined,
     address: OpenKeyParams,
@@ -50,6 +55,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     store: VaultStoreAPI,
     generation: string,
     specific?: string,
+    wrappingID?: string,
   ): Promise<OpenedKey> {
     // Both reads run together. Their results are checked in the old order: key, version, revocation.
     const [keyRead, revokedRead] = await Promise.allSettled([
@@ -70,7 +76,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     const branch = await ctx.branch(address, version, store, specific)
     const supplied = Object.values(address.inputs ?? {}).some((input) => input !== undefined)
 
-    if (!supplied) {
+    if (!supplied && wrappingID === undefined) {
       const hit = cache.get(cacheID(address), version)
 
       if (hit !== null) {
@@ -86,6 +92,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     let locked = false
 
     for (const row of wrappings) {
+      if (wrappingID !== undefined && row.wrappingID !== wrappingID) continue
       if (params.mode === 'replicated' && row.provenance !== branch.branchID) continue
 
       const needed = satisfiableFactors(row.descriptors, params.identity)
@@ -103,7 +110,11 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
           expectedDescriptorDigest,
         })
 
-        if (ctx.generation(address) === generation && specific === undefined)
+        if (
+          ctx.generation(address) === generation &&
+          specific === undefined &&
+          wrappingID === undefined
+        )
           cache.set(cacheID(address), contentKey, version, branch.branchID)
 
         return { contentKey, version, suite: branch.suite, branchID: branch.branchID }
@@ -138,6 +149,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     address: OpenKeyParams,
     store = params.store,
     specific?: string,
+    wrappingID?: string,
   ): Promise<OpenedKey> {
     const generation = ctx.generation(address)
 
@@ -154,7 +166,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
       if (throttle.retryAfter(id) > 0) throw rejected()
 
       try {
-        const opened = await doOpen(address, store, generation, specific)
+        const opened = await doOpen(address, store, generation, specific, wrappingID)
 
         throttle.recordSuccess(id)
 
@@ -171,11 +183,12 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     }
 
     if (
+      wrappingID !== undefined ||
       specific !== undefined ||
       Object.values(address.inputs ?? {}).some((input) => input !== undefined) ||
       store !== params.store
     )
-      return doOpen(address, store, generation, specific)
+      return doOpen(address, store, generation, specific, wrappingID)
 
     const flightID = JSON.stringify([cacheID(address), address.atVersion])
 

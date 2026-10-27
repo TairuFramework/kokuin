@@ -4,6 +4,7 @@ import {
   decodeVaultRecord,
   factorsFromDescriptors,
   getSuite,
+  isSecretFactorKind,
   NoAvailableFactor,
   vaultRevocationRecordID,
 } from '@kokuin/vault'
@@ -13,6 +14,7 @@ import { VaultKeyLocked, VaultNotFound, VaultRepairPending } from './coordinator
 import type { OpenFunctions } from './coordinator-open.js'
 import type { RecordFunctions } from './coordinator-records.js'
 import type { ForkRepairResult, RotateKeyParams } from './coordinator-types.js'
+import { VaultWriteConflict } from './record-context.js'
 import { settleAll } from './settle.js'
 import type { EntryRow, KeyRow, VaultStoreAPI, WrappingRow } from './types.js'
 
@@ -164,9 +166,32 @@ export function createRotateFunctions(
 
     if (repair && branches.length < 2) return null
 
+    const sourceVersion = request.sourceVersion ?? key.version
+    if (!Number.isInteger(sourceVersion) || sourceVersion < 1 || sourceVersion > key.version)
+      throw new VaultNotFound()
+    const sourceBranch =
+      request.sourceVersion === undefined ? undefined : await ctx.branch(key, sourceVersion, store)
+    if (request.sourceVersion !== undefined) {
+      const source = await open.open(
+        { ...request, atVersion: sourceVersion },
+        store,
+        sourceBranch?.branchID || undefined,
+      )
+      source.contentKey.fill(0)
+    }
+    const revocations =
+      request.sourceVersion === undefined || params.mode === 'local'
+        ? []
+        : await ctx.recordsFor(store).listRevocations(key)
     const wrappingsRead = async () => {
       const existing = await store.listWrappings(key)
-      const current = existing.filter((w) => w.keyVersion === key.version)
+      const current = existing.filter(
+        (w) =>
+          w.keyVersion === sourceVersion &&
+          (request.sourceVersion === undefined ||
+            params.mode === 'local' ||
+            w.provenance === sourceBranch?.branchID),
+      )
 
       return { existing, current, evidence: await ctx.wrappingEvidences(current, store) }
     }
@@ -181,7 +206,10 @@ export function createRotateFunctions(
     const evidence = new Map<string, WrappingEvidence>(
       wrappingState.evidence.map((item) => [item.record.id, item]),
     )
-    let retained = wrappingState.current.filter((w) => !excluded(w, request.excludedRecipients))
+    let retained = wrappingState.current.filter(
+      (w) => !excluded(w, [...request.excludedRecipients, ...revocations]),
+    )
+    if (request.sourceVersion !== undefined && retained.length === 0) throw new VaultNotFound()
     let selections = currentSelections
     const keys = new Map<string, Promise<SourceKey>>()
     const pending: Array<Promise<unknown>> = []
@@ -343,6 +371,20 @@ export function createRotateFunctions(
         [...instructions.keys()].some((id) => !selections.some((s) => s.entryID === id))
       )
         throw new TypeError('Reissue instructions must name distinct existing entries')
+
+      // Opening one alternative does not authenticate secrets on the other retained wrappings.
+      for (const previous of retained) {
+        if (!previous.descriptors.some((descriptor) => isSecretFactorKind(descriptor.kind)))
+          continue
+
+        const verified = await open.open(
+          { ...request, atVersion: previous.keyVersion },
+          store,
+          params.mode === 'replicated' ? previous.provenance : undefined,
+          previous.wrappingID,
+        )
+        verified.contentKey.fill(0)
+      }
 
       const suite = getSuite(request.suite ?? key.suite)
       const next = { ...key, version: key.version + 1, suite: suite.id }
@@ -542,7 +584,14 @@ export function createRotateFunctions(
   async function rotate(request: RotateKeyParams): Promise<number> {
     await ctx.authorize('rotate', 'administer', request)
 
-    const version = await ctx.locked([request], (tx) => rotateLocked(request, tx, false))
+    const observed = request.sourceVersion === undefined ? undefined : await ctx.key(request)
+    const version = await ctx.locked([request], async (tx) => {
+      if (observed !== undefined && (await ctx.key(request, tx)).version !== observed.version)
+        throw new VaultWriteConflict()
+      if (request.sourceVersion !== undefined)
+        await ctx.authorize('rotate', 'administer', request, tx)
+      return rotateLocked(request, tx, false)
+    })
 
     if (version === null) throw new VaultNotFound()
 

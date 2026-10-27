@@ -40,6 +40,7 @@ Use `apply(records, transportContext)` for receipt. Use `write({ records, precon
 Both run `@kokuin/records` apply. There is no direct signed put method.
 `preconditions.key` compares the expected version, including `null` for absence, and an optional complete branch set.
 `preconditions.entry` compares an entry's exact HLC, including `null` for absence.
+`preconditions.copy` compares the selected output address against `expectedOpHash` after acquiring the key locks.
 Every output must be covered by the named key or entry. Preconditions and apply share the transaction and key locks.
 Obtain the base store from the caller's transaction provider to join journal/outbox writes.
 An error requires the caller to roll back that transaction.
@@ -96,6 +97,12 @@ Replicated arbitration can refuse same-version reactivation after retirement. Th
 Entry operations accept explicit owner-qualified addresses, byte plaintext and public kind, label and string attributes.
 `putEntry` creates an absent address. Updates require an existing entry. HLC CAS returns updated, absent or superseded.
 `reKeyEntry` authorises both keys, preserves the entry address, and re-encrypts under the destination key.
+The optional coordinator port `authorizeEquivalentBranch({ entry, entryBranch, winningBranch })` can approve reads from a superseded entry branch.
+All three records and the entry projection are authenticated before the callback.
+Only an explicit `true` permits decryption through the entry's own branch. Without approval, reads retain `VaultSupersededBranch`.
+The consumer validates matching signed repair markers and decides whether another repair is needed.
+Approval does not bypass read authority, owner/version binding or revocation checks. Reads never write or advance key versions.
+
 `getEntry`, `listEntries`, `listKeys`, `readEntry` and `openKey` never write or initiate recovery.
 Returned entry rows include stored provenance. No entry ID has application-specific meaning.
 
@@ -108,6 +115,28 @@ Without it, keys and branches inherit key evidence, wrappings inherit wrapping e
 Entry reissue evidence remains independent through `reissue[].consumer`.
 Re-endorsement preserves exact claims and offers no metadata replacement input.
 See [consumer metadata inputs](../../docs/reference/vault.md#coordinators-rotation-and-repair) for the complete mutation table.
+
+`refreshEntry({ ownerDID, entryID, expectedHLC, inputs?, consumer? })` re-encrypts authenticated stored plaintext at the current key version.
+It preserves signed `contentHLC` and public metadata, allocating only a new operation HLC.
+It decrypts the entry's actual version and branch, without accepting caller plaintext or a content stamp.
+Omitted `consumer` inherits authenticated evidence. Supplied evidence describes the current call.
+It returns `updated`, `absent` or `superseded`. Key changes, branch changes and failed write preconditions refuse atomically.
+Same-version entry refresh can lose the existing claim-digest tie-break and throw `VaultWriteConflict`.
+Refresh does not change entry merge ordering or advance the key solely to win a tie.
+Revoked callers cannot refresh. Deletion and newer content never become an insertion or restored consent.
+
+`refreshWrapping({ ownerDID, keyID, wrappingID, expectedOpHash, consumer })` refreshes evidence in replicated mode without opening the content key.
+It preserves the wrapping ID, payload, descriptors, recipient, version and branch, and signs a strictly newer operation HLC.
+The selected signed copy must match `expectedOpHash` before writing and under the write precondition.
+It refuses deleted, historical, superseded or revoked material, and returns the accepted signed copy.
+Consumers can bind that exact copy to an envelope within their enclosing host transaction.
+
+`rotate({ ..., sourceVersion })` retains eligible factors and recipients from an explicitly named, authenticated source version.
+The output version remains the current version plus one. Omission retains the existing current-version selection.
+The source must open successfully, and retained secret factors require supplied inputs.
+Permanent revocations and explicit exclusions suppress historical recipients. Missing preservation material rolls back the operation.
+A concurrent current-version advance refuses the explicit-source rotation.
+The consumer selects its highest openable source, distinguishing unavailable material from rejected secrets and denied authority.
 
 `rotate` and `repairFork` require `excludedRecipients` and `reissue` arrays, including explicit empty arrays.
 Replicated rotation carries generic plaintext and public metadata forward, preserving content intent unless an instruction supplies another `contentHLC`.
