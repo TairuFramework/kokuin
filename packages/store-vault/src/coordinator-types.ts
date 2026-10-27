@@ -70,7 +70,7 @@ export type EntryWriteParams = KeyAddress &
   }
 
 export type EntryUpdateParams = EntryAddress &
-  CoordinatorCall & { plaintext: Uint8Array; inputs?: FactorInputs }
+  CoordinatorCall & { plaintext: Uint8Array; inputs?: FactorInputs; consumer?: unknown }
 
 export type EntryReissue = { entryID: string; contentHLC?: string; consumer?: unknown } & (
   | { action: 'preserve' | 'skip' | 'delete' }
@@ -80,6 +80,7 @@ export type EntryReissue = { entryID: string; contentHLC?: string; consumer?: un
 export type RotateKeyParams = OpenKeyParams & {
   excludedRecipients: ReadonlyArray<string>
   reissue: ReadonlyArray<EntryReissue>
+  consumer?: unknown
   suite?: number
 }
 
@@ -123,11 +124,13 @@ export type VaultCoordinator = {
   lockAll(ownerDID: string, call?: CoordinatorCall): Promise<void>
   status(params: OpenKeyParams): Promise<KeyStatus>
   listKeys(ownerDID: string, call?: CoordinatorCall): Promise<Array<KeyRow>>
-  setKeyState(params: KeyAddress & CoordinatorCall & Pick<KeyRow, 'state'>): Promise<void>
-  deleteKey(params: KeyAddress & CoordinatorCall): Promise<void>
-  grant(params: OpenKeyParams & { recipientDID: string }): Promise<void>
-  addFactor(params: OpenKeyParams & { factor: FactorInput }): Promise<void>
-  removeFactor(params: OpenKeyParams & { kind: string }): Promise<void>
+  setKeyState(
+    params: KeyAddress & CoordinatorCall & Pick<KeyRow, 'state'> & { consumer?: unknown },
+  ): Promise<void>
+  deleteKey(params: KeyAddress & CoordinatorCall & { consumer?: unknown }): Promise<void>
+  grant(params: OpenKeyParams & { recipientDID: string; consumer?: unknown }): Promise<void>
+  addFactor(params: OpenKeyParams & { factor: FactorInput; consumer?: unknown }): Promise<void>
+  removeFactor(params: OpenKeyParams & { kind: string; consumer?: unknown }): Promise<void>
   rotate(params: RotateKeyParams): Promise<number>
   repairFork(params: RotateKeyParams): Promise<ForkRepairResult>
   putEntry(params: EntryWriteParams): Promise<EntryAddress>
@@ -139,9 +142,10 @@ export type VaultCoordinator = {
   readEntry(params: EntryAddress & CoordinatorCall & { inputs?: FactorInputs }): Promise<Uint8Array>
   getEntry(params: EntryAddress & CoordinatorCall): Promise<EntryRow | undefined>
   listEntries(params: EntryFilter & CoordinatorCall): Promise<Array<EntryRow>>
-  deleteEntry(params: EntryAddress & CoordinatorCall): Promise<void>
+  deleteEntry(params: EntryAddress & CoordinatorCall & { consumer?: unknown }): Promise<void>
   reKeyEntry(
-    params: EntryAddress & CoordinatorCall & { toKeyID: string; inputs?: FactorInputs },
+    params: EntryAddress &
+      CoordinatorCall & { toKeyID: string; inputs?: FactorInputs; consumer?: unknown },
   ): Promise<void>
   reendorse(
     params: KeyAddress & CoordinatorCall & { records: ReadonlyArray<SignedRecord> },

@@ -26,6 +26,255 @@ export function coordinatorCases(harness: StoreHarness): void {
     const runtime = createRuntime()
     const cost = { m: 8, t: 1, p: 1 }
 
+    async function signedOps(f: Awaited<ReturnType<typeof fixture>>, types: Array<string>) {
+      const decisions = await f.manager.records.adapter.list(types)
+      return Promise.all(
+        decisions
+          .flatMap((decision) => decision.copies)
+          .map(async (record) => {
+            const op = await verifySignedRecord(record, VAULT_OP_KIND)
+            if (op === null) throw new Error('Invalid signed record')
+            return { record, op }
+          }),
+      )
+    }
+
+    const currentEvidence = { delegation: 'current administrator' }
+    const previousEvidence = { delegation: 'previous administrator' }
+
+    function administrator(f: Awaited<ReturnType<typeof fixture>>) {
+      if (f.params.mode !== 'replicated') throw new Error('Expected replicated mode')
+      const signer = randomIdentity()
+      return createVaultCoordinator({ ...f.params, signer, principal: signer.id })
+    }
+
+    test('grantSignsSuppliedConsumerEvidence', async () => {
+      const f = await fixture('replicated')
+      const key = await f.manager.createKey({ ownerDID: f.identity.id, consumer: previousEvidence })
+      const recipientDID = randomIdentity().id
+      await administrator(f).grant({ ...key, recipientDID, consumer: currentEvidence })
+      const supplied = (await signedOps(f, ['vault.wrapping'])).filter(
+        ({ op }) => op.claim.meta.recipient === recipientDID,
+      )
+      expect(supplied).toHaveLength(1)
+      expect(supplied[0]?.op.claim.meta.consumer).toEqual(currentEvidence)
+      expect(supplied[0]?.op.issuer).not.toBe(f.identity.id)
+    })
+
+    test('rotationSignsSuppliedConsumerEvidenceOnKeyAndBranch', async () => {
+      const f = await fixture('replicated')
+      const key = await f.manager.createKey({ ownerDID: f.identity.id, consumer: previousEvidence })
+      const entry = await f.manager.putEntry({
+        ...key,
+        entryID: 'independent-evidence',
+        ...metadata,
+        plaintext: bytes('preserved'),
+        consumer: previousEvidence,
+      })
+      const inherited = await f.manager.putEntry({
+        ...key,
+        entryID: 'inherited-evidence',
+        ...metadata,
+        plaintext: bytes('also preserved'),
+        consumer: previousEvidence,
+      })
+      const replacement = { entry: 'replacement evidence' }
+      await administrator(f).rotate({
+        ...key,
+        excludedRecipients: [randomIdentity().id],
+        consumer: currentEvidence,
+        reissue: [{ ...entry, action: 'preserve', consumer: replacement }],
+      })
+      const output = await signedOps(f, [
+        'vault.key',
+        'vault.key-branch',
+        'vault.wrapping',
+        'vault.revocation',
+      ])
+      const current = output.filter(
+        ({ op }) =>
+          op.claim.meta.version === 2 ||
+          op.claim.meta.keyVersion === 2 ||
+          op.claim.type === 'vault.revocation',
+      )
+      expect(current.map(({ op }) => op.claim.type).sort()).toEqual(
+        ['vault.key', 'vault.key-branch', 'vault.wrapping', 'vault.revocation'].sort(),
+      )
+      for (const { op } of current) {
+        expect(op.claim.meta.consumer).toEqual(currentEvidence)
+        expect(op.issuer).not.toBe(f.identity.id)
+      }
+      const entries = await signedOps(f, ['vault.entry'])
+      expect(
+        entries.find(({ record }) => record.id === entry.entryID)?.op.claim.meta.consumer,
+      ).toEqual(replacement)
+      expect(
+        entries.find(({ record }) => record.id === inherited.entryID)?.op.claim.meta.consumer,
+      ).toEqual(previousEvidence)
+      expect(text(await f.manager.readEntry(entry))).toBe('preserved')
+    })
+
+    test('repairForkSignsSuppliedConsumerEvidence', async () => {
+      const a = await fixture('replicated')
+      const b = await fixture('replicated', a.identity)
+      const key = await a.manager.createKey({ ownerDID: a.identity.id, consumer: previousEvidence })
+      const types = ['vault.key', 'vault.key-branch', 'vault.wrapping']
+      await b.manager.records.apply(
+        (await a.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+      )
+      await a.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })
+      await b.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })
+      await a.manager.records.apply(
+        (await b.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+      )
+      expect(
+        await administrator(a).repairFork({
+          ...key,
+          excludedRecipients: [randomIdentity().id],
+          reissue: [],
+          consumer: currentEvidence,
+        }),
+      ).toEqual({ status: 'rotated', version: 3 })
+      const current = (await signedOps(a, ['vault.key', 'vault.key-branch'])).filter(
+        ({ op }) => op.claim.meta.version === 3 || op.claim.meta.keyVersion === 3,
+      )
+      expect(current).toHaveLength(2)
+      for (const { op } of current) expect(op.claim.meta.consumer).toEqual(currentEvidence)
+    })
+
+    test('unsetConsumerKeepsInheritedEvidence', async () => {
+      const f = await fixture('replicated')
+      const key = await f.manager.createKey({ ownerDID: f.identity.id, consumer: previousEvidence })
+      await f.manager.rotate({ ...key, excludedRecipients: [], reissue: [], consumer: undefined })
+      const current = (
+        await signedOps(f, ['vault.key', 'vault.key-branch', 'vault.wrapping'])
+      ).filter(({ op }) => op.claim.meta.version === 2 || op.claim.meta.keyVersion === 2)
+      expect(current).toHaveLength(3)
+      for (const { op } of current) expect(op.claim.meta.consumer).toEqual(previousEvidence)
+      const recipientDID = randomIdentity().id
+      await f.manager.grant({ ...key, recipientDID })
+      expect(
+        (await signedOps(f, ['vault.wrapping'])).find(
+          ({ op }) => op.claim.meta.recipient === recipientDID,
+        )?.op.claim.meta.consumer,
+      ).toBeNull()
+    })
+
+    test('nullConsumerClearsEvidence', async () => {
+      const f = await fixture('replicated')
+      const key = await f.manager.createKey({ ownerDID: f.identity.id, consumer: previousEvidence })
+      await f.manager.rotate({ ...key, excludedRecipients: [], reissue: [], consumer: null })
+      const current = (
+        await signedOps(f, ['vault.key', 'vault.key-branch', 'vault.wrapping'])
+      ).filter(({ op }) => op.claim.meta.version === 2 || op.claim.meta.keyVersion === 2)
+      expect(current).toHaveLength(3)
+      for (const { op } of current) expect(op.claim.meta.consumer).toBeNull()
+    })
+
+    test.each(['metadata', 'authority'] as const)(
+      'suppliedConsumerRefusalPreventsWrites (%s)',
+      async (refusal) => {
+        const f = await fixture('replicated')
+        const key = await f.manager.createKey({ ownerDID: f.identity.id })
+        if (f.params.mode !== 'replicated') throw new Error('Expected replicated mode')
+        const seen: Array<unknown> = []
+        const authority = {
+          authorize: vi.fn(async (request: CredentialAuthorityRequest) => {
+            if (request.source === 'local') return true
+            seen.push(request.op.claim.meta.consumer)
+            return refusal !== 'authority' || request.op.claim.meta.consumer === null
+          }),
+        }
+        const validateConsumerMetadata = vi.fn(async (consumer: unknown) => {
+          seen.push(consumer)
+          return refusal !== 'metadata' || consumer === null
+        })
+        const manager = createVaultCoordinator({
+          ...f.params,
+          authority,
+          records: { ...f.params.records, validateConsumerMetadata },
+        })
+        const types = ['vault.key', 'vault.key-branch', 'vault.wrapping', 'vault.revocation']
+        const before = await f.manager.records.adapter.list(types)
+        const wrappings = await f.store.listWrappings(key)
+        const queryStart = f.queries.length
+        await expect(
+          manager.grant({
+            ...key,
+            recipientDID: randomIdentity().id,
+            consumer: currentEvidence,
+          }),
+        ).rejects.toThrow()
+        expect(seen).toContainEqual(currentEvidence)
+        expect(
+          f.queries
+            .slice(queryStart)
+            .filter(
+              ({ sql }) => /^\s*(insert|update|delete)\b/i.test(sql) && !/WHERE 1 = 0$/.test(sql),
+            ),
+        ).toEqual([])
+        expect(await f.manager.records.adapter.list(types)).toEqual(before)
+        expect(await f.store.listWrappings(key)).toEqual(wrappings)
+      },
+    )
+
+    test.each([
+      'setKeyState',
+      'deleteKey',
+      'addFactor',
+      'removeFactor',
+      'updateEntry',
+      'updateEntryIfPresent',
+      'updateEntryIfUnchanged',
+      'deleteEntry',
+      'reKeyEntry',
+    ] as const)('mutationSignsCurrentConsumerEvidence (%s)', async (operation) => {
+      const f = await fixture('replicated')
+      const key = await f.manager.createKey({ ownerDID: f.identity.id, consumer: previousEvidence })
+      const entry = await f.manager.putEntry({
+        ...key,
+        entryID: 'evidence',
+        ...metadata,
+        plaintext: bytes('old'),
+        consumer: previousEvidence,
+      })
+      const manager = administrator(f)
+      const call = { ...key, ...entry, consumer: currentEvidence }
+      if (operation === 'setKeyState') await manager.setKeyState({ ...call, state: 'retired' })
+      else if (operation === 'deleteKey') await manager.deleteKey(call)
+      else if (operation === 'addFactor')
+        await manager.addFactor({
+          ...call,
+          factor: { kind: 'pin', input: bytes('pin'), cost },
+        })
+      else if (operation === 'removeFactor') {
+        await f.manager.addFactor({ ...key, factor: { kind: 'pin', input: bytes('pin'), cost } })
+        await manager.removeFactor({ ...call, inputs: { pin: bytes('pin') }, kind: 'pin' })
+      } else if (operation === 'deleteEntry') await manager.deleteEntry(call)
+      else if (operation === 'reKeyEntry') {
+        const target = await f.manager.createKey({ ownerDID: f.identity.id })
+        await manager.reKeyEntry({ ...call, toKeyID: target.keyID })
+      } else if (operation === 'updateEntryIfUnchanged') {
+        const row = await f.store.getEntry(entry)
+        if (row === undefined) throw new Error('Missing entry')
+        await manager.updateEntryIfUnchanged({
+          ...call,
+          plaintext: bytes('new'),
+          expectedHLC: row.hlc,
+        })
+      } else await manager[operation]({ ...call, plaintext: bytes('new') })
+      const type =
+        operation === 'setKeyState' || operation === 'deleteKey'
+          ? 'vault.key'
+          : operation === 'addFactor' || operation === 'removeFactor'
+            ? 'vault.wrapping'
+            : 'vault.entry'
+      const signed = (await signedOps(f, [type])).filter(({ op }) => op.issuer !== f.identity.id)
+      expect(signed.length).toBeGreaterThan(0)
+      for (const { op } of signed) expect(op.claim.meta.consumer).toEqual(currentEvidence)
+      if (type === 'vault.wrapping') expect(signed).toHaveLength(2)
+    })
+
     test('replicated reads refuse replayed ciphertext beneath a newer signed entry decision', async () => {
       const { sql } = await import('@hozon/db')
       const f = await fixture('replicated')

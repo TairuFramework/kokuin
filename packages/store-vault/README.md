@@ -99,6 +99,16 @@ Entry operations accept explicit owner-qualified addresses, byte plaintext and p
 `getEntry`, `listEntries`, `listKeys`, `readEntry` and `openKey` never write or initiate recovery.
 Returned entry rows include stored provenance. No entry ID has application-specific meaning.
 
+Replicated signing mutations accept optional `consumer?: unknown` for the current caller's signed evidence.
+This includes grant, lifecycle changes, factor edits, entry updates, deletion and re-keying.
+`undefined` preserves previous behaviour. `null` clears evidence. Local mode ignores this input.
+Grant defaults to `null`. Lifecycle, factor and entry edits inherit their previous record's evidence.
+Rotation and repair apply top-level evidence to new keys, branches, wrappings and revocations.
+Without it, keys and branches inherit key evidence, wrappings inherit wrapping evidence, and revocations use `null`.
+Entry reissue evidence remains independent through `reissue[].consumer`.
+Re-endorsement preserves exact claims and offers no metadata replacement input.
+See [consumer metadata inputs](../../docs/reference/vault.md#coordinators-rotation-and-repair) for the complete mutation table.
+
 `rotate` and `repairFork` require `excludedRecipients` and `reissue` arrays, including explicit empty arrays.
 Replicated rotation carries generic plaintext and public metadata forward, preserving content intent unless an instruction supplies another `contentHLC`.
 Local rotation stores a fresh entry HLC and ignores `contentHLC` and `consumer` instructions.
