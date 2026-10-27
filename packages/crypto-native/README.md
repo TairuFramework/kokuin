@@ -4,7 +4,7 @@ An explicit Nitro provider for Ed25519 signing and verification, ES256 verificat
 The package implements `CryptoProvider` from `@kokuin/crypto`.
 It runs cryptographic work on a native worker and returns Promises.
 
-This provider is experimental. Physical-device performance measurements remain pending.
+This provider is experimental. The complete physical-device benchmark gate remains pending.
 Correctness checks on simulators and emulators do not establish latency improvements.
 
 After publication, install the provider and its tested Nitro peer:
@@ -34,6 +34,7 @@ No operation routes have been selected through performance measurements yet.
 Supported targets are iOS 16.4+, arm64 devices and arm64/x86_64 simulators, and Android API 24+, arm64-v8a and x86_64.
 The tested JavaScript peers are React Native 0.88 and Nitro 0.37.1.
 Applications still need their platform's normal Xcode or Android build environment.
+Android builds honour the supported subset requested through `reactNativeArchitectures`, including ARM64-only physical-device builds.
 
 Inputs preserve byte offsets and lengths. Native owners copy them synchronously before dispatch.
 Seed-bearing native copies are erased on success, failure and rejected dispatch.
