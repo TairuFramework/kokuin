@@ -1,0 +1,7 @@
+appId: com.kokuin.cryptoconsumer
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Crypto conformance: OK"
+    timeout: 30000

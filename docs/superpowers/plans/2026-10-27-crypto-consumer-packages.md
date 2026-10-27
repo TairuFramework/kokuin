@@ -83,12 +83,12 @@ Modify native cross-build CI and the Expo checks to consume the shared conforman
 Portable imports must execute known-answer operations without loading Nitro.
 Mobile consumers must link shipped libraries without invoking Cargo.
 
-- [ ] Install both tarballs into independent consumer fixtures.
-- [ ] Run portable known-answer checks and verify no native dependencies enter its graph.
-- [ ] Build mobile consumers from packed packages with Cargo absent from PATH.
-- [ ] Run shared conformance checks on simulator and emulator where tooling permits.
-- [ ] Document installation, explicit construction, supported targets and unmeasured performance.
-- [ ] Run repository, Rust, native ownership and packaging checks.
+- [x] Install both tarballs into independent consumer fixtures.
+- [x] Run portable known-answer checks and verify no native dependencies enter its graph.
+- [x] Build mobile consumers from packed packages with Cargo absent from PATH.
+- [x] Run shared conformance checks on simulator and emulator where tooling permits.
+- [x] Document installation, explicit construction, supported targets and unmeasured performance.
+- [x] Run repository, Rust, native ownership and packaging checks.
 - [ ] Obtain one fresh review of the final changes and address material findings.
 - [ ] Commit validated consumer adoption tooling and record any environmental limitations.
 

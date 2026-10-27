@@ -1,0 +1,73 @@
+name: Native crypto packages
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  libraries:
+    strategy:
+      matrix:
+        include:
+          - platform: ios
+            runner: macos-26
+          - platform: android
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+      - if: matrix.platform == 'android'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+      - if: matrix.platform == 'android'
+        uses: android-actions/setup-android@v4
+      - run: pnpm install --frozen-lockfile
+      - if: matrix.platform == 'android'
+        run: sdkmanager 'ndk;27.1.12297006'
+      - run: node scripts/build-crypto-native.mjs ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: crypto-native-${{ matrix.platform }}
+          path: packages/crypto-native/prebuilt
+          if-no-files-found: error
+
+  packages:
+    needs: libraries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: crypto-native-*
+          path: packages/crypto-native/prebuilt
+          merge-multiple: true
+      - run: pnpm --filter @kokuin/crypto-conformance... build
+      - name: Verify packed consumers outside the workspace
+        run: node scripts/verify-crypto-consumer.mjs
+      - name: Pack public distributions
+        run: |
+          mkdir -p "$RUNNER_TEMP/crypto-packages"
+          pnpm --dir packages/crypto pack --pack-destination "$RUNNER_TEMP/crypto-packages"
+          pnpm --dir packages/crypto-native pack --pack-destination "$RUNNER_TEMP/crypto-packages"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: crypto-provider-packages
+          path: ${{ runner.temp }}/crypto-packages/*.tgz
+          if-no-files-found: error
