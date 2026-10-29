@@ -1,11 +1,11 @@
-import { createSpikeCrypto } from '@kokuin/crypto-native'
+import { createNativeCrypto } from '@kokuin/crypto-native'
 import { File, Paths } from 'expo-file-system'
 import { isAvailableAsync, shareAsync } from 'expo-sharing'
 import { useRef, useState } from 'react'
 import { Button, Platform, Switch, Text, TextInput, View } from 'react-native'
 
 import { runBenchmarkMatrix } from '../crypto/benchmark'
-import { checkSpikeCrypto } from '../crypto/checks'
+import { checkNativeCrypto } from '../crypto/checks'
 import { type BenchmarkSample, evaluateGate } from '../crypto/gate'
 
 export default function CryptoBenchmark() {
@@ -20,7 +20,7 @@ export default function CryptoBenchmark() {
   async function check() {
     setRunning(true)
     try {
-      await checkSpikeCrypto(createSpikeCrypto())
+      await checkNativeCrypto(createNativeCrypto())
       setStatus('Crypto checks: OK')
     } catch (error) {
       setStatus(`Crypto checks: FAIL ${String(error)}`)
@@ -36,8 +36,8 @@ export default function CryptoBenchmark() {
     samples.current = []
     setRunning(true)
     try {
-      const native = createSpikeCrypto()
-      await checkSpikeCrypto(native)
+      const native = createNativeCrypto()
+      await checkNativeCrypto(native)
       await runBenchmarkMatrix({
         native,
         signal: controller.signal,

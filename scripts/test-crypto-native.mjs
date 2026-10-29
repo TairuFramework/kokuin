@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const targetDirectory = resolve(root, process.env.CARGO_TARGET_DIR || 'target')
 const directory = mkdtempSync(join(tmpdir(), 'kokuin-native-test-'))
 try {
   execFileSync(
@@ -49,7 +50,7 @@ try {
       '-I',
       join(root, 'packages/crypto-native/cpp'),
       join(root, 'packages/crypto-native/cpp/test/WorkerTest.cpp'),
-      join(root, 'target/debug/libkokuin_crypto_ffi.a'),
+      join(targetDirectory, 'debug/libkokuin_crypto_ffi.a'),
       ...libraries,
       '-o',
       worker,

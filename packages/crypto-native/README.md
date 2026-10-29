@@ -26,7 +26,11 @@ export async function signMessage(seed: Uint8Array, message: Uint8Array) {
 }
 ```
 
-Construction throws when native registration is missing or the ABI is incompatible.
+`createNativeCrypto()` throws when the native `Crypto` object is not registered or its ABI version is incompatible.
+An unsupported Android device ABI does not crash app startup.
+Android ships `libKokuinCrypto.so` only for arm64-v8a and x86_64.
+On an armeabi-v7a or x86 device the library fails to load, `CryptoPackage` logs the load failure and continues, and construction throws an error naming the missing native library.
+Apps that never call `createNativeCrypto()` are unaffected.
 Native errors reject the operation. They never trigger fallback to noble.
 Every operation uses the native implementation, including every item in a batch.
 No operation routes have been selected through performance measurements yet.
@@ -35,6 +39,8 @@ Supported targets are iOS 16.4+, arm64 devices and arm64/x86_64 simulators, and 
 The tested JavaScript peers are React Native 0.88 and Nitro 0.37.1.
 Applications still need their platform's normal Xcode or Android build environment.
 Android builds honour the supported subset requested through `reactNativeArchitectures`, including ARM64-only physical-device builds.
+Unsupported entries in that list are dropped from the native build, so those APK slices omit the library.
+The build fails when the list names neither arm64-v8a nor x86_64.
 
 Inputs preserve byte offsets and lengths. Native owners copy them synchronously before dispatch.
 Seed-bearing native copies are erased on success, failure and rejected dispatch.

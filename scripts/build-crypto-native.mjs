@@ -8,6 +8,7 @@ import { sourceFingerprint, stampArtifacts } from './crypto-artifacts.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const prebuilt = join(root, 'packages/crypto-native/prebuilt')
+const targetDirectory = resolve(root, process.env.CARGO_TARGET_DIR || 'target')
 const platform = process.argv[2]
 if (platform !== 'ios' && platform !== 'android')
   throw new Error('Usage: node scripts/build-crypto-native.mjs ios|android')
@@ -34,7 +35,7 @@ function build(target, env = {}) {
     ],
     env,
   )
-  return join(root, 'target', target, 'release/libkokuin_crypto_ffi.a')
+  return join(targetDirectory, target, 'release/libkokuin_crypto_ffi.a')
 }
 
 if (platform === 'ios') {

@@ -1,9 +1,9 @@
+import type { CryptoProvider, VerifyItem } from '@kokuin/crypto'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
 import { blake3 } from '@noble/hashes/blake3.js'
 
 import { type BenchmarkCell, type BenchmarkSample, benchmarkCells } from './gate'
-import type { SpikeCrypto, VerifyItem } from './spike.js'
 import { strictNoble } from './strict-noble'
 
 export type BenchmarkMetadata = Pick<
@@ -11,7 +11,7 @@ export type BenchmarkMetadata = Pick<
   'platform' | 'device' | 'physical' | 'release' | 'hermes' | 'revision'
 >
 export type BenchmarkOptions = {
-  native: SpikeCrypto
+  native: CryptoProvider
   metadata: BenchmarkMetadata
   signal: AbortSignal
   onSample(sample: BenchmarkSample, completed: number, total: number): Promise<void>
@@ -19,7 +19,7 @@ export type BenchmarkOptions = {
 }
 
 // This comparison preserves today's noble verification rules, independently of the strict gate baseline.
-const currentNoble: SpikeCrypto = {
+const currentNoble: CryptoProvider = {
   ...strictNoble,
   async verify(alg, signature, message, publicKey) {
     try {
@@ -51,7 +51,7 @@ const currentNoble: SpikeCrypto = {
 
 function prepare(
   cell: BenchmarkCell,
-  provider: SpikeCrypto,
+  provider: CryptoProvider,
 ): (iteration: number) => Promise<unknown> {
   const message = new Uint8Array(cell.messageSize).fill(0x61)
   const seeds = Array.from({ length: cell.batchSize }, (_, index) => {
