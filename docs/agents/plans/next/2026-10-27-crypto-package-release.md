@@ -14,13 +14,13 @@ The expanded adversarial corpus and remaining runtime checks precede production-
 3. Exercise supported x86_64 targets at runtime when suitable hosts are available.
 4. Expand the shared corpus with pinned RFC 8032, Wycheproof Ed25519/P-256 and official blake3 vectors.
 5. Record source revisions, licences and explicit outcomes under the stricter project verification policy.
-6. Generate one checked corpus for TypeScript and Rust, including generator drift checks and deliberately incorrect-provider tests.
-7. Cover canonical encodings, scalar boundaries, small/mixed-order points, off-curve keys, invalid r/s, high-S and double hashing.
-8. Cover batch ordering, snapshots, detached/shared buffers, independent outputs and all hash-length bounds.
-9. Repeat shared cases through noble, Rust and packed native consumers.
-10. Verify both default and single-ABI Android builds, generated registration files, complete notices and binary provenance.
-11. Preserve the absence of Nitro and Rust requirements in portable consumer installations.
-12. Use `kigu:releasing` to inspect versions, public access and release intents before any separately requested publication.
+6. Extend `packages/crypto-conformance/vectors/corpus.json` with off-curve compressed ES256 keys and the item 4 sets.
+   The corpus itself, its Rust and noble CI runs, and per-guard weakened-verifier tests are done (see the crypto provider reference).
+7. Cover batch ordering, snapshots, detached/shared buffers, independent outputs and all hash-length bounds.
+8. Run the shared corpus through packed native consumers in CI; noble and the Rust core already run it on every pull request.
+9. Verify both default and single-ABI Android builds, generated registration files, complete notices and binary provenance.
+10. Preserve the absence of Nitro and Rust requirements in portable consumer installations.
+11. Use `kigu:releasing` to inspect versions, public access and release intents before any separately requested publication.
 
 The complete [physical benchmark gate](2026-10-27-crypto-benchmark-gate.md) remains necessary for qualified routes and existing API migration.
 An experimental standalone release does not establish that qualification.

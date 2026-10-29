@@ -414,6 +414,10 @@ importers:
       '@noble/hashes':
         specifier: 'catalog:'
         version: 2.4.0
+    devDependencies:
+      '@noble/curves':
+        specifier: 'catalog:'
+        version: 2.4.0
 
   packages/crypto-native:
     dependencies:

@@ -68,13 +68,53 @@ It hashes raw messages once with SHA-256 and rejects high-S signatures without n
 Malformed signatures and keys resolve `false`. Unsupported algorithms and invalid signing seeds reject with `TypeError`.
 blake3 output lengths must be integers from 1 through 65536. Invalid lengths reject with `RangeError`.
 
+## Shared corpus and backend agreement
+
+`packages/crypto-conformance/vectors/corpus.json` holds every pure-data case with its expected outcome.
+It covers Ed25519 signing, invalid seeds, Ed25519 and ES256 verification, blake3 known answers and invalid output lengths.
+Batch membership, snapshot, ownership and argument-validation cases remain TypeScript code in `cryptoConformance`.
+
+The Rust crypto checks workflow (`.github/workflows/crypto-rust.yml`) enforces two runs of the same file on every pull request:
+
+- `cargo test --workspace --locked --offline` runs `crates/kokuin-crypto/tests/corpus.rs` against the Rust core.
+- `pnpm --filter @kokuin/crypto-conformance run test` runs `cryptoConformance(nobleCrypto)`.
+
+Both runs assert the recorded outcome for every vector, so noble and the Rust core agree on the whole corpus.
+CI does not run the corpus through the Nitro provider. The Expo end-to-end app and the packed mobile consumer run it on devices.
+
+Every rejected vector names, per backend, the deliberately weakened verifiers that accept it.
+Each side rebuilds its verifier with exactly one guard removed.
+It asserts that the failing vectors are exactly those naming that weakening.
+
+| Guard | Noble weakening | Rust weakening |
+| --- | --- | --- |
+| Ed25519 subgroup check on A | `subgroup-a` | `subgroup` (dalek `verify_strict` alone) |
+| Ed25519 subgroup check on R | `subgroup-r` | Not isolable: a cofactorless check rejects a torsioned R when A is torsion-free |
+| Ed25519 canonical S | `s-range` | `s-range` |
+| ES256 low-S | `low-s` | `low-s` |
+| ES256 r and s below n | `scalar-range` | `scalar-range` |
+| ES256 non-zero r and s | `zero-scalars` (CVE-2022-21449 inverse) | Not implemented |
+
+Rust additionally checks that an unguarded cofactored verifier accepts every Ed25519 forgery.
+This proves that the k ≢ 0 (mod 4) mixed-order and small-order vectors are real forgeries, even though dalek's cofactorless equation rejects them too.
+Only the k ≡ 0 (mod 4) mixed-order key vector certifies the Rust subgroup guard.
+
+Some guards have no single-guard vector.
+Every non-canonical Ed25519 encoding decodes to a small-order or torsioned point, so the canonical-encoding check is never the sole guard.
+ES256 r = 0 or s = 0 alone also fails the verification equation.
+
 ## Native targets and failures
 
 Supported libraries cover iOS 16.4+, arm64 devices, arm64/x86_64 simulators, and Android API 24+, arm64-v8a and x86_64.
 The tested peers are React Native 0.88 and Nitro 0.37.1.
 Expo applications require a native build rather than Expo Go.
 
-Missing native registration and incompatible ABIs fail construction.
+Missing native registration and incompatible ABIs fail construction: `createNativeCrypto()` throws, and
+nothing fails earlier. Android ships `libKokuinCrypto.so` only for arm64-v8a and x86_64; other entries in
+`reactNativeArchitectures` are dropped from the native build, so armeabi-v7a and x86 APK slices omit the library.
+On such a device `CryptoPackage` catches the `UnsatisfiedLinkError`, logs it and lets the app start, so apps that
+never call `createNativeCrypto()` are unaffected. The Android build fails only when `reactNativeArchitectures`
+names neither arm64-v8a nor x86_64. iOS links the library statically, so a missing slice fails at link time.
 Native execution failures reject their Promises. They never invoke noble as a fallback.
 All standalone native operations currently use Rust. Performance-based routing decisions remain pending.
 Native seed copies are erased after success, failure or rejected dispatch. JavaScript seed buffers remain caller-owned.

@@ -1,22 +1,41 @@
 import type { CryptoProvider } from '@kokuin/crypto'
 import { hexToBytes } from '@noble/hashes/utils.js'
 
-import { mixedOrderVectors } from './adversarial.js'
+import { type CorpusVerifyCase, corpus } from './corpus.js'
+
+export type {
+  CorpusHashCase,
+  CorpusInvalidSeed,
+  CorpusSignCase,
+  CorpusVerifyCase,
+  CryptoCorpus,
+} from './corpus.js'
+export { corpus } from './corpus.js'
 
 export type CryptoConformanceCase = { name: string; run(): Promise<void> }
 
-const SEED = '9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60'
-const KEY = 'd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'
-const SIGNATURE =
-  'e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b'
-const HASH =
-  'af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262e00f03e7b69af26b7faaf09fcd333050338ddfe085b8cc869ca98b206c08243a'
-const ES_KEY = '036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296'
-const ES_MESSAGE = '6b6f6b75696e2063727970746f207370696b65'
-const ES_SIGNATURE =
-  'd8993d42f5ff5aaf214a10145e5f9ad8bd572acd022d87bd4d8bf989319619e1205bca699914f7f3319fd760301ff494ef95a793ed79c534bab8fbdfcdbcbd58'
-const ES_HIGH =
-  'd8993d42f5ff5aaf214a10145e5f9ad8bd572acd022d87bd4d8bf989319619e1dfa4359566eb080dce60289fcfe00b6acd515319b99dd9503900cee32ea667f9'
+function find<T extends { name: string }>(entries: Array<T>, name: string): T {
+  const entry = entries.find((candidate) => candidate.name === name)
+  if (entry == null) throw new Error(`Crypto conformance: missing corpus entry ${name}`)
+  return entry
+}
+
+function verifyCase(name: string): CorpusVerifyCase {
+  return find(corpus.verify, name)
+}
+
+// Batch-semantics cases reuse corpus bytes; every rejection they expect is structural
+// (mutated message, empty signature), so no guard-specific vector appears in them.
+const RFC = find(corpus.ed25519Sign, 'RFC 8032 test 1')
+const SEED = RFC.seed
+const SIGNATURE = RFC.signature
+const KEY = verifyCase('Ed25519 RFC 8032 test 1').publicKey
+const HASH = find(corpus.blake3, 'empty input, 64 bytes').outputPrefix
+const ES_VALID = verifyCase('ES256 compact low-S')
+const ES_MUTATED = verifyCase('ES256 compact low-S over a mutated message')
+const ES_KEY = ES_VALID.publicKey
+const ES_MESSAGE = ES_VALID.message
+const ES_SIGNATURE = ES_VALID.signature
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Crypto conformance: ${message}`)
@@ -70,45 +89,6 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
       },
     },
     {
-      name: 'RFC 8032 signing and verification',
-      async run() {
-        const message = new Uint8Array()
-        equal(await provider.sign('EdDSA', hexToBytes(SEED), message), hexToBytes(SIGNATURE))
-        assert(
-          await provider.verify('EdDSA', hexToBytes(SIGNATURE), message, hexToBytes(KEY)),
-          'valid Ed25519',
-        )
-        assert(
-          !(await provider.verify(
-            'EdDSA',
-            hexToBytes(SIGNATURE),
-            new Uint8Array([1]),
-            hexToBytes(KEY),
-          )),
-          'mutated message accepted',
-        )
-      },
-    },
-    {
-      name: 'compact P-256 verifies raw messages and rejects high-S',
-      async run() {
-        const message = hexToBytes(ES_MESSAGE)
-        const key = hexToBytes(ES_KEY)
-        assert(
-          await provider.verify('ES256', hexToBytes(ES_SIGNATURE), message, key),
-          'valid P-256',
-        )
-        assert(
-          !(await provider.verify('ES256', hexToBytes(ES_HIGH), message, key)),
-          'high-S accepted',
-        )
-        assert(
-          !(await provider.verify('ES256', new Uint8Array(64), message, key)),
-          'zero r/s accepted',
-        )
-      },
-    },
-    {
       name: 'mixed verification batches preserve order',
       async run() {
         const results = await provider.verifyBatch([
@@ -126,9 +106,9 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
           },
           {
             alg: 'ES256',
-            signature: hexToBytes(ES_HIGH),
-            message: hexToBytes(ES_MESSAGE),
-            publicKey: hexToBytes(ES_KEY),
+            signature: hexToBytes(ES_MUTATED.signature),
+            message: hexToBytes(ES_MUTATED.message),
+            publicKey: hexToBytes(ES_MUTATED.publicKey),
           },
           {
             alg: 'ES256',
@@ -167,10 +147,7 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
         const input = new Uint8Array([0, 97, 98, 99, 0])
         const hashed = provider.blake3(input.subarray(1, 4), 32)
         input.fill(0)
-        equal(
-          await hashed,
-          hexToBytes('6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85'),
-        )
+        equal(await hashed, hexToBytes(find(corpus.blake3, 'abc, 32 bytes').outputPrefix))
       },
     },
     {
@@ -214,14 +191,57 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
       },
     },
   ]
-  for (const length of [1, 16, 32, 64, 65536]) {
+  for (const entry of corpus.ed25519Sign) {
     cases.push({
-      name: `blake3 output length ${length}`,
+      name: `sign: ${entry.name}`,
       async run() {
-        const result = await provider.blake3(new Uint8Array(), length)
-        assert(result.length === length, 'incorrect hash length')
-        equal(result.subarray(0, Math.min(length, 64)), hexToBytes(HASH).subarray(0, length))
-        const batch = await provider.blake3Batch([new Uint8Array(), new Uint8Array()], length)
+        const signature = await provider.sign(
+          'EdDSA',
+          hexToBytes(entry.seed),
+          hexToBytes(entry.message),
+        )
+        equal(signature, hexToBytes(entry.signature))
+      },
+    })
+  }
+  for (const entry of corpus.ed25519InvalidSeeds) {
+    cases.push({
+      name: `sign rejects: ${entry.name}`,
+      async run() {
+        await rejects(provider.sign('EdDSA', hexToBytes(entry.seed), new Uint8Array()), TypeError)
+      },
+    })
+  }
+  for (const entry of corpus.verify) {
+    cases.push({
+      name: `verify: ${entry.name}`,
+      async run() {
+        const item = {
+          alg: entry.alg,
+          signature: hexToBytes(entry.signature),
+          message: hexToBytes(entry.message),
+          publicKey: hexToBytes(entry.publicKey),
+        }
+        const single = await provider.verify(item.alg, item.signature, item.message, item.publicKey)
+        assert(single === entry.valid, `${entry.name}: verify returned ${single}`)
+        const batch = await provider.verifyBatch([item])
+        assert(
+          batch.length === 1 && batch[0] === entry.valid,
+          `${entry.name}: verifyBatch returned ${String(batch[0])}`,
+        )
+      },
+    })
+  }
+  for (const entry of corpus.blake3) {
+    cases.push({
+      name: `blake3: ${entry.name}`,
+      async run() {
+        const input = hexToBytes(entry.input)
+        const result = await provider.blake3(input, entry.length)
+        assert(result.length === entry.length, 'incorrect hash length')
+        const prefix = hexToBytes(entry.outputPrefix)
+        equal(result.subarray(0, prefix.length), prefix)
+        const batch = await provider.blake3Batch([input, input], entry.length)
         assert(batch.length === 2, 'missing hashes')
         equal(batch[0] as Uint8Array, result)
         batch[0]?.fill(0)
@@ -229,19 +249,11 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
       },
     })
   }
-  for (const vector of mixedOrderVectors) {
+  for (const length of corpus.blake3InvalidLengths) {
     cases.push({
-      name: `rejects ${vector.name}`,
+      name: `blake3 rejects output length ${length}`,
       async run() {
-        assert(
-          !(await provider.verify(
-            'EdDSA',
-            hexToBytes(vector.signature),
-            hexToBytes(vector.message),
-            hexToBytes(vector.publicKey),
-          )),
-          'mixed-order forgery accepted',
-        )
+        await rejects(provider.blake3(new Uint8Array(), length), RangeError)
       },
     })
   }

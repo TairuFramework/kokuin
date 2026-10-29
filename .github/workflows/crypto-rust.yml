@@ -21,10 +21,18 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Check Rust formatting
         run: pnpm exec cargo fmt --all --check
-      - name: Test crypto core and C ABI
+      # Includes crates/kokuin-crypto/tests/corpus.rs, which runs the shared corpus
+      # (packages/crypto-conformance/vectors/corpus.json) against the Rust core.
+      - name: Test crypto core, C ABI and shared corpus
         run: pnpm exec cargo test --workspace --locked --offline
       - name: Check Rust warnings
         run: pnpm exec cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+      - name: Build portable provider and conformance suite
+        run: pnpm --filter @kokuin/crypto-conformance... build
+      # Runs the same corpus file, plus the batch-semantics cases and per-guard
+      # weakened-provider self-tests, against strict noble.
+      - name: Test shared corpus against noble
+        run: pnpm --filter @kokuin/crypto-conformance run test
       - name: Check native ownership with sanitizers
         run: node scripts/test-crypto-native.mjs
       - name: Test artifact freshness

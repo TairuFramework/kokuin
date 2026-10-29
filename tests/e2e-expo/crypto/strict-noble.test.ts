@@ -1,9 +1,9 @@
+import { corpus } from '@kokuin/crypto-conformance'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
 import { hexToBytes } from '@noble/hashes/utils.js'
 import { expect, test } from 'vitest'
 
-import { mixedOrderVectors } from './adversarial'
 import { strictNoble } from './strict-noble.js'
 
 const seed = hexToBytes('9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60')
@@ -12,16 +12,16 @@ const signature = hexToBytes(
   'e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b',
 )
 
-for (const vector of mixedOrderVectors) {
-  test(`rejects a cofactored forgery with ${vector.name}`, async () => {
+for (const vector of corpus.verify) {
+  test(`matches the shared corpus: ${vector.name}`, async () => {
     expect(
       await strictNoble.verify(
-        'EdDSA',
+        vector.alg,
         hexToBytes(vector.signature),
         hexToBytes(vector.message),
         hexToBytes(vector.publicKey),
       ),
-    ).toBe(false)
+    ).toBe(vector.valid)
   })
 }
 

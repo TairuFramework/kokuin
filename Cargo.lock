@@ -473,6 +473,8 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "p256",
+ "serde_json",
+ "sha2",
  "zeroize",
 ]
 
