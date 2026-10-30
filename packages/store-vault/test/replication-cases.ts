@@ -11,8 +11,14 @@ import {
   signRecordOp,
   verifySignedRecord,
 } from '@kokuin/records'
-import type { SigningIdentity } from '@kokuin/token'
-import { createIdentity, normalizeDID, randomIdentity, stringifyToken } from '@kokuin/token'
+import type { MethodRegistry, SigningIdentity } from '@kokuin/token'
+import {
+  createIdentity,
+  createSigningIdentityForDID,
+  normalizeDID,
+  randomIdentity,
+  stringifyToken,
+} from '@kokuin/token'
 import type {
   CredentialAuthority,
   CredentialAuthorityRequest,
@@ -257,6 +263,97 @@ export function replicationCases(harness: StoreHarness): void {
       expect(result.parked).toEqual([])
       expect((await exchange(left.records.adapter, right.records)).rejected).toEqual([])
     }
+
+    test.each(
+      (
+        ['get', 'listKeyBranches', 'listEntryCandidates', 'listPriorEntryTombstones'] as const
+      ).flatMap((read) => {
+        return (['root', 'transaction'] as const).map((binding) => [read, binding] as const)
+      }),
+    )(
+      '%s verifies copies without deadlocking a %s-bound resolver',
+      async (read, binding) => {
+        const signer = createSigningIdentityForDID(
+          'did:test:vault-issuer',
+          ed25519.utils.randomSecretKey(),
+        )
+        const source = await chain(signer)
+        const key = { alg: 'EdDSA' as const, publicKey: signer.publicKey }
+        const params = {
+          store: left.store,
+          opKind: OP_KIND,
+          authority,
+          validateConsumerMetadata: metadata,
+          nowMS: () => Date.parse('2026-10-01T01:00:00.000Z'),
+          maxDriftMS: 60_000,
+        }
+        const seeded = createVaultRecords({
+          ...params,
+          methods: [{ method: 'test', resolve: async () => key }],
+        })
+        expect((await seeded.apply([source.key, source.branch])).rejected).toEqual([])
+        const entry = await dependent(signer, source, 'vault.entry', { deleted: true })
+        expect((await seeded.apply([entry])).rejected).toEqual([])
+        let resolverStore = left.store
+        const methods: MethodRegistry = [
+          {
+            method: 'test',
+            resolve: async (did) => {
+              expect(did).toBe(signer.id)
+              let timer: ReturnType<typeof setTimeout> | undefined
+              try {
+                // Release a deadlocked verification so failed tests can close the database.
+                const row = await Promise.race([
+                  resolverStore.getKey(source.address),
+                  new Promise<never>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error('Resolver query timed out')), 500)
+                  }),
+                ])
+                expect(row?.version).toBe(1)
+                return key
+              } finally {
+                clearTimeout(timer)
+              }
+            },
+          },
+        ]
+        const op = await verifySignedRecord(source.key, OP_KIND, methods)
+        if (op === null) throw new Error('fixture signature did not verify')
+        const check = async (records: VaultRecords) => {
+          if (read === 'get') {
+            expect(await records.adapter.get(source.key)).toEqual({
+              key: { type: source.key.type, owner: signer.id, id: source.key.id },
+              contentDigest: recordClaimDigest(op.claim),
+              decisionHLC: source.key.hlc,
+              copies: [source.key],
+            })
+          } else if (read === 'listKeyBranches') {
+            expect(await records.listKeyBranches({ ...source.address, keyVersion: 1 })).toEqual([
+              { branchID: source.branchID, branchRecordID: source.branch.id, introducingOp: op },
+            ])
+          } else if (read === 'listEntryCandidates') {
+            expect(await records.listEntryCandidates({ ...source.address, keyVersion: 1 })).toEqual(
+              [entry],
+            )
+          } else {
+            expect(
+              await records.listPriorEntryTombstones({ ...source.address, beforeVersion: 2 }),
+            ).toEqual([entry])
+          }
+        }
+        if (binding === 'transaction') {
+          await left.store.transaction(async (store) => {
+            resolverStore = store
+            expect(store.isTransaction).toBe(true)
+            await check(createVaultRecords({ ...params, store, methods }))
+            expect(store.isTransaction).toBe(true)
+          })
+        } else {
+          await check(createVaultRecords({ ...params, methods }))
+        }
+      },
+      2_000,
+    )
 
     test('batch reads equal individual owner-qualified reads and deduplicate keys', async () => {
       const source = await chain(owner)
