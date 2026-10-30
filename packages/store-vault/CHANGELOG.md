@@ -1,5 +1,11 @@
 # @kokuin/store-vault
 
+## 0.2.4
+
+### Patch Changes
+
+- Prevent vault record reads from deadlocking when issuer resolvers query the same SQLite provider.
+
 ## 0.2.3
 
 ### Patch Changes
