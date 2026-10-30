@@ -62,9 +62,12 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
 
       if (!supported(key.type)) return null
 
-      return withStoreTransaction(db, async (tx) => {
-        return decision(await whereKey(tx, key).orderBy('op_hash').execute(), bound)
+      const rows = await withStoreTransaction(db, async (tx) => {
+        return whereKey(tx, key).orderBy('op_hash').execute()
       })
+
+      // Root-bound resolvers need the connection released before verification.
+      return decision(rows, bound)
     },
     async getMany(keys) {
       await assertDomain(bound)
