@@ -32,6 +32,8 @@ import { getVaultStore } from './definition.js'
 import { VaultWriteConflict, vaultDatabases } from './record-context.js'
 import type { VaultKeyBranch, VaultRecords, VaultWritePreconditions } from './records.js'
 import { createVaultRecords, VaultRecordRowError } from './records.js'
+import type { MethodsParams } from './records-methods.js'
+import { storeMethods } from './records-methods.js'
 import { settleAll, settledValue } from './settle.js'
 import type { KeyAddress, KeyRow, VaultStoreAPI, WrappingRow } from './types.js'
 
@@ -116,6 +118,7 @@ export type CoordinatorContext = {
   cache: KeyCache
   cacheID(address: KeyAddress): string
   records: VaultRecords | undefined
+  methodsFor(store: VaultStoreAPI): MethodsParams['methods']
   recordsFor(store: VaultStoreAPI): VaultRecords
   authorize(
     operation: string,
@@ -131,7 +134,7 @@ export type CoordinatorContext = {
     meta: VaultRecordMetas[Type],
     hlc?: string,
   ): Promise<SignedRecord>
-  verified(record: SignedRecord): Promise<VerifiedRecordOp>
+  verified(record: SignedRecord, store: VaultStoreAPI): Promise<VerifiedRecordOp>
   stored(address: RecordKey, store?: VaultStoreAPI): Promise<StoredRecordEvidence>
   /** One batched read. Throws the first missing or unverifiable record in address order. */
   storedMany(
@@ -183,6 +186,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
   const cache = createKeyCache(params.cache)
   const generations = new Map<string, { ownerDID: string; value: number }>()
   const cacheID = (address: KeyAddress) => JSON.stringify([address.ownerDID, address.keyID])
+  const methodsFor = (store: VaultStoreAPI) => storeMethods(store, params)
   // One records object per store handle. It holds no per-call state: its adapter reads through the
   // handle's own database, and lock state lives only on adapters built inside `transaction`.
   const recordsByStore = new WeakMap<VaultStoreAPI, VaultRecords>()
@@ -192,7 +196,12 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
     let records = recordsByStore.get(store)
 
     if (records === undefined) {
-      records = createVaultRecords({ ...params.records, store, authority: params.authority })
+      records = createVaultRecords({
+        ...params.records,
+        methodsFor: params.records.methodsFor ?? params.methodsFor,
+        store,
+        authority: params.authority,
+      })
       recordsByStore.set(store, records)
     }
 
@@ -268,10 +277,17 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
     }
   }
 
-  async function verified(record: SignedRecord): Promise<VerifiedRecordOp> {
+  async function verified(record: SignedRecord, store: VaultStoreAPI): Promise<VerifiedRecordOp> {
     if (params.mode !== 'replicated') throw new TypeError('Local rows have no signed evidence')
 
-    const op = await verifySignedRecord(record, params.records.opKind, params.records.methods)
+    const op = await verifySignedRecord(
+      record,
+      params.records.opKind,
+      storeMethods(store, {
+        ...params.records,
+        methodsFor: params.records.methodsFor ?? params.methodsFor,
+      }),
+    )
 
     if (op === null) throw new VaultNotFound()
 
@@ -283,7 +299,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
 
     if (record === undefined) throw new VaultNotFound()
 
-    return { record, op: await verified(record) }
+    return { record, op: await verified(record, store) }
   }
 
   async function storedMany(
@@ -298,7 +314,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
 
         if (record === undefined) throw new VaultNotFound()
 
-        return { record, op: await verified(record) }
+        return { record, op: await verified(record, store) }
       }),
     )
   }
@@ -435,7 +451,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
       decisions.map((decision) => {
         const record = decision instanceof VaultRecordRowError ? undefined : decision?.copies[0]
 
-        return record === undefined ? Promise.resolve(null) : verified(record)
+        return record === undefined ? Promise.resolve(null) : verified(record, store)
       }),
     )
 
@@ -500,7 +516,10 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
 
         if (selected === undefined) throw new VaultWriteConflict()
 
-        const [selectedOp, expectedOp] = await settleAll([verified(selected), verified(record)])
+        const [selectedOp, expectedOp] = await settleAll([
+          verified(selected, store),
+          verified(record, store),
+        ])
 
         if (recordClaimDigest(selectedOp.claim) !== recordClaimDigest(expectedOp.claim))
           throw new VaultWriteConflict()
@@ -534,7 +553,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
         consumer: consumer === undefined ? (previous?.op.claim.meta.consumer ?? null) : consumer,
       },
     )
-    const op = await verified(record)
+    const op = await verified(record, store)
     const branchID = `${record.hlc}:${record.opHash}`
     const payload = {
       authorDID: op.issuer,
@@ -643,6 +662,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
     cacheID,
     records,
     recordsFor,
+    methodsFor,
     authorize,
     key,
     signed,

@@ -1,3 +1,4 @@
+import type { StoreProvider } from '@hozon/db'
 import type { SignedRecord } from '@kokuin/records'
 import type { SigningIdentity } from '@kokuin/token'
 import type {
@@ -116,6 +117,8 @@ type CommonParams = {
   authority: CredentialAuthority
   nextHLC(): Promise<string>
   methods?: WrapParams['methods']
+  /** Overrides methods with a registry for the store's provider. */
+  methodsFor?: (provider: StoreProvider) => NonNullable<WrapParams['methods']>
   cache?: KeyCacheParams
   authorizeEquivalentBranch?(request: {
     entry: SignedRecord

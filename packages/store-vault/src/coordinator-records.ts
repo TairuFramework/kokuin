@@ -182,7 +182,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
         keyRead,
         settleAll(
           request.records.map(async (record) => {
-            const op = await ctx.verified(record)
+            const op = await ctx.verified(record, tx)
 
             if (op.claim.owner !== request.ownerDID || op.claim.meta.keyID !== request.keyID)
               throw new TypeError('Re-endorsement is confined to the explicitly named key')
