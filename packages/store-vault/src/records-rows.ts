@@ -19,7 +19,7 @@ import { PARAMETER_BUDGET } from './batch.js'
 import type { VaultDatabase } from './record-context.js'
 import type { VaultRecordsTables, VaultRecordTable } from './record-tables.js'
 import type { VaultRecordsParams } from './records.js'
-import type { MethodsParams } from './records-methods.js'
+import type { VaultMethods } from './records-methods.js'
 import { settleAll } from './settle.js'
 import type { VaultStoreAPI } from './types.js'
 
@@ -49,7 +49,7 @@ export type HeldLock = { release: () => void; task: Promise<void> }
 
 export type Bound = VaultDatabase & {
   opKind: string
-  methods: MethodsParams['methods']
+  methods: VaultMethods | undefined
   params: VaultRecordsParams
   store: VaultStoreAPI
   locks?: Array<HeldLock>

@@ -1,4 +1,3 @@
-import type { StoreProvider } from '@hozon/db'
 import { withStoreTransaction } from '@hozon/db'
 import type {
   ApplyRecordChunkParams,
@@ -21,6 +20,7 @@ import { KEY_BRANCH_COLUMNS, statementChunks, upsertKeyBranches } from './batch.
 import { VaultWriteConflict, vaultDatabases } from './record-context.js'
 import type { VaultKeyBranchTable } from './record-tables.js'
 import { makeAdapter } from './records-adapter.js'
+import type { VaultMethodsFor } from './records-methods.js'
 import { storeMethods } from './records-methods.js'
 import { vaultRecordPortsFor } from './records-ports.js'
 import type { Bound } from './records-rows.js'
@@ -46,7 +46,7 @@ export type VaultWritePreconditions = {
 export type VaultRecordsParams = Omit<VaultRecordTypeParams, 'portsFor'> & {
   store: VaultStoreAPI
   /** Overrides methods with a registry for the store's provider. */
-  methodsFor?: (provider: StoreProvider) => NonNullable<VaultRecordTypeParams['methods']>
+  methodsFor?: VaultMethodsFor
   nowMS: () => number
   maxDriftMS: number
   receiveClock?: ApplyRecordChunkParams['receiveClock']

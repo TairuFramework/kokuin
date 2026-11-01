@@ -1,4 +1,3 @@
-import type { StoreProvider } from '@hozon/db'
 import type { SignedRecord } from '@kokuin/records'
 import type { SigningIdentity } from '@kokuin/token'
 import type {
@@ -13,6 +12,7 @@ import type {
 } from '@kokuin/vault'
 
 import type { VaultRecords, VaultRecordsParams } from './records.js'
+import type { VaultMethods, VaultMethodsFor } from './records-methods.js'
 import type {
   EntryAddress,
   EntryFilter,
@@ -116,9 +116,9 @@ type CommonParams = {
   runtime: WrapParams['runtime']
   authority: CredentialAuthority
   nextHLC(): Promise<string>
-  methods?: WrapParams['methods']
+  methods?: VaultMethods
   /** Overrides methods with a registry for the store's provider. */
-  methodsFor?: (provider: StoreProvider) => NonNullable<WrapParams['methods']>
+  methodsFor?: VaultMethodsFor
   cache?: KeyCacheParams
   authorizeEquivalentBranch?(request: {
     entry: SignedRecord

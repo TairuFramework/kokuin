@@ -4,20 +4,23 @@ import type { VaultRecordTypeParams } from '@kokuin/vault'
 import { vaultDatabases } from './record-context.js'
 import type { VaultStoreAPI } from './types.js'
 
+/** Registry used to verify signed record ops and wrappings. */
+export type VaultMethods = NonNullable<VaultRecordTypeParams['methods']>
+
+/** Builds a registry whose resolvers read through the given provider, including transactions. */
+export type VaultMethodsFor = (provider: StoreProvider) => VaultMethods
+
 export type MethodsParams = {
-  methods?: VaultRecordTypeParams['methods']
-  methodsFor?: (provider: StoreProvider) => NonNullable<VaultRecordTypeParams['methods']>
+  methods?: VaultMethods
+  methodsFor?: VaultMethodsFor
 }
 
-const methodsByFactory = new WeakMap<
-  NonNullable<MethodsParams['methodsFor']>,
-  WeakMap<VaultStoreAPI, NonNullable<MethodsParams['methods']>>
->()
+const methodsByFactory = new WeakMap<VaultMethodsFor, WeakMap<VaultStoreAPI, VaultMethods>>()
 
 export function storeMethods(
   store: VaultStoreAPI,
   params: MethodsParams,
-): MethodsParams['methods'] {
+): VaultMethods | undefined {
   if (params.methodsFor === undefined) return params.methods
 
   let byStore = methodsByFactory.get(params.methodsFor)

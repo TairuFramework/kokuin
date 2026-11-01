@@ -32,7 +32,7 @@ import { getVaultStore } from './definition.js'
 import { VaultWriteConflict, vaultDatabases } from './record-context.js'
 import type { VaultKeyBranch, VaultRecords, VaultWritePreconditions } from './records.js'
 import { createVaultRecords, VaultRecordRowError } from './records.js'
-import type { MethodsParams } from './records-methods.js'
+import type { VaultMethods } from './records-methods.js'
 import { storeMethods } from './records-methods.js'
 import { settleAll, settledValue } from './settle.js'
 import type { KeyAddress, KeyRow, VaultStoreAPI, WrappingRow } from './types.js'
@@ -118,7 +118,7 @@ export type CoordinatorContext = {
   cache: KeyCache
   cacheID(address: KeyAddress): string
   records: VaultRecords | undefined
-  methodsFor(store: VaultStoreAPI): MethodsParams['methods']
+  methodsFor(store: VaultStoreAPI): VaultMethods | undefined
   recordsFor(store: VaultStoreAPI): VaultRecords
   authorize(
     operation: string,

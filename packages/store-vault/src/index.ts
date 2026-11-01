@@ -19,5 +19,6 @@ export {
 export type * from './record-tables.js'
 export type { VaultRecords, VaultRecordsParams, VaultWritePreconditions } from './records.js'
 export { createVaultRecords, VaultRecordRowError, vaultRecordPortsFor } from './records.js'
+export type { VaultMethods, VaultMethodsFor } from './records-methods.js'
 export type * from './tables.js'
 export type * from './types.js'
