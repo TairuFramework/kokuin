@@ -126,6 +126,10 @@
   dir: packages/store-vault
   intents:
     - vault-resolver-read-transactions
+"@kokuin/store-vault@0.2.5":
+  dir: packages/store-vault
+  intents:
+    - vault-provider-scoped-methods
 "@kokuin/token@0.4.0":
   dir: packages/token
   intents:

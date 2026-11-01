@@ -1,5 +1,11 @@
 # @kokuin/store-vault
 
+## 0.2.5
+
+### Patch Changes
+
+- Support provider-scoped verification methods to prevent resolver deadlocks in vault transactions.
+
 ## 0.2.4
 
 ### Patch Changes
