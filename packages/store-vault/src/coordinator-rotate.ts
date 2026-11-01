@@ -77,8 +77,12 @@ export function createRotateFunctions(
     })
   }
 
-  async function candidate(key: KeyRow, record: SignedRecord): Promise<Selection> {
-    const op = await ctx.verified(record)
+  async function candidate(
+    key: KeyRow,
+    record: SignedRecord,
+    store: VaultStoreAPI,
+  ): Promise<Selection> {
+    const op = await ctx.verified(record, store)
     const meta = op.claim.meta
 
     if (
@@ -138,7 +142,9 @@ export function createRotateFunctions(
       api.listPriorEntryTombstones({ ...key, beforeVersion: key.version }),
     ])
     // Checks run together; the first failure in record order still wins.
-    const values = await settleAll([...current, ...prior].map((record) => candidate(key, record)))
+    const values = await settleAll(
+      [...current, ...prior].map((record) => candidate(key, record, store)),
+    )
     const grouped = new Map<string, Array<Selection>>()
 
     for (const value of values) {
@@ -446,7 +452,7 @@ export function createRotateFunctions(
               wrappingID,
               keyID: key.keyID,
               keyVersion: next.version,
-              methods: params.methods,
+              methods: ctx.methodsFor(store),
             })
 
             return { previous, wrappingID, result }

@@ -14,6 +14,7 @@ import { getVaultStore } from './definition.js'
 import { VaultModeConflict } from './record-context.js'
 import { getVaultRecordsStore } from './record-definition.js'
 import type { VaultRecordTable } from './record-tables.js'
+import { storeMethods } from './records-methods.js'
 import { projection } from './records-projection.js'
 import type { Bound } from './records-rows.js'
 import {
@@ -44,6 +45,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
           store: await getVaultStore(provider),
           locks: [],
         }
+        innerBound.methods = storeMethods(innerBound.store, bound.params)
         const inner = makeAdapter(innerBound)
 
         return withStoreTransaction(storage.db, async () => {
@@ -166,6 +168,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         async (provider) => {
           bound.context = { ...bound.context, provider }
           bound.store = await getVaultStore(provider)
+          bound.methods = storeMethods(bound.store, bound.params)
           entered.resolve()
           await released.promise
         },
@@ -179,7 +182,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
 
       await assertDomain(bound)
 
-      const op = await verifySignedRecord(record, bound.opKind, bound.params.methods)
+      const op = await verifySignedRecord(record, bound.opKind, bound.methods)
 
       if (op === null || !supported(record.type) || !recordPayloadMatches(record, op.claim))
         throw new Error('Invalid vault record copy')
@@ -266,7 +269,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         current.copies.map(async (copy) => {
           return {
             copy,
-            op: await verifySignedRecord(copy, bound.opKind, bound.params.methods),
+            op: await verifySignedRecord(copy, bound.opKind, bound.methods),
           }
         }),
       )
