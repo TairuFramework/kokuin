@@ -1,14 +1,30 @@
-import { existsSync } from 'node:fs'
-import { setTimeout as sleep } from 'node:timers/promises'
+import { existsSync, writeFileSync } from 'node:fs'
 import { NodeKeyStore } from '@kokuin/node'
+import { AsyncEntry } from '@napi-rs/keyring'
 
-const [service, keyID, startFile, lockPath] = process.argv.slice(2)
+const args = process.argv.slice(2)
+if (args.length < 4) {
+  throw new Error('usage: provide.ts <service> <keyID> <startFile> <readyFile> [lockPath]')
+}
+const [service, keyID, startFile, readyFile, lockPath] = args as [
+  string,
+  string,
+  string,
+  string,
+  string?,
+]
 
 async function waitForStart(): Promise<void> {
-  // Spin until the parent drops the start file, so both processes enter provideAsync together.
-  // Without this the first process finishes before the second begins, and there is no race.
+  // Warm the keyring path first: the first async read spins up the thread pool and the D-Bus
+  // session, and that one-off cost would otherwise skew which racer reads first.
+  await new AsyncEntry(service, `${keyID}.warmup`).getPassword()
+  // Announce readiness, then wait for the parent's start file. The parent waits for both ready
+  // files first, so both processes enter provideAsync together instead of whenever each
+  // finishes starting up.
+  writeFileSync(readyFile, '')
   while (!existsSync(startFile)) {
-    await sleep(2)
+    // Spin without sleeping: a timer tick of skew is enough for one racer's read to land after
+    // the other's write, and then there is no race to observe.
   }
 }
 
