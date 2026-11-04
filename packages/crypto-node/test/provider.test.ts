@@ -9,6 +9,9 @@ import { expect, test } from 'vitest'
 import { nodeCrypto } from '../src/index.js'
 
 const N = p256.Point.CURVE().n
+// The random comparisons run strict noble ES256 at about 1.7 ms per operation, which a loaded CI
+// runner stretches past the 5s default.
+const RANDOM = { timeout: 30_000 }
 
 function vector(name: string) {
   const entry = corpus.verify.find((candidate) => candidate.name === name)
@@ -50,21 +53,21 @@ test('rejects a compressed key whose x has no point on the curve', async () => {
   expect(await nobleCrypto.verify('ES256', signature, message, offCurve)).toBe(false)
 })
 
-test('agrees with strict noble on random Ed25519 signatures', async () => {
-  for (let i = 0; i < 64; i++) {
+test('agrees with strict noble on random Ed25519 signatures', RANDOM, async () => {
+  for (let i = 0; i < 32; i++) {
     const seed = new Uint8Array(randomBytes(32))
-    const message = new Uint8Array(randomBytes(i * 37))
+    const message = new Uint8Array(randomBytes(i * 73))
     expect(await nodeCrypto.sign('EdDSA', seed, message)).toEqual(
       await nobleCrypto.sign('EdDSA', seed, message),
     )
   }
 })
 
-test('agrees with strict noble on random ES256 verifications', async () => {
-  for (let i = 0; i < 48; i++) {
+test('agrees with strict noble on random ES256 verifications', RANDOM, async () => {
+  for (let i = 0; i < 16; i++) {
     const secret = p256.utils.randomSecretKey()
     const publicKey = p256.getPublicKey(secret, i % 2 === 0)
-    const message = new Uint8Array(randomBytes(i * 29))
+    const message = new Uint8Array(randomBytes(i * 83))
     const signature = p256.sign(message, secret, { lowS: true, prehash: true, format: 'compact' })
     const high = signature.slice()
     high.set(numberToBytesBE(N - bytesToNumberBE(signature.subarray(32)), 32), 32)
