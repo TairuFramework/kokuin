@@ -1,8 +1,8 @@
-import type { MethodRegistry } from '@kokuin/token'
+import type { CryptoOptions, MethodRegistry } from '@kokuin/token'
 
 import { compareRecordDecisionHLC, parseCanonicalHLC } from './clock.js'
 import { type VerifiedRecordOp, verifySignedRecord } from './op.js'
-import { RecordClaimError, type RecordKey, recordClaimDigest, type SignedRecord } from './record.js'
+import { RecordClaimError, type RecordKey, type SignedRecord } from './record.js'
 
 export type RecordDecision = {
   key: RecordKey
@@ -28,7 +28,7 @@ export function recordDecisionFromVerifiedCopies(
   for (const { op } of entries) {
     const decisionHLC = decisionStamp(op, stampSource)
     if (decisionHLC === null || parseCanonicalHLC(decisionHLC) === null) continue
-    const contentDigest = recordClaimDigest(op.claim)
+    const contentDigest = op.contentDigest
     if (
       winner === null ||
       compareRecordDecisionHLC(decisionHLC, winner.decisionHLC) > 0 ||
@@ -45,7 +45,7 @@ export function recordDecisionFromVerifiedCopies(
       .filter(
         ({ op }) =>
           decisionStamp(op, stampSource) === winner.decisionHLC &&
-          recordClaimDigest(op.claim) === winner.contentDigest,
+          op.contentDigest === winner.contentDigest,
       )
       .map(({ copy }) => copy)
       .sort((a, b) => (a.opHash < b.opHash ? -1 : a.opHash > b.opHash ? 1 : 0)),
@@ -57,8 +57,9 @@ export async function recordDecisionDigest(
   record: SignedRecord,
   opKind: string,
   methods?: MethodRegistry,
+  options?: CryptoOptions,
 ): Promise<string> {
-  const op = await verifySignedRecord(record, opKind, methods)
+  const op = await verifySignedRecord(record, opKind, methods, options)
   if (op === null) throw new RecordClaimError('Record signature is invalid')
-  return recordClaimDigest(op.claim)
+  return op.contentDigest
 }

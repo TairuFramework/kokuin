@@ -10,6 +10,7 @@ import {
   applyRecordChunk,
   getRecordDecisions,
   recordKeyText,
+  snapshotRecord,
   verifyRecordOp,
   verifySignedRecord,
 } from '@kokuin/records'
@@ -32,6 +33,7 @@ import {
   VaultRecordRowError,
 } from './records-rows.js'
 import { settleAll, settledValue } from './settle.js'
+import { snapshotData } from './snapshot.js'
 import type { EntryAddress, KeyAddress, VaultStoreAPI, WrappingRow } from './types.js'
 
 export { vaultRecordPortsFor } from './records-ports.js'
@@ -190,7 +192,12 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
   const api: VaultRecords = {
     adapter,
     apply: (records, transportContext) => apply(records, adapter, transportContext),
-    async write(request) {
+    async write(input) {
+      const request = {
+        ...input,
+        records: input.records.map(snapshotRecord),
+        preconditions: snapshotData(input.preconditions),
+      }
       if (request.preconditions === undefined)
         throw new TypeError('Signed writes require explicit preconditions')
 
@@ -384,7 +391,8 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
 
       return params.store.listWrappings(address)
     },
-    async rebuildKeyBranches(address) {
+    async rebuildKeyBranches(input) {
+      const address = { ...input }
       await assertDomain(bound)
 
       const decisions = await adapter.list(['vault.key-branch'])
@@ -403,7 +411,7 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
 
         if (op === null || op.claim.meta.keyID !== address.keyID) continue
 
-        const decoded = decodeVaultRecord(record, op.claim.meta)
+        const decoded = await decodeVaultRecord(record, op.claim.meta)
 
         if (decoded.type !== 'vault.key-branch') continue
 

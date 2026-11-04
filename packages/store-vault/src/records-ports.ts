@@ -1,6 +1,6 @@
 import { withStoreTransaction } from '@hozon/db'
 import type { RecordStoreAdapter } from '@kokuin/records'
-import { recordPayloadMatches, verifySignedRecord } from '@kokuin/records'
+import { recordPayloadMatches, snapshotRecord, verifySignedRecord } from '@kokuin/records'
 import type { VaultRecordPorts } from '@kokuin/vault'
 import { vaultRecordMeta, vaultRevocationRecordID } from '@kokuin/vault'
 
@@ -20,14 +20,15 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
   const { db } = bound
 
   return {
-    async retainEntryCandidate(record) {
+    async retainEntryCandidate(input) {
+      const record = snapshotRecord(input)
       if (!db.isTransaction) throw new Error('Candidate retention requires the apply transaction')
 
       const op = await verifySignedRecord(record, bound.opKind, bound.methods)
 
       if (
         op === null ||
-        !recordPayloadMatches(record, op.claim) ||
+        !(await recordPayloadMatches(record, op.claim)) ||
         vaultRecordMeta('vault.entry', op.claim) === null
       )
         throw new Error('Invalid entry candidate')
@@ -58,7 +59,8 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
 
       return rows.map((row) => row.recipient_did)
     },
-    async dropRevokedWrappings(address) {
+    async dropRevokedWrappings(input) {
+      const address = { ...input }
       if (!db.isTransaction) throw new Error('Wrapping suppression requires the apply transaction')
 
       const [revocations, wrappings] = await settleAll([

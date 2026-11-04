@@ -1,5 +1,5 @@
 import { blake3 } from '@noble/hashes/blake3.js'
-import { fromUTF, toB64U } from '@sozai/codec'
+import { canonicalStringify, fromUTF, toB64U } from '@sozai/codec'
 import { HLC } from '@sozai/hlc'
 import { describe, expect, test } from 'vitest'
 
@@ -95,31 +95,31 @@ function isSummary(child: RangeSummary | RangeLeafList): child is RangeSummary {
 }
 
 describe('fingerprintRange', () => {
-  test('does not depend on the order of the leaves', () => {
+  test('does not depend on the order of the leaves', async () => {
     const rows = leaves(100)
-    expect(fingerprintRange(shuffled(rows))).toBe(fingerprintRange(rows))
+    expect(await fingerprintRange(shuffled(rows))).toBe(await fingerprintRange(rows))
   })
 
-  test.each([10, 100, 1000])('is the hash of the lane sum and count at %i rows', (count) => {
+  test.each([10, 100, 1000])('is the hash of the lane sum and count at %i rows', async (count) => {
     const rows = leaves(count)
-    expect(fingerprintRange(rows)).toBe(referenceFingerprint(rows))
+    expect(await fingerprintRange(rows)).toBe(referenceFingerprint(rows))
   })
 
-  test('adding then removing a leaf restores the fingerprint', () => {
+  test('adding then removing a leaf restores the fingerprint', async () => {
     const rows = leaves(100)
     const extra = leafAt(1000)
-    const added = fingerprintRange([...rows, extra])
-    expect(added).not.toBe(fingerprintRange(rows))
+    const added = await fingerprintRange([...rows, extra])
+    expect(added).not.toBe(await fingerprintRange(rows))
     expect(added).toBe(referenceFingerprint([...rows, extra]))
-    expect(fingerprintRange([...rows, extra].filter((row) => row !== extra))).toBe(
-      fingerprintRange(rows),
+    expect(await fingerprintRange([...rows, extra].filter((row) => row !== extra))).toBe(
+      await fingerprintRange(rows),
     )
   })
 
-  test('adds lanes as big-endian words with unsigned wrap', () => {
+  test('adds lanes as big-endian words with unsigned wrap', async () => {
     // 0x000000ff + 0x00000001 carries into the second byte only when read big-endian;
     // 0xffffffff + 0x00000001 wraps to zero.
-    const carry = fingerprintRange([
+    const carry = await fingerprintRange([
       leafWithHash('a', laneHash(0xff)),
       leafWithHash('b', laneHash(0x01)),
     ])
@@ -131,7 +131,7 @@ describe('fingerprintRange', () => {
     carryView.setUint32(32, 2, false)
     expect(carry).toBe(toB64U(blake3(expectedCarry, { dkLen: 16 })))
 
-    const wrapped = fingerprintRange([
+    const wrapped = await fingerprintRange([
       leafWithHash('a', laneHash(0xffffffff)),
       leafWithHash('b', laneHash(0x01)),
     ])
@@ -140,12 +140,12 @@ describe('fingerprintRange', () => {
     expect(wrapped).toBe(toB64U(blake3(expectedWrap, { dkLen: 16 })))
   })
 
-  test('the count takes part, so equal sums of different sizes differ', () => {
+  test('the count takes part, so equal sums of different sizes differ', async () => {
     const zero = laneHash(0)
-    const none = fingerprintRange([])
-    const one = fingerprintRange([leafWithHash('a', zero)])
-    const two = fingerprintRange([leafWithHash('a', zero), leafWithHash('b', zero)])
-    const wrapPair = fingerprintRange([
+    const none = await fingerprintRange([])
+    const one = await fingerprintRange([leafWithHash('a', zero)])
+    const two = await fingerprintRange([leafWithHash('a', zero), leafWithHash('b', zero)])
+    const wrapPair = await fingerprintRange([
       leafWithHash('a', laneHash(0xffffffff)),
       leafWithHash('b', laneHash(0x01)),
     ])
@@ -154,12 +154,16 @@ describe('fingerprintRange', () => {
     expect(wrapPair).toBe(two)
   })
 
-  test('refuses an op hash that is not 32 bytes of base64url', () => {
-    expect(() => fingerprintRange([leafWithHash('a', 'a')])).toThrow(RecordRangeError)
-    expect(() => fingerprintRange([leafWithHash('a', toB64U(new Uint8Array(31)))])).toThrow(
+  test('refuses an op hash that is not 32 bytes of base64url', async () => {
+    await expect(async () => await fingerprintRange([leafWithHash('a', 'a')])).rejects.toThrow(
       RecordRangeError,
     )
-    expect(() => fingerprintRange([leafWithHash('a', `${laneHash(0)}=`)])).toThrow(RecordRangeError)
+    await expect(
+      async () => await fingerprintRange([leafWithHash('a', toB64U(new Uint8Array(31)))]),
+    ).rejects.toThrow(RecordRangeError)
+    await expect(
+      async () => await fingerprintRange([leafWithHash('a', `${laneHash(0)}=`)]),
+    ).rejects.toThrow(RecordRangeError)
   })
 })
 
@@ -176,7 +180,7 @@ describe('rangeContains', () => {
 })
 
 describe('summarizeRange', () => {
-  test('covers only the leaves of the range', () => {
+  test('covers only the leaves of the range', async () => {
     const rows = leaves(40)
     const sorted = [...rows].sort((left, right) => (left.id < right.id ? -1 : 1))
     const bounds: RangeBounds = {
@@ -185,8 +189,8 @@ describe('summarizeRange', () => {
       upper: rangePosition(sorted[19] as RangeLeaf),
     }
     const inside = sorted.slice(10, 20)
-    const summary = summarizeRange([...rows, ...leaves(5, 'credential.key')], bounds)
-    expect(summary).toEqual({ bounds, fingerprint: fingerprintRange(inside), count: 10 })
+    const summary = await summarizeRange([...rows, ...leaves(5, 'credential.key')], bounds)
+    expect(summary).toEqual({ bounds, fingerprint: await fingerprintRange(inside), count: 10 })
   })
 })
 
@@ -196,10 +200,10 @@ describe('splitRange', () => {
     expect(RANGE_LEAF_THRESHOLD).toBe(16)
   })
 
-  test('lists a range at the threshold in id order, without other types or ids', () => {
+  test('lists a range at the threshold in id order, without other types or ids', async () => {
     const rows = leaves(RANGE_LEAF_THRESHOLD)
     const others = leaves(3, 'credential.key')
-    const children = splitRange(shuffled([...rows, ...others]), WHOLE, RANGE_LEAF_THRESHOLD)
+    const children = await splitRange(shuffled([...rows, ...others]), WHOLE, RANGE_LEAF_THRESHOLD)
     const sorted = [...rows].sort((left, right) => (left.id < right.id ? -1 : 1))
     expect(children).toEqual([{ bounds: WHOLE, leaves: sorted }])
     const [listed] = children as [RangeLeafList]
@@ -208,24 +212,26 @@ describe('splitRange', () => {
     )
   })
 
-  test('lists an empty range as no leaves', () => {
-    expect(splitRange([], WHOLE, RANGE_LEAF_THRESHOLD)).toEqual([{ bounds: WHOLE, leaves: [] }])
+  test('lists an empty range as no leaves', async () => {
+    expect(await splitRange([], WHOLE, RANGE_LEAF_THRESHOLD)).toEqual([
+      { bounds: WHOLE, leaves: [] },
+    ])
   })
 
   test.each([
     [17, 9],
     [100, 15],
     [1000, 16],
-  ])('splits %i rows into %i summaries that partition the range', (count, expected) => {
+  ])('splits %i rows into %i summaries that partition the range', async (count, expected) => {
     const rows = leaves(count)
-    const children = splitRange(shuffled(rows), WHOLE, RANGE_LEAF_THRESHOLD)
+    const children = await splitRange(shuffled(rows), WHOLE, RANGE_LEAF_THRESHOLD)
     expect(children).toHaveLength(expected)
     expect(children.every(isSummary)).toBe(true)
     const summaries = children as Array<RangeSummary>
 
     expect(summaries[0]?.bounds.lower).toBeNull()
     expect(summaries.at(-1)?.bounds.upper).toBeNull()
-    summaries.forEach((summary, index) => {
+    summaries.forEach(async (summary, index) => {
       expect(summary.bounds.type).toBe(TYPE)
       if (index > 0) {
         expect(summary.bounds.lower).toBe(summaries[index - 1]?.bounds.upper)
@@ -233,12 +239,12 @@ describe('splitRange', () => {
       const inside = rows.filter((row) => rangeContains(summary.bounds, row))
       expect(summary.count).toBe(inside.length)
       expect(summary.count).toBeGreaterThan(0)
-      expect(summary.fingerprint).toBe(fingerprintRange(inside))
+      expect(summary.fingerprint).toBe(await fingerprintRange(inside))
     })
     expect(summaries.reduce((total, summary) => total + summary.count, 0)).toBe(count)
   })
 
-  test('splits a bounded sub-range inside its own bounds', () => {
+  test('splits a bounded sub-range inside its own bounds', async () => {
     const rows = leaves(200)
     const sorted = [...rows].sort((left, right) => (left.id < right.id ? -1 : 1))
     const bounds: RangeBounds = {
@@ -246,29 +252,38 @@ describe('splitRange', () => {
       lower: rangePosition(sorted[49] as RangeLeaf),
       upper: rangePosition(sorted[149] as RangeLeaf),
     }
-    const summaries = splitRange(rows, bounds, RANGE_LEAF_THRESHOLD) as Array<RangeSummary>
+    const summaries = (await splitRange(rows, bounds, RANGE_LEAF_THRESHOLD)) as Array<RangeSummary>
     expect(summaries[0]?.bounds.lower).toBe(bounds.lower)
     expect(summaries.at(-1)?.bounds.upper).toBe(bounds.upper)
     expect(summaries.reduce((total, summary) => total + summary.count, 0)).toBe(100)
   })
 
-  test('refuses a threshold that could not make progress', () => {
-    expect(() => splitRange(leaves(2), WHOLE, 0)).toThrow(RecordRangeError)
-    expect(() => splitRange(leaves(2), WHOLE, 1.5)).toThrow(RecordRangeError)
+  test('refuses a threshold that could not make progress', async () => {
+    await expect(async () => await splitRange(leaves(2), WHOLE, 0)).rejects.toThrow(
+      RecordRangeError,
+    )
+    await expect(async () => await splitRange(leaves(2), WHOLE, 1.5)).rejects.toThrow(
+      RecordRangeError,
+    )
   })
 
-  test('refuses two leaves for one record', () => {
+  test('refuses two leaves for one record', async () => {
     const [first] = leaves(1) as [RangeLeaf]
-    expect(() =>
-      splitRange([first, { ...first, opHash: hashOf('other') }], WHOLE, RANGE_LEAF_THRESHOLD),
-    ).toThrow(RecordRangeError)
+    await expect(
+      async () =>
+        await splitRange(
+          [first, { ...first, opHash: hashOf('other') }],
+          WHOLE,
+          RANGE_LEAF_THRESHOLD,
+        ),
+    ).rejects.toThrow(RecordRangeError)
   })
 })
 
 const T0 = Date.parse('2026-09-26T00:00:00.000Z')
 
 function op(opHash: string, claim: Partial<RecordClaim> = {}): VerifiedRecordOp {
-  return {
+  const value = {
     issuer: 'did:key:owner',
     opHash,
     claim: {
@@ -282,6 +297,29 @@ function op(opHash: string, claim: Partial<RecordClaim> = {}): VerifiedRecordOp 
       ...claim,
     },
   }
+  return {
+    ...value,
+    contentDigest: toB64U(
+      blake3(
+        fromUTF(
+          canonicalStringify({
+            ...value.claim,
+            hlc:
+              typeof value.claim.meta.version === 'string'
+                ? value.claim.meta.version
+                : value.claim.hlc,
+          }),
+        ),
+        { dkLen: 32 },
+      ),
+    ),
+  }
+}
+
+function invalidVersion(opHash: string, version: Array<number>): VerifiedRecordOp {
+  const value = op(opHash, { meta: { version: [] } })
+  value.claim.meta.version = version
+  return value
 }
 
 const VERSIONED: MergePolicy = {
@@ -304,41 +342,44 @@ function decisionFromOp(op: VerifiedRecordOp): RecordDecision {
   return {
     key: { type: record.type, owner: record.owner, id: record.id },
     decisionHLC: op.claim.hlc,
-    contentDigest: op.opHash,
+    contentDigest: op.contentDigest,
     copies: [record],
   }
 }
 
-function leafFromOp(op: VerifiedRecordOp, policy: MergePolicy): RangeLeaf | null {
-  return rangeLeaf(decisionFromOp(op), policy)
+async function leafFromOp(op: VerifiedRecordOp, policy: MergePolicy): Promise<RangeLeaf | null> {
+  return await rangeLeaf(decisionFromOp(op), policy)
 }
 
 describe('rangeLeaf', () => {
-  test.each(['first', 'later'])('ignores a malformed %s copy beside a valid copy', (position) => {
-    const digest = toB64U(new Uint8Array(32).fill(7))
-    const decision = decisionFromOp(op(digest))
-    const valid = decision.copies[0] as SignedRecord
-    const malformed = {
-      ...valid,
-      opJWT:
-        position === 'first'
-          ? 'not-a-token'
-          : `header.${toB64U(fromUTF(JSON.stringify({ iss: 'other', claim: 'invalid' })))}.signature`,
-    }
-    const copies = position === 'first' ? [malformed, valid] : [valid, malformed]
-    expect(rangeLeaf({ ...decision, copies }, { kind: 'lww' })).toEqual({
-      type: TYPE,
-      owner: 'did:key:owner',
-      id: 'record-1',
-      opHash: hashOf(JSON.stringify([digest, ['owner']])),
-      order: HLC.serialize({ wallTime: T0, counter: 0, nodeID: 'node' }),
-      contentDigest: digest,
-      signers: ['owner'],
-    })
-  })
-  test('keeps non-credential leaf fingerprints at the pre-reissue vector and emits plain leaves', () => {
+  test.each(['first', 'later'])(
+    'ignores a malformed %s copy beside a valid copy',
+    async (position) => {
+      const digest = toB64U(new Uint8Array(32).fill(7))
+      const decision = decisionFromOp(op(digest))
+      const valid = decision.copies[0] as SignedRecord
+      const malformed = {
+        ...valid,
+        opJWT:
+          position === 'first'
+            ? 'not-a-token'
+            : `header.${toB64U(fromUTF(JSON.stringify({ iss: 'other', claim: 'invalid' })))}.signature`,
+      }
+      const copies = position === 'first' ? [malformed, valid] : [valid, malformed]
+      expect(await rangeLeaf({ ...decision, copies }, { kind: 'lww' })).toEqual({
+        type: TYPE,
+        owner: 'did:key:owner',
+        id: 'record-1',
+        opHash: hashOf(JSON.stringify([op(digest).contentDigest, ['owner']])),
+        order: HLC.serialize({ wallTime: T0, counter: 0, nodeID: 'node' }),
+        contentDigest: op(digest).contentDigest,
+        signers: ['owner'],
+      })
+    },
+  )
+  test('fingerprints non-credential content and emits plain leaves', async () => {
     const opHash = toB64U(new Uint8Array(32).fill(7))
-    const nonCredential = leafFromOp(
+    const nonCredential = await leafFromOp(
       op(opHash, { type: 'catalog.record', meta: { version: [1] } }),
       VERSIONED,
     )
@@ -346,41 +387,50 @@ describe('rangeLeaf', () => {
       type: 'catalog.record',
       owner: 'did:key:owner',
       id: 'record-1',
-      opHash: hashOf(JSON.stringify([opHash, ['owner']])),
+      opHash: hashOf(
+        JSON.stringify([
+          op(opHash, { type: 'catalog.record', meta: { version: [1] } }).contentDigest,
+          ['owner'],
+        ]),
+      ),
       order: 'bff0000000000000',
-      contentDigest: opHash,
+      contentDigest: op(opHash, { type: 'catalog.record', meta: { version: [1] } }).contentDigest,
       signers: ['owner'],
     })
-    expect(fingerprintRange([nonCredential as RangeLeaf])).toBe('ypCiDdJwWeikqoNKP1qSpw')
-    expect(leafFromOp(op(opHash, { meta: { version: [1] } }), VERSIONED)).toEqual({
+    expect(await fingerprintRange([nonCredential as RangeLeaf])).toBe('sASs4GoVReTICHkgY7JX9w')
+    expect(await leafFromOp(op(opHash, { meta: { version: [1] } }), VERSIONED)).toEqual({
       type: TYPE,
       owner: 'did:key:owner',
       id: 'record-1',
-      opHash: hashOf(JSON.stringify([opHash, ['owner']])),
+      opHash: hashOf(
+        JSON.stringify([op(opHash, { meta: { version: [1] } }).contentDigest, ['owner']]),
+      ),
       order: 'bff0000000000000',
-      contentDigest: opHash,
+      contentDigest: op(opHash, { meta: { version: [1] } }).contentDigest,
       signers: ['owner'],
     })
   })
 
-  test('orders lww by the canonical stamp', () => {
+  test('orders lww by the canonical stamp', async () => {
     const hlc = HLC.serialize({ wallTime: T0 + 5, counter: 3, nodeID: 'node' })
-    expect(leafFromOp(op('h', { hlc }), { kind: 'lww' })).toEqual({
+    expect(await leafFromOp(op('h', { hlc }), { kind: 'lww' })).toEqual({
       type: TYPE,
       owner: 'did:key:owner',
       id: 'record-1',
-      opHash: hashOf(JSON.stringify(['h', ['owner']])),
-      contentDigest: 'h',
+      opHash: hashOf(JSON.stringify([op('h', { hlc }).contentDigest, ['owner']])),
+      contentDigest: op('h', { hlc }).contentDigest,
       order: hlc,
       signers: ['owner'],
     })
   })
 
-  test('leaves out an lww op whose stamp is not canonical', () => {
-    expect(leafFromOp(op('h', { hlc: '2026-09-26T00:00:00Z:0:node' }), { kind: 'lww' })).toBeNull()
+  test('leaves out an lww op whose stamp is not canonical', async () => {
+    expect(
+      await leafFromOp(op('h', { hlc: '2026-09-26T00:00:00Z:0:node' }), { kind: 'lww' }),
+    ).toBeNull()
   })
 
-  test('leaves out an lww op stamped outside the years string order can compare', () => {
+  test('leaves out an lww op stamped outside the years string order can compare', async () => {
     const stamp = (wallTime: number) => HLC.serialize({ wallTime, counter: 0, nodeID: 'node' })
     const yearZero = -62_167_219_200_000
     expect(stamp(yearZero)).toBe('0000-01-01T00:00:00.000Z:00000000:node')
@@ -389,21 +439,21 @@ describe('rangeLeaf', () => {
     const first = stamp(yearZero)
     const last = stamp(253_402_300_799_999)
     const preEpoch = stamp(Date.parse('1969-07-20T20:17:00.000Z'))
-    expect(leafFromOp(op('h', { hlc: before }), { kind: 'lww' })).toBeNull()
-    expect(leafFromOp(op('h', { hlc: after }), { kind: 'lww' })).toBeNull()
-    expect(leafFromOp(op('h', { hlc: first }), { kind: 'lww' })?.order).toBe(first)
-    expect(leafFromOp(op('h', { hlc: last }), { kind: 'lww' })?.order).toBe(last)
-    expect(leafFromOp(op('h', { hlc: preEpoch }), { kind: 'lww' })?.order).toBe(preEpoch)
+    expect(await leafFromOp(op('h', { hlc: before }), { kind: 'lww' })).toBeNull()
+    expect(await leafFromOp(op('h', { hlc: after }), { kind: 'lww' })).toBeNull()
+    expect((await leafFromOp(op('h', { hlc: first }), { kind: 'lww' }))?.order).toBe(first)
+    expect((await leafFromOp(op('h', { hlc: last }), { kind: 'lww' }))?.order).toBe(last)
+    expect((await leafFromOp(op('h', { hlc: preEpoch }), { kind: 'lww' }))?.order).toBe(preEpoch)
     // Canonical stamps inside those years sort as strings in time order, before 1970 too.
     const inOrder = [first, preEpoch, stamp(0), last]
     expect([...inOrder].reverse().sort()).toEqual(inOrder)
   })
 
-  test('orders immutable by the op hash', () => {
-    expect(leafFromOp(op('h'), { kind: 'immutable' })?.order).toBe('h')
+  test('orders immutable by the content digest', async () => {
+    expect((await leafFromOp(op('h'), { kind: 'immutable' }))?.order).toBe(op('h').contentDigest)
   })
 
-  test('encodes a monotonic version so string order is tuple order', () => {
+  test('encodes a monotonic version so string order is tuple order', async () => {
     const versions: Array<Array<number>> = [
       [],
       [0],
@@ -422,8 +472,13 @@ describe('rangeLeaf', () => {
       [Number.MIN_VALUE],
       [-Number.MIN_VALUE],
     ]
-    const orderOf = (version: Array<number>) =>
-      leafFromOp(op('h', { meta: { version } }), VERSIONED)?.order as string
+    const orderOf = async (version: Array<number>) =>
+      (await leafFromOp(op('h', { meta: { version } }), VERSIONED))?.order as string
+    const orders = new Map(
+      await Promise.all(
+        versions.map(async (version) => [version, await orderOf(version)] as const),
+      ),
+    )
     for (const left of versions) {
       for (const right of versions) {
         const decision = compareRecordOps(
@@ -431,16 +486,22 @@ describe('rangeLeaf', () => {
           op('b', { meta: { version: right } }),
           VERSIONED,
         )
-        const byOrder = orderOf(left) < orderOf(right) ? -1 : orderOf(left) > orderOf(right) ? 1 : 0
+        const byOrder =
+          (orders.get(left) as string) < (orders.get(right) as string)
+            ? -1
+            : (orders.get(left) as string) > (orders.get(right) as string)
+              ? 1
+              : 0
         // The policy applies a greater version, keeps a lesser one and reports an equal one.
-        const byPolicy = orderOf(left) === orderOf(right) ? 0 : decision.status === 'apply' ? 1 : -1
+        const byPolicy =
+          orders.get(left) === orders.get(right) ? 0 : decision.status === 'apply' ? 1 : -1
         expect([left, right, byOrder]).toEqual([left, right, byPolicy])
       }
     }
   })
 
-  test('leaves out a monotonic op whose version cannot be read', () => {
-    expect(leafFromOp(op('h', { meta: { version: [Number.NaN] } }), VERSIONED)).toBeNull()
-    expect(leafFromOp(op('h', { meta: {} }), VERSIONED)).toBeNull()
+  test('leaves out a monotonic op whose version cannot be read', async () => {
+    expect(await leafFromOp(invalidVersion('h', [Number.NaN]), VERSIONED)).toBeNull()
+    expect(await leafFromOp(op('h', { meta: {} }), VERSIONED)).toBeNull()
   })
 })

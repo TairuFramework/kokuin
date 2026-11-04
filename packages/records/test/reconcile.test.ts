@@ -70,7 +70,7 @@ function key(entry: { type: string; owner: string; id: string }): string {
   return JSON.stringify([entry.type, entry.owner, entry.id])
 }
 
-test('a directional pass stops with no pull when R has an extra row', () => {
+test('a directional pass stops with no pull when R has an extra row', async () => {
   const s: Array<RangeLeaf> = [
     {
       type: 'credential.entry',
@@ -95,56 +95,56 @@ test('a directional pass stops with no pull when R has an extra row', () => {
     },
   ]
   const bounds = { type: 'credential.entry', lower: null, upper: null }
-  const steps = nextRequesterSteps(r, { bounds, leaves: s })
+  const steps = await nextRequesterSteps(r, { bounds, leaves: s })
   expect(steps).toEqual([])
 })
 
 describe('the requester answers a summary', () => {
   const rows = leaves(40)
 
-  test('matches when it holds the same records in the range', () => {
-    const summary = summarizeRange(rows, WHOLE)
-    expect(nextRequesterSteps([...rows].reverse(), summary)).toEqual([
+  test('matches when it holds the same records in the range', async () => {
+    const summary = await summarizeRange(rows, WHOLE)
+    expect(await nextRequesterSteps([...rows].reverse(), summary)).toEqual([
       { answer: 'matches', bounds: WHOLE },
     ])
   })
 
-  test('is empty when it holds nothing in the range, whatever it holds elsewhere', () => {
+  test('is empty when it holds nothing in the range, whatever it holds elsewhere', async () => {
     const sorted = [...rows].sort((left, right) => (left.id < right.id ? -1 : 1))
     const bounds: RangeBounds = {
       type: TYPE,
       lower: rangePosition(sorted[19] as RangeLeaf),
       upper: null,
     }
-    const summary = summarizeRange(rows, bounds)
+    const summary = await summarizeRange(rows, bounds)
     const local = [...sorted.slice(0, 20), ...leaves(5, 'credential.key')]
-    expect(nextRequesterSteps(local, summary)).toEqual([{ answer: 'empty', bounds }])
+    expect(await nextRequesterSteps(local, summary)).toEqual([{ answer: 'empty', bounds }])
   })
 
-  test('differs when it holds an older op of one record', () => {
+  test('differs when it holds an older op of one record', async () => {
     const stale = rows.map((row, index) =>
       index === 7 ? { ...row, opHash: hashOf('stale'), order: orderAt(-1) } : row,
     )
-    expect(nextRequesterSteps(stale, summarizeRange(rows, WHOLE))).toEqual([
+    expect(await nextRequesterSteps(stale, await summarizeRange(rows, WHOLE))).toEqual([
       { answer: 'differs', bounds: WHOLE },
     ])
   })
 
-  test('differs when it holds a record the responder lacks', () => {
-    expect(nextRequesterSteps([...rows, leafAt(99)], summarizeRange(rows, WHOLE))).toEqual([
-      { answer: 'differs', bounds: WHOLE },
-    ])
+  test('differs when it holds a record the responder lacks', async () => {
+    expect(
+      await nextRequesterSteps([...rows, leafAt(99)], await summarizeRange(rows, WHOLE)),
+    ).toEqual([{ answer: 'differs', bounds: WHOLE }])
   })
 
-  test('matches a range the responder holds nothing in, since there is nothing to pull', () => {
-    expect(nextRequesterSteps(rows, summarizeRange([], WHOLE))).toEqual([
+  test('matches a range the responder holds nothing in, since there is nothing to pull', async () => {
+    expect(await nextRequesterSteps(rows, await summarizeRange([], WHOLE))).toEqual([
       { answer: 'matches', bounds: WHOLE },
     ])
   })
 
-  test('reads its own records only from the range and type it was asked about', () => {
-    const summary = summarizeRange(rows, WHOLE)
-    expect(nextRequesterSteps([...rows, ...leaves(3, 'credential.key')], summary)).toEqual([
+  test('reads its own records only from the range and type it was asked about', async () => {
+    const summary = await summarizeRange(rows, WHOLE)
+    expect(await nextRequesterSteps([...rows, ...leaves(3, 'credential.key')], summary)).toEqual([
       { answer: 'matches', bounds: WHOLE },
     ])
   })
@@ -161,29 +161,34 @@ describe('the requester picks what to fetch from a leaf list', () => {
     order: orderAt(5),
   }
 
-  function fetched(local: Array<RangeLeaf>, listed: Array<RangeLeaf>): Array<RequesterStep> {
-    return nextRequesterSteps(local, { bounds: WHOLE, leaves: listed })
+  async function fetched(
+    local: Array<RangeLeaf>,
+    listed: Array<RangeLeaf>,
+  ): Promise<Array<RequesterStep>> {
+    return await nextRequesterSteps(local, { bounds: WHOLE, leaves: listed })
   }
 
-  test('fetches a record it lacks', () => {
-    expect(fetched([], [held])).toEqual([{ get: [{ type: TYPE, owner: OWNER, id: 'held' }] }])
+  test('fetches a record it lacks', async () => {
+    expect(await fetched([], [held])).toEqual([{ get: [{ type: TYPE, owner: OWNER, id: 'held' }] }])
   })
 
-  test('fetches a newer order the responder alone holds', () => {
+  test('fetches a newer order the responder alone holds', async () => {
     const newer = { ...held, opHash: hashOf('newer'), order: orderAt(6) }
-    expect(fetched([held], [newer])).toEqual([{ get: [{ type: TYPE, owner: OWNER, id: 'held' }] }])
+    expect(await fetched([held], [newer])).toEqual([
+      { get: [{ type: TYPE, owner: OWNER, id: 'held' }] },
+    ])
   })
 
-  test('fetches a survivor reissue only when its ordinary order is later', () => {
+  test('fetches a survivor reissue only when its ordinary order is later', async () => {
     const removed = { ...held, order: orderAt(5) }
     const reissue = { ...held, opHash: hashOf('survivor-reissue'), order: orderAt(10) }
-    expect(nextRequesterSteps([removed], { bounds: WHOLE, leaves: [reissue] })).toEqual([
+    expect(await nextRequesterSteps([removed], { bounds: WHOLE, leaves: [reissue] })).toEqual([
       { get: [{ type: TYPE, owner: OWNER, id: held.id }] },
     ])
-    expect(nextRequesterSteps([reissue], { bounds: WHOLE, leaves: [removed] })).toEqual([])
+    expect(await nextRequesterSteps([reissue], { bounds: WHOLE, leaves: [removed] })).toEqual([])
   })
 
-  test('fetches a re-added device op newer than an old survivor reissue', () => {
+  test('fetches a re-added device op newer than an old survivor reissue', async () => {
     const reissue = {
       ...held,
       issuer: 'did:key:survivor',
@@ -196,18 +201,18 @@ describe('the requester picks what to fetch from a leaf list', () => {
       opHash: hashOf('readded-device-op'),
       order: orderAt(6),
     }
-    expect(fetched([reissue], [readded])).toEqual([
+    expect(await fetched([reissue], [readded])).toEqual([
       { get: [{ type: TYPE, owner: OWNER, id: held.id }] },
     ])
   })
 
-  test('does not fetch the same op, or an older order', () => {
-    expect(fetched([held], [held])).toEqual([])
+  test('does not fetch the same op, or an older order', async () => {
+    expect(await fetched([held], [held])).toEqual([])
     const older = { ...held, opHash: hashOf('older'), order: orderAt(4) }
-    expect(fetched([held], [older])).toEqual([])
+    expect(await fetched([held], [older])).toEqual([])
   })
 
-  test('at an equal order, fetches only the op the policy prefers: the greater op hash', () => {
+  test('at an equal order, fetches only the op the policy prefers: the greater op hash', async () => {
     const [low, middle, high] = [hashOf('x'), hashOf('y'), hashOf('z')].sort() as [
       string,
       string,
@@ -216,13 +221,13 @@ describe('the requester picks what to fetch from a leaf list', () => {
     const mine = { ...held, opHash: middle, contentDigest: middle }
     const greater = { ...held, opHash: high, contentDigest: high }
     const lesser = { ...held, opHash: low, contentDigest: low }
-    expect(fetched([mine], [greater])).toEqual([
+    expect(await fetched([mine], [greater])).toEqual([
       { get: [{ type: TYPE, owner: OWNER, id: 'held' }] },
     ])
-    expect(fetched([mine], [lesser])).toEqual([])
+    expect(await fetched([mine], [lesser])).toEqual([])
   })
 
-  test('ignores listed leaves outside the range it asked about', () => {
+  test('ignores listed leaves outside the range it asked about', async () => {
     const bounds: RangeBounds = { type: TYPE, lower: position('m'), upper: position('p') }
     const listed = [
       { ...held, id: 'a' },
@@ -230,7 +235,7 @@ describe('the requester picks what to fetch from a leaf list', () => {
       { ...held, id: 'z' },
       { ...held, id: 'n2', type: 'credential.key' },
     ]
-    expect(nextRequesterSteps([], { bounds, leaves: listed })).toEqual([
+    expect(await nextRequesterSteps([], { bounds, leaves: listed })).toEqual([
       { get: [{ type: TYPE, owner: OWNER, id: 'n' }] },
     ])
   })
@@ -250,7 +255,7 @@ test('a numeric-string version pulls the numeric winner from the responder', asy
     const claim = {
       ...key,
       hlc,
-      payloadDigest: recordPayloadDigest(payload),
+      payloadDigest: await recordPayloadDigest(payload),
       deleted: false,
       meta: { version },
     }
@@ -258,11 +263,11 @@ test('a numeric-string version pulls the numeric winner from the responder', asy
   }
   const local = await signedVersion('2')
   const remote = await signedVersion('10')
-  const localLeaf = rangeLeaf(decisionOf(local), policy)
-  const remoteLeaf = rangeLeaf(decisionOf(remote), policy)
+  const localLeaf = await rangeLeaf(decisionOf(local), policy)
+  const remoteLeaf = await rangeLeaf(decisionOf(remote), policy)
   if (localLeaf === null || remoteLeaf === null) throw new Error('missing numeric leaf')
 
-  const result = runPass([localLeaf], [remoteLeaf], [key.type])
+  const result = await runPass([localLeaf], [remoteLeaf], [key.type])
   expect(result.state.complete).toBe(true)
   expect(result.fetched).toEqual([JSON.stringify([key.type, owner, key.id])])
 })
@@ -275,12 +280,16 @@ test('a numeric-string version pulls the numeric winner from the responder', asy
 function responder(visible: ReadonlyArray<RangeLeaf>) {
   return {
     sent: [] as Array<unknown>,
-    begin(types: ReadonlyArray<string>): Array<RangeResponse> {
-      const out = types.map((type) => summarizeRange(visible, { type, lower: null, upper: null }))
+    async begin(types: ReadonlyArray<string>): Promise<Array<RangeResponse>> {
+      const out = await Promise.all(
+        types.map(
+          async (type) => await summarizeRange(visible, { type, lower: null, upper: null }),
+        ),
+      )
       this.sent.push(out)
       return out
     },
-    answer(steps: ReadonlyArray<RequesterStep>) {
+    async answer(steps: ReadonlyArray<RequesterStep>) {
       const ranges: Array<RangeResponse> = []
       const records: Array<RangeLeaf> = []
       for (const step of steps) {
@@ -288,7 +297,7 @@ function responder(visible: ReadonlyArray<RangeLeaf>) {
           continue
         }
         if (step.answer === 'differs') {
-          ranges.push(...splitRange(visible, step.bounds, RANGE_LEAF_THRESHOLD))
+          ranges.push(...(await splitRange(visible, step.bounds, RANGE_LEAF_THRESHOLD)))
         } else if (step.answer === 'empty') {
           records.push(...visible.filter((row) => rangeContains(step.bounds, row)))
         }
@@ -309,14 +318,14 @@ type PassResult = {
 }
 
 /** Drive one pull pass to completion; the final `records/get` counts as one more round trip. */
-function runPass(
+async function runPass(
   local: ReadonlyArray<RangeLeaf>,
   visible: ReadonlyArray<RangeLeaf>,
   types: ReadonlyArray<string> = [TYPE],
-): PassResult & { sent: Array<unknown> } {
+): Promise<PassResult & { sent: Array<unknown> }> {
   const peer = responder(visible)
   let state = beginRecordPull(types)
-  let responses = peer.begin(types)
+  let responses = await peer.begin(types)
   let roundTrips = 1
   let leafLists = 0
   const delivered: Array<string> = []
@@ -327,7 +336,7 @@ function runPass(
       if ('leaves' in response) {
         leafLists += 1
       }
-      const advanced = advanceRecordPull(state, local, response)
+      const advanced = await advanceRecordPull(state, local, response)
       state = advanced.state
       outgoing.push(...advanced.steps)
     }
@@ -339,7 +348,7 @@ function runPass(
       break
     }
     roundTrips += 1
-    const reply = peer.answer(answers)
+    const reply = await peer.answer(answers)
     responses = reply.ranges
     delivered.push(...reply.records.map(key))
   }
@@ -397,9 +406,9 @@ describe('a pull pass with the measured configuration', () => {
   }
 
   for (const kind of ['in-sync', 'one-stale', 'requester-empty', 'requester-extra'] as const) {
-    test.each([10, 100, 1000])(`${kind} at %i rows pulls exactly the diff`, (count) => {
+    test.each([10, 100, 1000])(`${kind} at %i rows pulls exactly the diff`, async (count) => {
       const { visible, local, fetch, deliver } = scenario(count, kind)
-      const result = runPass(local, visible)
+      const result = await runPass(local, visible)
       expect(result.state.complete).toBe(true)
       expect(result.state.pending).toEqual([])
       // The guard: the pass finds exactly the diff, nothing vacuous and nothing extra.
@@ -412,22 +421,22 @@ describe('a pull pass with the measured configuration', () => {
     })
   }
 
-  test('an extra row in the requester keeps its range differing but asks for nothing', () => {
+  test('an extra row in the requester keeps its range differing but asks for nothing', async () => {
     const { visible, local } = scenario(1000, 'requester-extra')
-    const result = runPass(local, visible)
+    const result = await runPass(local, visible)
     const answers = result.requests.flat()
     expect(answers.some((step) => 'answer' in step && step.answer === 'differs')).toBe(true)
     expect(answers.some((step) => 'get' in step)).toBe(false)
     expect(result.state).toEqual({ pending: [], requested: [], complete: true })
   })
 
-  test('an empty requester gets every visible record of each type in one round trip', () => {
+  test('an empty requester gets every visible record of each type in one round trip', async () => {
     const entries = leaves(1000)
     const keys = leaves(40, 'credential.key')
     const hidden = leaves(30, 'credential.wrapping')
     // The responder filters to what the requester may see before it answers.
     const visible = [...entries, ...keys]
-    const result = runPass([], visible, ['credential.entry', 'credential.key'])
+    const result = await runPass([], visible, ['credential.entry', 'credential.key'])
     expect(result.roundTrips).toBe(2)
     expect(result.requests).toEqual([
       [
@@ -441,10 +450,10 @@ describe('a pull pass with the measured configuration', () => {
     expect(result.delivered.some((entry) => hidden.map(key).includes(entry))).toBe(false)
   })
 
-  test('the requester sends only answers and ids the responder sent it', () => {
+  test('the requester sends only answers and ids the responder sent it', async () => {
     for (const kind of ['one-stale', 'requester-extra', 'requester-empty'] as const) {
       const { visible, local } = scenario(1000, kind)
-      const result = runPass(local, visible)
+      const result = await runPass(local, visible)
       const fromResponder = new Set<string>()
       const collect = (value: unknown): void => {
         if (typeof value === 'string') {
@@ -465,7 +474,7 @@ describe('a pull pass with the measured configuration', () => {
           }
         }
       }
-      const localFingerprints = new Set([fingerprintRange(local)])
+      const localFingerprints = new Set([await fingerprintRange(local)])
 
       for (const step of result.requests.flat()) {
         if ('answer' in step) {
@@ -508,27 +517,25 @@ describe('advanceRecordPull', () => {
     expect(beginRecordPull([])).toEqual({ pending: [], requested: [], complete: true })
   })
 
-  test('narrows a pending range as the split arrives, child by child', () => {
+  test('narrows a pending range as the split arrives, child by child', async () => {
     const rows = leaves(100)
     const local = rows.map((row, index) =>
       index === 0 ? { ...row, opHash: hashOf('stale-0'), order: orderAt(-1) } : row,
     )
-    const state = advanceRecordPull(
-      beginRecordPull([TYPE]),
-      local,
-      summarizeRange(rows, WHOLE),
+    const state = (
+      await advanceRecordPull(beginRecordPull([TYPE]), local, await summarizeRange(rows, WHOLE))
     ).state
     expect(state.pending).toEqual([WHOLE])
-    const children = splitRange(rows, WHOLE, RANGE_LEAF_THRESHOLD) as Array<RangeSummary>
+    const children = (await splitRange(rows, WHOLE, RANGE_LEAF_THRESHOLD)) as Array<RangeSummary>
     const [first, second] = children as [RangeSummary, RangeSummary]
-    const afterFirst = advanceRecordPull(state, local, first).state
+    const afterFirst = (await advanceRecordPull(state, local, first)).state
     expect(afterFirst.complete).toBe(false)
     expect(afterFirst.pending).toContainEqual({
       type: TYPE,
       lower: first.bounds.upper,
       upper: null,
     })
-    const afterSecond = advanceRecordPull(afterFirst, local, second).state
+    const afterSecond = (await advanceRecordPull(afterFirst, local, second)).state
     expect(afterSecond.pending).toContainEqual({
       type: TYPE,
       lower: second.bounds.upper,
@@ -541,27 +548,33 @@ describe('advanceRecordPull', () => {
     })
   })
 
-  test('refuses a response for a range it is not waiting on', () => {
+  test('refuses a response for a range it is not waiting on', async () => {
     const rows = leaves(40)
     const state = beginRecordPull([TYPE])
-    expect(() =>
-      advanceRecordPull(
-        state,
-        [],
-        summarizeRange(rows, { type: 'credential.key', lower: null, upper: null }),
-      ),
-    ).toThrow(RecordRangeError)
-    expect(() =>
-      advanceRecordPull(state, [], summarizeRange(rows, { type: TYPE, lower: 'a', upper: null })),
-    ).toThrow(RecordRangeError)
-    const done = advanceRecordPull(state, rows, summarizeRange(rows, WHOLE)).state
+    await expect(
+      async () =>
+        await advanceRecordPull(
+          state,
+          [],
+          await summarizeRange(rows, { type: 'credential.key', lower: null, upper: null }),
+        ),
+    ).rejects.toThrow(RecordRangeError)
+    await expect(
+      async () =>
+        await advanceRecordPull(
+          state,
+          [],
+          await summarizeRange(rows, { type: TYPE, lower: 'a', upper: null }),
+        ),
+    ).rejects.toThrow(RecordRangeError)
+    const done = (await advanceRecordPull(state, rows, await summarizeRange(rows, WHOLE))).state
     expect(done.complete).toBe(true)
-    expect(() => advanceRecordPull(done, rows, summarizeRange(rows, WHOLE))).toThrow(
-      RecordRangeError,
-    )
+    await expect(
+      async () => await advanceRecordPull(done, rows, await summarizeRange(rows, WHOLE)),
+    ).rejects.toThrow(RecordRangeError)
   })
 
-  test('a listed id cannot be requested twice in one pass', () => {
+  test('a listed id cannot be requested twice in one pass', async () => {
     const [row] = leaves(1) as [RangeLeaf]
     const listed = { ...row, id: 'c' }
     const state: RecordPullState = {
@@ -569,20 +582,21 @@ describe('advanceRecordPull', () => {
       requested: [],
       complete: false,
     }
-    const first = advanceRecordPull(state, [], {
+    const first = await advanceRecordPull(state, [], {
       bounds: { type: TYPE, lower: null, upper: 'd' },
       leaves: [listed],
     })
     expect(first.state.requested).toEqual([{ type: TYPE, owner: OWNER, id: 'c' }])
     // The part holding `c` is answered; the same list again answers no pending range.
-    expect(() =>
-      advanceRecordPull(first.state, [], {
-        bounds: { type: TYPE, lower: null, upper: 'd' },
-        leaves: [listed],
-      }),
-    ).toThrow(RecordRangeError)
+    await expect(
+      async () =>
+        await advanceRecordPull(first.state, [], {
+          bounds: { type: TYPE, lower: null, upper: 'd' },
+          leaves: [listed],
+        }),
+    ).rejects.toThrow(RecordRangeError)
     // And a list for what remains ignores a leaf outside it.
-    const rest = advanceRecordPull(first.state, [], {
+    const rest = await advanceRecordPull(first.state, [], {
       bounds: { type: TYPE, lower: 'd', upper: null },
       leaves: [listed],
     })
@@ -593,58 +607,69 @@ describe('advanceRecordPull', () => {
     })
   })
 
-  test('refuses a leaf list longer than the threshold', () => {
+  test('refuses a leaf list longer than the threshold', async () => {
     const listed = leaves(RANGE_LEAF_THRESHOLD + 1)
-    expect(() => nextRequesterSteps([], { bounds: WHOLE, leaves: listed })).toThrow(
-      RecordRangeError,
-    )
-    expect(() =>
-      advanceRecordPull(beginRecordPull([TYPE]), [], { bounds: WHOLE, leaves: listed }),
-    ).toThrow(RecordRangeError)
+    await expect(
+      async () => await nextRequesterSteps([], { bounds: WHOLE, leaves: listed }),
+    ).rejects.toThrow(RecordRangeError)
+    await expect(
+      async () =>
+        await advanceRecordPull(beginRecordPull([TYPE]), [], { bounds: WHOLE, leaves: listed }),
+    ).rejects.toThrow(RecordRangeError)
     expect(
-      nextRequesterSteps([], { bounds: WHOLE, leaves: listed.slice(0, RANGE_LEAF_THRESHOLD) }),
+      await nextRequesterSteps([], {
+        bounds: WHOLE,
+        leaves: listed.slice(0, RANGE_LEAF_THRESHOLD),
+      }),
     ).toHaveLength(1)
   })
 
-  test('refuses a listed leaf with an id past the length bound', () => {
+  test('refuses a listed leaf with an id past the length bound', async () => {
     const [row] = leaves(1) as [RangeLeaf]
     const long = { ...row, id: 'x'.repeat(MAX_RECORD_ID_LENGTH + 1) }
-    expect(() => nextRequesterSteps([], { bounds: WHOLE, leaves: [long] })).toThrow(
-      RecordRangeError,
-    )
+    await expect(
+      async () => await nextRequesterSteps([], { bounds: WHOLE, leaves: [long] }),
+    ).rejects.toThrow(RecordRangeError)
     const atBound = { ...row, id: 'x'.repeat(MAX_RECORD_ID_LENGTH) }
-    expect(nextRequesterSteps([], { bounds: WHOLE, leaves: [atBound] })).toEqual([
+    expect(await nextRequesterSteps([], { bounds: WHOLE, leaves: [atBound] })).toEqual([
       { get: [{ type: TYPE, owner: OWNER, id: atBound.id }] },
     ])
   })
 
-  test('refuses a listed leaf whose op hash is not a canonical digest', () => {
+  test('refuses a listed leaf whose op hash is not a canonical digest', async () => {
     const [row] = leaves(1) as [RangeLeaf]
     for (const opHash of ['a', `${row.opHash}=`, toB64U(new Uint8Array(31))]) {
-      expect(() =>
-        advanceRecordPull(beginRecordPull([TYPE]), [], {
-          bounds: WHOLE,
-          leaves: [{ ...row, opHash }],
-        }),
-      ).toThrow(RecordRangeError)
+      await expect(
+        async () =>
+          await advanceRecordPull(beginRecordPull([TYPE]), [], {
+            bounds: WHOLE,
+            leaves: [{ ...row, opHash }],
+          }),
+      ).rejects.toThrow(RecordRangeError)
     }
   })
 
-  test('refuses a child reaching past the range it answers for', () => {
+  test('refuses a child reaching past the range it answers for', async () => {
     const state: RecordPullState = {
       pending: [{ type: TYPE, lower: 'b', upper: 'm' }],
       requested: [],
       complete: false,
     }
     const past = { bounds: { type: TYPE, lower: 'b', upper: 'n' }, leaves: [] }
-    expect(() => advanceRecordPull(state, [], past)).toThrow(RecordRangeError)
+    await expect(async () => await advanceRecordPull(state, [], past)).rejects.toThrow(
+      RecordRangeError,
+    )
     const open = { bounds: { type: TYPE, lower: 'b', upper: null }, leaves: [] }
-    expect(() => advanceRecordPull(state, [], open)).toThrow(RecordRangeError)
+    await expect(async () => await advanceRecordPull(state, [], open)).rejects.toThrow(
+      RecordRangeError,
+    )
     const hollow = { bounds: { type: TYPE, lower: 'b', upper: 'b' }, leaves: [] }
-    expect(() => advanceRecordPull(state, [], hollow)).toThrow(RecordRangeError)
+    await expect(async () => await advanceRecordPull(state, [], hollow)).rejects.toThrow(
+      RecordRangeError,
+    )
   })
 
-  test('asks for an id once, however many times it is listed', () => {
+  test('asks for an id once, however many times it is listed', async () => {
     const [row] = leaves(1) as [RangeLeaf]
     let state = beginRecordPull([TYPE])
     state = {
@@ -654,7 +679,7 @@ describe('advanceRecordPull', () => {
         { type: TYPE, lower: 'm', upper: null },
       ],
     }
-    const first = advanceRecordPull(state, [], {
+    const first = await advanceRecordPull(state, [], {
       bounds: { type: TYPE, lower: null, upper: 'm' },
       leaves: [
         { ...row, id: 'a' },
@@ -702,7 +727,7 @@ describe('fetched records still pass through apply', () => {
         id,
         owner,
         hlc,
-        payloadDigest: recordPayloadDigest(payload),
+        payloadDigest: await recordPayloadDigest(payload),
         deleted: false,
         meta: {},
       },
@@ -723,7 +748,7 @@ describe('fetched records still pass through apply', () => {
     const out: Array<RangeLeaf> = []
     for (const record of await store.list([TYPE])) {
       const op = await verifySignedRecord(record.copies[0] as SignedRecord, TEST_OP_KIND)
-      const leaf = op === null ? null : rangeLeaf(record, definition.policy)
+      const leaf = op === null ? null : await rangeLeaf(record, definition.policy)
       if (leaf !== null) {
         out.push(leaf)
       }
@@ -741,7 +766,7 @@ describe('fetched records still pass through apply', () => {
     const responderStore = memoryStore([sharedNew, mineOld, theirs])
     const requesterStore = memoryStore([sharedOld, mineNew])
 
-    const result = runPass(await leavesOf(requesterStore), await leavesOf(responderStore))
+    const result = await runPass(await leavesOf(requesterStore), await leavesOf(responderStore))
     expect([...result.fetched].sort()).toEqual([key(sharedNew), key(theirs)].sort())
 
     const fetchedRecords = (
@@ -773,7 +798,7 @@ describe('fetched records still pass through apply', () => {
     ).toBe(mineNew.opHash)
 
     // A second pass finds nothing left to pull.
-    const again = runPass(await leavesOf(requesterStore), await leavesOf(responderStore))
+    const again = await runPass(await leavesOf(requesterStore), await leavesOf(responderStore))
     expect(again.state).toEqual({ pending: [], requested: [], complete: true })
   })
 })

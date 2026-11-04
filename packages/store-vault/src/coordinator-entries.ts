@@ -13,6 +13,7 @@ import type {
 } from './coordinator-types.js'
 import { VaultWriteConflict } from './record-context.js'
 import { settleAll } from './settle.js'
+import { snapshotCall } from './snapshot.js'
 import type { EntryAddress, EntryRow, UpdateEntryResult, VaultStoreAPI } from './types.js'
 
 export type ReKeyEntryParams = EntryAddress &
@@ -80,7 +81,8 @@ export function createEntryFunctions(
     )
   }
 
-  async function putEntry(request: EntryWriteParams): Promise<EntryAddress> {
+  async function putEntry(input: EntryWriteParams): Promise<EntryAddress> {
+    const request = snapshotCall(input)
     await ctx.authorize('putEntry', 'administer', request)
 
     return ctx.locked([request], async (store) => {
@@ -118,9 +120,10 @@ export function createEntryFunctions(
   }
 
   async function update(
-    request: EntryUpdateParams & { expectedHLC?: string },
+    input: EntryUpdateParams & { expectedHLC?: string },
     operation: string,
   ): Promise<UpdateEntryResult> {
+    const request = snapshotCall(input)
     await ctx.authorize(operation, 'administer', request)
 
     const observed = await params.store.getEntry(request)
@@ -178,7 +181,8 @@ export function createEntryFunctions(
     })
   }
 
-  async function refreshEntry(request: RefreshEntryParams): Promise<UpdateEntryResult> {
+  async function refreshEntry(input: RefreshEntryParams): Promise<UpdateEntryResult> {
+    const request = snapshotCall(input)
     await ctx.authorize('refreshEntry', 'administer', request)
     const observed = await params.store.getEntry(request)
     if (observed === undefined) return 'absent'
@@ -254,8 +258,9 @@ export function createEntryFunctions(
   }
 
   async function deleteEntry(
-    request: EntryAddress & CoordinatorCall & { consumer?: unknown },
+    input: EntryAddress & CoordinatorCall & { consumer?: unknown },
   ): Promise<void> {
+    const request = snapshotCall(input)
     await ctx.authorize('deleteEntry', 'administer', request)
 
     const observed = await params.store.getEntry(request)
@@ -308,7 +313,8 @@ export function createEntryFunctions(
     })
   }
 
-  async function reKeyEntry(request: ReKeyEntryParams): Promise<void> {
+  async function reKeyEntry(input: ReKeyEntryParams): Promise<void> {
+    const request = snapshotCall(input)
     await ctx.authorize('reKeyEntry', 'administer', request)
 
     const observed = await params.store.getEntry(request)

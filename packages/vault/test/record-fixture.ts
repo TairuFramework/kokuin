@@ -1,7 +1,6 @@
 import type { RecordDecision, RecordStoreAdapter, SignedRecord } from '@kokuin/records'
 import {
   applyRecordChunk,
-  recordClaimDigest,
   recordKeyText,
   recordPayloadDigest,
   recordSignerKey,
@@ -45,7 +44,7 @@ export async function signed(
       signer,
       {
         ...claim,
-        payloadDigest: recordPayloadDigest(payload),
+        payloadDigest: await recordPayloadDigest(payload),
         deleted: payload === null,
       },
       opKind,
@@ -104,7 +103,7 @@ export async function chain(
     opHash: key.opHash,
     suite: 1,
   })
-  const id = recordPayloadDigest(payload)
+  const id = await recordPayloadDigest(payload)
   if (id === null) throw new Error('Branch payload digest missing')
   const branch = await signed(signer, {
     type: 'vault.key-branch',
@@ -193,7 +192,7 @@ export function memoryStore() {
         const op = await verified(record)
         const text = recordKeyText(record)
         const previous = view.get(text)
-        const digest = recordClaimDigest(op.claim)
+        const digest = op.contentDigest
         const copies = previous?.contentDigest === digest ? [...previous.copies] : []
         const signer = recordSignerKey(op.issuer, record.opJWT)
         for (let index = copies.length - 1; index >= 0; index--) {

@@ -231,3 +231,62 @@ test('apply scopes verification hooks while importing a signed branch and its de
     await f.db.close()
   }
 }, 3_000)
+
+test('local row writes own bytes and metadata before waiting for the provider', async () => {
+  const db = new HozonDB({ adapter: new NodeSQLiteAdapter({ database: ':memory:' }) })
+  db.register(vaultStoreDefinition)
+  try {
+    const store = await getVaultStore(db)
+    const row = {
+      ownerDID: randomIdentity().id,
+      keyID: 'snapshot-key',
+      entryID: 'snapshot-entry',
+      keyVersion: 1,
+      kind: 'blob',
+      label: 'Original',
+      attributes: { name: 'original' },
+      iv: new Uint8Array(12),
+      ciphertext: new Uint8Array([1, 2, 3]),
+      hlc: '2026-10-01T00:00:00.000Z:00000001:snapshot',
+      provenance: 'local',
+    }
+    const pending = store.putEntry(row)
+    row.label = 'Changed'
+    row.attributes.name = 'changed'
+    row.ciphertext.fill(9)
+    await pending
+    const stored = await store.getEntry(row)
+    expect(stored?.label).toBe('Original')
+    expect(stored?.attributes).toEqual({ name: 'original' })
+    expect(stored?.ciphertext).toEqual(new Uint8Array([1, 2, 3]))
+  } finally {
+    await db.close()
+  }
+})
+
+test('coordinator writes own plaintext before awaiting authority', async () => {
+  const f = await fixture()
+  try {
+    const entered = Promise.withResolvers<void>()
+    const released = Promise.withResolvers<void>()
+    const manager = createVaultCoordinator({
+      ...f.params,
+      authority: {
+        authorize: async () => {
+          entered.resolve()
+          await released.promise
+          return true
+        },
+      },
+    })
+    const request = { ...f.entry, plaintext: bytes('original') }
+    const pending = manager.updateEntry(request)
+    await entered.promise
+    request.plaintext.fill(9)
+    released.resolve()
+    await pending
+    expect(await manager.readEntry(f.entry)).toEqual(bytes('original'))
+  } finally {
+    await f.db.close()
+  }
+})

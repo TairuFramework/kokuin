@@ -107,7 +107,7 @@ type Draft = {
   meta?: Record<string, unknown>
 }
 
-function claimFor(identity: TestIdentity, draft: Draft = {}): RecordClaim {
+async function claimFor(identity: TestIdentity, draft: Draft = {}): Promise<RecordClaim> {
   const payload = draft.payload === undefined ? new Uint8Array([1]) : draft.payload
   return {
     type: draft.type ?? 'test.value',
@@ -120,14 +120,14 @@ function claimFor(identity: TestIdentity, draft: Draft = {}): RecordClaim {
         counter: draft.counter ?? 0,
         nodeID: identity.id,
       }),
-    payloadDigest: recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest(payload),
     deleted: payload === null,
     meta: draft.meta ?? {},
   }
 }
 
 async function makeRecord(identity: TestIdentity, draft: Draft = {}): Promise<SignedRecord> {
-  const claim = claimFor(identity, draft)
+  const claim = await claimFor(identity, draft)
   const signed = await signRecordOp(identity, claim, TEST_OP_KIND)
   const payload = draft.payload === undefined ? new Uint8Array([1]) : draft.payload
   return { type: claim.type, id: claim.id, owner: claim.owner, hlc: claim.hlc, payload, ...signed }
@@ -188,7 +188,7 @@ function applyWith(
 
 test('same-decision chunk verifies 64 incoming signers at most twice each', async () => {
   const owner = randomIdentity()
-  const claim = claimFor(owner)
+  const claim = await claimFor(owner)
   const copies = await Promise.all(
     Array.from({ length: 64 }, async () => {
       const signer = randomIdentity()
@@ -234,7 +234,7 @@ describe('the clock gate runs before anything else', () => {
       id: 'one',
       owner: normalizeDID(identity.id),
       hlc: HLC.serialize({ wallTime: nowMS + 60_001, counter: 0, nodeID: identity.id }),
-      payloadDigest: recordPayloadDigest(new Uint8Array([1])),
+      payloadDigest: await recordPayloadDigest(new Uint8Array([1])),
       deleted: false,
       meta: {},
     }
@@ -345,7 +345,7 @@ describe('the clock gate runs before anything else', () => {
   test('a bounded envelope stamp cannot carry a far-future signed stamp', async () => {
     const identity = randomIdentity()
     const future = await makeRecord(identity, { offsetMS: 10 * DAY_MS })
-    const disguised = { ...future, hlc: claimFor(identity).hlc }
+    const disguised = { ...future, hlc: (await claimFor(identity)).hlc }
     const { store, writes } = memoryStore()
     const authorize = vi.fn(async () => true)
     const receiveClock = vi.fn()
@@ -364,7 +364,7 @@ describe('the five checks run in order', () => {
     const identity = randomIdentity()
     // Hand-signed, since signing refuses the long id: only the claim check can reject it.
     const handSigned = async (id: string): Promise<SignedRecord> => {
-      const claim = { ...claimFor(identity), id }
+      const claim = { ...(await claimFor(identity)), id }
       const signed = await identity.signToken(
         { kind: TEST_OP_KIND, claim: toB64U(fromUTF(canonicalStringify(claim))) },
         { embedLongForm: true },
@@ -516,7 +516,7 @@ describe('authorization', () => {
     const [op, ctx] = authorize.mock.calls[0] ?? []
     expect(op?.opHash).toBe(incoming.opHash)
     expect(op?.issuer).toBe(normalizeDID(identity.id))
-    expect(ctx?.record).toBe(incoming)
+    expect(ctx?.record).toEqual(incoming)
     expect(ctx?.stored).toEqual(stored)
     // The chunk's transaction, not the store outside it: a read through it sees the
     // chunk's own write of the record.
@@ -1203,7 +1203,7 @@ describe('afterAuthorize hook', () => {
 
 test('apply rejects a record from another replay domain', async () => {
   const identity = randomIdentity()
-  const claim = claimFor(identity)
+  const claim = await claimFor(identity)
   const signed = await signRecordOp(identity, claim, 'a/op')
   const record = { ...claim, payload: new Uint8Array([1]), ...signed }
   const memory = memoryStore()
@@ -1234,4 +1234,48 @@ test('authorizers receive the caller transport context by reference', async () =
   )
   expect(result.applied).toBe(1)
   expect(received).toBe(transportContext)
+})
+
+test.each([
+  'precheck',
+  'authorize',
+  'afterAuthorize',
+  'afterApply',
+  'dependencies',
+  'lockKeys',
+] as const)('%s mutations cannot alter the validated persistence snapshot', async (hook) => {
+  const record = await makeRecord(randomIdentity(), { payload: new Uint8Array([1, 2, 3]) })
+  const memory = memoryStore()
+  const mutate = (received: SignedRecord) => {
+    received.payload?.fill(9)
+    received.opJWT = 'unsigned replacement'
+  }
+  const definition = valueType()
+  if (hook === 'authorize')
+    definition.authorize = async (_op, ctx) => {
+      mutate(ctx.record)
+      return true
+    }
+  else if (hook === 'precheck')
+    definition.precheck = async (_op, received) => {
+      mutate(received)
+      return true
+    }
+  else if (hook === 'dependencies')
+    definition.dependencies = (received) => {
+      mutate(received)
+      return []
+    }
+  else if (hook === 'lockKeys')
+    definition.lockKeys = async (received) => {
+      mutate(received)
+      return []
+    }
+  else
+    definition[hook] = async (received) => {
+      mutate(received)
+    }
+  const result = await applyWith([record], memory.store, typesOf(definition))
+  expect(result.applied).toBe(1)
+  expect(memory.read(record.type, record.id)).toEqual(record)
 })

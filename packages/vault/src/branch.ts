@@ -1,10 +1,9 @@
 import type { VerifiedRecordOp } from '@kokuin/records'
-import { recordClaimDigest } from '@kokuin/records'
 
 /** Compare authenticated introducing ops by claim digest, then op hash. */
 export function compareVaultBranches(left: VerifiedRecordOp, right: VerifiedRecordOp): number {
-  const a = recordClaimDigest(left.claim)
-  const b = recordClaimDigest(right.claim)
+  const a = left.contentDigest
+  const b = right.contentDigest
 
   return a < b
     ? -1

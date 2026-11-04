@@ -45,6 +45,7 @@ import {
   VaultModeConflict,
   VaultRecordRowError,
   VaultWriteConflict,
+  vaultRecordPortsFor,
   vaultRecordsStoreDefinition,
 } from '../src/index.js'
 import type { StoreHarness } from './cases.js'
@@ -83,7 +84,7 @@ async function signed(
       signer,
       {
         ...claim,
-        payloadDigest: recordPayloadDigest(payload),
+        payloadDigest: await recordPayloadDigest(payload),
         deleted: payload === null,
       },
       opKind,
@@ -134,7 +135,7 @@ async function chain(
     opHash: key.opHash,
     suite: 1,
   })
-  const recordID = recordPayloadDigest(payload)
+  const recordID = await recordPayloadDigest(payload)
   if (recordID === null) throw new Error('branch payload has no digest')
   const branch = await signed(signer, {
     type: 'vault.key-branch',
@@ -265,6 +266,66 @@ export function replicationCases(harness: StoreHarness): void {
     }
 
     test.each(
+      (['putCopy', 'retainEntryCandidate'] as const).flatMap((method) =>
+        (['token', 'payload'] as const).map((mutation) => [method, mutation] as const),
+      ),
+    )(
+      '%s persists its input snapshot when the resolver suspends during %s mutation',
+      async (method, mutation) => {
+        const signer = createSigningIdentityForDID(
+          'did:test:snapshot',
+          ed25519.utils.randomSecretKey(),
+        )
+        const source = await chain(signer)
+        const record =
+          method === 'putCopy' ? source.key : await dependent(signer, source, 'vault.entry')
+        const original = {
+          ...record,
+          payload: record.payload === null ? null : new Uint8Array(record.payload),
+        }
+        const entered = Promise.withResolvers<void>()
+        const released = Promise.withResolvers<void>()
+        const records = createVaultRecords({
+          store: left.store,
+          opKind: OP_KIND,
+          authority,
+          validateConsumerMetadata: metadata,
+          nowMS: () => Date.parse('2026-10-01T01:00:00.000Z'),
+          maxDriftMS: 60_000,
+          methods: [
+            {
+              method: 'test',
+              resolve: async () => {
+                entered.resolve()
+                await released.promise
+                return { alg: 'EdDSA', publicKey: signer.publicKey }
+              },
+            },
+          ],
+        })
+        await records.adapter.transaction(async (tx) => {
+          const pending =
+            method === 'putCopy'
+              ? tx.putCopy(record)
+              : vaultRecordPortsFor(tx).retainEntryCandidate(record)
+          await entered.promise
+          if (mutation === 'token') record.opJWT = 'unsigned replacement'
+          else record.payload?.fill(9)
+          released.resolve()
+          await pending
+        })
+        const { db } = await getVaultRecordsStore(left.db)
+        const rows = await db
+          .selectFrom(method === 'putCopy' ? 'vault_records' : 'vault_entry_candidates')
+          .selectAll()
+          .execute()
+        expect(rows).toHaveLength(1)
+        expect(rows[0]?.op_jwt).toBe(original.opJWT)
+        expect(new Uint8Array(rows[0]?.payload ?? [])).toEqual(original.payload)
+      },
+    )
+
+    test.each(
       (
         ['get', 'listKeyBranches', 'listEntryCandidates', 'listPriorEntryTombstones'] as const
       ).flatMap((read) => {
@@ -323,7 +384,7 @@ export function replicationCases(harness: StoreHarness): void {
           if (read === 'get') {
             expect(await records.adapter.get(source.key)).toEqual({
               key: { type: source.key.type, owner: signer.id, id: source.key.id },
-              contentDigest: recordClaimDigest(op.claim),
+              contentDigest: op.contentDigest,
               decisionHLC: source.key.hlc,
               copies: [source.key],
             })
@@ -581,12 +642,12 @@ export function replicationCases(harness: StoreHarness): void {
       await seed(source)
       const before = await left.records.adapter.get(source.key)
       if (before === null) throw new Error('missing decision')
-      const a = rangeLeaf(before, { kind: 'lww' })
+      const a = await rangeLeaf(before, { kind: 'lww' })
       const copy = await resign(randomIdentity(), source.key)
       await left.records.apply([copy])
       const after = await left.records.adapter.get(source.key)
       if (after === null) throw new Error('missing decision')
-      const b = rangeLeaf(after, { kind: 'lww' })
+      const b = await rangeLeaf(after, { kind: 'lww' })
       expect(a).not.toEqual(b)
       expect(after.copies).toHaveLength(2)
     })
@@ -796,7 +857,7 @@ export function replicationCases(harness: StoreHarness): void {
       await seed(source)
       const old = await left.records.adapter.get(source.key)
       if (old === null) throw new Error('missing decision')
-      const originalLeaf = rangeLeaf(old, { kind: 'lww' })
+      const originalLeaf = await rangeLeaf(old, { kind: 'lww' })
       await left.records.adapter.transaction(async (tx) => {
         await tx.pruneCopy(source.key, owner.id)
       })
@@ -810,9 +871,11 @@ export function replicationCases(harness: StoreHarness): void {
       const current = await left.records.adapter.get(source.key)
       if (current === null) throw new Error('missing decision')
       expect(current.copies).toEqual([copy])
-      const currentLeaf = rangeLeaf(current, { kind: 'lww' })
+      const currentLeaf = await rangeLeaf(current, { kind: 'lww' })
       if (currentLeaf === null || originalLeaf === null) throw new Error('missing range leaf')
-      expect(fingerprintRange([currentLeaf])).not.toEqual(fingerprintRange([originalLeaf]))
+      expect(await fingerprintRange([currentLeaf])).not.toEqual(
+        await fingerprintRange([originalLeaf]),
+      )
       expect((await left.store.getKey(source.address))?.version).toBe(1)
     })
 
@@ -1075,7 +1138,7 @@ export function replicationCases(harness: StoreHarness): void {
       expect(result.rows).toEqual([
         {
           deleted: 0,
-          payload_digest: recordPayloadDigest(entry.payload),
+          payload_digest: await recordPayloadDigest(entry.payload),
           hlc: entry.hlc,
           op_jwt: entry.opJWT,
           op_hash: entry.opHash,
@@ -1344,7 +1407,7 @@ export function replicationCases(harness: StoreHarness): void {
       const original = await chain(owner)
       const otherCopy = await resign(randomIdentity(), original.key)
       const ops = [await verified(original.key), await verified(otherCopy)] as const
-      expect(recordClaimDigest(ops[0].claim)).toBe(recordClaimDigest(ops[1].claim))
+      expect(await recordClaimDigest(ops[0].claim)).toBe(await recordClaimDigest(ops[1].claim))
       expect(ops[0].opHash).not.toBe(ops[1].opHash)
       const expected = [original.key.opHash, otherCopy.opHash].sort().at(-1)
       expect(selectWinningBranch(ops).opHash).toBe(expected)

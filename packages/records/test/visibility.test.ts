@@ -87,7 +87,7 @@ async function makeRecord(
     id,
     owner: options.owner ?? normalizeDID(signer.id),
     hlc: HLC.serialize({ wallTime: Date.now(), counter: tick++, nodeID: signer.id }),
-    payloadDigest: recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest(payload),
     deleted: payload === null,
     meta,
   }
@@ -253,7 +253,7 @@ test('a proof below the responder current key version earns no entries', async (
       id,
       owner,
       hlc: HLC.serialize({ wallTime: Date.now(), counter: 0, nodeID: signer.id }),
-      payloadDigest: recordPayloadDigest(payload),
+      payloadDigest: await recordPayloadDigest(payload),
       deleted: false,
       meta,
     }
@@ -799,7 +799,7 @@ describe('keyHolder', () => {
       const copies: Array<{ record: SignedRecord; digest: string }> = []
       for (let value = 0; value < 12; value++) {
         const payload = new Uint8Array([value])
-        const claim = { ...verified.claim, payloadDigest: recordPayloadDigest(payload) }
+        const claim = { ...verified.claim, payloadDigest: await recordPayloadDigest(payload) }
         const record = { ...base, payload, ...(await signRecordOp(w.owner, claim, TEST_OP_KIND)) }
         copies.push({ record, digest: decisionOf(record).contentDigest })
       }
@@ -1059,7 +1059,7 @@ describe('the responder filters before it answers', () => {
         continue
       }
       const op = await verifySignedRecord(record, TEST_OP_KIND)
-      const leaf = op === null ? null : rangeLeaf(decisionOf(record), LWW)
+      const leaf = op === null ? null : await rangeLeaf(decisionOf(record), LWW)
       if (leaf !== null) {
         leaves.push(leaf)
       }
@@ -1093,8 +1093,8 @@ describe('the responder filters before it answers', () => {
         const bounds: RangeBounds = { type, lower: null, upper: null }
         const leaves = await leavesOf(visible, type)
         answers[type] = {
-          summary: summarizeRange(leaves, bounds),
-          split: splitRange(leaves, bounds, RANGE_LEAF_THRESHOLD),
+          summary: await summarizeRange(leaves, bounds),
+          split: await splitRange(leaves, bounds, RANGE_LEAF_THRESHOLD),
         }
       }
       const requested = await Promise.all(

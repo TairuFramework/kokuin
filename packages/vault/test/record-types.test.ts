@@ -183,7 +183,7 @@ describe('vault record registration and authority', () => {
     })
     const branch = await signed(owner, {
       type: 'vault.key-branch',
-      id: recordPayloadDigest(payload) as string,
+      id: (await recordPayloadDigest(payload)) as string,
       owner: owner.id,
       hlc: source.branch.hlc,
       payload,
@@ -291,7 +291,7 @@ describe('key ordering and authenticated branches', () => {
     const source = await chain(owner)
     const other = await resign(randomIdentity(), source.key)
     const ops = [await verified(source.key), await verified(other)] as const
-    expect(recordClaimDigest(ops[0].claim)).toBe(recordClaimDigest(ops[1].claim))
+    expect(await recordClaimDigest(ops[0].claim)).toBe(await recordClaimDigest(ops[1].claim))
     const expected = [source.key.opHash, other.opHash].sort().at(-1)
     expect(selectWinningBranch(ops).opHash).toBe(expected)
     expect(selectWinningBranch([...ops].reverse()).opHash).toBe(expected)
@@ -304,7 +304,7 @@ describe('key ordering and authenticated branches', () => {
     const source = await chain(owner)
     await peer.apply([source.key])
     const op = await verified(source.branch)
-    const decoded = decodeVaultRecord(source.branch, op.claim.meta)
+    const decoded = await decodeVaultRecord(source.branch, op.claim.meta)
     if (decoded.type !== 'vault.key-branch') throw new Error('Fixture type')
     const base = decoded.payload
     for (const patch of [
@@ -316,7 +316,7 @@ describe('key ordering and authenticated branches', () => {
     ]) {
       const payload = encodeVaultRecordPayload('vault.key-branch', { ...base, ...patch })
       const broken = await resign(owner, source.branch, {
-        id: recordPayloadDigest(payload) as string,
+        id: (await recordPayloadDigest(payload)) as string,
         payload,
       })
       expect(reasons(await peer.apply([broken]))).toEqual(['unauthorized'])

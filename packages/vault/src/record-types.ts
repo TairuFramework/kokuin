@@ -149,15 +149,15 @@ function validStructure(type: VaultRecordType, op: VerifiedRecordOp): boolean {
   return true
 }
 
-function decodedAs<Type extends VaultRecordType>(
+async function decodedAs<Type extends VaultRecordType>(
   record: SignedRecord,
   op: VerifiedRecordOp,
   type: Type,
-): Extract<DecodedVaultRecord, { type: Type }> | null {
-  if (op.claim.deleted || !recordPayloadMatches(record, op.claim)) return null
+): Promise<Extract<DecodedVaultRecord, { type: Type }> | null> {
+  if (op.claim.deleted || !(await recordPayloadMatches(record, op.claim))) return null
 
   try {
-    const decoded = decodeVaultRecord(record, op.claim.meta)
+    const decoded = await decodeVaultRecord(record, op.claim.meta)
 
     return decoded.type === type ? (decoded as Extract<DecodedVaultRecord, { type: Type }>) : null
   } catch {
@@ -301,7 +301,7 @@ async function authorizeBranch(
   ctx: RecordAuthorizeContext,
 ): Promise<boolean> {
   const meta = vaultRecordMeta(BRANCH, op.claim)
-  const decoded = decodedAs(ctx.record, op, BRANCH)
+  const decoded = await decodedAs(ctx.record, op, BRANCH)
 
   if (meta === null || decoded === null) return false
 
@@ -328,7 +328,7 @@ async function authorizeBranch(
     state: key.state as 'active' | 'retired',
   })
 
-  if (introducing.claim.payloadDigest !== recordPayloadDigest(keyPayload)) return false
+  if (introducing.claim.payloadDigest !== (await recordPayloadDigest(keyPayload))) return false
 
   // The embedded op is independent authenticated evidence and gets its own consumer decision.
   const keyRecord: SignedRecord = {
@@ -377,14 +377,15 @@ function createType(
 
       if (checked === null || checked.opHash !== op.opHash) return false
 
-      if (!validStructure(type, op) || !recordPayloadMatches(ctx.record, op.claim)) return false
+      if (!validStructure(type, op) || !(await recordPayloadMatches(ctx.record, op.claim)))
+        return false
 
       if (type !== KEY && !(await keyOwnerMatches(params, op, ctx))) return false
 
       if (type === BRANCH) return await authorizeBranch(params, op, ctx)
 
       if (!op.claim.deleted) {
-        const decoded = decodedAs(ctx.record, op, type)
+        const decoded = await decodedAs(ctx.record, op, type)
 
         if (decoded === null) return false
 
@@ -419,11 +420,15 @@ function createType(
 
       const op = await verifySignedRecord(record, params.opKind, params.methods)
 
-      if (op === null || !validStructure(type, op) || !recordPayloadMatches(record, op.claim))
+      if (
+        op === null ||
+        !validStructure(type, op) ||
+        !(await recordPayloadMatches(record, op.claim))
+      )
         return false
 
       if (!op.claim.deleted) {
-        const decoded = decodedAs(record, op, type)
+        const decoded = await decodedAs(record, op, type)
 
         if (decoded === null) return false
 

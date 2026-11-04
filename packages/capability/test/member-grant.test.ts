@@ -170,7 +170,8 @@ async function grantOf(signer: SigningIdentity, payload: Claims): Promise<string
   return stringifyToken(await signer.signToken(defined))
 }
 
-const grant = (overrides: Claims = {}, signer = m.signer) => grantOf(signer, claims(overrides))
+const grant = async (overrides: Claims = {}, signer = m.signer) =>
+  grantOf(signer, claims(overrides))
 
 /** The signed payload of `raw`, as a caller that verified it would hand to `checkCapability`. */
 async function payloadOf(raw: string): Promise<CapabilityPayload> {

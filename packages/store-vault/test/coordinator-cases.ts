@@ -321,7 +321,8 @@ export function coordinatorCases(harness: StoreHarness): void {
       const right = (await b.manager.records.listKeyBranches({ ...key, keyVersion: 2 }))[0]
       if (!left || !right) throw new Error('missing branches')
       const [winner, loser] =
-        recordClaimDigest(left.introducingOp.claim) > recordClaimDigest(right.introducingOp.claim)
+        (await recordClaimDigest(left.introducingOp.claim)) >
+        (await recordClaimDigest(right.introducingOp.claim))
           ? [a, b]
           : [b, a]
       const selected = (
@@ -1099,8 +1100,8 @@ export function coordinatorCases(harness: StoreHarness): void {
       const [firstBranch, secondBranch] = keys
       if (firstBranch === undefined || secondBranch === undefined) throw new Error('Missing branch')
       const [loser, winner] =
-        recordClaimDigest(firstBranch.introducingOp.claim) <
-        recordClaimDigest(secondBranch.introducingOp.claim)
+        (await recordClaimDigest(firstBranch.introducingOp.claim)) <
+        (await recordClaimDigest(secondBranch.introducingOp.claim))
           ? [a, b]
           : [b, a]
       await loser.manager.putEntry({
@@ -1190,7 +1191,11 @@ export function coordinatorCases(harness: StoreHarness): void {
       const ops = await Promise.all(copies.map((r) => verifySignedRecord(r, VAULT_OP_KIND)))
       expect(ops.map((o) => o?.issuer)).toContain(survivor.id)
       expect(
-        new Set(ops.map((o) => (o === null ? 'invalid' : recordClaimDigest(o.claim)))).size,
+        new Set(
+          await Promise.all(
+            ops.map(async (o) => (o === null ? 'invalid' : await recordClaimDigest(o.claim))),
+          ),
+        ).size,
       ).toBe(1)
       f.deny()
       await expect(manager.reendorse({ ...key, records: [original] })).rejects.toBeInstanceOf(

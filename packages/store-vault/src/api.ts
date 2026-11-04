@@ -26,6 +26,7 @@ import { claimModes, VaultModeConflict, vaultDatabases } from './record-context.
 import { getVaultRecordsStore } from './record-definition.js'
 import type { VaultRecordsTables } from './record-tables.js'
 import { settleAll } from './settle.js'
+import { snapshotData } from './snapshot.js'
 import type {
   VaultEntryTable,
   VaultKeyTable,
@@ -285,17 +286,20 @@ export function createVaultStore(
         return withStoreTransaction(await transactionDatabase(tx), async () => fn(store))
       })
     },
-    async lockKeyRow(address) {
+    async lockKeyRow(input) {
+      const address = snapshotData(input)
       if (!context.provider.isTransactionBound) throw new Error('Key locks require a transaction')
 
       await locked([address], async () => {})
     },
-    async lockKeyRows(addresses) {
+    async lockKeyRows(input) {
+      const addresses = snapshotData(input)
       if (!context.provider.isTransactionBound) throw new Error('Key locks require a transaction')
 
       await locked(addresses, async () => {})
     },
-    async putKey(row) {
+    async putKey(input) {
+      const row = snapshotData(input)
       await locked([row], async (trx) => {
         await localMode(trx, 'vault.key', row.ownerDID, row.keyID)
 
@@ -355,7 +359,8 @@ export function createVaultStore(
         return rows.map((row) => row.owner_did)
       })
     },
-    async setKeyState(row) {
+    async setKeyState(input) {
+      const row = snapshotData(input)
       await locked([row], async (trx) => {
         await localMode(trx, 'vault.key', row.ownerDID, row.keyID)
         await trx
@@ -366,7 +371,8 @@ export function createVaultStore(
           .execute()
       })
     },
-    async setKeyVersion(row) {
+    async setKeyVersion(input) {
+      const row = snapshotData(input)
       await locked([row], async (trx) => {
         await localMode(trx, 'vault.key', row.ownerDID, row.keyID)
         await trx
@@ -378,7 +384,8 @@ export function createVaultStore(
           .execute()
       })
     },
-    async deleteKey(address) {
+    async deleteKey(input) {
+      const address = snapshotData(input)
       await locked([address], async (trx) => {
         await localMode(trx, 'vault.key', address.ownerDID, address.keyID)
         await trx
@@ -391,7 +398,8 @@ export function createVaultStore(
     async putWrapping(row) {
       await api.putWrappings([row])
     },
-    async putWrappings(input) {
+    async putWrappings(source) {
+      const input = snapshotData(source)
       const { rows, rekeyed } = lastWrites(input, (row) =>
         JSON.stringify([row.ownerDID, row.wrappingID]),
       )
@@ -468,7 +476,8 @@ export function createVaultStore(
     async deleteWrapping(address) {
       await api.deleteWrappings([address])
     },
-    async deleteWrappings(addresses) {
+    async deleteWrappings(source) {
+      const addresses = snapshotData(source)
       if (addresses.length === 0) return
 
       // Discover each key before locking, then qualify deletion so a changed association survives.
@@ -503,7 +512,8 @@ export function createVaultStore(
         },
       )
     },
-    async deleteWrappingsBelowVersion(address) {
+    async deleteWrappingsBelowVersion(source) {
+      const address = snapshotData(source)
       await locked([address], async (trx) => {
         const rows = await trx
           .selectFrom('vault_wrappings')
@@ -530,7 +540,8 @@ export function createVaultStore(
     async putEntry(row) {
       await api.putEntries([row])
     },
-    async putEntries(input) {
+    async putEntries(source) {
+      const input = snapshotData(source)
       const { rows, rekeyed } = lastWrites(input, (row) =>
         JSON.stringify([row.ownerDID, row.entryID]),
       )
@@ -577,7 +588,8 @@ export function createVaultStore(
           throw new Error('Entry belongs to another key')
       })
     },
-    async moveEntry(row) {
+    async moveEntry(input) {
+      const row = snapshotData(input)
       const source = await api.getEntry(row)
 
       if (source == null) return
@@ -594,10 +606,12 @@ export function createVaultStore(
           .execute()
       })
     },
-    async updateEntryIfPresent(row) {
+    async updateEntryIfPresent(source) {
+      const row = snapshotData(source)
       return (await updateEntry(row)) as 'updated' | 'absent'
     },
-    async updateEntryIfUnchanged(row) {
+    async updateEntryIfUnchanged(source) {
+      const row = snapshotData(source)
       return updateEntry(row, row.expectedHLC)
     },
     async getEntry(address) {
@@ -658,7 +672,8 @@ export function createVaultStore(
     async deleteEntry(address) {
       await api.deleteEntries([address])
     },
-    async deleteEntries(addresses) {
+    async deleteEntries(source) {
+      const addresses = snapshotData(source)
       if (addresses.length === 0) return
 
       const rows = (

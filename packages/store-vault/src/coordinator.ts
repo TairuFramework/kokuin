@@ -26,6 +26,7 @@ import type {
 } from './coordinator-types.js'
 import { VaultWriteConflict } from './record-context.js'
 import { settleAll, settledValue } from './settle.js'
+import { snapshotCall } from './snapshot.js'
 import type { KeyAddress, KeyRow, WrappingRow } from './types.js'
 
 export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoordinator {
@@ -35,7 +36,8 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
   const rotate = createRotateFunctions(ctx, open, records)
   const entries = createEntryFunctions(ctx, open, records)
 
-  async function createKey(request: CreateKeyParams): Promise<KeyAddress> {
+  async function createKey(input: CreateKeyParams): Promise<KeyAddress> {
+    const request = snapshotCall(input)
     await ctx.authorize('createKey', 'administer', request)
 
     const unique = params.runtime.getRandomValues(new Uint8Array(16))
@@ -297,7 +299,8 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
 
       return params.store.listKeys(ownerDID)
     },
-    async setKeyState(request) {
+    async setKeyState(input) {
+      const request = snapshotCall(input)
       await ctx.authorize('setKeyState', 'administer', request)
       await ctx.locked([request], async (store) => {
         if (params.mode === 'local') {
@@ -331,7 +334,8 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
 
       ctx.evict(request)
     },
-    async deleteKey(request) {
+    async deleteKey(input) {
+      const request = snapshotCall(input)
       await ctx.authorize('deleteKey', 'administer', request)
       await ctx.locked([request], async (store) => {
         if (params.mode === 'local') {
@@ -368,7 +372,8 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
 
       ctx.evict(request)
     },
-    async grant(request) {
+    async grant(input) {
+      const request = snapshotCall(input)
       await ctx.authorize('grant', 'administer', request)
       await ctx.locked([request], async (store) => {
         const [key, revocations] = await settleAll([
@@ -441,7 +446,8 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         }
       })
     },
-    async refreshWrapping(request) {
+    async refreshWrapping(input) {
+      const request = snapshotCall(input)
       await ctx.authorize('refreshWrapping', 'administer', request)
       if (params.mode !== 'replicated')
         throw new TypeError('Wrapping refresh requires replicated mode')
@@ -484,7 +490,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         )
           throw new VaultNotFound()
         if (evidence.record.opHash !== request.expectedOpHash) throw new VaultWriteConflict()
-        const decoded = decodeVaultRecord(evidence.record, evidence.op.claim.meta)
+        const decoded = await decodeVaultRecord(evidence.record, evidence.op.claim.meta)
         if (decoded.type !== 'vault.wrapping') throw new VaultNotFound()
         const hlc = await params.nextHLC()
         if (compareRecordDecisionHLC(hlc, evidence.record.hlc) <= 0) throw new VaultWriteConflict()
@@ -517,11 +523,13 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         return record
       })
     },
-    async addFactor(request) {
+    async addFactor(input) {
+      const request = snapshotCall(input)
       await ctx.authorize('addFactor', 'administer', request)
       await rewrap(request, (factors) => [...factors, request.factor])
     },
-    async removeFactor(request) {
+    async removeFactor(input) {
+      const request = snapshotCall(input)
       await ctx.authorize('removeFactor', 'administer', request)
       await rewrap(request, (factors) => {
         if (!factors.some((f) => f.kind === request.kind)) throw new VaultNotFound()

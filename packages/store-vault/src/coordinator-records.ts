@@ -11,6 +11,7 @@ import type { CoordinatorContext } from './coordinator-context.js'
 import { VaultNotFound } from './coordinator-context.js'
 import type { CoordinatorCall } from './coordinator-types.js'
 import { settleAll, settledValue } from './settle.js'
+import { snapshotCall } from './snapshot.js'
 import type { EntryRow, VaultStoreAPI, WrappingRow } from './types.js'
 
 type Branch = { branchID: string; branchRecordID: string }
@@ -94,7 +95,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
     )
   }
 
-  function checkEntry(row: EntryRow, op: VerifiedRecordOp): EntryInfo {
+  async function checkEntry(row: EntryRow, op: VerifiedRecordOp): Promise<EntryInfo> {
     const meta = op.claim.meta
     const attributes = meta.attributes
 
@@ -111,7 +112,8 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
       Array.isArray(attributes) ||
       Object.keys(attributes).length !== Object.keys(row.attributes).length ||
       Object.entries(attributes).some(([name, value]) => row.attributes[name] !== value) ||
-      recordPayloadDigest(encodeVaultRecordPayload('vault.entry', row)) !== op.claim.payloadDigest
+      (await recordPayloadDigest(encodeVaultRecordPayload('vault.entry', row))) !==
+        op.claim.payloadDigest
     )
       throw new VaultTampered('Entry projection disagrees with authenticated content')
 
@@ -130,7 +132,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
       store,
     )
 
-    return checkEntry(row, op)
+    return await checkEntry(row, op)
   }
 
   async function entryInfos(
@@ -145,22 +147,25 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
       store,
     )
 
-    return rows.map((row, index) => {
-      const item = evidence[index]
+    return await Promise.all(
+      rows.map(async (row, index) => {
+        const item = evidence[index]
 
-      if (item === undefined) throw new VaultNotFound()
+        if (item === undefined) throw new VaultNotFound()
 
-      return checkEntry(row, item.op)
-    })
+        return await checkEntry(row, item.op)
+      }),
+    )
   }
 
   async function reendorse(
-    request: {
+    input: {
       ownerDID: string
       keyID: string
       records: ReadonlyArray<SignedRecord>
     } & CoordinatorCall,
   ): Promise<void> {
+    const request = snapshotCall(input)
     await ctx.authorize('reendorse', 'administer', request)
 
     if (ctx.params.mode !== 'replicated')

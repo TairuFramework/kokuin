@@ -2,7 +2,6 @@ import { withKeyLocks, withStoreTransaction } from '@hozon/db'
 import type { RecordDecision, RecordKey, SignedRecord, VerifiedRecordOp } from '@kokuin/records'
 import {
   getRecordDecisions,
-  recordClaimDigest,
   recordKeyText,
   recordPayloadDigest,
   signRecordOp,
@@ -35,6 +34,7 @@ import { createVaultRecords, VaultRecordRowError } from './records.js'
 import type { VaultMethods } from './records-methods.js'
 import { storeMethods } from './records-methods.js'
 import { settleAll, settledValue } from './settle.js'
+import { snapshotCall } from './snapshot.js'
 import type { KeyAddress, KeyRow, VaultStoreAPI, WrappingRow } from './types.js'
 
 export class VaultNotAuthorized extends Error {
@@ -225,7 +225,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
       keyID: address.keyID,
       entryID: address.entryID,
       transportContext: address.transportContext,
-      request: address,
+      request: snapshotCall(address),
       store: {
         getKey: (a) => store.getKey(a),
         getEntry: (a) => store.getEntry(a),
@@ -262,7 +262,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
       id: address.id,
       owner: address.ownerDID,
       hlc: stamp,
-      payloadDigest: recordPayloadDigest(bytes),
+      payloadDigest: await recordPayloadDigest(bytes),
       deleted: bytes === null,
       meta,
     }
@@ -319,8 +319,11 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
     )
   }
 
-  function checkWrapping(row: WrappingRow, evidence: StoredRecordEvidence): WrappingEvidence {
-    const decoded = decodeVaultRecord(evidence.record, evidence.op.claim.meta)
+  async function checkWrapping(
+    row: WrappingRow,
+    evidence: StoredRecordEvidence,
+  ): Promise<WrappingEvidence> {
+    const decoded = await decodeVaultRecord(evidence.record, evidence.op.claim.meta)
 
     if (
       decoded.type !== 'vault.wrapping' ||
@@ -357,13 +360,15 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
       store,
     )
 
-    return rows.map((row, index) => {
-      const item = evidence[index]
+    return await Promise.all(
+      rows.map(async (row, index) => {
+        const item = evidence[index]
 
-      if (item === undefined) throw new VaultNotFound()
+        if (item === undefined) throw new VaultNotFound()
 
-      return checkWrapping(row, item)
-    })
+        return await checkWrapping(row, item)
+      }),
+    )
   }
 
   async function wrappingEvidence(
@@ -377,7 +382,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
       store,
     )
 
-    return checkWrapping(row, evidence)
+    return await checkWrapping(row, evidence)
   }
 
   async function branches(
@@ -483,7 +488,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
         continue
       }
 
-      const decoded = decodeVaultRecord(record, op.claim.meta)
+      const decoded = await decodeVaultRecord(record, op.claim.meta)
 
       if (decoded.type === 'vault.key-branch')
         return { branchID, branchRecordID: record.id, suite: decoded.payload.suite }
@@ -521,8 +526,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
           verified(record, store),
         ])
 
-        if (recordClaimDigest(selectedOp.claim) !== recordClaimDigest(expectedOp.claim))
-          throw new VaultWriteConflict()
+        if (selectedOp.contentDigest !== expectedOp.contentDigest) throw new VaultWriteConflict()
       }),
     )
   }
@@ -562,7 +566,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
       opHash: record.opHash,
       suite: row.suite,
     }
-    const branchRecordID = recordPayloadDigest(
+    const branchRecordID = await recordPayloadDigest(
       encodeVaultRecordPayload('vault.key-branch', payload),
     )
 

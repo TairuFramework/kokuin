@@ -22,6 +22,7 @@ import type { RecordFunctions } from './coordinator-records.js'
 import type { ForkRepairResult, RotateKeyParams } from './coordinator-types.js'
 import { VaultWriteConflict } from './record-context.js'
 import { settleAll } from './settle.js'
+import { snapshotCall } from './snapshot.js'
 import type { EntryRow, KeyRow, VaultStoreAPI, WrappingRow } from './types.js'
 
 type Selection = {
@@ -96,7 +97,7 @@ export function createRotateFunctions(
     let row: EntryRow | undefined
 
     if (!op.claim.deleted) {
-      const decoded = decodeVaultRecord(record, meta)
+      const decoded = await decodeVaultRecord(record, meta)
 
       if (
         decoded.type !== 'vault.entry' ||
@@ -625,7 +626,8 @@ export function createRotateFunctions(
     }
   }
 
-  async function rotate(request: RotateKeyParams): Promise<number> {
+  async function rotate(input: RotateKeyParams): Promise<number> {
+    const request = snapshotCall(input)
     await ctx.authorize('rotate', 'administer', request)
 
     const observed = request.sourceVersion === undefined ? undefined : await ctx.key(request)
@@ -644,7 +646,8 @@ export function createRotateFunctions(
     return version
   }
 
-  async function repairFork(request: RotateKeyParams): Promise<ForkRepairResult> {
+  async function repairFork(input: RotateKeyParams): Promise<ForkRepairResult> {
+    const request = snapshotCall(input)
     await ctx.authorize('repairFork', 'administer', request)
 
     if (params.mode === 'local') return { status: 'not-needed' }

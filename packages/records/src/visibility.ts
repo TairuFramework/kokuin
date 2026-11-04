@@ -9,10 +9,16 @@ import { settleLimited } from './limit.js'
 import { type VerifiedRecordOp, verifySignedRecord } from './op.js'
 import { compareRecordOps } from './policy.js'
 import {
+  captureMethods,
+  captureOptions,
+  guardedProvider,
+  ProviderFailure,
+} from './provider-options.js'
+import {
   type RecordClaim,
-  recordClaimDigest,
   recordPayloadMatches,
   type SignedRecord,
+  snapshotRecord,
 } from './record.js'
 import { getRecordDecisions, recordKeyText } from './store.js'
 
@@ -105,14 +111,14 @@ function storedRowAdmits(
   if (stored.opHash === proof.opHash) {
     return true
   }
-  if (recordClaimDigest(stored.claim) === recordClaimDigest(proof.claim)) {
+  if (stored.contentDigest === proof.contentDigest) {
     return true
   }
   // The same winner apply would store: the proof must be the op a merge keeps.
   const decision = compareRecordOps(proof, stored, definition.policy, definition.onEqual)
   return (
     decision.status === 'apply' ||
-    (decision.status === 'fork' && recordClaimDigest(proof.claim) > recordClaimDigest(stored.claim))
+    (decision.status === 'fork' && proof.contentDigest > stored.contentDigest)
   )
 }
 
@@ -122,8 +128,8 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
   if (definition === undefined) {
     return null
   }
-  const op = await verifySignedRecord(proof, ctx.opKind, ctx.methods)
-  if (op === null || op.claim.deleted || !recordPayloadMatches(proof, op.claim)) {
+  const op = await verifySignedRecord(proof, ctx.opKind, ctx.methods, ctx)
+  if (op === null || op.claim.deleted || !(await recordPayloadMatches(proof, op.claim, ctx))) {
     return null
   }
   const { keyID, keyVersion, recipient } = op.claim.meta
@@ -149,7 +155,9 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
   const storedDecision = decisions.get(recordKeyText(storedKey)) ?? null
   const storedRecord = storedDecision?.copies[0] ?? null
   const storedOp =
-    storedRecord === null ? null : await verifySignedRecord(storedRecord, ctx.opKind, ctx.methods)
+    storedRecord === null
+      ? null
+      : await verifySignedRecord(storedRecord, ctx.opKind, ctx.methods, ctx)
   if (!storedRowAdmits(op, storedOp, definition)) {
     return null
   }
@@ -162,6 +170,7 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
         decisions.get(recordKeyText(dependency)) ?? null,
         ctx.opKind,
         ctx.methods,
+        ctx,
       ),
     ),
   )
@@ -184,14 +193,14 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
  * This does not bind the proof to any guarded record's owner; `visibleTo` does, since a proof
  * is valid for its own owner's key alone.
  *
- * Never throws: a proof is hostile input, and one that cannot be checked earns nothing. The
+ * Uncheckable proofs earn nothing. Provider operational failures propagate. The
  * proof is only read, never stored or forwarded.
  */
 export async function verifyHolderProof(
   proof: SignedRecord,
   ctx: VisibilityContext,
 ): Promise<boolean> {
-  return (await checkedHolding(proof, ctx)) !== null
+  return (await checkedHolding(snapshotRecord(proof), captureContext(ctx))) !== null
 }
 
 async function checkedHolding(
@@ -199,8 +208,12 @@ async function checkedHolding(
   ctx: VisibilityContext,
 ): Promise<Holding | null> {
   try {
-    return await heldKey(proof, ctx)
-  } catch {
+    return await heldKey(snapshotRecord(proof), {
+      ...ctx,
+      crypto: guardedProvider(ctx.crypto ?? captureOptions().crypto),
+    })
+  } catch (error) {
+    if (error instanceof ProviderFailure) throw error.cause
     return null
   }
 }
@@ -312,15 +325,17 @@ export async function visibleTo(
   rules: ReadonlyArray<VisibilityRule>,
   ctx: VisibilityContext,
 ): Promise<boolean> {
+  const captured = captureContext(ctx)
+  const fixedRules = [...rules]
   if (rules.length === 0) {
     return false
   }
-  const op = await verifySignedRecord(record, ctx.opKind, ctx.methods)
+  const op = await verifySignedRecord(record, captured.opKind, captured.methods, captured)
   if (op === null) {
     return false
   }
-  for (const rule of rules) {
-    if (await satisfiesRule(rule, op.claim, ctx)) {
+  for (const rule of fixedRules) {
+    if (await satisfiesRule(rule, op.claim, captured)) {
       return true
     }
   }
@@ -350,33 +365,50 @@ export async function filterVisibleRecords(
   types: ReadonlyMap<string, RecordTypeDefinition>,
   ctx: VisibilityContext,
 ): Promise<Array<SignedRecord>> {
+  const owned = records.map(snapshotRecord)
+  const captured = captureContext(ctx)
   // One context for this call: holdings and key versions are read once, then indexed.
   const versions = new Map<string, Promise<number | null>>()
   const scoped: VisibilityContext = {
-    ...ctx,
+    ...captured,
     currentKeyVersion: (owner, keyID) => {
       const id = holdingID(owner, keyID)
       let version = versions.get(id)
       if (version === undefined) {
-        version = ctx.currentKeyVersion(owner, keyID)
+        version = captured.currentKeyVersion(owner, keyID)
         versions.set(id, version)
       }
       return version
     },
   }
+  ownedContexts.add(scoped)
   holdingIndexes.set(scoped, { checks: [], held: new Set() })
   // Records are checked together, up to `CONCURRENCY_LIMIT` at once. They share the holding
   // index, so each holding is still checked once. The first failure in record order is thrown.
-  const admitted = await settleLimited(records, async (record) => {
+  const admitted = await settleLimited(owned, async (record) => {
     const hook = types.get(record.type)?.visibleTo
     return hook !== undefined && (await hook(record, scoped))
   })
   const visible: Array<SignedRecord> = []
-  for (const [index, record] of records.entries()) {
+  for (const [index, record] of owned.entries()) {
     const result = admitted[index]
     if (result === undefined) continue
     if (result.status === 'rejected') throw result.reason
     if (result.value) visible.push(record)
   }
   return visible
+}
+
+const ownedContexts = new WeakSet<VisibilityContext>()
+function captureContext(ctx: VisibilityContext): VisibilityContext {
+  if (ownedContexts.has(ctx)) return ctx
+  const captured = {
+    ...ctx,
+    ...captureOptions(ctx),
+    methods: captureMethods(ctx.methods),
+    requester: { ...ctx.requester },
+    proofs: ctx.proofs.map(snapshotRecord),
+  }
+  ownedContexts.add(captured)
+  return captured
 }

@@ -56,7 +56,7 @@ async function signed(
   const claim: RecordClaim = {
     ...key,
     hlc: options.hlc ?? stamp(signer),
-    payloadDigest: recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest(payload),
     deleted: payload === null,
     meta: options.meta ?? {},
   }
@@ -242,7 +242,10 @@ describe('owner-qualified decisions and signed copies', () => {
         const copy = await signed(signer, key, { meta: { version: version(`a${index}`) } })
         const op = await verifySignedRecord(copy, TEST_OP_KIND)
         if (op === null) throw new Error('invalid signed fixture')
-        if (records.recordClaimDigest(op.claim) > records.recordClaimDigest(highOp.claim)) {
+        if (
+          (await records.recordClaimDigest(op.claim)) >
+          (await records.recordClaimDigest(highOp.claim))
+        ) {
           pair = { key, high, highOp, low: { copy, op } }
           break
         }
@@ -284,16 +287,18 @@ describe('owner-qualified decisions and signed copies', () => {
       expect((await applyWith([malloryDelete], memory.store)).applied).toBe(1)
       expect(memory.read(aliceKey)?.copies).toEqual([aliceLive])
       expect(memory.read(malloryKey)?.copies).toEqual([malloryDelete])
-      const leaves = [memory.read(aliceKey), memory.read(malloryKey)].map((decision) => {
-        const leaf = rangeLeaf(decision as RecordDecision, LWW)
-        if (leaf === null) throw new Error('Decision leaf was not produced')
-        return leaf
-      })
+      const leaves = await Promise.all(
+        [memory.read(aliceKey), memory.read(malloryKey)].map(async (decision) => {
+          const leaf = await rangeLeaf(decision as RecordDecision, LWW)
+          if (leaf === null) throw new Error('Decision leaf was not produced')
+          return leaf
+        }),
+      )
       expect(leaves.map((leaf) => leaf.owner)).toEqual([aliceKey.owner, malloryKey.owner])
       expect(new Set(leaves.map((leaf) => leaf.id)).size).toBe(1)
       const bounds = { type: TYPE, lower: null, upper: null }
-      expect(summarizeRange(leaves, bounds).count).toBe(2)
-      expect(splitRange(leaves, bounds, 16)).toEqual([
+      expect((await summarizeRange(leaves, bounds)).count).toBe(2)
+      expect(await splitRange(leaves, bounds, 16)).toEqual([
         {
           bounds,
           leaves: [...leaves].sort((left, right) => (left.owner < right.owner ? -1 : 1)),
@@ -480,13 +485,13 @@ describe('owner-qualified decisions and signed copies', () => {
     const replacement = await signed(alice, key, { hlc })
     const oldDecision = await decisionFor(old)
     const both: RecordDecision = { ...oldDecision, copies: [old, replacement] }
-    expect(() => rangeLeaf(oldDecision, LWW)).not.toThrow()
-    const oldLeaf = rangeLeaf(oldDecision, LWW)
-    const bothLeaf = rangeLeaf(both, LWW)
+    expect(async () => await rangeLeaf(oldDecision, LWW)).not.toThrow()
+    const oldLeaf = await rangeLeaf(oldDecision, LWW)
+    const bothLeaf = await rangeLeaf(both, LWW)
     if (oldLeaf === null || bothLeaf === null) throw new Error('Decision leaf was not produced')
-    expect(fingerprintRange([oldLeaf])).not.toBe(fingerprintRange([bothLeaf]))
+    expect(await fingerprintRange([oldLeaf])).not.toBe(await fingerprintRange([bothLeaf]))
     expect(
-      nextRequesterSteps([oldLeaf], {
+      await nextRequesterSteps([oldLeaf], {
         bounds: { type: TYPE, lower: null, upper: null },
         leaves: [bothLeaf],
       }),

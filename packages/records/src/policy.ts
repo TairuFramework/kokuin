@@ -1,6 +1,6 @@
 import { compareRecordDecisionHLC, parseCanonicalHLC } from './clock.js'
 import type { VerifiedRecordOp } from './op.js'
-import { type RecordClaim, recordClaimDigest } from './record.js'
+import type { RecordClaim } from './record.js'
 
 /**
  * How a record type orders two ops for one record.
@@ -53,9 +53,7 @@ function compareStrings(left: string, right: string): number {
 
 /** Greater content digest wins, so every arrival order stores the same decision. */
 function byContentDigest(incoming: VerifiedRecordOp, stored: VerifiedRecordOp): 'apply' | 'noop' {
-  return compareStrings(recordClaimDigest(incoming.claim), recordClaimDigest(stored.claim)) > 0
-    ? 'apply'
-    : 'noop'
+  return compareStrings(incoming.contentDigest, stored.contentDigest) > 0 ? 'apply' : 'noop'
 }
 
 function compareLWW(incoming: VerifiedRecordOp, stored: VerifiedRecordOp): MergeDecision {

@@ -62,7 +62,7 @@ async function makeRecord(
     id,
     owner: options.owner ?? normalizeDID(identity.id),
     hlc: HLC.serialize({ wallTime: options.wallTime ?? NOW, counter: 0, nodeID: identity.id }),
-    payloadDigest: recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest(payload),
     deleted: false,
     meta: { label: id },
   }
@@ -105,7 +105,9 @@ describe('record op verification memo', () => {
     const record = await makeRecord(randomIdentity(), 'a')
     const first = await verifyRecordOp(record.opJWT, TEST_OP_KIND)
     if (first === null) throw new Error('expected a verified op')
-    first.claim.meta.label = 'changed'
+    expect(() => {
+      first.claim.meta.label = 'changed'
+    }).toThrow(TypeError)
     const second = await verifyRecordOp(record.opJWT, TEST_OP_KIND)
 
     expect(verifications.count).toBe(1)
@@ -136,7 +138,7 @@ describe('record op verification memo', () => {
 
   test('apply verifies a registry-resolved token once before the locks and once under them', async () => {
     const identity = randomIdentity()
-    const records = await Promise.all(['a', 'b', 'c'].map((id) => makeRecord(identity, id)))
+    const records = await Promise.all(['a', 'b', 'c'].map(async (id) => makeRecord(identity, id)))
     const apply = async () => {
       return await applyRecordChunk({
         opKind: TEST_OP_KIND,

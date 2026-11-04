@@ -1,3 +1,6 @@
+import { nobleCrypto } from '@kokuin/crypto'
+import type { CryptoOptions } from '@kokuin/token'
+
 import {
   assertListedLeaf,
   fingerprintRange,
@@ -62,16 +65,21 @@ function prefersResponder(listed: RangeLeaf, held: RangeLeaf | undefined): boole
   return listed.opHash !== held.opHash
 }
 
-function answerFor(local: ReadonlyArray<RangeLeaf>, summary: RangeSummary): RangeAnswer {
+async function answerFor(
+  local: ReadonlyArray<RangeLeaf>,
+  summary: RangeSummary,
+  options?: CryptoOptions,
+): Promise<RangeAnswer> {
   if (summary.count === 0) {
     return 'matches'
   }
+  const expected = summary.fingerprint
   const mine = local.filter((leaf) => rangeContains(summary.bounds, leaf))
   if (mine.length === 0) {
     return 'empty'
   }
   // The fingerprint already carries the count.
-  return fingerprintRange(mine) === summary.fingerprint ? 'matches' : 'differs'
+  return (await fingerprintRange(mine, options)) === expected ? 'matches' : 'differs'
 }
 
 /**
@@ -86,12 +94,14 @@ function answerFor(local: ReadonlyArray<RangeLeaf>, summary: RangeSummary): Rang
  * leaf `assertListedLeaf` refuses: a responder splits a larger range, so a longer list is
  * not one it would send.
  */
-export function nextRequesterSteps(
+export async function nextRequesterSteps(
   local: ReadonlyArray<RangeLeaf>,
   response: RangeResponse,
-): Array<RequesterStep> {
+  options?: CryptoOptions,
+): Promise<Array<RequesterStep>> {
   if (!isLeafList(response)) {
-    return [{ answer: answerFor(local, response), bounds: { ...response.bounds } }]
+    const bounds = { ...response.bounds }
+    return [{ answer: await answerFor(local, response, options), bounds }]
   }
   if (response.leaves.length > RANGE_LEAF_THRESHOLD) {
     throw new RecordRangeError('Leaf list is longer than the leaf threshold')
@@ -154,22 +164,25 @@ function pendingIndexFor(pending: ReadonlyArray<RangeBounds>, bounds: RangeBound
  * @throws RecordRangeError when the message answers no pending range, reaches past it, or is
  * a leaf list `nextRequesterSteps` refuses.
  */
-export function advanceRecordPull(
+export async function advanceRecordPull(
   state: RecordPullState,
   local: ReadonlyArray<RangeLeaf>,
   response: RangeResponse,
-): { state: RecordPullState; steps: Array<RequesterStep> } {
+  options?: CryptoOptions,
+): Promise<{ state: RecordPullState; steps: Array<RequesterStep> }> {
   const index = pendingIndexFor(state.pending, response.bounds)
   const range = state.pending[index] as RangeBounds
-  const pending = [...state.pending]
+  const pending = state.pending.map((bounds) => ({ ...bounds }))
   if (response.bounds.upper === range.upper) {
     pending.splice(index, 1)
   } else {
     pending[index] = { type: range.type, lower: response.bounds.upper, upper: range.upper }
   }
 
-  const steps = nextRequesterSteps(local, response)
-  let requested = state.requested
+  let requested = state.requested.map((key) => ({ ...key }))
+  const steps = await nextRequesterSteps(local, response, {
+    crypto: options?.crypto ?? nobleCrypto,
+  })
   for (const step of steps) {
     if ('answer' in step) {
       if (step.answer === 'differs') {

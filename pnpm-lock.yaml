@@ -631,6 +631,9 @@ importers:
 
   packages/records:
     dependencies:
+      '@kokuin/crypto':
+        specifier: workspace:^
+        version: link:../crypto
       '@kokuin/token':
         specifier: workspace:^
         version: link:../token

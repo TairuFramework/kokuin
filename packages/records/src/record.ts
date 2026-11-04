@@ -1,5 +1,5 @@
-import { normalizeDID } from '@kokuin/token'
-import { blake3 } from '@noble/hashes/blake3.js'
+import { nobleCrypto } from '@kokuin/crypto'
+import { type CryptoOptions, normalizeDID } from '@kokuin/token'
 import { canonicalStringify, fromB64U, fromUTF, toB64U, toUTF } from '@sozai/codec'
 import { isJSONValue } from '@sozai/json'
 
@@ -58,9 +58,13 @@ export function recordSignerKey(issuer: string, opJWT: string): string | null {
   }
 }
 
-export function recordClaimDigest(claim: RecordClaim): string {
+export async function recordClaimDigest(
+  claim: RecordClaim,
+  options?: CryptoOptions,
+): Promise<string> {
   const decisionHLC = typeof claim.meta.version === 'string' ? claim.meta.version : claim.hlc
-  return toB64U(blake3(canonicalRecordClaim({ ...claim, hlc: decisionHLC }), { dkLen: 32 }))
+  const bytes = canonicalRecordClaim({ ...claim, hlc: decisionHLC })
+  return toB64U(await (options?.crypto ?? nobleCrypto).blake3(bytes, 32))
 }
 
 /** Thrown when a claim cannot be signed as given. */
@@ -166,11 +170,26 @@ export function canonicalRecordClaim(claim: RecordClaim): Uint8Array {
  * Digest of the exact payload bytes — never of a parsed form, since the primitive does not
  * know whether the payload is ciphertext or JSON. `null` for a tombstone's absent payload.
  */
-export function recordPayloadDigest(payload: Uint8Array | null): string | null {
-  return payload === null ? null : toB64U(blake3(payload, { dkLen: 32 }))
+export async function recordPayloadDigest(
+  payload: Uint8Array | null,
+  options?: CryptoOptions,
+): Promise<string | null> {
+  return payload === null
+    ? null
+    : toB64U(await (options?.crypto ?? nobleCrypto).blake3(new Uint8Array(payload), 32))
 }
 
 /** Whether a record's payload is the one its claim signed for. */
-export function recordPayloadMatches(record: SignedRecord, claim: RecordClaim): boolean {
-  return recordPayloadDigest(record.payload) === claim.payloadDigest
+export async function recordPayloadMatches(
+  record: SignedRecord,
+  claim: RecordClaim,
+  options?: CryptoOptions,
+): Promise<boolean> {
+  const expected = claim.payloadDigest
+  return (await recordPayloadDigest(record.payload, options)) === expected
+}
+
+/** Own payload views as well as indexed bindings before verification yields. */
+export function snapshotRecord(record: SignedRecord): SignedRecord {
+  return { ...record, payload: record.payload === null ? null : new Uint8Array(record.payload) }
 }

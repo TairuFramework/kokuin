@@ -44,7 +44,7 @@ export async function projection(
     }
   }
 
-  const decoded = decodeVaultRecord(record, op.claim.meta)
+  const decoded = await decodeVaultRecord(record, op.claim.meta)
 
   switch (decoded.type) {
     case 'vault.key': {

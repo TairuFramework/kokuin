@@ -31,7 +31,7 @@ async function makeRecord(
     id,
     owner: normalizeDID(identity.id),
     hlc: HLC.serialize({ wallTime: NOW, counter: 0, nodeID: identity.id }),
-    payloadDigest: recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest(payload),
     deleted: false,
     meta: {},
   }
@@ -125,7 +125,7 @@ describe('applyRecordChunk reads the store in batches', () => {
   test('prefetches once before the locks and rechecks once under them', async () => {
     const identity = randomIdentity()
     const records = await Promise.all(
-      Array.from({ length: 20 }, (_, index) => makeRecord(identity, `r${index}`)),
+      Array.from({ length: 20 }, async (_, index) => makeRecord(identity, `r${index}`)),
     )
     const { store, events } = batchStore()
     const result = await applyRecordChunk({
@@ -155,7 +155,7 @@ describe('applyRecordChunk reads the store in batches', () => {
   test('checks refused records for replays in one read, keeping rejection order', async () => {
     const identity = randomIdentity()
     const [first, replay, last] = await Promise.all(
-      ['a', 'b', 'c'].map((id) => makeRecord(identity, id)),
+      ['a', 'b', 'c'].map(async (id) => makeRecord(identity, id)),
     )
     const { store, events } = batchStore([replay as SignedRecord])
     const result = await applyRecordChunk({
@@ -180,7 +180,7 @@ describe('applyRecordChunk reads the store in batches', () => {
     const identity = randomIdentity()
     const parentRecord = await makeRecord(identity, 'p', 'test.parent')
     const children = await Promise.all(
-      Array.from({ length: 20 }, (_, index) => makeRecord(identity, `c${index}`)),
+      Array.from({ length: 20 }, async (_, index) => makeRecord(identity, `c${index}`)),
     )
     const parentKey = { type: 'test.parent', owner: parentRecord.owner, id: 'p' }
     const seen: Array<boolean> = []

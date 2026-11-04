@@ -1,5 +1,5 @@
 import { blake3 } from '@noble/hashes/blake3.js'
-import { toB64U } from '@sozai/codec'
+import { canonicalStringify, fromUTF, toB64U } from '@sozai/codec'
 import { HLC } from '@sozai/hlc'
 import { describe, expect, test } from 'vitest'
 
@@ -21,7 +21,7 @@ function hlcAt(offsetMS: number, counter = 0, nodeID = 'node'): string {
 
 function op(opHash: string, claim: Partial<RecordClaim> = {}): VerifiedRecordOp {
   const deleted = claim.deleted ?? false
-  return {
+  const value = {
     issuer: 'did:key:owner',
     opHash,
     claim: {
@@ -35,6 +35,29 @@ function op(opHash: string, claim: Partial<RecordClaim> = {}): VerifiedRecordOp 
       ...claim,
     },
   }
+  return {
+    ...value,
+    contentDigest: toB64U(
+      blake3(
+        fromUTF(
+          canonicalStringify({
+            ...value.claim,
+            hlc:
+              typeof value.claim.meta.version === 'string'
+                ? value.claim.meta.version
+                : value.claim.hlc,
+          }),
+        ),
+        { dkLen: 32 },
+      ),
+    ),
+  }
+}
+
+function invalidVersion(opHash: string, version: unknown): VerifiedRecordOp {
+  const value = op(opHash, { meta: { version: [] } })
+  value.claim.meta.version = version
+  return value
 }
 
 function higherContent(left: VerifiedRecordOp, right: VerifiedRecordOp): boolean {
@@ -225,12 +248,8 @@ describe('monotonic', () => {
         meta: { epoch: 2, sequence: 7 },
       },
     }
-    const stored: VerifiedRecordOp = { ...base, opHash: 'a' }
-    const incoming: VerifiedRecordOp = {
-      ...base,
-      opHash: 'b',
-      claim: { ...base.claim, payloadDigest: 'digest-b' },
-    }
+    const stored = op('a', base.claim)
+    const incoming = op('b', { ...base.claim, payloadDigest: 'digest-b' })
     const policy: MergePolicy = {
       kind: 'monotonic',
       version: (op) => [Number(op.meta.epoch), Number(op.meta.sequence)],
@@ -297,7 +316,7 @@ describe('monotonic', () => {
     ['a non-number component', ['2']],
     ['a non-array', 2],
   ])('an incoming version with %s is rejected', (_label, version) => {
-    const incoming = op('z', { meta: { version } })
+    const incoming = invalidVersion('z', version)
     expect(compareRecordOps(incoming, versioned('a', [1]), VERSIONED)).toEqual({
       status: 'reject',
       reason: 'version-invalid',
@@ -316,7 +335,7 @@ describe('monotonic', () => {
   })
 
   test('a stored op with an invalid version yields to a valid one', () => {
-    const stored = op('z', { meta: { version: [Number.NaN] } })
+    const stored = invalidVersion('z', [Number.NaN])
     expect(compareRecordOps(versioned('a', [1]), stored, VERSIONED)).toEqual({
       status: 'apply',
       reason: 'stored-version-invalid',

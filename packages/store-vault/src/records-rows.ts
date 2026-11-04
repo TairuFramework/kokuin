@@ -153,15 +153,15 @@ export async function checked(row: VaultRecordTable, bound: Bound): Promise<Chec
     if (op === null) return null
 
     if (
-      !recordPayloadMatches(copy, op.claim) ||
+      !(await recordPayloadMatches(copy, op.claim)) ||
       row.payload_digest !== op.claim.payloadDigest ||
       row.deleted !== Number(op.claim.deleted) ||
-      recordClaimDigest({ ...op.claim, meta: meta as Record<string, unknown> }) !==
-        recordClaimDigest(op.claim)
+      (await recordClaimDigest({ ...op.claim, meta: meta as Record<string, unknown> })) !==
+        op.contentDigest
     )
       throw new Error('stored claim mismatch')
 
-    if (!op.claim.deleted) decodeVaultRecord(copy, op.claim.meta)
+    if (!op.claim.deleted) await decodeVaultRecord(copy, op.claim.meta)
 
     return { copy, op }
   } catch (cause) {
@@ -190,7 +190,7 @@ export async function decision(
 
     if (value === null) continue
 
-    const contentDigest = recordClaimDigest(value.op.claim)
+    const contentDigest = value.op.contentDigest
     const decisionHLC =
       typeof value.op.claim.meta.version === 'string'
         ? value.op.claim.meta.version

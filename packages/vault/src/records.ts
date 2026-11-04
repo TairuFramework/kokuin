@@ -327,18 +327,21 @@ function payloadOf(type: VaultRecordType, data: Uint8Array): VaultRecordPayloads
 }
 
 /** Pure codec. Signature and payload-digest verification belong to the caller. */
-export function decodeVaultRecord(
+export async function decodeVaultRecord(
   record: Pick<SignedRecord, 'type' | 'id' | 'owner' | 'hlc' | 'payload'>,
-  meta: Record<string, unknown>,
-): DecodedVaultRecord {
-  const { type, id, owner, hlc, payload } = record
+  recordMeta: Record<string, unknown>,
+): Promise<DecodedVaultRecord> {
+  const { type, id, owner, hlc } = record
+  const payload = record.payload === null ? null : new Uint8Array(record.payload)
 
   try {
+    const meta = JSON.parse(JSON.stringify(recordMeta))
     if (!(VAULT_RECORD_TYPES as ReadonlyArray<string>).includes(type))
       throw new Error('unknown record type')
 
     if (payload === null) throw new Error('a tombstone has no payload')
 
+    const payloadDigest = await recordPayloadDigest(payload)
     const recordType = type as VaultRecordType
     const decodedMeta = vaultRecordMeta(recordType, {
       type,
@@ -347,12 +350,12 @@ export function decodeVaultRecord(
       hlc,
       meta,
       deleted: false,
-      payloadDigest: recordPayloadDigest(payload),
+      payloadDigest,
     })
 
     if (decodedMeta === null) throw new Error('record metadata')
 
-    if (type === 'vault.key-branch' && id !== recordPayloadDigest(payload))
+    if (type === 'vault.key-branch' && id !== payloadDigest)
       throw new Error('record id is not the payload digest')
 
     return {

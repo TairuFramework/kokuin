@@ -78,6 +78,7 @@ export {
   recordPayloadMatches,
   recordSignerKey,
   type SignedRecord,
+  snapshotRecord,
 } from './record.js'
 export {
   getRecordDecisions,

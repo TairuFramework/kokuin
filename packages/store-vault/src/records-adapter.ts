@@ -1,10 +1,10 @@
 import { chunk, withKeyLocks, withStoreTransaction } from '@hozon/db'
 import type { RecordDecision, RecordKey, RecordStoreAdapter } from '@kokuin/records'
 import {
-  recordClaimDigest,
   recordKeyText,
   recordPayloadMatches,
   recordSignerKey,
+  snapshotRecord,
   verifySignedRecord,
 } from '@kokuin/records'
 import { type VAULT_RECORD_TYPES, vaultRecordMeta } from '@kokuin/vault'
@@ -177,14 +177,15 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
       bound.locks.push({ release: () => released.resolve(), task })
       await Promise.race([entered.promise, task])
     },
-    async putCopy(record) {
+    async putCopy(input) {
+      const record = snapshotRecord(input)
       if (!db.isTransaction) throw new Error('Copy persistence requires the apply transaction')
 
       await assertDomain(bound)
 
       const op = await verifySignedRecord(record, bound.opKind, bound.methods)
 
-      if (op === null || !supported(record.type) || !recordPayloadMatches(record, op.claim))
+      if (op === null || !supported(record.type) || !(await recordPayloadMatches(record, op.claim)))
         throw new Error('Invalid vault record copy')
 
       const type = record.type as (typeof VAULT_RECORD_TYPES)[number]
@@ -193,7 +194,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
 
       const previousRows = await whereKey(db, record).orderBy('op_hash').execute()
       const previous = await decision(previousRows, bound)
-      const contentDigest = recordClaimDigest(op.claim)
+      const contentDigest = op.contentDigest
       const decisionHLC =
         typeof op.claim.meta.version === 'string' ? op.claim.meta.version : op.claim.hlc
       const same = previous?.contentDigest === contentDigest && previous.decisionHLC === decisionHLC
@@ -258,7 +259,8 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
 
       if (claimed.numInsertedOrUpdatedRows === 0n) throw new VaultModeConflict()
     },
-    async pruneCopy(key, signerDID) {
+    async pruneCopy(input, signerDID) {
+      const key = { ...input }
       if (!db.isTransaction) throw new Error('Copy pruning requires the apply transaction')
 
       const current = await adapter.get(key)

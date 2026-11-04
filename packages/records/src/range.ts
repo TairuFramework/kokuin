@@ -1,5 +1,5 @@
-import { normalizeDID } from '@kokuin/token'
-import { blake3 } from '@noble/hashes/blake3.js'
+import { nobleCrypto } from '@kokuin/crypto'
+import { type CryptoOptions, normalizeDID } from '@kokuin/token'
 import { fromB64U, fromUTF, toB64U, toUTF } from '@sozai/codec'
 
 import { parseCanonicalHLC } from './clock.js'
@@ -105,7 +105,10 @@ function opHashBytes(opHash: string): Uint8Array {
  *
  * @throws RecordRangeError when an `opHash` is not a canonical 32-byte digest.
  */
-export function fingerprintRange(leaves: ReadonlyArray<RangeLeaf>): string {
+export async function fingerprintRange(
+  leaves: ReadonlyArray<RangeLeaf>,
+  options?: CryptoOptions,
+): Promise<string> {
   const sum = new Uint32Array(LANES)
   for (const leaf of leaves) {
     const view = new DataView(opHashBytes(leaf.opHash).buffer)
@@ -119,7 +122,7 @@ export function fingerprintRange(leaves: ReadonlyArray<RangeLeaf>): string {
     view.setUint32(lane * 4, sum[lane] as number, false)
   }
   view.setUint32(OP_HASH_BYTES, leaves.length, false)
-  return toB64U(blake3(input, { dkLen: FINGERPRINT_BYTES }))
+  return toB64U(await (options?.crypto ?? nobleCrypto).blake3(input, FINGERPRINT_BYTES))
 }
 
 /** Whether a record's key falls inside a range. */
@@ -155,12 +158,14 @@ function leavesIn(leaves: ReadonlyArray<RangeLeaf>, bounds: RangeBounds): Array<
 }
 
 /** A responder's summary of one range, scanning its (already visibility-filtered) leaves. */
-export function summarizeRange(
+export async function summarizeRange(
   leaves: ReadonlyArray<RangeLeaf>,
-  bounds: RangeBounds,
-): RangeSummary {
-  const inside = leavesIn(leaves, bounds)
-  return { bounds, fingerprint: fingerprintRange(inside), count: inside.length }
+  rangeBounds: RangeBounds,
+  options?: CryptoOptions,
+): Promise<RangeSummary> {
+  const bounds = { ...rangeBounds }
+  const inside = leavesIn(leaves, bounds).map((leaf) => ({ ...leaf, signers: [...leaf.signers] }))
+  return { bounds, fingerprint: await fingerprintRange(inside, options), count: inside.length }
 }
 
 /**
@@ -173,15 +178,18 @@ export function summarizeRange(
  * @throws RecordRangeError when `leafThreshold` is not a positive integer, since a range of
  * one record could then split into itself forever.
  */
-export function splitRange(
+export async function splitRange(
   leaves: ReadonlyArray<RangeLeaf>,
-  bounds: RangeBounds,
+  rangeBounds: RangeBounds,
   leafThreshold: number,
-): Array<RangeSummary | RangeLeafList> {
+  cryptoOptions?: CryptoOptions,
+): Promise<Array<RangeSummary | RangeLeafList>> {
+  const options = { crypto: cryptoOptions?.crypto ?? nobleCrypto }
   if (!Number.isInteger(leafThreshold) || leafThreshold < 1) {
     throw new RecordRangeError('Leaf threshold must be a positive integer')
   }
-  const inside = leavesIn(leaves, bounds)
+  const bounds = { ...rangeBounds }
+  const inside = leavesIn(leaves, bounds).map((leaf) => ({ ...leaf, signers: [...leaf.signers] }))
   if (inside.length <= leafThreshold) {
     return [{ bounds, leaves: inside }]
   }
@@ -197,7 +205,7 @@ export function splitRange(
     }
     children.push({
       bounds: childBounds,
-      fingerprint: fingerprintRange(chunk),
+      fingerprint: await fingerprintRange(chunk, options),
       count: chunk.length,
     })
   }
@@ -236,7 +244,13 @@ function sortableNumber(value: number): string {
  * `null` when the policy cannot order the op. A responder then leaves the record out of its
  * ranges, and a requester treats it as a record it lacks, so a fetched op can replace it.
  */
-export function rangeLeaf(decision: RecordDecision, policy: MergePolicy): RangeLeaf | null {
+export async function rangeLeaf(
+  decision: RecordDecision,
+  policy: MergePolicy,
+  options?: CryptoOptions,
+): Promise<RangeLeaf | null> {
+  const key = { ...decision.key }
+  const contentDigest = decision.contentDigest
   const validCopies = decision.copies.flatMap((copy) => {
     try {
       const parts = copy.opJWT.split('.')
@@ -283,12 +297,18 @@ export function rangeLeaf(decision: RecordDecision, policy: MergePolicy): RangeL
   }
   const signers = [...new Set(validCopies.map((copy) => copy.issuer))].sort()
   const opHash = toB64U(
-    blake3(fromUTF(JSON.stringify([decision.contentDigest, signers])), { dkLen: 32 }),
+    await (options?.crypto ?? nobleCrypto).blake3(
+      fromUTF(JSON.stringify([contentDigest, signers])),
+      32,
+    ),
   )
-  return { ...decision.key, opHash, order, contentDigest: decision.contentDigest, signers }
+  return { ...key, opHash, order, contentDigest, signers }
 }
 
-function orderOf(op: VerifiedRecordOp, policy: MergePolicy): string | null {
+function orderOf(
+  op: Pick<VerifiedRecordOp, 'claim' | 'opHash'>,
+  policy: MergePolicy,
+): string | null {
   switch (policy.kind) {
     case 'lww': {
       // An ISO date outside years 0000-9999 carries a sign and extra digits, so its string no
