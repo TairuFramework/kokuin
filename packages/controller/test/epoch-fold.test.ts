@@ -679,6 +679,8 @@ describe('totality under hostile presentation', () => {
     expect(deep.length).toBeGreaterThan(5)
   })
 
+  // 150 seeds folded twice each, with a noble Ed25519 verification per signature: about 4.5s
+  // locally, and 38s on a loaded CI runner.
   test('no seed throws, and every shuffle of a seed folds to the same head', () => {
     for (let seedValue = 0; seedValue < 150; seedValue++) {
       const next = rng(seedValue)
@@ -705,5 +707,5 @@ describe('totality under hostile presentation', () => {
         expect(seen, `seed ${seedValue}`).toEqual(expected)
       }
     }
-  }, 30_000)
+  }, 120_000)
 })

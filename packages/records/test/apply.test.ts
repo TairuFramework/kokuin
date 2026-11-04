@@ -186,6 +186,8 @@ function applyWith(
   })
 }
 
+// 64 noble signatures plus up to 128 verifications: about 0.3s locally, but a loaded CI runner
+// stretched it past the 5s default.
 test('same-decision chunk verifies 64 incoming signers at most twice each', async () => {
   const owner = randomIdentity()
   const claim = claimFor(owner)
@@ -218,7 +220,7 @@ test('same-decision chunk verifies 64 incoming signers at most twice each', asyn
   expect(result.applied).toBe(64)
   expect(held).toHaveLength(64)
   expect(vi.mocked(verifyToken).mock.calls.length).toBeLessThanOrEqual(128)
-})
+}, 30_000)
 
 const VERSIONED = {
   kind: 'monotonic' as const,
