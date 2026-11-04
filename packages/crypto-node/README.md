@@ -29,3 +29,10 @@ OpenSSL keeps its copy until the key object is garbage-collected, just as noble 
 
 Requires Node.js 22 or later. Electron, Bun and Deno ship different `node:crypto` implementations and are untested.
 Existing kokuin identity, token, controller and records APIs do not yet accept a provider.
+
+## Named params migration
+
+`CryptoProvider.verify` now accepts one `VerifyItem`: `{ alg, signature, message, publicKey }`.
+`sign` keeps its three positional arguments. Batch methods retain their existing signatures.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

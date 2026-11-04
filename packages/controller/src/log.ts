@@ -9,6 +9,33 @@ import { MAX_EPOCH_EVENTS, MAX_EVENT_PARENTS, MAX_LOG_EVENTS } from './limits.js
 import { snapshotLog } from './log-snapshot.js'
 import { resolveBranches } from './supersede.js'
 
+type FoldHeldParams = {
+  did: string
+  log: ControllerLog
+  limits?: Partial<EpochLimits>
+  options?: CryptoOptions
+}
+type WithEpochParams = {
+  did: string
+  states: Array<KeyState>
+  events: Array<unknown>
+  limits?: Partial<EpochLimits>
+  trusted?: Array<unknown>
+  options?: CryptoOptions
+}
+type SettledChainParams = {
+  did: string
+  a: Array<SignedEvent>
+  b: Array<SignedEvent>
+  options?: CryptoOptions
+}
+export type MergeLogsParams = {
+  did: string
+  left: ControllerLog
+  right: ControllerLog
+  options?: CryptoOptions
+}
+
 /**
  * Everything a controller's log holds: the root chain, which fixes the keys and every settlement, and
  * the epoch events that built up on the chain's last event since. They are separate lists because
@@ -69,24 +96,31 @@ export type HeldFold = {
  *
  * Nothing in `log` is trusted: every signature is checked, under the failed-signature limit.
  */
-export async function foldHeld(
-  did: string,
-  input: ControllerLog,
-  limits?: Partial<EpochLimits>,
-  options: CryptoOptions = {},
-): Promise<HeldFold | Extract<FoldResult, { ok: false }>> {
-  if (!isControllerLog(input)) {
+export async function foldHeld({
+  did,
+  log: suppliedLog,
+  limits,
+  options = {},
+}: FoldHeldParams): Promise<HeldFold | Extract<FoldResult, { ok: false }>> {
+  if (!isControllerLog(suppliedLog)) {
     return { ok: false, reason: MALFORMED_LOG, index: 0 }
   }
-  if (input.events.length > MAX_HELD_EVENTS) {
+  if (suppliedLog.events.length > MAX_HELD_EVENTS) {
     return { ok: false, reason: LOG_TOO_LARGE, index: -1 }
   }
-  const log = snapshotLog(input)
+  const log = snapshotLog(suppliedLog)
   const chain = await foldLog(did, { chain: log.chain, events: [] }, options)
   if (!chain.ok) {
     return chain
   }
-  return await withEpoch(did, chain.states, log.events, limits, undefined, options)
+  return await withEpoch({
+    did: did,
+    states: chain.states,
+    events: log.events,
+    limits: limits,
+    trusted: undefined,
+    options: options,
+  })
 }
 
 /**
@@ -94,14 +128,14 @@ export async function foldHeld(
  * `trusted` is this party's own memory (see `FoldEpochParams.trusted`), never a presentation. Refused,
  * at index -1, when `events` passes the failed-signature limit.
  */
-export async function withEpoch(
-  did: string,
-  states: Array<KeyState>,
-  events: Array<unknown>,
-  limits?: Partial<EpochLimits>,
-  trusted?: Array<unknown>,
-  options: CryptoOptions = {},
-): Promise<HeldFold | Extract<FoldResult, { ok: false }>> {
+export async function withEpoch({
+  did,
+  states,
+  events,
+  limits,
+  trusted,
+  options = {},
+}: WithEpochParams): Promise<HeldFold | Extract<FoldResult, { ok: false }>> {
   const merged = await foldEpochDetailed({
     ...options,
     did,
@@ -146,7 +180,7 @@ export async function epochHeads(
   log: ControllerLog,
   options: CryptoOptions = {},
 ): Promise<Array<string>> {
-  const held = await foldHeld(did, log, undefined, options)
+  const held = await foldHeld({ did: did, log: log, limits: undefined, options: options })
   if ('ok' in held) {
     throw new Error(`${held.reason}: ${did}`)
   }
@@ -203,12 +237,12 @@ function sameSignatures(a: Array<string>, b: Array<string>): boolean {
  * {@link resolveBranches} names. Throws when that is nothing — a fork ({@link LOG_FORKED}) or no
  * chain that folds ({@link LOG_UNFOLDABLE}).
  */
-async function settledChain(
-  did: string,
-  a: Array<SignedEvent>,
-  b: Array<SignedEvent>,
-  options: CryptoOptions = {},
-): Promise<Array<SignedEvent>> {
+async function settledChain({
+  did,
+  a,
+  b,
+  options = {},
+}: SettledChainParams): Promise<Array<SignedEvent>> {
   const left = await foldLog(did, { chain: a, events: [] }, options)
   const right = await foldLog(did, { chain: b, events: [] }, options)
   if (left.ok && right.ok) {
@@ -240,18 +274,18 @@ async function settledChain(
  * input is held to, which {@link foldLog} then reports. Each input may be at most what a verifier
  * holds plus one presentation; a larger one throws `LOG_TOO_LARGE` before any work.
  */
-export async function mergeLogs(
-  did: string,
-  left: ControllerLog,
-  right: ControllerLog,
-  options: CryptoOptions = {},
-): Promise<ControllerLog> {
+export async function mergeLogs({
+  did,
+  left,
+  right,
+  options = {},
+}: MergeLogsParams): Promise<ControllerLog> {
   if (left.events.length > MAX_HELD_EVENTS || right.events.length > MAX_HELD_EVENTS) {
     throw new Error(`${LOG_TOO_LARGE}: ${did}`)
   }
   const a = snapshotLog(left)
   const b = snapshotLog(right)
-  const chain = await settledChain(did, a.chain, b.chain, options)
+  const chain = await settledChain({ did: did, a: a.chain, b: b.chain, options: options })
   const events: Array<SignedEvent<EpochEvent>> = []
   const kept = new Map<string, Array<Array<string>>>()
   for (const entry of [...a.events, ...b.events]) {
@@ -289,7 +323,7 @@ export async function pruneLog(
   options: CryptoOptions = {},
 ): Promise<ControllerLog> {
   const log = snapshotLog(input)
-  const held = await foldHeld(did, log, undefined, options)
+  const held = await foldHeld({ did: did, log: log, limits: undefined, options: options })
   if (!('result' in held)) {
     // Index -1 is a request limit: the chain may fold fine, the log is refused as too much work.
     throw new Error(

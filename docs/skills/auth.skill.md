@@ -356,7 +356,7 @@ import {
 } from '@kokuin/controller'
 
 const seed = new Uint8Array(32).fill(3)
-const inception = createInception(seed, 0)
+const inception = await createInception(seed, 0)
 const did = didFromInception(inception.event)
 
 // Any log loader works — this one is a fixed in-memory log.
@@ -383,7 +383,7 @@ new TextDecoder().decode(decrypted) // 'hello'
 message was addressed
 
 **Key points**:
-- `createInception(seed, profile)` derives a deterministic inception event; `didFromInception`
+- `await createInception(seed, profile)` derives a deterministic inception event; `didFromInception`
   hashes it into the DID — same seed and profile index always produce the same DID
 - `createControllerResolver({ loadLog })` adapts a folded event log into a `DIDMethodResolver`;
   `loadLog(did)` returns the DID's `ControllerLog` — `{ chain, events }`, the root chain and the
@@ -426,9 +426,9 @@ import {
 import { createUnsignedToken, signToken, verifyToken } from '@kokuin/token'
 
 const seed = new Uint8Array(32).fill(7)
-const inception = createInception(seed, 0)
+const inception = await createInception(seed, 0)
 const did = didFromInception(inception.event)
-const rotate = createRotate({
+const rotate = await createRotate({
   seed,
   profile: 0,
   did,
@@ -438,7 +438,7 @@ const rotate = createRotate({
 const log = { chain: [inception, rotate], events: [] }
 
 // Folds the log and derives the authority key the *current* state establishes.
-const identity = createControllerIdentity({ seed, profile: 0, log })
+const identity = await createControllerIdentity({ seed, profile: 0, log })
 identity.id // the did:kokuin: DID, not a did:key:
 
 const token = await signToken(identity, createUnsignedToken({ hello: 'world' }))
@@ -459,7 +459,7 @@ any claim whose subject is the profile rather than a device
   that shape), and cannot rotate, because a rotate must reveal the key the log pre-committed and only
   the seed derives that one. Same guards, same `kid`, same failures. The seed form below is the
   ceremony API
-- `createControllerIdentity({ seed, profile, log })` takes the **log**, not a `{ gen, seq }` position.
+- `await createControllerIdentity({ seed, profile, log })` takes the **log**, not a `{ gen, seq }` position.
   What that buys is narrow but real: the caller cannot name a position, so the signing key always
   matches the log it was handed. **The log is still the caller's freshness contract** — build an
   identity from a stale or truncated log and it signs with whatever key that log's head
@@ -517,10 +517,10 @@ any claim whose subject is the profile rather than a device
   // `head` is the fold's head; `epochHeads` the current epoch's heads this party holds, at most
   // `MAX_EVENT_PARENTS` of them.
   // Root signs here; a management member passes `{ member: { privateKey, add } }`.
-  const rev = createRevoke({
+  const rev = await createRevoke({
     did,
     head,
-    parents: epochHeads(did, log),
+    parents: await epochHeads(did, log),
     signer: { root: { seed, profile: 0 } },
     target: keyTarget(leakedKey),
   })

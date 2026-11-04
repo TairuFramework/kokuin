@@ -15,6 +15,8 @@ import {
 import { foldLog } from '../src/fold.js'
 import { encodeKey } from '../src/keys.js'
 
+type ResignParams = { event: RotateEvent; seed: Uint8Array; keyGen: number; keySeq: number }
+
 const ownerSeed = new Uint8Array(32).fill(1)
 const newRootSeed = new Uint8Array(32).fill(77)
 
@@ -23,12 +25,12 @@ function recoveryKeyOf(seed: Uint8Array) {
 }
 
 /** Re-sign a rotate body after mutating it, with the key the rotate reveals. */
-async function resign(
-  event: RotateEvent,
-  seed: Uint8Array,
-  keyGen: number,
-  keySeq: number,
-): Promise<SignedEvent<RotateEvent>> {
+async function resign({
+  event,
+  seed,
+  keyGen,
+  keySeq,
+}: ResignParams): Promise<SignedEvent<RotateEvent>> {
   const key = deriveKeyPair(seed, authorityPath(0, keyGen, keySeq), 'EdDSA')
   return { event, sigs: await signEvent(event, [key.privateKey]) }
 }
@@ -66,14 +68,14 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
       ...rot.event,
       r: digestOf(encodeKey(newRecovery.publicKey, 'EdDSA')),
     }
-    const forgedRot = await resign(mutated, ownerSeed, 0, 1)
+    const forgedRot = await resign({ event: mutated, seed: ownerSeed, keyGen: 0, keySeq: 1 })
 
     const folded = await foldLog(did, { chain: [icp, forgedRot], events: [] })
     expect(folded).toEqual({ ok: false, reason: 'invalid rotate', index: 1 })
 
     // ROW 1 control: the same rotate with `r` left alone, re-signed by the same key at the same
     // position — so the rejection above is the `r` member and nothing about the re-signing.
-    const control = await resign({ ...rot.event }, ownerSeed, 0, 1)
+    const control = await resign({ event: { ...rot.event }, seed: ownerSeed, keyGen: 0, keySeq: 1 })
     const controlFold = await foldLog(did, { chain: [icp, control], events: [] })
     expect(controlFold.ok).toBe(true)
     if (!controlFold.ok) return
@@ -99,10 +101,10 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
       ...rot.event,
       r: digestOf(encodeKey(newRecovery.publicKey, 'EdDSA')),
     }
-    const forgedRot = await resign(mutated, ownerSeed, 0, 1)
+    const forgedRot = await resign({ event: mutated, seed: ownerSeed, keyGen: 0, keySeq: 1 })
 
     // A reset authored by the key the log's *current* commitment names.
-    const newRootReset = await createReset(newRootSeed, 0, 1)
+    const newRootReset = await createReset({ seed: newRootSeed, profile: 0, gen: 1 })
     // It has to anchor to THIS did's inception, so rebuild the body against it.
     const body: RotateEvent = { ...newRootReset.event, i: did, p: digestOf(icp.event) }
     const signedByNewRoot: SignedEvent<RotateEvent> = {
@@ -116,7 +118,7 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
 
     // ROW 2 control: the *committed* recovery key authors the same shape of reset against the same
     // inception and it verifies — so the refusal above is the key and not the hand-built body.
-    const rootReset = await createReset(ownerSeed, 0, 1)
+    const rootReset = await createReset({ seed: ownerSeed, profile: 0, gen: 1 })
     expect(await verifyReset(rootReset, icp.event)).toBe(true)
   })
 
@@ -135,10 +137,10 @@ describe('ATTACK: `RotateEvent.r` — the documented recovery-commitment update'
       ...rot.event,
       r: digestOf(encodeKey(newRecovery.publicKey, 'EdDSA')),
     }
-    const forgedRot = await resign(mutated, ownerSeed, 0, 1)
+    const forgedRot = await resign({ event: mutated, seed: ownerSeed, keyGen: 0, keySeq: 1 })
 
     // The key the owner believes they retired.
-    const oldReset = await createReset(ownerSeed, 0, 1)
+    const oldReset = await createReset({ seed: ownerSeed, profile: 0, gen: 1 })
     const r = await foldLog(did, { chain: [icp, forgedRot, oldReset], events: [] })
     // The r-carrying rotate no longer folds at all, so the log stops there.
     expect(r).toEqual({ ok: false, reason: 'invalid rotate', index: 1 })

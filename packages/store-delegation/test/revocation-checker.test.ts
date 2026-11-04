@@ -15,7 +15,7 @@ import {
   keyTarget,
   type SignedEvent,
 } from '@kokuin/controller'
-import type { CryptoOptions } from '@kokuin/token'
+import type { CryptoOptions, DIDString } from '@kokuin/token'
 import {
   randomIdentity as createIdentity,
   createIdentity as createPeer4Identity,
@@ -65,14 +65,17 @@ async function openStore(): Promise<{ db: HozonDB; store: DelegationStoreAPI }> 
 
 async function capability(grantor: SigningIdentity, jti: string) {
   const iat = nowSeconds()
-  return await createCapability(grantor, {
-    sub: grantor.id,
-    aud: 'did:key:z6MkAudience',
-    act: 'document/write',
-    res: '*',
-    iat,
-    exp: iat + 3600,
-    jti,
+  return await createCapability({
+    signer: grantor,
+    payload: {
+      sub: grantor.id,
+      aud: 'did:key:z6MkAudience',
+      act: 'document/write',
+      res: '*',
+      iat,
+      exp: iat + 3600,
+      jti,
+    },
   })
 }
 
@@ -236,11 +239,13 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     await db.close()
   })
 
-  const registry = (did: string, log: Array<SignedEvent>): MethodRegistry => [
-    createControllerResolver({
-      loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
-    }),
-  ]
+  const registry = (did: string, log: Array<SignedEvent>): MethodRegistry => {
+    return [
+      createControllerResolver({
+        loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
+      }),
+    ]
+  }
 
   async function fileRecord(params: {
     jti: string
@@ -276,14 +281,17 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
       })
       const jti = 'revocation-controller-fault'
       const now = nowSeconds()
-      const cap = await createCapability(identity, {
-        sub: issuer,
-        aud: 'did:key:z6MkAudience',
-        act: 'document/write',
-        res: '*',
-        jti,
-        iat: now,
-        exp: now + 3600,
+      const cap = await createCapability({
+        signer: identity,
+        payload: {
+          sub: issuer,
+          aud: 'did:key:z6MkAudience',
+          act: 'document/write',
+          res: '*',
+          jti,
+          iat: now,
+          exp: now + 3600,
+        },
       })
       const capRaw = stringifyToken(cap)
       const verified = await verifyToken<CapabilityPayload>(capRaw, {
@@ -326,7 +334,7 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     })
     const jti = 'jti-fault-own-issuer'
     const fragmented = createSigningIdentityForDID(
-      `${did}#key-1` as typeof did,
+      `${did}#key-1` as DIDString,
       createIdentity().privateKey,
     )
     const record = await fragmented.signToken({ jti, rev: true, iat: nowSeconds() })

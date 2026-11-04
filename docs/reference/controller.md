@@ -152,8 +152,8 @@ The fold judges every snapshot against the generation it lands on, each rule wit
 A rotate signed by the **recovery** key that increments the generation and discards everything under the prior one — including every grant minted there. It anchors to the **inception**, not to the log head, which the root recomputes from the seed alone.
 
 ```typescript
-await createReset(seed, profile, gen) // blind: a pure function of (seed, profile, gen)
-await createReset(seed, profile, gen, snapshot) // carries the whole recovered state
+await createReset({ seed: seed, profile: profile, gen: gen }) // blind: a pure function of (seed, profile, gen)
+await createReset({ seed: seed, profile: profile, gen: gen, snapshot: snapshot }) // carries the whole recovered state
 ```
 
 - **Blind** (no snapshot): no seal, `d: []` and no `m`. Two blind resets at one generation therefore produce identical bytes and resolve as idempotent re-derivation rather than as a fork. The new epoch starts empty and root re-adds members with individual adds. This is the worst-case path, for a root that does not know the log's state. An empty snapshot is the same state and is written the same way, so it stays byte-identical to a blind reset rather than becoming a second encoding of it.
@@ -163,19 +163,19 @@ A root that does not know the current generation starts at `gen = 1` and retries
 
 ### Device revokes on the root chain
 
-`deviceRevokeIndex(did, chain, subject)` returns the chain index of the first rotate that newly denies `subject` within its generation.
+`deviceRevokeIndex({ did, chain, subject })` returns the chain index of the first rotate that newly denies `subject` within its generation.
 The resulting state's deny set must contain the subject, and the prior state's must exclude it.
 Resets never count, even when their snapshots carry the denial. Later rotates carrying an existing denial do not count again.
 Matching normalises the subject and deny entries with `normalizeDID`, treating `did:peer:4` long and short forms as equivalent.
 The helper returns `undefined` when no rotate matches or the chain does not fold.
-`deviceRevokeIndices(did, chain, subject)` folds once and returns every such index in chain order (empty for an invalid chain). A subject revoked, cleared by a reset and revoked again in a later generation has two indices; a verifier checking a specific rotate, or applying its own generation floor, uses this rather than the first index.
+`deviceRevokeIndices({ did, chain: chain, subject })` folds once and returns every such index in chain order (empty for an invalid chain). A subject revoked, cleared by a reset and revoked again in a later generation has two indices; a verifier checking a specific rotate, or applying its own generation floor, uses this rather than the first index.
 Both helpers require an `icp` at index zero and only `rot` events afterwards, with no epoch events.
 
 ```typescript
 import { createDeviceRevoke, deviceRevokeIndex } from '@kokuin/controller'
 
 const revoke = await createDeviceRevoke({ seed, profile: 0, did, chain, subject })
-const index = await deviceRevokeIndex(did, [...chain, revoke], subject)
+const index = await deviceRevokeIndex({ did: did, chain: [...chain, revoke], subject: subject })
 ```
 
 `createDeviceRevoke` folds the chain and carries `snapshotOf(head)` forward, appending the subject to the head's deny set.
@@ -356,7 +356,7 @@ Comparing heads would make chain _length_ the deciding factor, and length is the
 ## Merging and pruning
 
 ```typescript
-mergeLogs(did, a, b, options?: CryptoOptions): Promise<ControllerLog>   // a party's log joined with one it was handed
+declare function mergeLogs(params: MergeLogsParams): Promise<ControllerLog>
 pruneLog(did, log, options?: CryptoOptions): Promise<ControllerLog>     // the least of a log that still folds to the same head
 ```
 
@@ -472,7 +472,6 @@ Prefer the key form on any path that runs often. The seed is the root of everyth
 
 It is a contract, not a proof of security. The 2026-08-15 review found five Criticals that the suite passed, because it only ever presented equal-length branches: the properties it certified were never the ones under attack. Rows have since been added for what those attacks reached. Treat a green suite as "this implementation agrees with the others", never as "this implementation is safe".
 
-
 ### Removed incarnations and historic membership
 
 `StateSnapshot.removed` carries removed incarnations as `MemberEntry` values. Non-reset rotate events encode these entries in `u`, separately from live members in `m`.
@@ -534,7 +533,7 @@ A blind reset supplies no membership evidence for the new generation.
 A reset snapshot may re-admit an incarnation as live through root attestation, matching `resolveMember` behaviour.
 Only then can its unchanged add digest resolve under the new generation.
 A reset must never carry `u`, even an empty list: nobody has been removed in the new generation.
-`createReset` silently drops `snapshot.removed`, so `createReset(seed, profile, gen, snapshotOf(head))` works after removal.
+`createReset` silently drops `snapshot.removed`, so `createReset({ seed, profile, gen, snapshot: snapshotOf(head) })` works after removal.
 The fold still refuses any reset carrying `u` with `RESET_HAS_TOMBSTONES`.
 
 ## Provider migration

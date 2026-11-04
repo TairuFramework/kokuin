@@ -73,20 +73,20 @@ test(
 
 test('complete failure stops and a noisy final run cannot qualify a route', FULL_FIXTURE, () => {
   expect(evaluateGate(completeSamples(1)).status).toBe('stop')
-  const noisy = completeSamples().map((sample) =>
-    sample.backend === 'native' && sample.run === 4
+  const noisy = completeSamples().map((sample) => {
+    return sample.backend === 'native' && sample.run === 4
       ? { ...sample, wallMs: Array<number>(200).fill(0.95) }
-      : sample,
-  )
+      : sample
+  })
   expect(evaluateGate(noisy).status).toBe('stop')
 })
 
 test('batch-only wins retain noble for single calls', FULL_FIXTURE, () => {
-  const samples = completeSamples().map((sample) =>
-    sample.backend === 'native' && sample.cell.mode === 'single'
+  const samples = completeSamples().map((sample) => {
+    return sample.backend === 'native' && sample.cell.mode === 'single'
       ? { ...sample, wallMs: Array<number>(200).fill(1) }
-      : sample,
-  )
+      : sample
+  })
   const report = evaluateGate(samples)
   expect(report.status).toBe('proceed')
   expect(

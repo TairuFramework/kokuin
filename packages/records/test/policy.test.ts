@@ -13,6 +13,13 @@ import {
   type VerifiedRecordOp,
 } from '../src/index.js'
 
+type ExpectConvergenceParams = {
+  ops: Array<VerifiedRecordOp>
+  policy: MergePolicy
+  expected: Terminal
+  onEqual?: (incoming: VerifiedRecordOp, stored: VerifiedRecordOp) => EqualVersionDecision
+}
+
 const T0 = Date.parse('2026-09-26T00:00:00.000Z')
 
 function hlcAt(offsetMS: number, counter = 0, nodeID = 'node'): string {
@@ -61,8 +68,9 @@ function invalidVersion(opHash: string, version: unknown): VerifiedRecordOp {
 }
 
 function higherContent(left: VerifiedRecordOp, right: VerifiedRecordOp): boolean {
-  const digest = (op: VerifiedRecordOp) =>
-    toB64U(blake3(canonicalRecordClaim(op.claim), { dkLen: 32 }))
+  const digest = (op: VerifiedRecordOp) => {
+    return toB64U(blake3(canonicalRecordClaim(op.claim), { dkLen: 32 }))
+  }
   return digest(left) > digest(right)
 }
 
@@ -82,15 +90,19 @@ describe('lww', () => {
   test('the greater hlc wins', () => {
     const older = op('z', { hlc: hlcAt(0) })
     const newer = op('a', { hlc: hlcAt(1) })
-    expect(compareRecordOps(newer, older, LWW)).toEqual({ status: 'apply' })
-    expect(compareRecordOps(older, newer, LWW)).toEqual({ status: 'noop' })
+    expect(compareRecordOps({ incoming: newer, stored: older, policy: LWW })).toEqual({
+      status: 'apply',
+    })
+    expect(compareRecordOps({ incoming: older, stored: newer, policy: LWW })).toEqual({
+      status: 'noop',
+    })
   })
 
   test('the counter orders stamps at one wall time, numerically', () => {
     const low = op('z', { hlc: hlcAt(0, 9) })
     const high = op('a', { hlc: hlcAt(0, 10) })
-    expect(compareRecordOps(high, low, LWW).status).toBe('apply')
-    expect(compareRecordOps(low, high, LWW).status).toBe('noop')
+    expect(compareRecordOps({ incoming: high, stored: low, policy: LWW }).status).toBe('apply')
+    expect(compareRecordOps({ incoming: low, stored: high, policy: LWW }).status).toBe('noop')
   })
 
   test('stamps order by time, not by their spelling', () => {
@@ -110,17 +122,17 @@ describe('lww', () => {
       }),
     })
     expect(y10000.claim.hlc < y9999.claim.hlc).toBe(true)
-    expect(compareRecordOps(y10000, y9999, LWW).status).toBe('apply')
-    expect(compareRecordOps(y9999, y10000, LWW).status).toBe('noop')
+    expect(compareRecordOps({ incoming: y10000, stored: y9999, policy: LWW }).status).toBe('apply')
+    expect(compareRecordOps({ incoming: y9999, stored: y10000, policy: LWW }).status).toBe('noop')
   })
 
   test('an equal hlc goes to the greater content digest', () => {
     const low = op('a', { hlc: hlcAt(0) })
     const high = op('b', { hlc: hlcAt(0) })
-    expect(compareRecordOps(high, low, LWW)).toEqual({
+    expect(compareRecordOps({ incoming: high, stored: low, policy: LWW })).toEqual({
       status: higherContent(high, low) ? 'apply' : 'noop',
     })
-    expect(compareRecordOps(low, high, LWW)).toEqual({
+    expect(compareRecordOps({ incoming: low, stored: high, policy: LWW })).toEqual({
       status: higherContent(low, high) ? 'apply' : 'noop',
     })
   })
@@ -129,15 +141,25 @@ describe('lww', () => {
     const write = op('z', { hlc: hlcAt(0) })
     const laterDelete = op('a', { hlc: hlcAt(1), deleted: true })
     const earlierDelete = op('a', { hlc: hlcAt(-1), deleted: true })
-    expect(compareRecordOps(laterDelete, write, LWW).status).toBe('apply')
-    expect(compareRecordOps(earlierDelete, write, LWW).status).toBe('noop')
-    expect(compareRecordOps(write, laterDelete, LWW).status).toBe('noop')
-    expect(compareRecordOps(write, earlierDelete, LWW).status).toBe('apply')
+    expect(compareRecordOps({ incoming: laterDelete, stored: write, policy: LWW }).status).toBe(
+      'apply',
+    )
+    expect(compareRecordOps({ incoming: earlierDelete, stored: write, policy: LWW }).status).toBe(
+      'noop',
+    )
+    expect(compareRecordOps({ incoming: write, stored: laterDelete, policy: LWW }).status).toBe(
+      'noop',
+    )
+    expect(compareRecordOps({ incoming: write, stored: earlierDelete, policy: LWW }).status).toBe(
+      'apply',
+    )
   })
 
   test('the same op is a no-op', () => {
     const stored = op('a')
-    expect(compareRecordOps(stored, stored, LWW)).toEqual({ status: 'noop' })
+    expect(compareRecordOps({ incoming: stored, stored: stored, policy: LWW })).toEqual({
+      status: 'noop',
+    })
   })
 
   test('an incoming op with a non-canonical hlc cannot win, however late it looks', () => {
@@ -146,7 +168,7 @@ describe('lww', () => {
     const loose = new Date(T0 + 1000).toISOString()
     const incoming = op('z', { hlc: `${loose}:1:node` })
     expect(HLC.tryParse(incoming.claim.hlc)).not.toBeNull()
-    expect(compareRecordOps(incoming, stored, LWW)).toEqual({
+    expect(compareRecordOps({ incoming: incoming, stored: stored, policy: LWW })).toEqual({
       status: 'reject',
       reason: 'hlc-not-canonical',
     })
@@ -155,7 +177,7 @@ describe('lww', () => {
   test('a stored op with a non-canonical hlc yields to any canonical one', () => {
     const stored = op('z', { hlc: `${new Date(T0 + 1000).toISOString()}:1:node` })
     const incoming = op('a', { hlc: hlcAt(0) })
-    expect(compareRecordOps(incoming, stored, LWW)).toEqual({
+    expect(compareRecordOps({ incoming: incoming, stored: stored, policy: LWW })).toEqual({
       status: 'apply',
       reason: 'stored-hlc-not-canonical',
     })
@@ -170,8 +192,8 @@ describe('monotonic', () => {
     }
     const high = op('a', { meta: { version: '10' } })
     const low = op('z', { meta: { version: '2' } })
-    expect(compareRecordOps(high, low, policy).status).toBe('apply')
-    expect(compareRecordOps(low, high, policy).status).toBe('noop')
+    expect(compareRecordOps({ incoming: high, stored: low, policy: policy }).status).toBe('apply')
+    expect(compareRecordOps({ incoming: low, stored: high, policy: policy }).status).toBe('noop')
   })
 
   test('an HLC version policy rejects non-canonical string metadata on first write', () => {
@@ -181,7 +203,7 @@ describe('monotonic', () => {
       version: (claim) => [HLC.tryParse(String(claim.meta.version))?.counter ?? Number.NaN],
     }
     const loose = op('a', { meta: { version: '2026-09-26T00:00:00.000Z:1:z' } })
-    expect(compareRecordOps(loose, null, policy)).toEqual({
+    expect(compareRecordOps({ incoming: loose, stored: null, policy: policy })).toEqual({
       status: 'reject',
       reason: 'version-invalid',
     })
@@ -203,35 +225,55 @@ describe('monotonic', () => {
       }
     }
     if (low === null) throw new Error('no opposing digest fixture')
-    expect(compareRecordOps(high, low, policy).status).toBe('apply')
-    expect(compareRecordOps(low, high, policy).status).toBe('noop')
+    expect(compareRecordOps({ incoming: high, stored: low, policy: policy }).status).toBe('apply')
+    expect(compareRecordOps({ incoming: low, stored: high, policy: policy }).status).toBe('noop')
   })
 
   test('versions compare as numeric tuples, not strings or sums', () => {
     const high = versioned('a', [2, 0])
     const low = versioned('z', [1, 999])
-    expect(compareRecordOps(high, low, VERSIONED)).toEqual({ status: 'apply' })
-    expect(compareRecordOps(low, high, VERSIONED)).toEqual({ status: 'noop' })
+    expect(compareRecordOps({ incoming: high, stored: low, policy: VERSIONED })).toEqual({
+      status: 'apply',
+    })
+    expect(compareRecordOps({ incoming: low, stored: high, policy: VERSIONED })).toEqual({
+      status: 'noop',
+    })
     // '10' sorts before '9' as a string.
-    expect(compareRecordOps(versioned('a', [10]), versioned('z', [9]), VERSIONED).status).toBe(
-      'apply',
-    )
+    expect(
+      compareRecordOps({
+        incoming: versioned('a', [10]),
+        stored: versioned('z', [9]),
+        policy: VERSIONED,
+      }).status,
+    ).toBe('apply')
   })
 
   test('a longer tuple extending an equal prefix is greater', () => {
-    expect(compareRecordOps(versioned('a', [1, 0]), versioned('z', [1]), VERSIONED).status).toBe(
-      'apply',
-    )
-    expect(compareRecordOps(versioned('z', [1]), versioned('a', [1, 0]), VERSIONED).status).toBe(
-      'noop',
-    )
+    expect(
+      compareRecordOps({
+        incoming: versioned('a', [1, 0]),
+        stored: versioned('z', [1]),
+        policy: VERSIONED,
+      }).status,
+    ).toBe('apply')
+    expect(
+      compareRecordOps({
+        incoming: versioned('z', [1]),
+        stored: versioned('a', [1, 0]),
+        policy: VERSIONED,
+      }).status,
+    ).toBe('noop')
   })
 
   test('the version decides, not the hlc', () => {
     const newerStampLowerVersion = versioned('z', [1], { hlc: hlcAt(1000) })
     const olderStampHigherVersion = versioned('a', [2], { hlc: hlcAt(0) })
     expect(
-      compareRecordOps(olderStampHigherVersion, newerStampLowerVersion, VERSIONED).status,
+      compareRecordOps({
+        incoming: olderStampHigherVersion,
+        stored: newerStampLowerVersion,
+        policy: VERSIONED,
+      }).status,
     ).toBe('apply')
   })
 
@@ -255,17 +297,19 @@ describe('monotonic', () => {
       version: (op) => [Number(op.meta.epoch), Number(op.meta.sequence)],
     }
     const conflict = { storedOpHash: 'a', incomingOpHash: 'b' }
-    expect(compareRecordOps(incoming, stored, policy)).toEqual({
+    expect(compareRecordOps({ incoming: incoming, stored: stored, policy: policy })).toEqual({
       status: higherContent(incoming, stored) ? 'apply' : 'noop',
       reason: 'equal-version-conflict',
       conflict,
     })
-    expect(compareRecordOps(stored, incoming, policy)).toEqual({
+    expect(compareRecordOps({ incoming: stored, stored: incoming, policy: policy })).toEqual({
       status: higherContent(stored, incoming) ? 'apply' : 'noop',
       reason: 'equal-version-conflict',
       conflict: { storedOpHash: 'b', incomingOpHash: 'a' },
     })
-    expect(compareRecordOps(stored, stored, policy)).toEqual({ status: 'noop' })
+    expect(compareRecordOps({ incoming: stored, stored: stored, policy: policy })).toEqual({
+      status: 'noop',
+    })
   })
 
   test('a fork hook keeps both operations at one version, and is not asked about the same op', () => {
@@ -276,13 +320,19 @@ describe('monotonic', () => {
     }
     const a = versioned('a', [3])
     const b = versioned('b', [3])
-    expect(compareRecordOps(b, a, VERSIONED, onEqual)).toEqual({
+    expect(
+      compareRecordOps({ incoming: b, stored: a, policy: VERSIONED, onEqual: onEqual }),
+    ).toEqual({
       status: 'fork',
       reason: 'equal-version-fork',
       conflict: { storedOpHash: 'a', incomingOpHash: 'b' },
     })
-    expect(compareRecordOps(a, b, VERSIONED, onEqual).status).toBe('fork')
-    expect(compareRecordOps(a, a, VERSIONED, onEqual)).toEqual({ status: 'noop' })
+    expect(
+      compareRecordOps({ incoming: a, stored: b, policy: VERSIONED, onEqual: onEqual }).status,
+    ).toBe('fork')
+    expect(
+      compareRecordOps({ incoming: a, stored: a, policy: VERSIONED, onEqual: onEqual }),
+    ).toEqual({ status: 'noop' })
     expect(asked).toEqual([
       ['b', 'a'],
       ['a', 'b'],
@@ -293,19 +343,26 @@ describe('monotonic', () => {
     const resolve = (): EqualVersionDecision => 'resolve'
     const a = versioned('a', [3])
     const b = versioned('b', [3])
-    expect(compareRecordOps(b, a, VERSIONED, resolve).status).toBe(
-      higherContent(b, a) ? 'apply' : 'noop',
-    )
-    expect(compareRecordOps(a, b, VERSIONED, resolve).status).toBe(
-      higherContent(a, b) ? 'apply' : 'noop',
-    )
+    expect(
+      compareRecordOps({ incoming: b, stored: a, policy: VERSIONED, onEqual: resolve }).status,
+    ).toBe(higherContent(b, a) ? 'apply' : 'noop')
+    expect(
+      compareRecordOps({ incoming: a, stored: b, policy: VERSIONED, onEqual: resolve }).status,
+    ).toBe(higherContent(a, b) ? 'apply' : 'noop')
   })
 
   test('the hook is not consulted across different versions', () => {
     const onEqual = (): EqualVersionDecision => {
       throw new Error('hook consulted')
     }
-    expect(compareRecordOps(versioned('a', [4]), versioned('b', [3]), VERSIONED, onEqual)).toEqual({
+    expect(
+      compareRecordOps({
+        incoming: versioned('a', [4]),
+        stored: versioned('b', [3]),
+        policy: VERSIONED,
+        onEqual: onEqual,
+      }),
+    ).toEqual({
       status: 'apply',
     })
   })
@@ -317,7 +374,9 @@ describe('monotonic', () => {
     ['a non-array', 2],
   ])('an incoming version with %s is rejected', (_label, version) => {
     const incoming = invalidVersion('z', version)
-    expect(compareRecordOps(incoming, versioned('a', [1]), VERSIONED)).toEqual({
+    expect(
+      compareRecordOps({ incoming: incoming, stored: versioned('a', [1]), policy: VERSIONED }),
+    ).toEqual({
       status: 'reject',
       reason: 'version-invalid',
     })
@@ -331,12 +390,16 @@ describe('monotonic', () => {
         return claim.meta.version as ReadonlyArray<number>
       },
     }
-    expect(compareRecordOps(op('z'), versioned('a', [1]), policy).status).toBe('reject')
+    expect(
+      compareRecordOps({ incoming: op('z'), stored: versioned('a', [1]), policy: policy }).status,
+    ).toBe('reject')
   })
 
   test('a stored op with an invalid version yields to a valid one', () => {
     const stored = invalidVersion('z', [Number.NaN])
-    expect(compareRecordOps(versioned('a', [1]), stored, VERSIONED)).toEqual({
+    expect(
+      compareRecordOps({ incoming: versioned('a', [1]), stored: stored, policy: VERSIONED }),
+    ).toEqual({
       status: 'apply',
       reason: 'stored-version-invalid',
     })
@@ -346,7 +409,9 @@ describe('monotonic', () => {
 describe('immutable', () => {
   test('an identical duplicate is a no-op', () => {
     const stored = op('a')
-    expect(compareRecordOps(stored, stored, IMMUTABLE)).toEqual({ status: 'noop' })
+    expect(compareRecordOps({ incoming: stored, stored: stored, policy: IMMUTABLE })).toEqual({
+      status: 'noop',
+    })
   })
 
   test.each([
@@ -360,12 +425,12 @@ describe('immutable', () => {
     (_label, change) => {
       const low = op('a')
       const high = op('b', change)
-      expect(compareRecordOps(high, low, IMMUTABLE)).toEqual({
+      expect(compareRecordOps({ incoming: high, stored: low, policy: IMMUTABLE })).toEqual({
         status: higherContent(high, low) ? 'apply' : 'noop',
         reason: 'immutable-conflict',
         conflict: { storedOpHash: 'a', incomingOpHash: 'b' },
       })
-      expect(compareRecordOps(low, high, IMMUTABLE)).toEqual({
+      expect(compareRecordOps({ incoming: low, stored: high, policy: IMMUTABLE })).toEqual({
         status: higherContent(low, high) ? 'apply' : 'noop',
         reason: 'immutable-conflict',
         conflict: { storedOpHash: 'b', incomingOpHash: 'a' },
@@ -430,9 +495,14 @@ function replay(
       rows.set(incoming.claim.id, [incoming])
       continue
     }
-    const decisions: Array<MergeDecision> = retained.map((stored) =>
-      compareRecordOps(incoming, stored, policy, onEqual),
-    )
+    const decisions: Array<MergeDecision> = retained.map((stored) => {
+      return compareRecordOps({
+        incoming: incoming,
+        stored: stored,
+        policy: policy,
+        onEqual: onEqual,
+      })
+    })
     for (const decision of decisions) {
       if (decision.conflict !== undefined) {
         reports++
@@ -455,12 +525,7 @@ function replay(
   return { rows: terminal, conflicts: [...conflicts].sort(), reports }
 }
 
-function expectConvergence(
-  ops: Array<VerifiedRecordOp>,
-  policy: MergePolicy,
-  expected: Terminal,
-  onEqual?: (incoming: VerifiedRecordOp, stored: VerifiedRecordOp) => EqualVersionDecision,
-): void {
+function expectConvergence({ ops, policy, expected, onEqual }: ExpectConvergenceParams): void {
   for (let seed = 1; seed <= 200; seed++) {
     const { rows, conflicts } = replay(arrival(ops, mulberry32(seed)), policy, onEqual)
     expect({ seed, rows, conflicts }).toEqual({ seed, ...expected })
@@ -479,12 +544,16 @@ describe('every arrival order converges', () => {
       op('h6', { id: 'r2', hlc: hlcAt(1, 12, 'node-b') }),
       op('h7', { id: 'r3', hlc: hlcAt(-100_000) }),
     ]
-    const r1 = [ops[1], ops[2], ops[3]].reduce((best, item) =>
-      higherContent(item as VerifiedRecordOp, best as VerifiedRecordOp) ? item : best,
-    ) as VerifiedRecordOp
-    expectConvergence(ops, LWW, {
-      rows: { r1: [r1.opHash], r2: ['h6'], r3: ['h7'] },
-      conflicts: [],
+    const r1 = [ops[1], ops[2], ops[3]].reduce((best, item) => {
+      return higherContent(item as VerifiedRecordOp, best as VerifiedRecordOp) ? item : best
+    }) as VerifiedRecordOp
+    expectConvergence({
+      ops: ops,
+      policy: LWW,
+      expected: {
+        rows: { r1: [r1.opHash], r2: ['h6'], r3: ['h7'] },
+        conflicts: [],
+      },
     })
   })
 
@@ -498,11 +567,9 @@ describe('every arrival order converges', () => {
       versioned('m6', [1, 0], { id: 'r2' }),
       versioned('m7', [0, 5], { id: 'r3' }),
     ]
-    const r1 = ops
-      .slice(1, 4)
-      .reduce((best, item) =>
-        higherContent(item as VerifiedRecordOp, best as VerifiedRecordOp) ? item : best,
-      ) as VerifiedRecordOp
+    const r1 = ops.slice(1, 4).reduce((best, item) => {
+      return higherContent(item as VerifiedRecordOp, best as VerifiedRecordOp) ? item : best
+    }) as VerifiedRecordOp
     const r2 = higherContent(ops[5] as VerifiedRecordOp, ops[4] as VerifiedRecordOp) ? 'm6' : 'm5'
     const expected = { r1: [r1.opHash], r2: [r2], r3: ['m7'] }
     for (let seed = 1; seed <= 200; seed++) {
@@ -538,19 +605,22 @@ describe('every arrival order converges', () => {
       versioned('k2b', [2], { id: 'key' }),
       versioned('k2c', [2], { id: 'key' }),
     ]
-    expectConvergence(
-      ops,
-      VERSIONED,
-      { rows: { key: ['k2a', 'k2b', 'k2c'] }, conflicts: ['k2a|k2b', 'k2a|k2c', 'k2b|k2c'] },
-      FORK_ON_EQUAL,
-    )
+    expectConvergence({
+      ops: ops,
+      policy: VERSIONED,
+      expected: {
+        rows: { key: ['k2a', 'k2b', 'k2c'] },
+        conflicts: ['k2a|k2b', 'k2a|k2c', 'k2b|k2c'],
+      },
+      onEqual: FORK_ON_EQUAL,
+    })
     // A later version supersedes every branch.
-    expectConvergence(
-      [...ops, versioned('k3', [3], { id: 'key' })],
-      VERSIONED,
-      { rows: { key: ['k3'] }, conflicts: expect.any(Array) as unknown as Array<string> },
-      FORK_ON_EQUAL,
-    )
+    expectConvergence({
+      ops: [...ops, versioned('k3', [3], { id: 'key' })],
+      policy: VERSIONED,
+      expected: { rows: { key: ['k3'] }, conflicts: expect.any(Array) as unknown as Array<string> },
+      onEqual: FORK_ON_EQUAL,
+    })
   })
 
   test('a fork hook over two ops keeps both under both orders', () => {
@@ -580,8 +650,9 @@ describe('every arrival order converges', () => {
 
   test('an asymmetric fork hook splits peers, which a two-order replay detects', () => {
     // Forks only when the incoming op has the greater opHash: (b, a) forks, (a, b) resolves.
-    const asymmetric = (incoming: VerifiedRecordOp, stored: VerifiedRecordOp) =>
-      incoming.opHash > stored.opHash ? ('fork' as const) : ('resolve' as const)
+    const asymmetric = (incoming: VerifiedRecordOp, stored: VerifiedRecordOp) => {
+      return incoming.opHash > stored.opHash ? ('fork' as const) : ('resolve' as const)
+    }
     const a = versioned('a', [2])
     const b = versioned('b', [2])
     const forward = replay([a, b], VERSIONED, asymmetric).rows

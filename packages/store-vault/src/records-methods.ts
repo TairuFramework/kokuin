@@ -39,11 +39,13 @@ export function storeMethods(
 }
 
 export function snapshotMethods(methods?: VaultMethods): VaultMethods | undefined {
-  return methods?.map((method) => ({
-    ...method,
-    resolve: method.resolve.bind(method),
-    resolveHistoric: method.resolveHistoric?.bind(method),
-    resolveDenySet: method.resolveDenySet?.bind(method),
-    resolveAgreementKey: method.resolveAgreementKey?.bind(method),
-  }))
+  return methods?.map((method) => {
+    return {
+      ...method,
+      resolve: method.resolve.bind(method),
+      resolveHistoric: method.resolveHistoric?.bind(method),
+      resolveDenySet: method.resolveDenySet?.bind(method),
+      resolveAgreementKey: method.resolveAgreementKey?.bind(method),
+    }
+  })
 }

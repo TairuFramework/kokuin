@@ -6,7 +6,7 @@ import { type FoldResult, foldLog, type KeyState } from './fold.js'
 import { snapshotLog, unchangedEntries } from './log-snapshot.js'
 
 /** Index into an array whose element is a branch-resolution invariant, throwing rather than reading undefined. */
-function required<T>(items: ReadonlyArray<T>, index: number, what: string): T {
+function required<TValue>(items: ReadonlyArray<TValue>, index: number, what: string): TValue {
   const item = items[index]
   if (item === undefined) {
     throw new Error(`supersede: ${what}`)

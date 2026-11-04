@@ -146,7 +146,6 @@ describe('BrowserKeyEntry', () => {
     const entry = new BrowserKeyEntry({ keyID: 'k4', getStore })
     const provided = (await entry.provideAsync()) as StoredKeyRecord & { suite?: string }
     expect(provided.suite).toBe('Ed25519')
-    // Stored in mock IDB
     expect(data.has('k4')).toBe(true)
   })
 
@@ -184,7 +183,7 @@ describe('BrowserKeyEntry', () => {
 describe('BrowserKeyStore', () => {
   test('entry() returns BrowserKeyEntry with correct keyID', async () => {
     const { BrowserKeyStore } = await import('../src/store.js')
-    const store = new BrowserKeyStore(createMockGetStore().getStore)
+    const store = new BrowserKeyStore({ getStore: createMockGetStore().getStore })
     const entry = store.entry('my-key')
     expect(entry).toBeInstanceOf(BrowserKeyEntry)
     expect(entry.keyID).toBe('my-key')
@@ -192,13 +191,13 @@ describe('BrowserKeyStore', () => {
 
   test('entry() returns cached entry for same keyID', async () => {
     const { BrowserKeyStore } = await import('../src/store.js')
-    const store = new BrowserKeyStore(createMockGetStore().getStore)
+    const store = new BrowserKeyStore({ getStore: createMockGetStore().getStore })
     expect(store.entry('x')).toBe(store.entry('x'))
   })
 
   test('entry("constructor") returns a real entry, not a prototype member', async () => {
     const { BrowserKeyStore } = await import('../src/store.js')
-    const store = new BrowserKeyStore(createMockGetStore().getStore)
+    const store = new BrowserKeyStore({ getStore: createMockGetStore().getStore })
     const entry = store.entry('constructor')
     expect(entry).toBeInstanceOf(BrowserKeyEntry)
     expect(entry.keyID).toBe('constructor')

@@ -28,6 +28,26 @@ import {
   snapshotRecord,
 } from './record.js'
 
+export type RecordOpSigningErrorParams = { message: string }
+export type SignRecordOpParams = {
+  identity: SigningIdentity
+  claim: RecordClaim
+  opKind: string
+  options?: CryptoOptions
+}
+export type VerifyRecordOpParams = {
+  opJWT: string
+  opKind: string
+  methods?: MethodRegistry
+  options?: CryptoOptions
+}
+export type VerifySignedRecordParams = {
+  record: SignedRecord
+  opKind: string
+  methods?: MethodRegistry
+  options?: CryptoOptions
+}
+
 /** A record op whose signature checked out. `issuer` is the verified signer, normalized. */
 export type VerifiedRecordOp = {
   issuer: string
@@ -84,7 +104,7 @@ export function clearRecordOpMemo(): void {
 
 /** Thrown when an identity signs an envelope that record-op verification cannot accept. */
 export class RecordOpSigningError extends Error {
-  constructor(message: string) {
+  constructor({ message }: RecordOpSigningErrorParams) {
     super(message)
     this.name = 'RecordOpSigningError'
   }
@@ -182,12 +202,12 @@ const signingQueues = new WeakMap<SigningIdentity, Promise<unknown>>()
  * @throws RecordClaimError when the claim is malformed.
  * @throws RecordOpSigningError when the identity produces an unverifiable record-op envelope.
  */
-export async function signRecordOp(
-  identity: SigningIdentity,
-  claim: RecordClaim,
-  opKind: string,
-  options?: CryptoOptions,
-): Promise<{ opJWT: string; opHash: string }> {
+export async function signRecordOp({
+  identity,
+  claim,
+  opKind,
+  options,
+}: SignRecordOpParams): Promise<{ opJWT: string; opHash: string }> {
   const crypto = options?.crypto ?? nobleCrypto
   const bytes = canonicalRecordClaim(claim)
   const previous = signingQueues.get(identity) ?? Promise.resolve()
@@ -214,7 +234,9 @@ export async function signRecordOp(
     normalizeDID(signed.payload.iss) !== normalizeDID(identity.id) ||
     signed.payload.claim !== toB64U(bytes)
   ) {
-    throw new RecordOpSigningError('Identity produced a record op envelope that cannot be verified')
+    throw new RecordOpSigningError({
+      message: 'Identity produced a record op envelope that cannot be verified',
+    })
   }
   return { opJWT, opHash }
 }
@@ -244,12 +266,12 @@ function decodeClaim(encoded: string): RecordClaim | null {
  * The issuer is taken only from the verified `iss` — the claim's `owner` is the author's
  * assertion, and whether the issuer may write for that owner is the type's decision.
  */
-export async function verifyRecordOp(
-  opJWT: string,
-  opKind: string,
-  methods?: MethodRegistry,
-  options?: CryptoOptions,
-): Promise<VerifiedRecordOp | null> {
+export async function verifyRecordOp({
+  opJWT,
+  opKind,
+  methods,
+  options,
+}: VerifyRecordOpParams): Promise<VerifiedRecordOp | null> {
   if (!isCanonicalCompactToken(opJWT)) {
     return null
   }
@@ -306,14 +328,22 @@ export async function verifyRecordOp(
  * The payload is not checked here: `recordPayloadMatches` does that, so a caller can order
  * it after the merge decision.
  */
-export async function verifySignedRecord(
-  record: SignedRecord,
-  opKind: string,
-  methods?: MethodRegistry,
-  options?: CryptoOptions,
-): Promise<VerifiedRecordOp | null> {
+export async function verifySignedRecord({
+  record,
+  opKind,
+  methods,
+  options,
+}: VerifySignedRecordParams): Promise<VerifiedRecordOp | null> {
   const owned = snapshotRecord(record)
-  return bindRecord(owned, await verifyRecordOp(owned.opJWT, opKind, methods, options))
+  return bindRecord(
+    owned,
+    await verifyRecordOp({
+      opJWT: owned.opJWT,
+      opKind: opKind,
+      methods: methods,
+      options: options,
+    }),
+  )
 }
 
 function bindRecord(
@@ -353,7 +383,12 @@ export function createRecordVerifier(
     const record = snapshotRecord(input)
     let pending = ops.get(record.opJWT)
     if (pending === undefined) {
-      pending = verifyRecordOp(record.opJWT, opKind, capturedMethods, captured)
+      pending = verifyRecordOp({
+        opJWT: record.opJWT,
+        opKind: opKind,
+        methods: capturedMethods,
+        options: captured,
+      })
       const token = record.opJWT
       pending = pending.then(
         (op) => {

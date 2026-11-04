@@ -7,6 +7,9 @@ import {
   mutableKeyStoreConformanceCases,
 } from '../src/index.js'
 
+type MemoryKeyEntryParams = { keyID: string; keys: Map<string, Uint8Array> }
+type CollidingKeyEntryParams = { keyID: string; keys: Map<string, Uint8Array>; slot: string }
+
 // --- A correct reference implementation ---
 
 class MemoryKeyEntry implements MutableKeyEntry<Uint8Array> {
@@ -14,7 +17,7 @@ class MemoryKeyEntry implements MutableKeyEntry<Uint8Array> {
   #keys: Map<string, Uint8Array>
   #provideLock: Promise<unknown> = Promise.resolve()
 
-  constructor(keyID: string, keys: Map<string, Uint8Array>) {
+  constructor({ keyID, keys }: MemoryKeyEntryParams) {
     this.#keyID = keyID
     this.#keys = keys
   }
@@ -55,7 +58,7 @@ class MemoryKeyStore implements KeyStore<Uint8Array, MemoryKeyEntry> {
   #keys = new Map<string, Uint8Array>()
 
   entry(keyID: string): MemoryKeyEntry {
-    this.#entries[keyID] ??= new MemoryKeyEntry(keyID, this.#keys)
+    this.#entries[keyID] ??= new MemoryKeyEntry({ keyID: keyID, keys: this.#keys })
     return this.#entries[keyID]
   }
 }
@@ -83,7 +86,7 @@ class CollidingKeyEntry implements MutableKeyEntry<Uint8Array> {
   #slot: string
   #provideLock: Promise<unknown> = Promise.resolve()
 
-  constructor(keyID: string, keys: Map<string, Uint8Array>, slot: string) {
+  constructor({ keyID, keys, slot }: CollidingKeyEntryParams) {
     this.#keyID = keyID
     this.#keys = keys
     this.#slot = slot
@@ -124,7 +127,11 @@ class CollidingKeyStore implements KeyStore<Uint8Array, CollidingKeyEntry> {
   #entries: Record<string, CollidingKeyEntry> = Object.create(null)
   #keys = new Map<string, Uint8Array>()
   entry(keyID: string): CollidingKeyEntry {
-    this.#entries[keyID] ??= new CollidingKeyEntry(keyID, this.#keys, 'shared-slot')
+    this.#entries[keyID] ??= new CollidingKeyEntry({
+      keyID: keyID,
+      keys: this.#keys,
+      slot: 'shared-slot',
+    })
     return this.#entries[keyID]
   }
 }
@@ -133,7 +140,7 @@ class CollidingKeyStore implements KeyStore<Uint8Array, CollidingKeyEntry> {
 class UncachedEntryStore implements KeyStore<Uint8Array, MemoryKeyEntry> {
   #keys = new Map<string, Uint8Array>()
   entry(keyID: string): MemoryKeyEntry {
-    return new MemoryKeyEntry(keyID, this.#keys)
+    return new MemoryKeyEntry({ keyID: keyID, keys: this.#keys })
   }
 }
 
@@ -155,7 +162,7 @@ class RacyKeyStore implements KeyStore<Uint8Array, RacyKeyEntry> {
   #entries: Record<string, RacyKeyEntry> = Object.create(null)
   #keys = new Map<string, Uint8Array>()
   entry(keyID: string): RacyKeyEntry {
-    this.#entries[keyID] ??= new RacyKeyEntry(keyID, this.#keys)
+    this.#entries[keyID] ??= new RacyKeyEntry({ keyID: keyID, keys: this.#keys })
     return this.#entries[keyID]
   }
 }

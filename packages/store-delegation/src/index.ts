@@ -12,6 +12,7 @@ export {
   delegationStoreDefinition,
   getDelegationStore,
 } from './definition.js'
+export type { VerifiedRevocationErrorParams } from './revocation-checker.js'
 export {
   createDelegationRevocationBackend,
   createDelegationRevocationChecker,

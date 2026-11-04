@@ -20,7 +20,7 @@
  */
 export type KeyEntry<PrivateKeyType> = {
   /** The keyID this entry was created for. Identical to the string passed to `entry()`. */
-  readonly keyID: string
+  keyID: string
   /** The stored key, or `null` when none exists. Never `undefined`; never throws for absence. */
   getAsync(): Promise<PrivateKeyType | null>
   /**

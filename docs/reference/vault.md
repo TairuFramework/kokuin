@@ -203,7 +203,6 @@ Replicated retirement outranks same-version activation. A refused reactivation p
 Entry operations accept opaque byte plaintext and public metadata, without application-specific IDs.
 `reKeyEntry` authorises both keys and re-encrypts while preserving the entry address.
 
-
 Replicated mutations accept optional `consumer?: unknown` for the current caller's signed `meta.consumer`.
 `undefined` preserves existing behaviour. `null` explicitly clears evidence.
 Local mode ignores this signed metadata input.

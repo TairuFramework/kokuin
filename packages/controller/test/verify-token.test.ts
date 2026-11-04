@@ -53,7 +53,7 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
 
   test('a token signed by the pre-rotation key is rejected once the log has reset', async () => {
     const inception = await createInception(seed, 0)
-    const reset = await createReset(seed, 0, 1)
+    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
 
     // Signed before the reset, by an identity that only ever saw the inception.
     const stale = await createControllerIdentity({

@@ -5,6 +5,19 @@ import { createRotate, type SignedEvent } from './events.js'
 import { type FoldResult, foldLog, snapshotOf } from './fold.js'
 import { snapshotLog } from './log-snapshot.js'
 
+export type DeviceRevokeIndicesParams = {
+  did: string
+  chain: Array<SignedEvent>
+  subject: string
+  options?: CryptoOptions
+}
+export type DeviceRevokeIndexParams = {
+  did: string
+  chain: Array<SignedEvent>
+  subject: string
+  options?: CryptoOptions
+}
+
 async function foldDeviceChain(
   did: string,
   input: Array<SignedEvent>,
@@ -29,13 +42,13 @@ function deniesSubject(deny: ReadonlySet<string>, subject: string): boolean {
  * Every same-generation rotate newly denying `subject`, in chain order, or an empty array for an
  * invalid chain. A subject revoked, cleared by a reset and revoked again yields both indices.
  */
-export async function deviceRevokeIndices(
-  did: string,
-  input: Array<SignedEvent>,
-  subject: string,
-  options: CryptoOptions = {},
-): Promise<Array<number>> {
-  const chain = snapshotLog({ chain: input, events: [] }).chain
+export async function deviceRevokeIndices({
+  did,
+  chain: suppliedChain,
+  subject,
+  options = {},
+}: DeviceRevokeIndicesParams): Promise<Array<number>> {
+  const chain = snapshotLog({ chain: suppliedChain, events: [] }).chain
   const folded = await foldDeviceChain(did, chain, options)
   if (!folded.ok) return []
   const indices: Array<number> = []
@@ -57,13 +70,15 @@ export async function deviceRevokeIndices(
 }
 
 /** First same-generation rotate newly denying `subject`, or undefined for an invalid chain. */
-export async function deviceRevokeIndex(
-  did: string,
-  chain: Array<SignedEvent>,
-  subject: string,
-  options: CryptoOptions = {},
-): Promise<number | undefined> {
-  return (await deviceRevokeIndices(did, chain, subject, options))[0]
+export async function deviceRevokeIndex({
+  did,
+  chain,
+  subject,
+  options = {},
+}: DeviceRevokeIndexParams): Promise<number | undefined> {
+  return (
+    await deviceRevokeIndices({ did: did, chain: chain, subject: subject, options: options })
+  )[0]
 }
 
 export type CreateDeviceRevokeParams = CryptoOptions & {

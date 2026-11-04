@@ -82,12 +82,7 @@ export function providerFor(bridge: Pick<Crypto, 'abiVersion' | 'execute'>): Cry
       const requests = items.map((item) => signingRequest(alg, item))
       return decode(await bridge.execute(requests), requests.length, 64)
     },
-    async verify(
-      alg: CryptoAlgorithm,
-      signature: Uint8Array,
-      message: Uint8Array,
-      publicKey: Uint8Array,
-    ): Promise<boolean> {
+    async verify({ alg, signature, message, publicKey }: VerifyItem): Promise<boolean> {
       return verified(
         decode(
           await bridge.execute([verifyRequest({ alg, signature, message, publicKey })]),

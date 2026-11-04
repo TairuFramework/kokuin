@@ -19,7 +19,7 @@ Metadata must survive JSON encoding unchanged. Claims reject extra fields, negat
 import { signRecordOp, verifySignedRecord } from '@kokuin/records'
 
 const opKind = 'example/record-op'
-const signed = await signRecordOp(identity, claim, opKind)
+const signed = await signRecordOp({ identity: identity, claim: claim, opKind: opKind })
 const record = {
   type: claim.type,
   owner: claim.owner,
@@ -28,7 +28,7 @@ const record = {
   payload,
   ...signed,
 }
-const verified = await verifySignedRecord(record, opKind, methods)
+const verified = await verifySignedRecord({ record: record, opKind: opKind, methods: methods })
 ```
 
 The token envelope contains exactly `iss`, `kind`, and the base64url canonical claim bytes.
@@ -52,7 +52,7 @@ The verified issuer identifies the signer. The claim's owner remains an assertio
 A `RecordDecision` contains a key, `decisionHLC`, `contentDigest`, and signed copies of that content.
 `recordClaimDigest` hashes the canonical claim, replacing its `hlc` with string `meta.version` when present.
 This keeps a versioned content decision stable across signing stamps and signers.
-`recordDecisionDigest(record, opKind, methods)` verifies first, then returns that content digest.
+`recordDecisionDigest({ record, opKind, methods })` verifies first, then returns that content digest.
 
 `recordDecisionFromVerifiedCopies` selects the greatest canonical decision stamp, then the greatest content digest.
 Its explicit stamp source selects claim `hlc` or metadata `version`.
@@ -226,28 +226,28 @@ Fixtures must obtain it through verification or an awaited digest of the exact f
 Persisted-operation reconstruction must verify the signed operation again before trusting its content digest.
 No database schema migration is required for the carried field.
 
-Positional APIs append `options?: CryptoOptions`. Existing `methods?` arguments keep their positions.
+Params objects carry `methods?` and `options?: CryptoOptions` for APIs that previously exceeded three arguments.
 
 | Export | Arguments after migration | Result |
 | --- | --- | --- |
 | `recordClaimDigest` | `claim, options?` | `Promise<string>` |
 | `recordPayloadDigest` | `payload, options?` | `Promise<string \| null>` |
 | `recordPayloadMatches` | `record, claim, options?` | `Promise<boolean>` |
-| `recordDecisionDigest` | `record, opKind, methods?, options?` | `Promise<string>` |
+| `recordDecisionDigest` | `{ record, opKind, methods?, options? }` | `Promise<string>` |
 | `fingerprintRange` | `leaves, options?` | `Promise<string>` |
 | `summarizeRange` | `leaves, bounds, options?` | `Promise<RangeSummary>` |
-| `splitRange` | `leaves, bounds, leafThreshold, options?` | `Promise<Array<RangeSummary \| RangeLeafList>>` |
+| `splitRange` | `{ leaves, rangeBounds, leafThreshold, cryptoOptions? }` | `Promise<Array<RangeSummary \| RangeLeafList>>` |
 | `rangeLeaf` | `decision, policy, options?` | `Promise<RangeLeaf \| null>` |
 | `nextRequesterSteps` | `local, response, options?` | `Promise<Array<RequesterStep>>` |
-| `advanceRecordPull` | `state, local, response, options?` | `Promise<{ state: RecordPullState; steps: Array<RequesterStep> }>` |
+| `advanceRecordPull` | `{ state, local, response, options? }` | `Promise<{ state: RecordPullState; steps: Array<RequesterStep> }>` |
 
-`signRecordOp(identity, claim, opKind, options?)` keeps its Promise result. Options select hashing, while the identity owns signing.
-`verifyRecordOp(opJWT, opKind, methods?, options?)` and `verifySignedRecord(record, opKind, methods?, options?)` keep `Promise<VerifiedRecordOp | null>`.
+`signRecordOp({ identity, claim, opKind, options? })` keeps its Promise result. Options select hashing, while the identity owns signing.
+`verifyRecordOp({ opJWT, opKind, methods?, options? })` and `verifySignedRecord({ record, opKind, methods?, options? })` keep `Promise<VerifiedRecordOp | null>`.
 `createRecordVerifier(opKind, methods?, options?)` remains synchronous and captures options for its asynchronous verifier.
 `ApplyRecordChunkParams`, `RecordReceiveContext` and `VisibilityContext` gain `crypto?`.
 `verifyHolderProof`, `visibleTo` and `filterVisibleRecords` keep their asynchronous contracts and forward that context.
 `visibilityRules(rules)` keeps its signature. Its returned hook consumes the extended context.
-Internal `isDependencyUnsatisfied` and `isDependencyUnsatisfiedBy` append options after `methods?` and remain asynchronous.
+Internal dependency checks carry `methods?` and provider options in named params objects and remain asynchronous.
 
 `beginRecordPull`, ordering, policies, decisions and content comparisons remain synchronous.
 Hashing preserves canonical bytes, string `meta.version` substitution, tombstones and range framing.
@@ -256,8 +256,13 @@ Provider operational failures reject rather than becoming invalid-input refusals
 
 ```ts
 const options = { crypto }
-const op = await verifySignedRecord(record, opKind, methods, options)
-if (op !== null && await recordPayloadMatches(record, op.claim, options)) {
+const op = await verifySignedRecord({
+  record: record,
+  opKind: opKind,
+  methods: methods,
+  options: options,
+})
+if (op !== null && (await recordPayloadMatches(record, op.claim, options))) {
   const digest = op.contentDigest
   // Apply authorisation and persistence policy using this verified content.
 }

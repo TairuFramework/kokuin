@@ -1,4 +1,6 @@
+import type * as ed25519Module from '@noble/curves/ed25519.js'
 import { ed25519 } from '@noble/curves/ed25519.js'
+import type * as nistModule from '@noble/curves/nist.js'
 import { p256 } from '@noble/curves/nist.js'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -16,7 +18,7 @@ import { getVerifier } from '../src/verifier.js'
 // noble's curve objects are frozen, so `vi.spyOn` cannot wrap `verify`: replace them with
 // pass-through copies whose `verify` is a spy.
 vi.mock('@noble/curves/ed25519.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@noble/curves/ed25519.js')>()
+  const original = await importOriginal<typeof ed25519Module>()
   return {
     ...original,
     ed25519: {
@@ -27,7 +29,7 @@ vi.mock('@noble/curves/ed25519.js', async (importOriginal) => {
   }
 })
 vi.mock('@noble/curves/nist.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@noble/curves/nist.js')>()
+  const original = await importOriginal<typeof nistModule>()
   return { ...original, p256: { ...original.p256, verify: vi.fn(original.p256.verify) } }
 })
 

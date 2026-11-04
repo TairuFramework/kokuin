@@ -1,3 +1,30 @@
+type MemberIncarnation = { add: string; g: number }
+
+import type { VaultTestDB } from './cases.js'
+
+type RecordChain = {
+  key: SignedRecord
+  branch: SignedRecord
+  branchID: string
+  address: { ownerDID: string; keyID: string }
+  version: number
+}
+
+type DependentParams = {
+  signer: SigningIdentity
+  source: Chain
+  type: 'vault.entry' | 'vault.wrapping'
+  options?: {
+    id?: string
+    counter?: number
+    contentCounter?: number
+    recipient?: string | null
+    factorRecipient?: string
+    deleted?: boolean
+    consumer?: Record<string, unknown>
+  }
+}
+
 import { sql, withKeyLock, withKeyLocks } from '@hozon/db'
 import type { RecordStoreAdapter, SignedRecord, VerifiedRecordOp } from '@kokuin/records'
 import {
@@ -80,27 +107,30 @@ async function signed(
     owner: params.owner,
     hlc: params.hlc,
     payload,
-    ...(await signRecordOp(
-      signer,
-      {
+    ...(await signRecordOp({
+      identity: signer,
+      claim: {
         ...claim,
         payloadDigest: await recordPayloadDigest(payload),
         deleted: payload === null,
       },
-      opKind,
-    )),
+      opKind: opKind,
+    })),
   }
 }
 
 async function verified(record: SignedRecord): Promise<VerifiedRecordOp> {
-  const op = await verifySignedRecord(record, OP_KIND)
+  const op = await verifySignedRecord({ record: record, opKind: OP_KIND })
   if (op === null) throw new Error('fixture signature did not verify')
   return op
 }
 
 async function resign(signer: SigningIdentity, record: SignedRecord): Promise<SignedRecord> {
   const op = await verified(record)
-  return { ...record, ...(await signRecordOp(signer, op.claim, OP_KIND)) }
+  return {
+    ...record,
+    ...(await signRecordOp({ identity: signer, claim: op.claim, opKind: OP_KIND })),
+  }
 }
 
 async function chain(
@@ -112,7 +142,7 @@ async function chain(
     state?: 'active' | 'retired'
     consumer?: Record<string, unknown>
   } = {},
-) {
+): Promise<RecordChain> {
   const owner = params.owner ?? signer.id
   const keyID = await createVaultKeyID(owner, UNIQUE)
   const version = params.version ?? 1
@@ -148,22 +178,14 @@ async function chain(
   return { key, branch, branchID, address: { ownerDID: owner, keyID }, version }
 }
 
-type Chain = Awaited<ReturnType<typeof chain>>
+type Chain = RecordChain
 
-async function dependent(
-  signer: SigningIdentity,
-  source: Chain,
-  type: 'vault.entry' | 'vault.wrapping',
-  options: {
-    id?: string
-    counter?: number
-    contentCounter?: number
-    recipient?: string | null
-    factorRecipient?: string
-    deleted?: boolean
-    consumer?: Record<string, unknown>
-  } = {},
-): Promise<SignedRecord> {
+async function dependent({
+  signer,
+  source,
+  type,
+  options = {},
+}: DependentParams): Promise<SignedRecord> {
   const hlc = stamp(options.counter ?? 100)
   const wrapped =
     type === 'vault.wrapping' && !options.deleted
@@ -218,7 +240,7 @@ async function exchange(source: RecordStoreAdapter, receiver: VaultRecords, cont
 
 export function replicationCases(harness: StoreHarness): void {
   describe(`vault record exchange (${harness.name})`, () => {
-    type Peer = Awaited<ReturnType<typeof openVaultTestDB>> & { records: VaultRecords }
+    type Peer = VaultTestDB & { records: VaultRecords }
     let peers: Array<Peer>
     let left: Peer
     let right: Peer
@@ -266,9 +288,9 @@ export function replicationCases(harness: StoreHarness): void {
     }
 
     test.each(
-      (['putCopy', 'retainEntryCandidate'] as const).flatMap((method) =>
-        (['token', 'payload'] as const).map((mutation) => [method, mutation] as const),
-      ),
+      (['putCopy', 'retainEntryCandidate'] as const).flatMap((method) => {
+        return (['token', 'payload'] as const).map((mutation) => [method, mutation] as const)
+      }),
     )(
       '%s persists its input snapshot when the resolver suspends during %s mutation',
       async (method, mutation) => {
@@ -278,7 +300,9 @@ export function replicationCases(harness: StoreHarness): void {
         )
         const source = await chain(signer)
         const record =
-          method === 'putCopy' ? source.key : await dependent(signer, source, 'vault.entry')
+          method === 'putCopy'
+            ? source.key
+            : await dependent({ signer: signer, source: source, type: 'vault.entry' })
         const original = {
           ...record,
           payload: record.payload === null ? null : new Uint8Array(record.payload),
@@ -353,7 +377,12 @@ export function replicationCases(harness: StoreHarness): void {
           methods: [{ method: 'test', resolve: async () => key }],
         })
         expect((await seeded.apply([source.key, source.branch])).rejected).toEqual([])
-        const entry = await dependent(signer, source, 'vault.entry', { deleted: true })
+        const entry = await dependent({
+          signer: signer,
+          source: source,
+          type: 'vault.entry',
+          options: { deleted: true },
+        })
         expect((await seeded.apply([entry])).rejected).toEqual([])
         let resolverStore = left.store
         const methods: MethodRegistry = [
@@ -361,7 +390,7 @@ export function replicationCases(harness: StoreHarness): void {
             method: 'test',
             resolve: async (did) => {
               expect(did).toBe(signer.id)
-              let timer: ReturnType<typeof setTimeout> | undefined
+              let timer: NodeJS.Timeout | undefined
               try {
                 // Release a deadlocked verification so failed tests can close the database.
                 const row = await Promise.race([
@@ -378,7 +407,11 @@ export function replicationCases(harness: StoreHarness): void {
             },
           },
         ]
-        const op = await verifySignedRecord(source.key, OP_KIND, methods)
+        const op = await verifySignedRecord({
+          record: source.key,
+          opKind: OP_KIND,
+          methods: methods,
+        })
         if (op === null) throw new Error('fixture signature did not verify')
         const check = async (records: VaultRecords) => {
           if (read === 'get') {
@@ -419,7 +452,7 @@ export function replicationCases(harness: StoreHarness): void {
     test('batch reads equal individual owner-qualified reads and deduplicate keys', async () => {
       const source = await chain(owner)
       await seed(source)
-      const entry = await dependent(owner, source, 'vault.entry')
+      const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
       await left.records.apply([entry])
       const keys = [
         source.key,
@@ -444,11 +477,13 @@ export function replicationCases(harness: StoreHarness): void {
     })
 
     test('batch reads chunk large addresses without exceeding the parameter ceiling', async () => {
-      const keys = Array.from({ length: 501 }, (_, i) => ({
-        type: 'vault.entry',
-        owner: owner.id,
-        id: `absent-${i}`,
-      }))
+      const keys = Array.from({ length: 501 }, (_, i) => {
+        return {
+          type: 'vault.entry',
+          owner: owner.id,
+          id: `absent-${i}`,
+        }
+      })
       const start = left.queries.length
       expect((await left.records.adapter.getMany?.(keys))?.size).toBe(0)
       const queries = left.queries.slice(start).filter((q) => /select .*vault_records/i.test(q.sql))
@@ -459,7 +494,7 @@ export function replicationCases(harness: StoreHarness): void {
     test('records and projections survive adapter reconstruction and remain owner-qualified', async () => {
       const source = await chain(owner)
       await seed(source)
-      const entry = await dependent(owner, source, 'vault.entry')
+      const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
       await left.records.apply([entry])
       const reopened = createVaultRecords({
         store: left.store,
@@ -482,7 +517,7 @@ export function replicationCases(harness: StoreHarness): void {
     test('host rollback removes decisions, projections and candidate effects together', async () => {
       const source = await chain(owner)
       await seed(source)
-      const entry = await dependent(owner, source, 'vault.entry')
+      const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
       await expect(
         left.store.transaction(async (store) => {
           const records = createVaultRecords({
@@ -512,7 +547,7 @@ export function replicationCases(harness: StoreHarness): void {
       async (field) => {
         const source = await chain(owner)
         await seed(source)
-        const entry = await dependent(owner, source, 'vault.entry')
+        const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
         await left.records.apply([entry])
         const table = sql.table('vault_records')
         if (field === 'payload')
@@ -530,7 +565,14 @@ export function replicationCases(harness: StoreHarness): void {
           VaultRecordRowError,
         )
         await expect(
-          left.records.apply([await dependent(owner, source, 'vault.entry', { counter: 200 })]),
+          left.records.apply([
+            await dependent({
+              signer: owner,
+              source: source,
+              type: 'vault.entry',
+              options: { counter: 200 },
+            }),
+          ]),
         ).rejects.toThrow(VaultRecordRowError)
       },
     )
@@ -538,7 +580,7 @@ export function replicationCases(harness: StoreHarness): void {
     test('malformed signed payload and altered payload leave no candidate or projection', async () => {
       const source = await chain(owner)
       await seed(source)
-      const entry = await dependent(owner, source, 'vault.entry')
+      const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
       const op = await verified(entry)
       const malformed = await signed(owner, {
         ...op.claim,
@@ -561,7 +603,7 @@ export function replicationCases(harness: StoreHarness): void {
       await sql`alter table ${sql.table('vault_entries')} rename to vault_entries_gone`.execute(
         left.raw,
       )
-      const entry = await dependent(owner, source, 'vault.entry')
+      const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
       await expect(left.records.apply([entry])).rejects.toThrow()
       expect(await left.records.adapter.get(entry)).toBeNull()
       expect(await left.records.listEntryCandidates({ ...source.address, keyVersion: 1 })).toEqual(
@@ -574,7 +616,10 @@ export function replicationCases(harness: StoreHarness): void {
       async (type) => {
         const source = await chain(owner)
         await seed(source)
-        const record = type === 'vault.key' ? source.key : await dependent(owner, source, type)
+        const record =
+          type === 'vault.key'
+            ? source.key
+            : await dependent({ signer: owner, source: source, type: type })
         await left.records.apply([record])
         const row =
           type === 'vault.key'
@@ -612,7 +657,7 @@ export function replicationCases(harness: StoreHarness): void {
     test('rotation branch-set and entry CAS preconditions reject atomically', async () => {
       const source = await chain(owner)
       await seed(source)
-      const entry = await dependent(owner, source, 'vault.entry')
+      const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
       await left.records.apply([entry])
       const next = await chain(owner, { version: 2 })
       await expect(
@@ -621,9 +666,14 @@ export function replicationCases(harness: StoreHarness): void {
           preconditions: { key: { ...source.address, expectedVersion: 1, expectedBranches: [] } },
         }),
       ).rejects.toThrow(VaultWriteConflict)
-      const refreshed = await dependent(owner, source, 'vault.entry', {
-        counter: 200,
-        contentCounter: 190,
+      const refreshed = await dependent({
+        signer: owner,
+        source: source,
+        type: 'vault.entry',
+        options: {
+          counter: 200,
+          contentCounter: 190,
+        },
       })
       await expect(
         left.records.write({
@@ -665,7 +715,10 @@ export function replicationCases(harness: StoreHarness): void {
         const source = await chain(owner)
         const legacy = await openVaultTestDB(harness)
         const localKey = { ...source.address, suite: 1, version: 1, state: 'active' as const }
-        const live = type === 'vault.key' ? source.key : await dependent(owner, source, type)
+        const live =
+          type === 'vault.key'
+            ? source.key
+            : await dependent({ signer: owner, source: source, type: type })
         const localEntry = storedEntry(source.address, { entryID: live.id })
         const wrapped = await getSuite(1).wrap({
           runtime: createRuntime(),
@@ -743,8 +796,8 @@ export function replicationCases(harness: StoreHarness): void {
     test('all local mutation verbs refuse replicated projections', async () => {
       const source = await chain(owner)
       await seed(source)
-      const entry = await dependent(owner, source, 'vault.entry')
-      const wrapping = await dependent(owner, source, 'vault.wrapping')
+      const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
+      const wrapping = await dependent({ signer: owner, source: source, type: 'vault.wrapping' })
       await left.records.apply([entry, wrapping])
       const entryAddress = { ownerDID: owner.id, entryID: entry.id }
       const wrappingAddress = { ownerDID: owner.id, wrappingID: wrapping.id }
@@ -756,11 +809,12 @@ export function replicationCases(harness: StoreHarness): void {
         () => left.store.deleteKey(source.address),
         () => left.store.updateEntryIfPresent(row),
         () => left.store.updateEntryIfUnchanged({ ...row, expectedHLC: row.hlc }),
-        async () =>
-          left.store.moveEntry({
+        async () => {
+          return left.store.moveEntry({
             ...row,
             keyID: await createVaultKeyID(owner.id, new Uint8Array(16).fill(9)),
-          }),
+          })
+        },
         () => left.store.deleteEntry(entryAddress),
         () => left.store.deleteWrapping(wrappingAddress),
         () => left.store.deleteWrappingsBelowVersion({ ...source.address, keyVersion: 2 }),
@@ -780,16 +834,16 @@ export function replicationCases(harness: StoreHarness): void {
     test('operation kind is fixed for an adapter and its durable database', async () => {
       const source = await chain(owner)
       await seed(source)
-      expect(() =>
-        createVaultRecords({
+      expect(() => {
+        return createVaultRecords({
           store: left.store,
           opKind: 'other/op',
           authority,
           validateConsumerMetadata: metadata,
           nowMS: () => Date.parse('2026-10-01T01:00:00.000Z'),
           maxDriftMS: 60_000,
-        }),
-      ).toThrow(TypeError)
+        })
+      }).toThrow(TypeError)
       await left.store.transaction(async (store) => {
         const other = createVaultRecords({
           store,
@@ -809,9 +863,9 @@ export function replicationCases(harness: StoreHarness): void {
       }>`select op_kind from ${sql.table('vault_record_domain')}`.execute(left.raw)
       expect(rows.rows).toEqual([{ op_kind: OP_KIND }])
       expect(
-        left.queries.some((query) =>
-          /(?:pg_advisory_xact_lock|delete from.*vault_keys.*where 1 = 0)/i.test(query.sql),
-        ),
+        left.queries.some((query) => {
+          return /(?:pg_advisory_xact_lock|delete from.*vault_keys.*where 1 = 0)/i.test(query.sql)
+        }),
       ).toBe(false)
       const start = left.queries.length
       await expect(getVaultRecordsStore(left.db, 'other/op')).rejects.toThrow(TypeError)
@@ -823,11 +877,9 @@ export function replicationCases(harness: StoreHarness): void {
         ).rows,
       ).toEqual([{ op_kind: OP_KIND }])
       expect(
-        left.queries
-          .slice(start)
-          .some((query) =>
-            /(?:pg_advisory_xact_lock|delete from.*vault_keys.*where 1 = 0)/i.test(query.sql),
-          ),
+        left.queries.slice(start).some((query) => {
+          return /(?:pg_advisory_xact_lock|delete from.*vault_keys.*where 1 = 0)/i.test(query.sql)
+        }),
       ).toBe(false)
       await left.db.withTransaction(async (provider) => {
         await expect(getVaultRecordsStore(provider, OP_KIND)).rejects.toThrow(
@@ -882,8 +934,8 @@ export function replicationCases(harness: StoreHarness): void {
     test('first-use applies never write the operation domain while a vault key lock is held', async () => {
       const source = await chain(owner)
       const next = await chain(owner, { version: 2 })
-      const create = (store: VaultRecordsParams['store']) =>
-        createVaultRecords({
+      const create = (store: VaultRecordsParams['store']) => {
+        return createVaultRecords({
           store,
           opKind: OP_KIND,
           authority,
@@ -891,6 +943,7 @@ export function replicationCases(harness: StoreHarness): void {
           nowMS: () => Date.parse('2026-10-01T01:00:00.000Z'),
           maxDriftMS: 60_000,
         })
+      }
       const start = left.queries.length
       let contender: Promise<unknown> | undefined
       await left.db
@@ -911,11 +964,9 @@ export function replicationCases(harness: StoreHarness): void {
               const result = await create(store).apply([source.key])
               expect(result.rejected).toEqual([])
               expect(result.applied).toBe(1)
-              const writes = left.queries
-                .slice(start)
-                .filter((query) =>
-                  /(?:insert into|update|delete from).*vault_record_domain/i.test(query.sql),
-                )
+              const writes = left.queries.slice(start).filter((query) => {
+                return /(?:insert into|update|delete from).*vault_record_domain/i.test(query.sql)
+              })
               expect(writes, 'domain binding must commit before any vault key lock').toEqual([])
             },
           )
@@ -928,11 +979,9 @@ export function replicationCases(harness: StoreHarness): void {
         expect((await left.records.apply([next.key])).applied).toBe(1)
       }
       expect(
-        left.queries
-          .slice(start)
-          .filter((query) =>
-            /(?:insert into|update|delete from).*vault_record_domain/i.test(query.sql),
-          ),
+        left.queries.slice(start).filter((query) => {
+          return /(?:insert into|update|delete from).*vault_record_domain/i.test(query.sql)
+        }),
       ).toEqual([])
       expect((await left.store.getKey(source.address))?.version).toBe(2)
     })
@@ -989,9 +1038,14 @@ export function replicationCases(harness: StoreHarness): void {
           { purpose: 'kem', alg: 'X25519' },
         ],
       })
-      const wrapping = await dependent(owner, source, 'vault.wrapping', {
-        recipient: null,
-        factorRecipient: identity.longForm,
+      const wrapping = await dependent({
+        signer: owner,
+        source: source,
+        type: 'vault.wrapping',
+        options: {
+          recipient: null,
+          factorRecipient: identity.longForm,
+        },
       })
       expect((await right.records.apply([wrapping])).rejected).toEqual([])
       expect(await right.store.listWrappings(source.address)).toHaveLength(1)
@@ -1009,10 +1063,15 @@ export function replicationCases(harness: StoreHarness): void {
       expect(
         (
           await right.records.apply([
-            await dependent(owner, source, 'vault.wrapping', {
-              counter: 300,
-              recipient: null,
-              factorRecipient: identity.longForm,
+            await dependent({
+              signer: owner,
+              source: source,
+              type: 'vault.wrapping',
+              options: {
+                counter: 300,
+                recipient: null,
+                factorRecipient: identity.longForm,
+              },
             }),
           ])
         ).rejected.map((r) => r.reason),
@@ -1059,8 +1118,18 @@ export function replicationCases(harness: StoreHarness): void {
     test('corrupt listing reports one bad decision without hiding good records', async () => {
       const source = await chain(owner)
       await seed(source)
-      const good = await dependent(owner, source, 'vault.entry', { id: 'good' })
-      const bad = await dependent(owner, source, 'vault.entry', { id: 'bad' })
+      const good = await dependent({
+        signer: owner,
+        source: source,
+        type: 'vault.entry',
+        options: { id: 'good' },
+      })
+      const bad = await dependent({
+        signer: owner,
+        source: source,
+        type: 'vault.entry',
+        options: { id: 'bad' },
+      })
       await left.records.apply([good, bad])
       await sql`update ${sql.table('vault_records')} set deleted = 7 where id = ${bad.id}`.execute(
         left.raw,
@@ -1113,7 +1182,7 @@ export function replicationCases(harness: StoreHarness): void {
     test('replicated reads perform no writes and expose signed standard columns', async () => {
       const source = await chain(owner)
       await seed(source)
-      const entry = await dependent(owner, source, 'vault.entry')
+      const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
       await left.records.apply([entry])
       const start = left.queries.length
       await left.records.adapter.get(entry)
@@ -1161,14 +1230,14 @@ export function replicationCases(harness: StoreHarness): void {
           maxDriftMS: 60_000,
         })
         const results = await Promise.allSettled(
-          [two, three].map((next) =>
-            records.write({
+          [two, three].map((next) => {
+            return records.write({
               records: [next.key],
               preconditions: {
                 key: { ...source.address, expectedVersion: 1, expectedBranches: [source.branchID] },
               },
-            }),
-          ),
+            })
+          }),
         )
         expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
         const refused = results.find((r) => r.status === 'rejected')
@@ -1208,15 +1277,25 @@ export function replicationCases(harness: StoreHarness): void {
     test('a first entry tombstone remains signed and prevents stale resurrection', async () => {
       const source = await chain(owner)
       await seed(source)
-      const deleted = await dependent(owner, source, 'vault.entry', {
-        deleted: true,
-        counter: 200,
-        contentCounter: 190,
+      const deleted = await dependent({
+        signer: owner,
+        source: source,
+        type: 'vault.entry',
+        options: {
+          deleted: true,
+          counter: 200,
+          contentCounter: 190,
+        },
       })
       expect((await left.records.apply([deleted])).applied).toBe(1)
-      const stale = await dependent(owner, source, 'vault.entry', {
-        counter: 300,
-        contentCounter: 100,
+      const stale = await dependent({
+        signer: owner,
+        source: source,
+        type: 'vault.entry',
+        options: {
+          counter: 300,
+          contentCounter: 100,
+        },
       })
       expect((await left.records.apply([stale])).applied).toBe(0)
       expect((await left.records.adapter.get(deleted))?.copies).toEqual([deleted])
@@ -1286,8 +1365,18 @@ export function replicationCases(harness: StoreHarness): void {
     test('wrapping LWW selects the later operation and ignores its replayed predecessor', async () => {
       const source = await chain(owner)
       await seed(source)
-      const first = await dependent(owner, source, 'vault.wrapping', { counter: 100 })
-      const next = await dependent(owner, source, 'vault.wrapping', { counter: 120 })
+      const first = await dependent({
+        signer: owner,
+        source: source,
+        type: 'vault.wrapping',
+        options: { counter: 100 },
+      })
+      const next = await dependent({
+        signer: owner,
+        source: source,
+        type: 'vault.wrapping',
+        options: { counter: 120 },
+      })
       await left.records.apply([first])
       await exchange(left.records.adapter, right.records)
       expect((await right.records.apply([next])).applied).toBe(1)
@@ -1301,23 +1390,38 @@ export function replicationCases(harness: StoreHarness): void {
     test('entry content intent orders before key version, which breaks equal-content-stamp ties', async () => {
       const one = await chain(owner)
       await seed(one)
-      const original = await dependent(owner, one, 'vault.entry', {
-        counter: 100,
-        contentCounter: 90,
+      const original = await dependent({
+        signer: owner,
+        source: one,
+        type: 'vault.entry',
+        options: {
+          counter: 100,
+          contentCounter: 90,
+        },
       })
       await left.records.apply([original])
       await exchange(left.records.adapter, right.records)
       const two = await chain(owner, { version: 2 })
-      const refreshed = await dependent(owner, two, 'vault.entry', {
-        counter: 200,
-        contentCounter: 90,
+      const refreshed = await dependent({
+        signer: owner,
+        source: two,
+        type: 'vault.entry',
+        options: {
+          counter: 200,
+          contentCounter: 90,
+        },
       })
       await right.records.apply([two.key, two.branch, refreshed])
       await exchange(right.records.adapter, left.records)
       expect((await left.records.adapter.get(original))?.copies[0]?.opHash).toBe(refreshed.opHash)
-      const newerContent = await dependent(owner, one, 'vault.entry', {
-        counter: 300,
-        contentCounter: 100,
+      const newerContent = await dependent({
+        signer: owner,
+        source: one,
+        type: 'vault.entry',
+        options: {
+          counter: 300,
+          contentCounter: 100,
+        },
       })
       await left.records.apply([newerContent])
       await exchange(left.records.adapter, right.records)
@@ -1335,7 +1439,7 @@ export function replicationCases(harness: StoreHarness): void {
         const other = await chain(owner, { counter: 11 })
         await left.records.apply([exact.key, exact.branch])
         await right.records.apply([other.key, other.branch])
-        const record = await dependent(owner, exact, type)
+        const record = await dependent({ signer: owner, source: exact, type: type })
         expect((await right.records.apply([record])).parked).toEqual([record])
         expect(await right.records.adapter.get(record)).toBeNull()
         const result = await right.records.apply([exact.branch, record])
@@ -1368,8 +1472,8 @@ export function replicationCases(harness: StoreHarness): void {
       for (let counter = 20; counter < 148; counter += 2) {
         const first = await chain(owner, { version: 2, counter })
         const second = await chain(owner, { version: 2, counter: counter + 1 })
-        const firstDigest = await recordDecisionDigest(first.key, OP_KIND)
-        const secondDigest = await recordDecisionDigest(second.key, OP_KIND)
+        const firstDigest = await recordDecisionDigest({ record: first.key, opKind: OP_KIND })
+        const secondDigest = await recordDecisionDigest({ record: second.key, opKind: OP_KIND })
         if (firstDigest === secondDigest) continue
         const [winner, loser] = firstDigest > secondDigest ? [first, second] : [second, first]
         if (winner.key.opHash < loser.key.opHash) {
@@ -1417,13 +1521,23 @@ export function replicationCases(harness: StoreHarness): void {
     test('authorised losing entries remain received candidates while refused entries do not', async () => {
       const source = await chain(owner)
       await seed(source)
-      const winner = await dependent(owner, source, 'vault.entry', {
-        counter: 110,
-        contentCounter: 100,
+      const winner = await dependent({
+        signer: owner,
+        source: source,
+        type: 'vault.entry',
+        options: {
+          counter: 110,
+          contentCounter: 100,
+        },
       })
-      const loser = await dependent(owner, source, 'vault.entry', {
-        counter: 120,
-        contentCounter: 90,
+      const loser = await dependent({
+        signer: owner,
+        source: source,
+        type: 'vault.entry',
+        options: {
+          counter: 120,
+          contentCounter: 90,
+        },
       })
       await left.records.apply([winner])
       await exchange(left.records.adapter, right.records)
@@ -1434,9 +1548,14 @@ export function replicationCases(harness: StoreHarness): void {
           .map((record) => record.opHash)
           .sort(),
       ).toEqual([winner.opHash, loser.opHash].sort())
-      const refused = await dependent(randomIdentity(), source, 'vault.entry', {
-        counter: 130,
-        contentCounter: 120,
+      const refused = await dependent({
+        signer: randomIdentity(),
+        source: source,
+        type: 'vault.entry',
+        options: {
+          counter: 130,
+          contentCounter: 120,
+        },
       })
       vi.mocked(authority.authorize).mockImplementation(
         async (request) => request.issuer === owner.id,
@@ -1459,16 +1578,26 @@ export function replicationCases(harness: StoreHarness): void {
     test('prior tombstones survive version changes and defeat older content re-encryption', async () => {
       const one = await chain(owner)
       await seed(one)
-      const deleted = await dependent(owner, one, 'vault.entry', {
-        deleted: true,
-        counter: 100,
-        contentCounter: 95,
+      const deleted = await dependent({
+        signer: owner,
+        source: one,
+        type: 'vault.entry',
+        options: {
+          deleted: true,
+          counter: 100,
+          contentCounter: 95,
+        },
       })
       await left.records.apply([deleted])
       await exchange(left.records.adapter, right.records)
       const two = await chain(owner, { version: 2 })
       await right.records.apply([two.key, two.branch])
-      const stale = await dependent(owner, two, 'vault.entry', { counter: 200, contentCounter: 90 })
+      const stale = await dependent({
+        signer: owner,
+        source: two,
+        type: 'vault.entry',
+        options: { counter: 200, contentCounter: 90 },
+      })
       await right.records.apply([stale])
       expect((await right.records.adapter.get(deleted))?.copies[0]?.payload).toBeNull()
       expect(await right.store.getEntry({ ...one.address, entryID: deleted.id })).toBeUndefined()
@@ -1485,16 +1614,26 @@ export function replicationCases(harness: StoreHarness): void {
         const source = await chain(owner)
         await seed(source)
         const recipient = randomIdentity()
-        const wrapping = await dependent(owner, source, 'vault.wrapping', {
-          recipient: field === 'recipient' ? recipient.id : null,
-          factorRecipient: field === 'recipient' ? owner.id : recipient.id,
+        const wrapping = await dependent({
+          signer: owner,
+          source: source,
+          type: 'vault.wrapping',
+          options: {
+            recipient: field === 'recipient' ? recipient.id : null,
+            factorRecipient: field === 'recipient' ? owner.id : recipient.id,
+          },
         })
         await right.records.apply([wrapping])
         const next = await chain(owner, { version: 2 })
-        const nextWrapping = await dependent(owner, next, 'vault.wrapping', {
-          id: 'newer-wrapping',
-          recipient: field === 'recipient' ? recipient.id : null,
-          factorRecipient: field === 'recipient' ? owner.id : recipient.id,
+        const nextWrapping = await dependent({
+          signer: owner,
+          source: next,
+          type: 'vault.wrapping',
+          options: {
+            id: 'newer-wrapping',
+            recipient: field === 'recipient' ? recipient.id : null,
+            factorRecipient: field === 'recipient' ? owner.id : recipient.id,
+          },
         })
         await right.records.apply([next.key, next.branch, nextWrapping])
         expect(await right.store.listWrappings(source.address)).toHaveLength(2)
@@ -1510,10 +1649,15 @@ export function replicationCases(harness: StoreHarness): void {
         await exchange(left.records.adapter, right.records)
         expect(await right.records.listRevocations(source.address)).toEqual([recipient.id])
         expect(await right.store.listWrappings(source.address)).toEqual([])
-        const later = await dependent(owner, next, 'vault.wrapping', {
-          counter: 300,
-          recipient: field === 'recipient' ? recipient.id : null,
-          factorRecipient: field === 'recipient' ? owner.id : recipient.id,
+        const later = await dependent({
+          signer: owner,
+          source: next,
+          type: 'vault.wrapping',
+          options: {
+            counter: 300,
+            recipient: field === 'recipient' ? recipient.id : null,
+            factorRecipient: field === 'recipient' ? owner.id : recipient.id,
+          },
         })
         expect((await right.records.apply([later])).rejected.map((item) => item.reason)).toEqual([
           'unauthorized',
@@ -1537,7 +1681,7 @@ export function replicationCases(harness: StoreHarness): void {
       await seed(source)
       const row = storedEntry(source.address, { entryID: 'shared-entry' })
       await right.store.putEntry(row)
-      const entry = await dependent(owner, source, 'vault.entry')
+      const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
       await expect(right.records.apply([entry])).rejects.toThrow(VaultModeConflict)
       expect(await right.store.getEntry(row)).toEqual(row)
       expect(await right.records.adapter.get(entry)).toBeNull()
@@ -1619,7 +1763,7 @@ export function replicationCases(harness: StoreHarness): void {
       const op = await verified(source.key)
       const foreign = {
         ...source.key,
-        ...(await signRecordOp(owner, op.claim, 'other/record-op/v1')),
+        ...(await signRecordOp({ identity: owner, claim: op.claim, opKind: 'other/record-op/v1' })),
       }
       expect((await right.records.apply([foreign])).rejected.map((item) => item.reason)).toEqual([
         'signature',
@@ -1658,7 +1802,9 @@ export function replicationCases(harness: StoreHarness): void {
       const historicAuthority: CredentialAuthority = {
         async authorize(request: CredentialAuthorityRequest) {
           if (request.source !== 'record') return false
-          const consumer = request.op.claim.meta.consumer as { incarnations: typeof incarnations }
+          const consumer = request.op.claim.meta.consumer as {
+            incarnations: Record<string, MemberIncarnation>
+          }
           const member = consumer.incarnations[request.issuer]
           if (member === undefined) return false
           const historic = await resolveMemberHistoric(request.issuer, {
@@ -1687,8 +1833,8 @@ export function replicationCases(harness: StoreHarness): void {
       expect(copy.payload).toEqual(source.key.payload)
       expect(copy.hlc).toBe(source.key.hlc)
       expect(copy.opHash).not.toBe(source.key.opHash)
-      expect(await recordDecisionDigest(copy, OP_KIND)).toBe(
-        await recordDecisionDigest(source.key, OP_KIND),
+      expect(await recordDecisionDigest({ record: copy, opKind: OP_KIND })).toBe(
+        await recordDecisionDigest({ record: source.key, opKind: OP_KIND }),
       )
       expect(
         (

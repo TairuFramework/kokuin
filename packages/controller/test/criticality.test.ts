@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'vitest'
 
+import type { InceptionEvent, SignedEvent } from '../src/events.js'
 import { createInception, didFromInception } from '../src/events.js'
 import { foldLog } from '../src/fold.js'
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -17,11 +18,7 @@ async function build() {
   return { icp, did: didFromInception(icp.event) }
 }
 
-async function unknownEvent(
-  did: string,
-  prior: Awaited<ReturnType<typeof createInception>>,
-  crit: boolean,
-) {
+async function unknownEvent(did: string, prior: SignedEvent<InceptionEvent>, crit: boolean) {
   return {
     event: {
       v: 1 as const,
@@ -76,7 +73,7 @@ describe('criticality', () => {
     const { event } = await unknownEvent(did, icp, false)
     const { crit: _crit, ...withoutCrit } = event
     const result = await foldLog(did, {
-      chain: [icp, { event: withoutCrit as typeof event, sigs: [] }],
+      chain: [icp, { event: withoutCrit as unknown as SignedEvent['event'], sigs: [] }],
       events: [],
     })
     expect(result.ok).toBe(false)

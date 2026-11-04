@@ -54,12 +54,15 @@ describe('a rotated-away authority key, at the capability path', () => {
     })
     const thiefDevice = await randomIdentity()
 
-    const minted = await createCapability(stolen, {
-      sub: did,
-      aud: thiefDevice.id,
-      act: '*',
-      res: '*',
-      exp: now() + 3600,
+    const minted = await createCapability({
+      signer: stolen,
+      payload: {
+        sub: did,
+        aud: thiefDevice.id,
+        act: '*',
+        res: '*',
+        exp: now() + 3600,
+      },
     })
     const raw = stringifyToken(minted)
 
@@ -136,12 +139,15 @@ describe('a rotated-away authority key, at the capability path', () => {
     })
     const honestDevice = await randomIdentity()
     const honest = stringifyToken(
-      await createCapability(owner, {
-        sub: did,
-        aud: honestDevice.id,
-        act: '*',
-        res: '*',
-        exp: now() + 3600,
+      await createCapability({
+        signer: owner,
+        payload: {
+          sub: did,
+          aud: honestDevice.id,
+          act: '*',
+          res: '*',
+          exp: now() + 3600,
+        },
       }),
     )
     let honestGranted = true

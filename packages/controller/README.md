@@ -20,3 +20,18 @@ Success memos isolate providers. Stored epoch authentication remains a trusted-s
 Provider failures propagate unchanged and remain retryable.
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `deriveKeyMaterial` | `DeriveKeyMaterialParams` | `seed, path, alg, length?` |
+| `mergeLogs` | `MergeLogsParams` | `did, left, right, options?` |
+| `verifySignatures` | `VerifySignaturesParams` | `event, sigs, keys, options?` |
+| `createReset` | `CreateResetParams` | `seed, profile, gen, snapshot?, options?` |
+| `deviceRevokeIndices` | `DeviceRevokeIndicesParams` | `did, chain, subject, options?` |
+| `deviceRevokeIndex` | `DeviceRevokeIndexParams` | `did, chain, subject, options?` |
+
+`EpochSignatureSigner` names the existing root-or-member signer union for `verifyEpochSignature`.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

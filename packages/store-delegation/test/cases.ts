@@ -1047,14 +1047,17 @@ export function delegationStoreCases(
       // would make the second run read the first run's row as a second held one.
       const audience = `did:key:a-held-peer4-${form}`
       const jti = `jti-held-peer4-${form}`
-      const cap = await createCapability(grantor, {
-        sub: grantor.longForm,
-        aud: audience,
-        act: 'document/write',
-        res: `doc:held-peer4-${form}`,
-        iat: 1_700_000_020,
-        exp: 2_000_000_000,
-        jti,
+      const cap = await createCapability({
+        signer: grantor,
+        payload: {
+          sub: grantor.longForm,
+          aud: audience,
+          act: 'document/write',
+          res: `doc:held-peer4-${form}`,
+          iat: 1_700_000_020,
+          exp: 2_000_000_000,
+          jti,
+        },
       })
       const record = await createRevocationRecord(grantor, jti)
       const revokerDID = pick(grantor)
@@ -1526,10 +1529,9 @@ export function delegationStoreCases(
         functions: adapter.functions,
       })
       const prefixed: Record<string, Migration> = Object.fromEntries(
-        Object.entries(migrations).map(([name, migration]) => [
-          name,
-          { up: (kysely) => migration.up(kysely.withPlugin(plugin)) },
-        ]),
+        Object.entries(migrations).map(([name, migration]) => {
+          return [name, { up: (kysely) => migration.up(kysely.withPlugin(plugin)) }]
+        }),
       )
 
       const applied = await new Migrator({
@@ -1615,12 +1617,14 @@ export function delegationStoreCases(
         .orderBy('revoker_did')
         .execute()
       expect(
-        rows.map((row) => ({
-          revoker_did: row.revoker_did,
-          revocation_token: row.revocation_token,
-          verified_at: row.verified_at,
-          hlc: row.hlc,
-        })),
+        rows.map((row) => {
+          return {
+            revoker_did: row.revoker_did,
+            revocation_token: row.revocation_token,
+            verified_at: row.verified_at,
+            hlc: row.hlc,
+          }
+        }),
       ).toEqual([
         {
           revoker_did: grantor,

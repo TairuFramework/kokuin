@@ -12,11 +12,25 @@ import type { SignedHeader } from './schemas.js'
 import type { DIDString, SignedToken } from './types.js'
 import { concatBytes } from './utils.js'
 
+type BuildSigningIdentityParams = {
+  id: DIDString
+  privateKey: Uint8Array
+  publicKey: Uint8Array
+  crypto: CryptoProvider
+}
+type BuildIdentityParams = {
+  id: DIDString
+  longForm: DIDString
+  doc: DIDDoc
+  keys: Array<ResolvedKey>
+  crypto: CryptoProvider
+}
+
 const tracer = createTracer('token')
 
 export type CryptoOptions = { crypto?: CryptoProvider }
 
-export type Identity = { readonly id: DIDString }
+export type Identity = { id: DIDString }
 
 export type SignTokenOptions = {
   /** Extra header fields merged into the signed JWS header. */
@@ -51,8 +65,8 @@ export type FullIdentity = SigningIdentity & KeyAgreementIdentity
 
 export type OwnIdentity = FullIdentity & { privateKey: Uint8Array }
 
-export type IdentityProvider<T extends SigningIdentity = SigningIdentity> = {
-  provideIdentity(keyID: string): Promise<T>
+export type IdentityProvider<TValue extends SigningIdentity = SigningIdentity> = {
+  provideIdentity(keyID: string): Promise<TValue>
 }
 
 export function isSigningIdentity(identity: Identity): identity is SigningIdentity {
@@ -89,22 +103,22 @@ export function createSigningIdentityForDID(
   privateKey: Uint8Array,
   options: CryptoOptions = {},
 ): SigningIdentity {
-  return buildSigningIdentity(
-    id,
-    privateKey,
-    ed25519.getPublicKey(privateKey),
-    options.crypto ?? nobleCrypto,
-  )
+  return buildSigningIdentity({
+    id: id,
+    privateKey: privateKey,
+    publicKey: ed25519.getPublicKey(privateKey),
+    crypto: options.crypto ?? nobleCrypto,
+  })
 }
 
 // Shared body. Takes `publicKey` rather than deriving it, so `createSigningIdentity` — which
 // needs the public key anyway to build the `did:key` — derives it once instead of twice.
-function buildSigningIdentity(
-  id: DIDString,
-  privateKey: Uint8Array,
-  publicKey: Uint8Array,
-  crypto: CryptoProvider,
-): SigningIdentity {
+function buildSigningIdentity({
+  id,
+  privateKey,
+  publicKey,
+  crypto,
+}: BuildSigningIdentityParams): SigningIdentity {
   async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
     payload: Payload,
     options: SignTokenOptions = {},
@@ -154,12 +168,12 @@ export function createSigningIdentity(
   options: CryptoOptions = {},
 ): SigningIdentity {
   const publicKey = ed25519.getPublicKey(privateKey)
-  return buildSigningIdentity(
-    getDID(CODECS.EdDSA, publicKey),
-    privateKey,
-    publicKey,
-    options.crypto ?? nobleCrypto,
-  )
+  return buildSigningIdentity({
+    id: getDID(CODECS.EdDSA, publicKey),
+    privateKey: privateKey,
+    publicKey: publicKey,
+    crypto: options.crypto ?? nobleCrypto,
+  })
 }
 
 /**
@@ -345,11 +359,13 @@ function resolveKeys(input: CreateIdentityInput): Array<ResolvedKey> {
 }
 
 function buildDoc(keys: Array<ResolvedKey>): DIDDoc {
-  const verificationMethod = keys.map((k) => ({
-    id: k.fragment,
-    type: 'Multikey',
-    publicKeyMultibase: publicKeyMultibase(k.alg, k.publicKey),
-  }))
+  const verificationMethod = keys.map((k) => {
+    return {
+      id: k.fragment,
+      type: 'Multikey',
+      publicKeyMultibase: publicKeyMultibase(k.alg, k.publicKey),
+    }
+  })
   const authentication = keys.filter((k) => k.purpose === 'sig').map((k) => k.fragment)
   const keyAgreement = keys.filter((k) => k.purpose === 'kem').map((k) => k.fragment)
   const doc: DIDDoc = {
@@ -408,13 +424,7 @@ function pickAgreementSecret(keys: Array<ResolvedKey>, isPeer: boolean, kid?: st
   throw new Error('No KEM key in identity')
 }
 
-function buildIdentity(
-  id: DIDString,
-  longForm: DIDString,
-  doc: DIDDoc,
-  keys: Array<ResolvedKey>,
-  crypto: CryptoProvider,
-): MultiKeyIdentity {
+function buildIdentity({ id, longForm, doc, keys, crypto }: BuildIdentityParams): MultiKeyIdentity {
   const primarySig = keys.find((k) => k.purpose === 'sig')
   if (primarySig == null) {
     throw new Error('createIdentity requires at least one signing key')
@@ -530,10 +540,22 @@ export async function createIdentity(
       ],
       authentication: ['#key-0'],
     }
-    return buildIdentity(id, id, doc, keys, input.crypto ?? nobleCrypto)
+    return buildIdentity({
+      id: id,
+      longForm: id,
+      doc: doc,
+      keys: keys,
+      crypto: input.crypto ?? nobleCrypto,
+    })
   }
 
   const doc = buildDoc(keys)
   const { longForm, shortForm } = encodePeer4(doc)
-  return buildIdentity(shortForm, longForm, doc, keys, input.crypto ?? nobleCrypto)
+  return buildIdentity({
+    id: shortForm,
+    longForm: longForm,
+    doc: doc,
+    keys: keys,
+    crypto: input.crypto ?? nobleCrypto,
+  })
 }

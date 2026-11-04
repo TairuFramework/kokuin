@@ -36,18 +36,22 @@ import { encodeKey } from '../src/keys.js'
 import { enumerateProfiles } from '../src/profiles.js'
 import { resolveBranches } from '../src/supersede.js'
 
+type AuthorityPrivateKeyParams = { seed: Uint8Array; profile: number; gen: number; seq: number }
+type CreateRotateParams = {
+  seed: Uint8Array
+  profile: number
+  did: string
+  prior: EventCommon
+  snapshot: StateSnapshot
+}
+
 /** Test-support only: the recovery private key `createReset` derives internally. */
 function recoveryPrivateKey(seed: Uint8Array, profile: number): Uint8Array {
   return deriveKeyPair(seed, recoveryPath(profile), 'EdDSA').privateKey
 }
 
 /** Test-support only: the authority (signing) private key `createInception`/`createRotate` derive internally. */
-function authorityPrivateKey(
-  seed: Uint8Array,
-  profile: number,
-  gen: number,
-  seq: number,
-): Uint8Array {
+function authorityPrivateKey({ seed, profile, gen, seq }: AuthorityPrivateKeyParams): Uint8Array {
   return deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA').privateKey
 }
 
@@ -113,13 +117,9 @@ const suite: ConformanceSuite = {
 const implementation = {
   name: '@kokuin/controller',
   createInception,
-  createRotate: async (
-    seed: Uint8Array,
-    profile: number,
-    did: string,
-    prior: EventCommon,
-    snapshot: StateSnapshot,
-  ) => await createRotate({ seed, profile, did, prior, snapshot }),
+  createRotate: async ({ seed, profile, did, prior, snapshot }: CreateRotateParams) => {
+    return await createRotate({ seed, profile, did, prior, snapshot })
+  },
   createReset,
   didFromInception,
   foldLog,

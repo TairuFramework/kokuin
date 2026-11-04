@@ -2,6 +2,7 @@ import type { StoreProvider } from '@hozon/db'
 import { HozonDB } from '@hozon/db'
 import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
 import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
+import type { SignedRecord } from '@kokuin/records'
 import { signRecordOp, verifySignedRecord } from '@kokuin/records'
 import type { MethodRegistry } from '@kokuin/token'
 import { createSigningIdentityForDID, randomIdentity } from '@kokuin/token'
@@ -10,6 +11,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { createRuntime } from '@sozai/runtime'
 import { expect, test, vi } from 'vitest'
 
+import type { VaultCoordinatorParams } from '../src/index.js'
 import {
   createVaultCoordinator,
   getVaultRecordsStore,
@@ -69,7 +71,7 @@ async function fixture() {
         method: 'test',
         resolve: async (did) => {
           expect(did).toBe(signer.id)
-          let timer: ReturnType<typeof setTimeout> | undefined
+          let timer: NodeJS.Timeout | undefined
           try {
             const row = await Promise.race([
               getVaultStore(provider).then((store) => store.getKey(key)),
@@ -197,26 +199,28 @@ test('apply scopes verification hooks while importing a signed branch and its de
       ])
     ).flatMap((decision) => decision.copies)
     const providers: Array<StoreProvider> = []
-    const methodsFor = (provider: StoreProvider): MethodRegistry => [
-      {
-        method: 'test',
-        resolve: async () => {
-          let timer: ReturnType<typeof setTimeout> | undefined
-          try {
-            await Promise.race([
-              getVaultStore(provider).then((store) => store.listKeys(f.key.ownerDID)),
-              new Promise<never>((_, reject) => {
-                timer = setTimeout(() => reject(new Error('Resolver query timed out')), 300)
-              }),
-            ])
-            providers.push(provider)
-            return { alg: 'EdDSA', publicKey: f.params.signer.publicKey }
-          } finally {
-            clearTimeout(timer)
-          }
+    const methodsFor = (provider: StoreProvider): MethodRegistry => {
+      return [
+        {
+          method: 'test',
+          resolve: async () => {
+            let timer: NodeJS.Timeout | undefined
+            try {
+              await Promise.race([
+                getVaultStore(provider).then((store) => store.listKeys(f.key.ownerDID)),
+                new Promise<never>((_, reject) => {
+                  timer = setTimeout(() => reject(new Error('Resolver query timed out')), 300)
+                }),
+              ])
+              providers.push(provider)
+              return { alg: 'EdDSA', publicKey: f.params.signer.publicKey }
+            } finally {
+              clearTimeout(timer)
+            }
+          },
         },
-      },
-    ]
+      ]
+    }
     const manager = createVaultCoordinator({
       ...f.params,
       store: await getVaultStore(db),
@@ -298,13 +302,13 @@ test('coordinator rejects conflicting nested crypto before any provider call', a
   try {
     const blake3 = vi.fn(nobleCrypto.blake3)
     const crypto = { ...nobleCrypto, blake3 }
-    expect(() =>
-      createVaultCoordinator({
+    expect(() => {
+      return createVaultCoordinator({
         ...f.params,
         crypto,
         records: { ...f.params.records, crypto: { ...nobleCrypto } },
-      }),
-    ).toThrow(/crypto/i)
+      })
+    }).toThrow(/crypto/i)
     expect(blake3).not.toHaveBeenCalled()
   } finally {
     await f.db.close()
@@ -317,7 +321,9 @@ test('coordinator captures one provider for key IDs, records, projections and de
     const blake3 = vi.fn(nobleCrypto.blake3)
     const verify = vi.fn(nobleCrypto.verify)
     const crypto = { ...nobleCrypto, blake3, verify }
-    const params: typeof f.params & { crypto: CryptoProvider } = { ...f.params, crypto }
+    const params: Extract<VaultCoordinatorParams, { mode: 'replicated' }> & {
+      crypto: CryptoProvider
+    } = { ...f.params, crypto }
     const manager = createVaultCoordinator(params)
     params.crypto = {
       ...nobleCrypto,
@@ -353,34 +359,42 @@ for (const failure of ['provider', 'payload', 'commitment'] as const) {
         }
         const record = (await f.manager.records.adapter.list(['vault.entry']))[0]?.copies[0]
         if (record === undefined) throw new Error('Missing entry fixture')
-        const op = await verifySignedRecord(record, VAULT_OP_KIND, f.params.records.methods)
+        const op = await verifySignedRecord({
+          record: record,
+          opKind: VAULT_OP_KIND,
+          methods: f.params.records.methods,
+        })
         if (op === null) throw new Error('Fixture signature failed')
         const marker = {
           ...record,
           id: 'rollback-marker',
-          ...(await signRecordOp(
-            f.params.signer,
-            { ...op.claim, id: 'rollback-marker' },
-            VAULT_OP_KIND,
-          )),
+          ...(await signRecordOp({
+            identity: f.params.signer,
+            claim: { ...op.claim, id: 'rollback-marker' },
+            opKind: VAULT_OP_KIND,
+          })),
         }
-        let invalid: typeof record = { ...record, payload: bytes('mismatched payload') }
+        let invalid: SignedRecord = { ...record, payload: bytes('mismatched payload') }
         if (failure === 'commitment') {
           const key = (await f.manager.records.adapter.list(['vault.key']))[0]?.copies[0]
           if (key === undefined || key.payload === null) throw new Error('Missing key fixture')
-          const keyOp = await verifySignedRecord(key, VAULT_OP_KIND, f.params.records.methods)
+          const keyOp = await verifySignedRecord({
+            record: key,
+            opKind: VAULT_OP_KIND,
+            methods: f.params.records.methods,
+          })
           if (keyOp === null) throw new Error('Fixture key signature failed')
           invalid = {
             ...key,
             payload: key.payload,
-            ...(await signRecordOp(
-              f.params.signer,
-              {
+            ...(await signRecordOp({
+              identity: f.params.signer,
+              claim: {
                 ...keyOp.claim,
                 meta: { ...keyOp.claim.meta, keyUnique: 'AAAAAAAAAAAAAAAAAAAAAA' },
               },
-              VAULT_OP_KIND,
-            )),
+              opKind: VAULT_OP_KIND,
+            })),
           }
         }
         const write = async (provider: StoreProvider) => {
@@ -415,7 +429,11 @@ test.each([false, true])(
       const { recordPayloadDigest } = await import('@kokuin/records')
       const original = (await f.manager.records.adapter.list(['vault.entry']))[0]?.copies[0]
       if (original === undefined) throw new Error('Missing fixture')
-      const op = await verifySignedRecord(original, VAULT_OP_KIND, f.params.records.methods)
+      const op = await verifySignedRecord({
+        record: original,
+        opKind: VAULT_OP_KIND,
+        methods: f.params.records.methods,
+      })
       if (op === null) throw new Error('Invalid fixture')
       const decoded = await decodeVaultRecord(original, op.claim.meta)
       if (decoded.type !== 'vault.entry') throw new Error('Wrong fixture type')
@@ -426,11 +444,11 @@ test.each([false, true])(
       const incoming = {
         ...original,
         payload,
-        ...(await signRecordOp(
-          f.params.signer,
-          { ...op.claim, payloadDigest: await recordPayloadDigest(payload) },
-          VAULT_OP_KIND,
-        )),
+        ...(await signRecordOp({
+          identity: f.params.signer,
+          claim: { ...op.claim, payloadDigest: await recordPayloadDigest(payload) },
+          opKind: VAULT_OP_KIND,
+        })),
       }
       const sentinel = new Error('Late provider failure')
       let payloadCalls = 0

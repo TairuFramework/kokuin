@@ -16,6 +16,7 @@ export {
   type DIDCache,
   type DIDResolver,
 } from './cache.js'
+export type { IssuerKeyNotFoundErrorParams, UnresolvableIssuerErrorParams } from './did.js'
 export {
   CODECS,
   getAgreementKey,

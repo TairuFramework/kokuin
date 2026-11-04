@@ -198,10 +198,12 @@ describe('suite 1 wrapping', () => {
         suite.generateContentKey(runtime),
       )
 
-      const edited = descriptors.map((d) => ({
-        ...d,
-        params: { ...d.params, recipient: 'did:key:someone-else' },
-      }))
+      const edited = descriptors.map((d) => {
+        return {
+          ...d,
+          params: { ...d.params, recipient: 'did:key:someone-else' },
+        }
+      })
 
       await expect(
         suite.unwrap({
@@ -407,8 +409,8 @@ describe('suite 1 passphrase and pin factors', () => {
       keyVersion: 1,
     })
 
-    const unwrap = (inputs?: { pin?: Uint8Array }) =>
-      suite.unwrap({
+    const unwrap = (inputs?: { pin?: Uint8Array }) => {
+      return suite.unwrap({
         identity,
         descriptors,
         inputs,
@@ -418,6 +420,7 @@ describe('suite 1 passphrase and pin factors', () => {
         keyID: KEY_ID,
         keyVersion: 1,
       })
+    }
 
     expect(await unwrap({ pin: pinInput })).toEqual(contentKey)
 
@@ -435,10 +438,12 @@ describe('suite 1 passphrase and pin factors', () => {
       keyVersion: 1,
     })
 
-    const weakened = descriptors.map((descriptor) => ({
-      ...descriptor,
-      params: { ...descriptor.params, m: 8 },
-    }))
+    const weakened = descriptors.map((descriptor) => {
+      return {
+        ...descriptor,
+        params: { ...descriptor.params, m: 8 },
+      }
+    })
 
     await expect(
       suite.unwrap({
@@ -469,8 +474,8 @@ describe('suite 1 passphrase and pin factors', () => {
   })
 
   test('each wrapping gets its own salt', async () => {
-    const wrapOnce = () =>
-      suite.wrap({
+    const wrapOnce = () => {
+      return suite.wrap({
         runtime,
         contentKey: suite.generateContentKey(runtime),
         factors: [{ kind: 'passphrase', input: passphraseInput, cost: testCost }],
@@ -478,6 +483,7 @@ describe('suite 1 passphrase and pin factors', () => {
         keyID: KEY_ID,
         keyVersion: 1,
       })
+    }
 
     const first = await wrapOnce()
     const second = await wrapOnce()
@@ -733,11 +739,11 @@ describe('suite 1 attributes an unwrap failure', () => {
       keyVersion: 1,
     })
 
-    const edited = descriptors.map((descriptor) =>
-      descriptor.kind === 'did'
+    const edited = descriptors.map((descriptor) => {
+      return descriptor.kind === 'did'
         ? { ...descriptor, params: { ...descriptor.params, recipient: 'did:key:someone-else' } }
-        : descriptor,
-    )
+        : descriptor
+    })
 
     const error = await suite
       .unwrap({
@@ -789,46 +795,46 @@ describe('suite 1 entries', () => {
 
   test('ciphertext does not move between entries', () => {
     const { iv, ciphertext } = encrypt()
-    expect(() =>
-      suite.decryptEntry({
+    expect(() => {
+      return suite.decryptEntry({
         contentKey,
         iv,
         ciphertext,
         keyID: KEY_ID,
         keyVersion: 1,
         entryID: 'k-entry-other',
-      }),
-    ).toThrow(VaultTampered)
+      })
+    }).toThrow(VaultTampered)
   })
 
   test('ciphertext does not read under a different key version', () => {
     const { iv, ciphertext } = encrypt(1)
-    expect(() =>
-      suite.decryptEntry({
+    expect(() => {
+      return suite.decryptEntry({
         contentKey,
         iv,
         ciphertext,
         keyID: KEY_ID,
         keyVersion: 2,
         entryID: ENTRY_ID,
-      }),
-    ).toThrow(VaultTampered)
+      })
+    }).toThrow(VaultTampered)
   })
 
   test('an altered ciphertext byte fails', () => {
     const { iv, ciphertext } = encrypt()
     const altered = new Uint8Array(ciphertext)
     altered[0] = (altered[0] ?? 0) ^ 0xff
-    expect(() =>
-      suite.decryptEntry({
+    expect(() => {
+      return suite.decryptEntry({
         contentKey,
         iv,
         ciphertext: altered,
         keyID: KEY_ID,
         keyVersion: 1,
         entryID: ENTRY_ID,
-      }),
-    ).toThrow(VaultTampered)
+      })
+    }).toThrow(VaultTampered)
   })
 })
 

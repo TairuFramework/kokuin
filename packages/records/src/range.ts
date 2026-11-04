@@ -8,6 +8,14 @@ import type { VerifiedRecordOp } from './op.js'
 import { type MergePolicy, readVersion } from './policy.js'
 import { isRecordClaim, MAX_RECORD_ID_LENGTH, type RecordKey, recordSignerKey } from './record.js'
 
+export type RecordRangeErrorParams = { message: string; options?: ErrorOptions }
+export type SplitRangeParams = {
+  leaves: ReadonlyArray<RangeLeaf>
+  rangeBounds: RangeBounds
+  leafThreshold: number
+  cryptoOptions?: CryptoOptions
+}
+
 /**
  * One owner-qualified decision as range reconciliation sees it. `opHash` is the leaf hash
  * of its content digest and sorted held signer set.
@@ -41,7 +49,7 @@ export const RANGE_LEAF_THRESHOLD = 16
 
 /** Thrown when range input could not come from a well-formed store or pass. */
 export class RecordRangeError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  constructor({ message, options }: RecordRangeErrorParams) {
     super(message, options)
     this.name = 'RecordRangeError'
   }
@@ -69,14 +77,14 @@ function compareStrings(left: string, right: string): number {
  */
 export function assertListedLeaf(leaf: RangeLeaf): void {
   if (leaf.id.length > MAX_RECORD_ID_LENGTH) {
-    throw new RecordRangeError('Listed id is longer than the id bound')
+    throw new RecordRangeError({ message: 'Listed id is longer than the id bound' })
   }
   opHashBytes(leaf.opHash)
   opHashBytes(leaf.contentDigest)
   if (
     leaf.signers.some((signer, index) => index > 0 && signer <= (leaf.signers[index - 1] as string))
   ) {
-    throw new RecordRangeError('Listed signers are not a sorted set')
+    throw new RecordRangeError({ message: 'Listed signers are not a sorted set' })
   }
 }
 
@@ -85,11 +93,12 @@ function opHashBytes(opHash: string): Uint8Array {
   try {
     bytes = fromB64U(opHash)
   } catch (cause) {
-    throw new RecordRangeError('Op hash is not base64url', { cause })
+    // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
+    throw new RecordRangeError({ message: 'Op hash is not base64url', options: { cause } })
   }
   // One spelling per hash, or two leaves for the same op could sum differently.
   if (bytes.length !== OP_HASH_BYTES || toB64U(bytes) !== opHash) {
-    throw new RecordRangeError('Op hash is not a canonical 32-byte digest')
+    throw new RecordRangeError({ message: 'Op hash is not a canonical 32-byte digest' })
   }
   return bytes
 }
@@ -151,7 +160,7 @@ function leavesIn(leaves: ReadonlyArray<RangeLeaf>, bounds: RangeBounds): Array<
     if (
       rangePosition(inside[index] as RangeLeaf) === rangePosition(inside[index - 1] as RangeLeaf)
     ) {
-      throw new RecordRangeError('Two leaves for one record')
+      throw new RecordRangeError({ message: 'Two leaves for one record' })
     }
   }
   return inside
@@ -178,15 +187,15 @@ export async function summarizeRange(
  * @throws RecordRangeError when `leafThreshold` is not a positive integer, since a range of
  * one record could then split into itself forever.
  */
-export async function splitRange(
-  leaves: ReadonlyArray<RangeLeaf>,
-  rangeBounds: RangeBounds,
-  leafThreshold: number,
-  cryptoOptions?: CryptoOptions,
-): Promise<Array<RangeSummary | RangeLeafList>> {
+export async function splitRange({
+  leaves,
+  rangeBounds,
+  leafThreshold,
+  cryptoOptions,
+}: SplitRangeParams): Promise<Array<RangeSummary | RangeLeafList>> {
   const options = { crypto: cryptoOptions?.crypto ?? nobleCrypto }
   if (!Number.isInteger(leafThreshold) || leafThreshold < 1) {
-    throw new RecordRangeError('Leaf threshold must be a positive integer')
+    throw new RecordRangeError({ message: 'Leaf threshold must be a positive integer' })
   }
   const bounds = { ...rangeBounds }
   const inside = leavesIn(leaves, bounds).map((leaf) => ({ ...leaf, signers: [...leaf.signers] }))

@@ -90,12 +90,12 @@ describe('vault crypto', () => {
     expect(suite.decryptEntry({ ...nextAddress, ...next, contentKey: opened, entryID })).toEqual(
       plaintext,
     )
-    expect(() =>
-      suite.decryptEntry({ ...nextAddress, ...next, contentKey: firstKey, entryID }),
-    ).toThrow(VaultTampered)
-    expect(() =>
-      suite.decryptEntry({ ...nextAddress, ...first, contentKey: firstKey, entryID }),
-    ).toThrow(VaultTampered)
+    expect(() => {
+      return suite.decryptEntry({ ...nextAddress, ...next, contentKey: firstKey, entryID })
+    }).toThrow(VaultTampered)
+    expect(() => {
+      return suite.decryptEntry({ ...nextAddress, ...first, contentKey: firstKey, entryID })
+    }).toThrow(VaultTampered)
     await expect(suite.unwrap({ ...openParams(wrapped), identity })).rejects.toThrow()
   })
 
@@ -170,10 +170,12 @@ describe('vault crypto', () => {
     'editing descriptor %s is tampering before agreement or GCM',
     async (field) => {
       const { identity, wrapped } = await multifactor()
-      const descriptors: Array<FactorDescriptor> = wrapped.descriptors.map((descriptor) => ({
-        ...descriptor,
-        params: { ...descriptor.params },
-      }))
+      const descriptors: Array<FactorDescriptor> = wrapped.descriptors.map((descriptor) => {
+        return {
+          ...descriptor,
+          params: { ...descriptor.params },
+        }
+      })
       const target = descriptors.find(
         (descriptor) => descriptor.kind === (field === 'recipient' ? 'did' : 'passphrase'),
       )
@@ -267,14 +269,14 @@ describe('vault crypto', () => {
       plaintext: bytes,
     })
     expect(suite.decryptEntry({ ...address, ...encrypted, contentKey, entryID })).toEqual(bytes)
-    expect(() =>
-      suite.decryptEntry({
+    expect(() => {
+      return suite.decryptEntry({
         ...address,
         ...encrypted,
         contentKey,
         entryID: 'another-entry',
-      }),
-    ).toThrow(VaultTampered)
+      })
+    }).toThrow(VaultTampered)
   })
 
   test('a host blob uses only the device agreement key and never prompts', async () => {

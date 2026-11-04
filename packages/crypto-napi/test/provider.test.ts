@@ -14,6 +14,25 @@ import {
   SIGN_SYNC_BATCH_ITEMS,
 } from '../src/index.js'
 
+type NapiVerifyParams = {
+  es256: boolean
+  signature: Uint8Array<ArrayBufferLike>
+  message: Uint8Array<ArrayBufferLike>
+  publicKey: Uint8Array<ArrayBufferLike>
+}
+type NapiVerifyBatchParams = {
+  es256: Array<boolean>
+  signatures: Array<Uint8Array<ArrayBufferLike>>
+  messages: Array<Uint8Array<ArrayBufferLike>>
+  publicKeys: Array<Uint8Array<ArrayBufferLike>>
+}
+type VerifyParams = {
+  alg: 'EdDSA' | 'ES256'
+  signature: Uint8Array
+  message: Uint8Array
+  key: Uint8Array
+}
+
 // A stand-in binding that records calls and answers with strict noble, so routing and
 // validation can be checked without a compiled binary.
 function recordingBinding() {
@@ -24,9 +43,14 @@ function recordingBinding() {
       calls.push('sign')
       return noble.sign(seed, message)
     },
-    verify(es256, signature, message, publicKey) {
+    verify({ es256, signature, message, publicKey }: NapiVerifyParams) {
       calls.push(`verify:${es256 ? 'ES256' : 'EdDSA'}`)
-      return noble.verify(es256 ? 'ES256' : 'EdDSA', signature, message, publicKey)
+      return noble.verify({
+        alg: es256 ? 'ES256' : 'EdDSA',
+        signature: signature,
+        message: message,
+        key: publicKey,
+      })
     },
     blake3(input, length) {
       calls.push('blake3')
@@ -36,16 +60,16 @@ function recordingBinding() {
       calls.push(`signBatch:${seeds.length}`)
       return seeds.map((seed, index) => noble.sign(seed, messages[index] as Uint8Array))
     },
-    async verifyBatch(es256, signatures, messages, publicKeys) {
+    async verifyBatch({ es256, signatures, messages, publicKeys }: NapiVerifyBatchParams) {
       calls.push(`verifyBatch:${es256.length}`)
-      return es256.map((flag, index) =>
-        noble.verify(
-          flag ? 'ES256' : 'EdDSA',
-          signatures[index] as Uint8Array,
-          messages[index] as Uint8Array,
-          publicKeys[index] as Uint8Array,
-        ),
-      )
+      return es256.map((flag, index) => {
+        return noble.verify({
+          alg: flag ? 'ES256' : 'EdDSA',
+          signature: signatures[index] as Uint8Array,
+          message: messages[index] as Uint8Array,
+          key: publicKeys[index] as Uint8Array,
+        })
+      })
     },
     async blake3Batch(inputs, length) {
       calls.push(`blake3Batch:${inputs.length}`)
@@ -58,7 +82,7 @@ function recordingBinding() {
 // Synchronous noble, so the fake binding stays synchronous where the real one is.
 const noble = {
   sign: (seed: Uint8Array, message: Uint8Array) => ed25519.sign(message, seed),
-  verify(alg: 'EdDSA' | 'ES256', signature: Uint8Array, message: Uint8Array, key: Uint8Array) {
+  verify({ alg, signature, message, key }: VerifyParams) {
     // The same strict checks as nobleCrypto: canonical, prime-order A and R, cofactorless.
     const strictPoint = (bytes: Uint8Array) => {
       const point = ed25519.Point.fromBytes(bytes, false)
@@ -113,7 +137,14 @@ test('single Ed25519 and blake3 calls run natively and synchronously', async () 
   expect(calls).toEqual(['sign'])
   const signature = await signing
   const publicKey = ed25519.getPublicKey(seed)
-  expect(await provider.verify('EdDSA', signature, message, publicKey)).toBe(true)
+  expect(
+    await provider.verify({
+      alg: 'EdDSA',
+      signature: signature,
+      message: message,
+      publicKey: publicKey,
+    }),
+  ).toBe(true)
   await provider.blake3(message, 32)
   expect(calls).toEqual(['sign', 'verify:EdDSA', 'blake3'])
 })
@@ -124,7 +155,14 @@ test('single ES256 verification stays on nodeCrypto', async () => {
   const secret = p256.utils.randomSecretKey()
   const signature = p256.sign(message, secret, { lowS: true, prehash: true, format: 'compact' })
   const publicKey = p256.getPublicKey(secret, true)
-  expect(await provider.verify('ES256', signature, message, publicKey)).toBe(true)
+  expect(
+    await provider.verify({
+      alg: 'ES256',
+      signature: signature,
+      message: message,
+      publicKey: publicKey,
+    }),
+  ).toBe(true)
   expect(calls).toEqual([])
 })
 
@@ -155,10 +193,12 @@ test('verify batches of two or more and large sign batches use the pool; smaller
   ])
   expect(calls).toEqual(['sign', 'sign', 'verifyBatch:2'])
   calls.length = 0
-  const many = Array.from({ length: SIGN_SYNC_BATCH_ITEMS + 1 }, () => ({
-    privateKey: seed,
-    message,
-  }))
+  const many = Array.from({ length: SIGN_SYNC_BATCH_ITEMS + 1 }, () => {
+    return {
+      privateKey: seed,
+      message,
+    }
+  })
   await provider.signBatch('EdDSA', many)
   expect(calls).toEqual([`signBatch:${SIGN_SYNC_BATCH_ITEMS + 1}`])
 })
@@ -215,12 +255,22 @@ test('invalid arguments reject like noble without reaching the binding', async (
       nobleCrypto.sign('ES256' as 'EdDSA', seed, message),
     ],
     [
-      provider.verify('RS256' as 'EdDSA', seed, message, seed),
-      nobleCrypto.verify('RS256' as 'EdDSA', seed, message, seed),
+      provider.verify({
+        alg: 'RS256' as 'EdDSA',
+        signature: seed,
+        message: message,
+        publicKey: seed,
+      }),
+      nobleCrypto.verify({
+        alg: 'RS256' as 'EdDSA',
+        signature: seed,
+        message: message,
+        publicKey: seed,
+      }),
     ],
     [
-      provider.verify('EdDSA', shared, message, seed),
-      nobleCrypto.verify('EdDSA', shared, message, seed),
+      provider.verify({ alg: 'EdDSA', signature: shared, message: message, publicKey: seed }),
+      nobleCrypto.verify({ alg: 'EdDSA', signature: shared, message: message, publicKey: seed }),
     ],
     [provider.blake3(message, 0), nobleCrypto.blake3(message, 0)],
     [provider.blake3(shared, 32), nobleCrypto.blake3(shared, 32)],

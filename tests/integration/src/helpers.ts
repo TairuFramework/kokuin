@@ -1,7 +1,6 @@
 import type { Kysely, StoreDefinition } from '@hozon/db'
 
-// biome-ignore lint/suspicious/noExplicitAny: raw access to tables created by the stores.
-export type RawDB = Kysely<any>
+export type RawDB = Kysely<Record<string, Record<string, unknown>>>
 
 /** A migration-free store exposing the database's Kysely instance, for catalog queries. */
 export const rawStore: StoreDefinition<unknown, RawDB> = {

@@ -5,7 +5,15 @@ import {
   sign as nodeSign,
   verify as nodeVerify,
 } from 'node:crypto'
+import type { VerifyItem } from '@kokuin/crypto'
 import { type CryptoAlgorithm, type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
+
+type VerifyOneParams = {
+  alg: CryptoAlgorithm
+  signature: Uint8Array
+  message: Uint8Array
+  publicKey: Uint8Array
+}
 
 // Ed25519 seed as a PKCS #8 PrivateKeyInfo (RFC 8410): this 16-byte prefix, then the 32-byte seed.
 const PKCS8_ED25519_PREFIX = Uint8Array.from([
@@ -87,12 +95,7 @@ function verifyES256(signature: Uint8Array, message: Uint8Array, publicKey: Uint
   }
 }
 
-function verifyOne(
-  alg: CryptoAlgorithm,
-  signature: Uint8Array,
-  message: Uint8Array,
-  publicKey: Uint8Array,
-): Promise<boolean> {
+function verifyOne({ alg, signature, message, publicKey }: VerifyOneParams): Promise<boolean> {
   // Never throw synchronously: in a batch, an earlier item's rejected Promise would then never
   // reach Promise.all and would surface as an unhandled rejection.
   try {
@@ -100,7 +103,12 @@ function verifyOne(
       throw new TypeError('Unsupported verification algorithm')
     }
     if (alg === 'ES256') return Promise.resolve(verifyES256(signature, message, publicKey))
-    return nobleCrypto.verify(alg, signature, message, publicKey)
+    return nobleCrypto.verify({
+      alg: alg,
+      signature: signature,
+      message: message,
+      publicKey: publicKey,
+    })
   } catch (error) {
     return Promise.reject(error)
   }
@@ -122,12 +130,24 @@ export const nodeCrypto: CryptoProvider = {
     if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
     return items.map((item) => sign(alg, item.privateKey, item.message))
   },
-  async verify(alg, signature, message, publicKey) {
-    return await verifyOne(alg, signature, message, publicKey)
+  async verify({ alg, signature, message, publicKey }: VerifyItem) {
+    return await verifyOne({
+      alg: alg,
+      signature: signature,
+      message: message,
+      publicKey: publicKey,
+    })
   },
   async verifyBatch(items) {
     return await Promise.all(
-      items.map((item) => verifyOne(item.alg, item.signature, item.message, item.publicKey)),
+      items.map((item) => {
+        return verifyOne({
+          alg: item.alg,
+          signature: item.signature,
+          message: item.message,
+          publicKey: item.publicKey,
+        })
+      }),
     )
   },
   blake3(input, dkLen) {

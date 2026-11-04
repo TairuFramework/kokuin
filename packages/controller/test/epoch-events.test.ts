@@ -114,18 +114,16 @@ describe('builders', () => {
     const rotated = await headOf([inception, rot])
     // The inception's position with the rotated head's keys: the derived key is the retired one.
     const stale = { ...rotated, keySeq: 0 }
-    await expect(
-      async () =>
-        await createAdd({ seed, profile, did, head: stale, parents: [stale.epoch], member }),
-    ).rejects.toThrow(/not the head's only/)
+    await expect(async () => {
+      return await createAdd({ seed, profile, did, head: stale, parents: [stale.epoch], member })
+    }).rejects.toThrow(/not the head's only/)
   })
 
   test('a root signer is refused when the head publishes more keys than the one it derives', async () => {
     const wider = { ...head, keys: [...head.keys, m.key] }
-    await expect(
-      async () =>
-        await createAdd({ seed, profile, did, head: wider, parents: [wider.epoch], member }),
-    ).rejects.toThrow(/only published key/)
+    await expect(async () => {
+      return await createAdd({ seed, profile, did, head: wider, parents: [wider.epoch], member })
+    }).rejects.toThrow(/only published key/)
   })
 
   test('a member revoke names its signer and verifies only under the pinned key', async () => {
@@ -204,28 +202,26 @@ describe('builders', () => {
   })
 
   test('builders refuse a non-integer lease rather than emit an unfoldable event', async () => {
-    await expect(
-      async () =>
-        await createAdd({
-          seed,
-          profile,
-          did,
-          head,
-          parents: [head.epoch],
-          member: { ...member, lease: 1.5 },
-        }),
-    ).rejects.toThrow()
-    await expect(
-      async () =>
-        await createRenew({
-          signer: memberSigner,
-          did,
-          head,
-          parents: [head.epoch],
-          add: 'B',
-          lease: -1,
-        }),
-    ).rejects.toThrow()
+    await expect(async () => {
+      return await createAdd({
+        seed,
+        profile,
+        did,
+        head,
+        parents: [head.epoch],
+        member: { ...member, lease: 1.5 },
+      })
+    }).rejects.toThrow()
+    await expect(async () => {
+      return await createRenew({
+        signer: memberSigner,
+        did,
+        head,
+        parents: [head.epoch],
+        add: 'B',
+        lease: -1,
+      })
+    }).rejects.toThrow()
   })
 })
 
@@ -269,8 +265,9 @@ describe('isEpochEventShape()', async () => {
   test('refuses a body exactly one byte past the limit and accepts one at it', () => {
     // Pad the member DID so the body lands on the boundary; length counts UTF-8 bytes of ASCII.
     const base = new TextEncoder().encode(JSON.stringify(add.event)).length
-    const fill = (extra: number) =>
-      withEvent(add, (event) => (event.did = `${add.event.did}${'a'.repeat(extra)}`))
+    const fill = (extra: number) => {
+      return withEvent(add, (event) => (event.did = `${add.event.did}${'a'.repeat(extra)}`))
+    }
     expect(isEpochEventShape(fill(MAX_EVENT_BYTES - base))).toBe(true)
     expect(isEpochEventShape(fill(MAX_EVENT_BYTES - base + 1))).toBe(false)
   })
@@ -295,8 +292,8 @@ describe('isEpochEventShape()', async () => {
   test('refuses an oversized parent or signature list without walking it', () => {
     // A getter on an entry would trip if the list were walked; the length check must come first.
     let walked = false
-    const trap = (length: number) =>
-      new Proxy(
+    const trap = (length: number) => {
+      return new Proxy(
         Array.from({ length }, () => 'z'),
         {
           get(target, key, receiver) {
@@ -305,6 +302,7 @@ describe('isEpochEventShape()', async () => {
           },
         },
       )
+    }
     expect(isEpochEventShape(withEvent(add, (event) => (event.p = trap(1_000_000))))).toBe(false)
     expect(isEpochEventShape({ ...add, sigs: trap(1_000_000) })).toBe(false)
     expect(walked).toBe(false)

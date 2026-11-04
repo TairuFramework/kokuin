@@ -203,7 +203,7 @@ test('every provider rejection escapes vault record authorisation and proof deco
   const { vaultRecordTypes, vaultProofAuthorizer } = await import('../src/record-types.js')
   const signer = createFullIdentity(new Uint8Array(32).fill(12))
   const source = await chain(signer)
-  const record = await dependent(signer, source, 'vault.wrapping')
+  const record = await dependent({ signer: signer, source: source, type: 'vault.wrapping' })
   const op = await verified(record)
   const peer = memoryStore()
   await peer.apply([source.key, source.branch])
@@ -220,11 +220,13 @@ test('every provider rejection escapes vault record authorisation and proof deco
     }
     const params = {
       ...peer.hooks,
-      portsFor: () => ({
-        retainEntryCandidate: async () => {},
-        listRevocations: async () => [],
-        dropRevokedWrappings: async () => {},
-      }),
+      portsFor: () => {
+        return {
+          retainEntryCandidate: async () => {},
+          listRevocations: async () => [],
+          dropRevokedWrappings: async () => {},
+        }
+      },
       opKind: 'kokuin/vault-op/v1',
       crypto,
     }
@@ -284,7 +286,11 @@ test('record factories capture ordinary resolver options at construction', async
       throw new Error('Unexpected ports')
     },
   }
-  const op = await verifySignedRecord(source.key, params.opKind, params.methods)
+  const op = await verifySignedRecord({
+    record: source.key,
+    opKind: params.opKind,
+    methods: params.methods,
+  })
   if (op === null) throw new Error('Invalid fixture')
   const definition = vaultRecordTypes(params).get('vault.key')
   if (definition === undefined) throw new Error('Missing definition')

@@ -22,7 +22,12 @@ test('rejects missing batch outputs and malformed verification responses', async
     execute: async () => [new Uint8Array([2]).buffer],
   })
   await expect(
-    malformed.verify('EdDSA', new Uint8Array(64), new Uint8Array(), new Uint8Array(32)),
+    malformed.verify({
+      alg: 'EdDSA',
+      signature: new Uint8Array(64),
+      message: new Uint8Array(),
+      publicKey: new Uint8Array(32),
+    }),
   ).rejects.toThrow('response')
 })
 

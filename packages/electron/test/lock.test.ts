@@ -3,20 +3,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
-vi.mock('electron', () => ({
-  safeStorage: {
-    encryptString: vi.fn((str: string) => Buffer.from(str)),
-    decryptString: vi.fn((buf: Buffer) => buf.toString()),
-    isEncryptionAvailable: vi.fn(() => true),
-  },
-}))
+type MockStoreParams = { name: string }
+
+vi.mock('electron', () => {
+  return {
+    safeStorage: {
+      encryptString: vi.fn((str: string) => Buffer.from(str)),
+      decryptString: vi.fn((buf: Buffer) => buf.toString()),
+      isEncryptionAvailable: vi.fn(() => true),
+    },
+  }
+})
 
 let storeData: Record<string, Record<string, string>>
 
 vi.mock('electron-store', () => {
   class MockStore {
     name: string
-    constructor(options: { name: string }) {
+    constructor(options: MockStoreParams) {
       this.name = options.name
     }
     get(key: string, defaultValue: Record<string, string> = {}) {
@@ -76,8 +80,8 @@ describe('ElectronKeyStore lockPath', () => {
 
   test('re-opening with a conflicting lockPath throws', () => {
     ElectronKeyStore.open({ name: 'conflict', lockPath })
-    expect(() =>
-      ElectronKeyStore.open({ name: 'conflict', lockPath: `${lockPath}.other` }),
-    ).toThrow(/lockPath/)
+    expect(() => {
+      return ElectronKeyStore.open({ name: 'conflict', lockPath: `${lockPath}.other` })
+    }).toThrow(/lockPath/)
   })
 })

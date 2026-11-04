@@ -1,6 +1,8 @@
 import { type SignedPayload, type Token, verifyToken } from '@kokuin/token'
 import { useState } from 'react'
 
+import type { KokuinWindow } from './global.js'
+
 type Data = {
   test: string
 }
@@ -9,7 +11,7 @@ function useSignedDID(): [string | null, (keyID: string) => void] {
   const [did, setDID] = useState<string | null>(null)
 
   const sign = (keyID: string) => {
-    window.kokuin
+    ;(window as unknown as KokuinWindow).kokuin
       .sign({ test: 'OK' }, keyID)
       .then((signedToken) => verifyToken<Data>(signedToken))
       .then((token) => {
@@ -42,7 +44,7 @@ export default function App() {
         <button
           type="button"
           onClick={() => {
-            window.kokuin.sign({ test: 'OK' }).then(setSignedToken)
+            ;(window as unknown as KokuinWindow).kokuin.sign({ test: 'OK' }).then(setSignedToken)
           }}>
           Sign token
         </button>

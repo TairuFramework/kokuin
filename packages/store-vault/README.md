@@ -9,7 +9,6 @@ The lookup only reads and joins the caller's transaction, including uncommitted 
 Results identify candidates without granting authority.
 Callers must verify each candidate, for example `await createVaultKeyID(owner, unique) === keyID`, and apply their own authority checks.
 
-
 Keys contain public suite, version and state metadata. Wrappings and entries contain opaque encrypted bytes.
 Entry `kind`, `label` and string attributes remain public. Filters combine exact kind/label equality with conjunctive attribute-subset matching.
 
@@ -199,3 +198,15 @@ Projection validation completes before destructive writes. Provider failures pro
 Raw SQL store construction gains no provider option. No schema migration is required.
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new VaultNotAuthorized` | `VaultNotAuthorizedParams` | `verb` |
+
+`VaultRecordRowErrorParams` names the existing record-key constructor object, including optional `cause`.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.
+
+`VaultSecretUnverifiableParams` names the existing `UnverifiableWrapping` constructor object without changing its shape.

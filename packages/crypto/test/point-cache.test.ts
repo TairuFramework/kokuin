@@ -54,7 +54,14 @@ test('cached validation agrees with uncached valid, small-order and mixed-order 
   for (const key of keys) {
     const expected = strictPoint(key) && ed25519.verify(signature, message, key, { zip215: false })
     for (let repeat = 0; repeat < 2; repeat++) {
-      expect(await nobleCrypto.verify('EdDSA', signature, message, key)).toBe(expected)
+      expect(
+        await nobleCrypto.verify({
+          alg: 'EdDSA',
+          signature: signature,
+          message: message,
+          publicKey: key,
+        }),
+      ).toBe(expected)
     }
     expect(counts.decoded.get(bytesToHex(key))).toBe(1)
   }
@@ -63,7 +70,14 @@ test('cached validation agrees with uncached valid, small-order and mixed-order 
 test('repeated verification checks public-key torsion once and signature torsion every time', async () => {
   const { nobleCrypto } = await import('../src/noble.js')
   for (let repeat = 0; repeat < 3; repeat++) {
-    expect(await nobleCrypto.verify('EdDSA', signature, message, publicKey)).toBe(true)
+    expect(
+      await nobleCrypto.verify({
+        alg: 'EdDSA',
+        signature: signature,
+        message: message,
+        publicKey: publicKey,
+      }),
+    ).toBe(true)
   }
   expect(counts.decoded.get(bytesToHex(publicKey))).toBe(1)
   expect(counts.torsion).toBe(4)
@@ -71,18 +85,34 @@ test('repeated verification checks public-key torsion once and signature torsion
 
 test('public-key validation evicts after 256 distinct keys', async () => {
   const { nobleCrypto } = await import('../src/noble.js')
-  const keys = Array.from({ length: 257 }, (_, index) =>
-    ed25519.Point.BASE.multiply(BigInt(index + 1)).toBytes(),
-  )
+  const keys = Array.from({ length: 257 }, (_, index) => {
+    return ed25519.Point.BASE.multiply(BigInt(index + 1)).toBytes()
+  })
   const rejectedR = new Uint8Array(64)
-  for (const key of keys) await nobleCrypto.verify('EdDSA', rejectedR, message, key)
+  for (const key of keys)
+    await nobleCrypto.verify({
+      alg: 'EdDSA',
+      signature: rejectedR,
+      message: message,
+      publicKey: key,
+    })
   counts.decoded.clear()
   const oldest = keys[0] as Uint8Array
-  await nobleCrypto.verify('EdDSA', rejectedR, message, oldest)
+  await nobleCrypto.verify({
+    alg: 'EdDSA',
+    signature: rejectedR,
+    message: message,
+    publicKey: oldest,
+  })
   expect(counts.decoded.get(bytesToHex(oldest))).toBe(1)
   counts.decoded.clear()
   const newest = keys[256] as Uint8Array
-  await nobleCrypto.verify('EdDSA', rejectedR, message, newest)
+  await nobleCrypto.verify({
+    alg: 'EdDSA',
+    signature: rejectedR,
+    message: message,
+    publicKey: newest,
+  })
   expect(counts.decoded.has(bytesToHex(newest))).toBe(false)
   // 257 scalar multiplications and subgroup checks exceed the default under parallel suite load.
 }, 30_000)
@@ -92,9 +122,30 @@ test('mutating an input view cannot reuse validation for different bytes', async
   const backing = new Uint8Array(40)
   const key = backing.subarray(4, 36)
   key.set(publicKey)
-  expect(await nobleCrypto.verify('EdDSA', signature, message, key)).toBe(true)
+  expect(
+    await nobleCrypto.verify({
+      alg: 'EdDSA',
+      signature: signature,
+      message: message,
+      publicKey: key,
+    }),
+  ).toBe(true)
   key.fill(0)
-  expect(await nobleCrypto.verify('EdDSA', signature, message, key)).toBe(false)
+  expect(
+    await nobleCrypto.verify({
+      alg: 'EdDSA',
+      signature: signature,
+      message: message,
+      publicKey: key,
+    }),
+  ).toBe(false)
   key.set(publicKey)
-  expect(await nobleCrypto.verify('EdDSA', signature, message, key)).toBe(true)
+  expect(
+    await nobleCrypto.verify({
+      alg: 'EdDSA',
+      signature: signature,
+      message: message,
+      publicKey: key,
+    }),
+  ).toBe(true)
 })

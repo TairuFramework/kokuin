@@ -11,6 +11,7 @@
  */
 
 export { type APDUChunk, CLA, encodeDerivationPath, encodeSignMessageChunks, INS } from './apdu.js'
+export type { LedgerDisconnectedErrorParams, LedgerErrorParams } from './errors.js'
 export {
   LedgerAppNotOpenError,
   LedgerDisconnectedError,

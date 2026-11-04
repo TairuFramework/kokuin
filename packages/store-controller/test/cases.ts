@@ -25,6 +25,8 @@ import {
   getControllerStore,
 } from '../src/index.js'
 
+type BuildAddParams = { did: string; log: Array<SignedEvent>; logSeed: Uint8Array; name: string }
+
 export type StoreHarness = {
   name: string
   createAdapter(): Promise<Adapter>
@@ -137,7 +139,7 @@ const TRANSACTION_FIRST_RACE_SEED = new Uint8Array(32).fill(19)
 
 // An epoch event admitting a member named `name`, rooted at the log's head. The store never verifies
 // events, so these only need to be distinct, well-formed entries.
-async function buildAdd(did: string, log: Array<SignedEvent>, logSeed: Uint8Array, name: string) {
+async function buildAdd({ did, log, logSeed, name }: BuildAddParams) {
   const folded = await foldLog(did, { chain: log, events: [] })
   if (!folded.ok) throw new Error(`log did not fold: ${folded.reason}`)
   const head = folded.states[folded.states.length - 1]
@@ -485,7 +487,7 @@ export function controllerStoreCases(
 
   test('merge applies the update to the stored log and returns it', async () => {
     const { did, log } = await buildRotatedLog(RACE_SEED)
-    const added = await buildAdd(did, log, RACE_SEED, 'one')
+    const added = await buildAdd({ did: did, log: log, logSeed: RACE_SEED, name: 'one' })
     let seen: ControllerLog | undefined = chainOnly([])
 
     const first = await store.merge(did, async (current) => {
@@ -520,8 +522,8 @@ export function controllerStoreCases(
   test('two concurrent merges for one stored DID both land', async () => {
     const { did, log } = await buildRotatedLog(RACE_SEED)
     await put(did, log)
-    const a = await buildAdd(did, log, RACE_SEED, 'a')
-    const b = await buildAdd(did, log, RACE_SEED, 'b')
+    const a = await buildAdd({ did: did, log: log, logSeed: RACE_SEED, name: 'a' })
+    const b = await buildAdd({ did: did, log: log, logSeed: RACE_SEED, name: 'b' })
     // The first update waits until the second merge has been issued, so an unlocked store lets both
     // read the same row.
     let issued: () => void = () => {}
@@ -548,8 +550,8 @@ export function controllerStoreCases(
       const { did, log } = await buildRotatedLog(logSeed)
       if (state === 'stored') await put(did, log)
       else expect(await store.get(did)).toBeUndefined()
-      const a = await buildAdd(did, log, logSeed, 'a')
-      const b = await buildAdd(did, log, logSeed, 'b')
+      const a = await buildAdd({ did: did, log: log, logSeed: logSeed, name: 'a' })
+      const b = await buildAdd({ did: did, log: log, logSeed: logSeed, name: 'b' })
 
       await db.withTransaction(async (tx) => {
         const logs = await getControllerStore(tx)
@@ -579,8 +581,8 @@ export function controllerStoreCases(
 
   test('two concurrent first merges for a new DID both land', async () => {
     const { did, log } = await buildRotatedLog(FIRST_RACE_SEED)
-    const a = await buildAdd(did, log, FIRST_RACE_SEED, 'a')
-    const b = await buildAdd(did, log, FIRST_RACE_SEED, 'b')
+    const a = await buildAdd({ did: did, log: log, logSeed: FIRST_RACE_SEED, name: 'a' })
+    const b = await buildAdd({ did: did, log: log, logSeed: FIRST_RACE_SEED, name: 'b' })
     expect(await store.get(did)).toBeUndefined()
     await Promise.all([
       store.merge(did, appendEvent(log, a)),

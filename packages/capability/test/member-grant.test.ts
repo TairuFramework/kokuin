@@ -17,6 +17,7 @@ import {
   keyTarget,
   type SignedEvent,
 } from '@kokuin/controller'
+import type { DIDString } from '@kokuin/token'
 import {
   createInMemoryDIDCache,
   createSigningIdentity,
@@ -75,14 +76,12 @@ const head = await headOf({ chain: [icp], events: [] })
 
 type Member = { signer: SigningIdentity; key: string; did: string }
 
-type Did = `did:${string}:${string}`
-
 /** `value` typed as the DID it is, refused if it is not one. */
-function asDID(value: string): Did {
+function asDID(value: string): DIDString {
   if (!/^did:[^:]+:./.test(value)) {
     throw new Error(`not a DID: ${value}`)
   }
-  return value as Did
+  return value as DIDString
 }
 
 /** A long-form `did:peer:4` carrying exactly `key` as its one signing key. */
@@ -170,8 +169,9 @@ async function grantOf(signer: SigningIdentity, payload: Claims): Promise<string
   return stringifyToken(await signer.signToken(defined))
 }
 
-const grant = async (overrides: Claims = {}, signer = m.signer) =>
-  grantOf(signer, claims(overrides))
+const grant = async (overrides: Claims = {}, signer = m.signer) => {
+  return grantOf(signer, claims(overrides))
+}
 
 /** The signed payload of `raw`, as a caller that verified it would hand to `checkCapability`. */
 async function payloadOf(raw: string): Promise<CapabilityPayload> {
@@ -303,10 +303,12 @@ describe('member-issued grants', () => {
         await createRenew({ signer: root, did, head, parents: [add], add, lease: LEASE + 3600 }),
       ],
     }
-    for (const check of await bothPaths(pastLease, () => ({
-      ...options(renewed),
-      atTime: LEASE - 3600,
-    }))) {
+    for (const check of await bothPaths(pastLease, () => {
+      return {
+        ...options(renewed),
+        atTime: LEASE - 3600,
+      }
+    })) {
       await expect(check).resolves.toBeUndefined()
     }
   })
@@ -364,8 +366,9 @@ describe('member-issued grants', () => {
 
   test('a grant from a removed member, a denied member, or a previous generation is refused', async () => {
     const removed = await createRemove({ signer: root, did, head, parents: [add], add })
-    const revoke = async (target: string) =>
-      await createRevoke({ signer: root, did, head, parents: [add], target })
+    const revoke = async (target: string) => {
+      return await createRevoke({ signer: root, did, head, parents: [add], target })
+    }
     const cases: Array<[string, ControllerLog]> = [
       ['removed', { chain: [icp], events: [added, removed] }],
       ['denied by DID', { chain: [icp], events: [added, await revoke(m.did)] }],
@@ -376,9 +379,14 @@ describe('member-issued grants', () => {
         {
           chain: [
             icp,
-            await createReset(seed, profile, 1, {
-              members: [{ did: m.did, key: m.key, add, lease: LEASE }],
-              deny: [],
+            await createReset({
+              seed: seed,
+              profile: profile,
+              gen: 1,
+              snapshot: {
+                members: [{ did: m.did, key: m.key, add, lease: LEASE }],
+                deny: [],
+              },
             }),
           ],
           events: [],
@@ -393,9 +401,9 @@ describe('member-issued grants', () => {
     }
     // The reset kills the generation-0 grant, not the member: a grant naming generation 1 verifies.
     const carried = at(cases, 4)[1]
-    for (const check of await bothPaths(await grant({ mbr: { add, g: 1 } }), () =>
-      options(carried),
-    )) {
+    for (const check of await bothPaths(await grant({ mbr: { add, g: 1 } }), () => {
+      return options(carried)
+    })) {
       await expect(check).resolves.toBeUndefined()
     }
     // Another member's incarnation, and a generation the head is not at, name nobody.
@@ -538,12 +546,12 @@ describe('member-issued grants', () => {
       res?: string
       exp?: number
     }): Promise<string> => {
-      const child = await createCapability(
-        edge,
-        { sub: did, aud: third.id, act: 'write', res: 'doc/1', exp: T + 1800, ...payload },
-        undefined,
-        { parentCapability: parent, methods: options().methods },
-      )
+      const child = await createCapability({
+        signer: edge,
+        payload: { sub: did, aud: third.id, act: 'write', res: 'doc/1', exp: T + 1800, ...payload },
+        header: undefined,
+        options: { parentCapability: parent, methods: options().methods },
+      })
       return stringifyToken(child)
     }
     const child = await delegate({})
@@ -562,8 +570,8 @@ describe('member-issued grants', () => {
     await expect(delegate({ exp: T + 7200 })).rejects.toThrow(
       'Invalid capability: child expiry exceeds parent capability',
     )
-    const signedChild = async (overrides: Claims): Promise<string> =>
-      grantOf(edge, {
+    const signedChild = async (overrides: Claims): Promise<string> => {
+      return grantOf(edge, {
         sub: did,
         aud: third.id,
         act: 'write',
@@ -571,6 +579,7 @@ describe('member-issued grants', () => {
         exp: T + 1800,
         ...overrides,
       })
+    }
     const wider = await signedChild({ act: ['write', 'admin'] })
     await expect(
       checkCapability(permission, await invocation([wider, parent], third), options()),
@@ -622,8 +631,13 @@ describe('member-issued grants', () => {
       iat: T - 60,
       exp: T + 3600,
     }
-    const minted = await createCapability(m.signer, payload, undefined, {
-      member: { add, g: 0 },
+    const minted = await createCapability({
+      signer: m.signer,
+      payload: payload,
+      header: undefined,
+      options: {
+        member: { add, g: 0 },
+      },
     })
     expect(minted.payload).toMatchObject({ iss: m.did, mbr: { add, g: 0 }, iat: T - 60 })
     for (const check of await bothPaths(stringifyToken(minted))) {
@@ -633,7 +647,12 @@ describe('member-issued grants', () => {
     for (const missing of ['exp', 'iat'] as const) {
       const { [missing]: _, ...partial } = payload
       await expect(
-        createCapability(m.signer, partial, undefined, { member: { add, g: 0 } }),
+        createCapability({
+          signer: m.signer,
+          payload: partial,
+          header: undefined,
+          options: { member: { add, g: 0 } },
+        }),
         missing,
       ).rejects.toThrow('Invalid capability: a member grant requires exp and iat')
     }
@@ -643,22 +662,34 @@ describe('member-issued grants', () => {
       { add, g: 0, by: 'root' },
     ]) {
       await expect(
-        createCapability(m.signer, payload, undefined, { member }),
+        createCapability({
+          signer: m.signer,
+          payload: payload,
+          header: undefined,
+          options: { member },
+        }),
         JSON.stringify(member),
       ).rejects.toThrow('Invalid capability: malformed mbr claim')
     }
     // So is a grant that expires before it is issued.
     await expect(
-      createCapability(m.signer, { ...payload, exp: T - 120 }, undefined, {
-        member: { add, g: 0 },
+      createCapability({
+        signer: m.signer,
+        payload: { ...payload, exp: T - 120 },
+        header: undefined,
+        options: {
+          member: { add, g: 0 },
+        },
       }),
     ).rejects.toThrow('Invalid capability: a member grant expires before it is issued')
     // CONTROL — without the option, a non-subject signer still needs a parent.
-    await expect(createCapability(m.signer, payload)).rejects.toThrow('parentCapability required')
+    await expect(createCapability({ signer: m.signer, payload: payload })).rejects.toThrow(
+      'parentCapability required',
+    )
   })
 })
 
-function at<T>(items: ReadonlyArray<T>, i: number): T {
+function at<TValue>(items: ReadonlyArray<TValue>, i: number): TValue {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v

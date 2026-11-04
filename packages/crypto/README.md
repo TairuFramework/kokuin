@@ -32,7 +32,14 @@ Native route qualification still requires stored measurements and final physical
 ## Provider adoption
 
 Identity, controller, record and vault APIs now accept this provider contract.
-The six-method asynchronous contract is unchanged. Strict noble caches public-key validation in a bounded 256-entry cache.
+The six methods remain asynchronous. Verification now takes a named object. Strict noble caches public-key validation in a bounded 256-entry cache.
 Every signature point still receives strict validation. Applications must keep provider behaviour immutable throughout its lifetime.
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+`CryptoProvider.verify` now accepts one `VerifyItem`: `{ alg, signature, message, publicKey }`.
+`sign` keeps its three positional arguments. Batch methods retain their existing signatures.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

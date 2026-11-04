@@ -6,6 +6,7 @@ import {
 } from '@kokuin/token'
 import { describe, expect, it } from 'vitest'
 
+import type { CapabilityPayload } from '../src/index.js'
 import { checkCapability, type DelegationChainOptions } from '../src/index.js'
 
 async function makePeer4(): Promise<MultiKeyIdentity> {
@@ -136,7 +137,7 @@ describe('Gate 2 — peer4 delegation matrix', () => {
     const payload = {
       iss: alice.id,
       sub: bob.id,
-    } as unknown as Parameters<typeof checkCapability>[1]
+    } as unknown as CapabilityPayload
     await expect(checkCapability({ act: 'foo', res: alice.id }, payload)).rejects.toThrow(
       /no capability|Invalid payload/i,
     )

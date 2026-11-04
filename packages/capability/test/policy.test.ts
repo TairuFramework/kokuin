@@ -34,12 +34,12 @@ describe('assertDeviceCapabilityPolicy()', () => {
   })
 
   test('honours a caller-supplied window', () => {
-    expect(() =>
-      assertDeviceCapabilityPolicy(
+    expect(() => {
+      return assertDeviceCapabilityPolicy(
         { exp: now + 60 * 60 * 24 * 30 },
         { now, maxLifetimeSeconds: 60 * 60 * 24 * 60 },
-      ),
-    ).not.toThrow()
+      )
+    }).not.toThrow()
   })
 
   test('the default window is seven days', () => {

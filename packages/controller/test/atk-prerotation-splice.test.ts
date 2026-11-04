@@ -118,7 +118,7 @@ describe('splicing, truncation, replay', () => {
 
   test("another DID's reset, relabelled with our `i`, is refused (anchor + recovery)", async () => {
     const a = await build(seedA)
-    const foreignReset = await createReset(seedB, 0, 1)
+    const foreignReset = await createReset({ seed: seedB, profile: 0, gen: 1 })
     const relabelled: SignedEvent<RotateEvent> = {
       ...foreignReset,
       event: { ...foreignReset.event, i: a.did, p: digestOf(a.icp.event) },
@@ -235,8 +235,8 @@ describe('superseding recovery abuse', () => {
 
   test('a reset cannot resurrect an older generation: a lower `g` never outranks a higher one', async () => {
     const { icp, did } = await build(seedA)
-    const reset1 = await createReset(seedA, 0, 1)
-    const reset2 = await createReset(seedA, 0, 2)
+    const reset1 = await createReset({ seed: seedA, profile: 0, gen: 1 })
+    const reset2 = await createReset({ seed: seedA, profile: 0, gen: 2 })
     const r = await resolveBranches(did, [
       [icp, reset2],
       [icp, reset1],
@@ -248,7 +248,7 @@ describe('superseding recovery abuse', () => {
 
   test('a reset a non-root forges is refused — the recovery key is unpublished', async () => {
     const { icp, did } = await build(seedA)
-    const honest = await createReset(seedA, 0, 1)
+    const honest = await createReset({ seed: seedA, profile: 0, gen: 1 })
     const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 0), 'EdDSA')
     const forged: SignedEvent<RotateEvent> = {
       event: honest.event,
@@ -262,7 +262,7 @@ describe('superseding recovery abuse', () => {
 
   test('a reset revealing the right recovery key but a forged signature is refused', async () => {
     const { icp, did } = await build(seedA)
-    const honest = await createReset(seedA, 0, 1)
+    const honest = await createReset({ seed: seedA, profile: 0, gen: 1 })
     const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 0), 'EdDSA')
     // The revealed key matches `inception.r`; only the signature is somebody else's.
     const forged: SignedEvent<RotateEvent> = {

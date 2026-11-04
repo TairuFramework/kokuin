@@ -14,7 +14,7 @@ import { createControllerResolver } from '../src/resolver.js'
 import { fixedViewResolver } from './fixed-view.js'
 import { buildTwoKeyLog, strangerKey } from './two-key-log.js'
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -144,7 +144,7 @@ describe('createControllerResolver().resolve() with a kid', () => {
 
   test('a kid naming a key from a superseded generation is rejected', async () => {
     const { icp, did } = await build()
-    const reset = await createReset(seed, 0, 1)
+    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp, reset], events: [] }),
     })

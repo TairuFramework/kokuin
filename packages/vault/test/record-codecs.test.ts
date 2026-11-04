@@ -25,8 +25,8 @@ test('all five pure codecs round-trip exact canonical bytes and signed metadata'
   const records = [
     source.key,
     source.branch,
-    await dependent(owner, source, 'vault.wrapping'),
-    await dependent(owner, source, 'vault.entry'),
+    await dependent({ signer: owner, source: source, type: 'vault.wrapping' }),
+    await dependent({ signer: owner, source: source, type: 'vault.entry' }),
     revoke,
   ] as const
   for (const record of records) {
@@ -50,8 +50,8 @@ test('malformed canonical wire shapes refuse without throwing from apply', async
   const source = await chain(owner)
   const peer = memoryStore()
   await peer.apply([source.key, source.branch])
-  const entry = await dependent(owner, source, 'vault.entry')
-  const wrapping = await dependent(owner, source, 'vault.wrapping')
+  const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
+  const wrapping = await dependent({ signer: owner, source: source, type: 'vault.wrapping' })
   const revocation = await signed(owner, {
     type: 'vault.revocation',
     id: vaultRevocationRecordID(source.keyID, owner.id),
@@ -61,7 +61,11 @@ test('malformed canonical wire shapes refuse without throwing from apply', async
     meta: { keyID: source.keyID, revokedDID: owner.id, consumer: {} },
   })
   for (const record of [source.key, source.branch, wrapping, entry, revocation]) {
-    const broken = await resign(owner, record, { payload: fromUTF('{"unexpected":1}') })
+    const broken = await resign({
+      signer: owner,
+      record: record,
+      changes: { payload: fromUTF('{"unexpected":1}') },
+    })
     expect((await peer.apply([broken])).rejected.map((r) => r.reason)).toEqual(['unauthorized'])
     await expect(async () => await decodeVaultRecord(broken, {})).rejects.toThrow(
       VaultRecordPayloadError,
@@ -80,7 +84,11 @@ test('malformed canonical wire shapes refuse without throwing from apply', async
     '[]',
     'not-json',
   ]) {
-    const broken = await resign(owner, entry, { payload: fromUTF(text) })
+    const broken = await resign({
+      signer: owner,
+      record: entry,
+      changes: { payload: fromUTF(text) },
+    })
     await expect(async () => await decodeVaultRecord(broken, op.claim.meta)).rejects.toThrow(
       VaultRecordPayloadError,
     )
@@ -96,17 +104,18 @@ test('branch codec refuses missing suite and wrong payload address; revocation b
   if (decoded.type !== 'vault.key-branch') throw new Error('Fixture type')
   const { suite: _suite, ...payload } = decoded.payload
   const bytes = fromUTF(canonicalStringify(payload))
-  await expect(
-    async () =>
-      await decodeVaultRecord(
-        { ...source.branch, id: (await recordPayloadDigest(bytes)) as string, payload: bytes },
-        op.claim.meta,
-      ),
-  ).rejects.toThrow(VaultRecordPayloadError)
-  await expect(
-    async () =>
-      await decodeVaultRecord({ ...source.branch, id: toB64U(new Uint8Array(32)) }, op.claim.meta),
-  ).rejects.toThrow(VaultRecordPayloadError)
+  await expect(async () => {
+    return await decodeVaultRecord(
+      { ...source.branch, id: (await recordPayloadDigest(bytes)) as string, payload: bytes },
+      op.claim.meta,
+    )
+  }).rejects.toThrow(VaultRecordPayloadError)
+  await expect(async () => {
+    return await decodeVaultRecord(
+      { ...source.branch, id: toB64U(new Uint8Array(32)) },
+      op.claim.meta,
+    )
+  }).rejects.toThrow(VaultRecordPayloadError)
   const peer = memoryStore()
   await peer.apply([source.key])
   const revoke = await signed(owner, {

@@ -137,7 +137,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     let thrown: unknown
     let answered: unknown
     try {
-      answered = await verifySignatures(event, ['AAAA'], ['zAbc'])
+      answered = await verifySignatures({ event: event, sigs: ['AAAA'], keys: ['zAbc'] })
     } catch (error) {
       thrown = error
     }
@@ -146,15 +146,16 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     const tame = fromWire('{"v":1,"t":"rev","g":0,"s":1,"crit":true,"junk":1}') as never
     expect(thrown).toBeUndefined()
     expect(answered).toBe(false)
-    expect(await verifySignatures(tame, ['AAAA'], ['zAbc'])).toBe(false)
+    expect(await verifySignatures({ event: tame, sigs: ['AAAA'], keys: ['zAbc'] })).toBe(false)
   })
 
   test('ROW 7 (the other spellings): NaN and -Infinity are refused, `-0` and 2^53+1 are not', async () => {
     const { did } = await build()
-    const body = (junk: string) =>
-      fromWire(
+    const body = (junk: string) => {
+      return fromWire(
         `{"event":{"v":1,"t":"icp","g":0,"s":0,"crit":true,"k":["zAbc"],"ka":["zAbc"],"n":["zAbc"],"kt":1,"nt":1,"r":"zAbc","junk":${junk}},"sigs":[]}`,
       ) as SignedEvent
+    }
 
     // `-1e400` is the second non-finite spelling reachable from the wire. `NaN` is not valid JSON,
     // so it is injected the only way it can arrive: from a caller's own object.

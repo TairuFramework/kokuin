@@ -33,7 +33,7 @@ import {
   now,
 } from '../src/index.js'
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -82,18 +82,18 @@ async function revokeOf(target: string): Promise<SignedEvent> {
 }
 
 async function mintFor(audience: SigningIdentity, signer = controller): Promise<string> {
-  const capability = await createCapability(
-    signer,
-    {
+  const capability = await createCapability({
+    signer: signer,
+    payload: {
       sub: did,
       aud: audience.id,
       act: 'write',
       res: 'doc/1',
       exp: now() + 3600,
     },
-    undefined,
-    { methods },
-  )
+    header: undefined,
+    options: { methods },
+  })
   return stringifyToken(capability)
 }
 
@@ -166,7 +166,7 @@ describe('a capability whose audience the profile has revoked', () => {
 
   test('a reset clears it, and the profile can grant the same device again', async () => {
     const revoke = await revokeOf(delegate.id)
-    const reset = await createReset(seed, 0, 1)
+    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
     log = [inception, revoke, reset]
 
     // The capability has to be re-minted: a reset discards the prior generation, so one signed
@@ -181,9 +181,9 @@ describe('a capability whose audience the profile has revoked', () => {
   test('the denial applies at the head, not at the position the capability names', async () => {
     // `iat` is author-supplied and backdatable, so anchoring the check to anything the token
     // carries would let the holder choose a position where it was not yet denied.
-    const backdated = await createCapability(
-      controller,
-      {
+    const backdated = await createCapability({
+      signer: controller,
+      payload: {
         sub: did,
         aud: delegate.id,
         act: 'write',
@@ -191,9 +191,9 @@ describe('a capability whose audience the profile has revoked', () => {
         iat: now() - 3600,
         exp: now() + 3600,
       },
-      undefined,
-      { methods },
-    )
+      header: undefined,
+      options: { methods },
+    })
     log = [inception, await revokeOf(delegate.id)]
 
     await expect(invoke(delegate, stringifyToken(backdated))).rejects.toThrow(/audience is revoked/)
@@ -209,12 +209,12 @@ describe('a capability whose audience the profile has revoked', () => {
     })
     expect(peer.longForm).not.toBe(peer.id)
 
-    const capability = await createCapability(
-      controller,
-      { sub: did, aud: peer.longForm, act: 'write', res: 'doc/1', exp: now() + 3600 },
-      undefined,
-      { methods },
-    )
+    const capability = await createCapability({
+      signer: controller,
+      payload: { sub: did, aud: peer.longForm, act: 'write', res: 'doc/1', exp: now() + 3600 },
+      header: undefined,
+      options: { methods },
+    })
     const cap = stringifyToken(capability)
     const holder = { id: peer.longForm } as SigningIdentity
 
@@ -266,19 +266,26 @@ describe('a revoked link in a delegation chain', () => {
     // controller → manager → delegate, with the *manager* revoked. Only a check that walks every
     // link catches this: the leaf's own audience is untouched.
     const manager = randomIdentity()
-    const root = await createCapability(
-      controller,
-      { sub: did, aud: manager.id, act: 'write', res: '*', exp: now() + 3600 },
-      undefined,
-      { methods },
-    )
+    const root = await createCapability({
+      signer: controller,
+      payload: { sub: did, aud: manager.id, act: 'write', res: '*', exp: now() + 3600 },
+      header: undefined,
+      options: { methods },
+    })
     const rootRaw = stringifyToken(root)
-    const leaf = await createCapability(
-      manager,
-      { sub: did, aud: delegate.id, act: 'write', res: 'doc/1', exp: now() + 1800, cap: [rootRaw] },
-      undefined,
-      { parentCapability: rootRaw, methods },
-    )
+    const leaf = await createCapability({
+      signer: manager,
+      payload: {
+        sub: did,
+        aud: delegate.id,
+        act: 'write',
+        res: 'doc/1',
+        exp: now() + 1800,
+        cap: [rootRaw],
+      },
+      header: undefined,
+      options: { parentCapability: rootRaw, methods },
+    })
     const leafRaw = stringifyToken(leaf)
 
     // Control: the whole chain verifies while nobody is revoked.
@@ -295,12 +302,12 @@ describe('a capability presented directly, without an invocation', () => {
   test('is rejected once its audience is revoked', async () => {
     // The self-issued branch of `checkCapability`: the capability's own `iss` is its `sub`, so
     // there is no chain to walk and the audience check has to happen on this path too.
-    const cap = await createCapability(
-      controller,
-      { sub: did, aud: delegate.id, act: 'revoke', res: '*', exp: now() + 3600 },
-      undefined,
-      { methods },
-    )
+    const cap = await createCapability({
+      signer: controller,
+      payload: { sub: did, aud: delegate.id, act: 'revoke', res: '*', exp: now() + 3600 },
+      header: undefined,
+      options: { methods },
+    })
 
     await expect(
       checkCapability({ act: 'revoke', res: 'doc/1' }, cap.payload, { methods }),
@@ -317,19 +324,26 @@ describe('a capability presented directly, without an invocation', () => {
     // capability's own audience check catches this, because `delegate` appears nowhere above it.
     const manager = randomIdentity()
     const rootRaw = stringifyToken(
-      await createCapability(
-        controller,
-        { sub: did, aud: manager.id, act: 'revoke', res: '*', exp: now() + 3600 },
-        undefined,
-        { methods },
-      ),
+      await createCapability({
+        signer: controller,
+        payload: { sub: did, aud: manager.id, act: 'revoke', res: '*', exp: now() + 3600 },
+        header: undefined,
+        options: { methods },
+      }),
     )
-    const leaf = await createCapability(
-      manager,
-      { sub: did, aud: delegate.id, act: 'revoke', res: '*', exp: now() + 1800, cap: [rootRaw] },
-      undefined,
-      { parentCapability: rootRaw, methods },
-    )
+    const leaf = await createCapability({
+      signer: manager,
+      payload: {
+        sub: did,
+        aud: delegate.id,
+        act: 'revoke',
+        res: '*',
+        exp: now() + 1800,
+        cap: [rootRaw],
+      },
+      header: undefined,
+      options: { parentCapability: rootRaw, methods },
+    })
 
     // Control: nobody revoked, and the same presented capability authorises.
     await expect(
@@ -354,16 +368,16 @@ describe('a capability presented directly, without an invocation', () => {
     // else has to fail on the leaf's own `res`, since the parent covers it.
     const manager = randomIdentity()
     const rootRaw = stringifyToken(
-      await createCapability(
-        controller,
-        { sub: did, aud: manager.id, act: 'revoke', res: '*', exp: now() + 3600 },
-        undefined,
-        { methods },
-      ),
+      await createCapability({
+        signer: controller,
+        payload: { sub: did, aud: manager.id, act: 'revoke', res: '*', exp: now() + 3600 },
+        header: undefined,
+        options: { methods },
+      }),
     )
-    const leaf = await createCapability(
-      manager,
-      {
+    const leaf = await createCapability({
+      signer: manager,
+      payload: {
         sub: did,
         aud: delegate.id,
         act: 'revoke',
@@ -371,9 +385,9 @@ describe('a capability presented directly, without an invocation', () => {
         exp: now() + 1800,
         cap: [rootRaw],
       },
-      undefined,
-      { parentCapability: rootRaw, methods },
-    )
+      header: undefined,
+      options: { parentCapability: rootRaw, methods },
+    })
 
     await expect(
       checkCapability({ act: 'revoke', res: 'doc/1' }, leaf.payload, { methods }),
@@ -392,8 +406,9 @@ describe('what the deny lookup costs a caller-supplied chain', () => {
     // call, which every looser assertion admits.
     let denyCalls = 0
     const inner = createControllerResolver({
-      loadLog: async (asked) =>
-        asked === did ? { chain: log, events: [] } : { chain: [], events: [] },
+      loadLog: async (asked) => {
+        return asked === did ? { chain: log, events: [] } : { chain: [], events: [] }
+      },
     })
     const counting: DIDMethodResolver = {
       method: 'kokuin',
@@ -441,8 +456,9 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
     // obligation is documented (`method.ts`, `capability.skill.md`) rather than enforced.
     log = [inception, await revokeOf(delegate.id)]
     const real = createControllerResolver({
-      loadLog: async (asked) =>
-        asked === did ? { chain: log, events: [] } : { chain: [], events: [] },
+      loadLog: async (asked) => {
+        return asked === did ? { chain: log, events: [] } : { chain: [], events: [] }
+      },
     })
     const wrapped: DIDMethodResolver = {
       method: 'kokuin',
@@ -564,12 +580,12 @@ describe('canonical peer:4 audience revocation', () => {
   ])(
     'refuses a $spelling-form denial with the other audience spelling',
     async ({ denied, aud }) => {
-      const capability = await createCapability(
-        controller,
-        { sub: did, aud, act: 'write', res: 'doc/1', exp: now() + 3600 },
-        undefined,
-        { methods },
-      )
+      const capability = await createCapability({
+        signer: controller,
+        payload: { sub: did, aud, act: 'write', res: 'doc/1', exp: now() + 3600 },
+        header: undefined,
+        options: { methods },
+      })
       const invocation = { iss: aud, sub: did, cap: [stringifyToken(capability)] }
       await expect(
         checkCapability({ act: 'write', res: 'doc/1' }, invocation, { methods }),

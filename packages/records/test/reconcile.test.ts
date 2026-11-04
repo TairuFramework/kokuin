@@ -33,6 +33,13 @@ import {
 } from '../src/index.js'
 import { decisionOf } from './decision-fixture.js'
 
+type MakeRecordParams = {
+  identity: SigningIdentity
+  id: string
+  offsetMS: number
+  payload: Uint8Array
+}
+
 const TEST_OP_KIND = 'test/record-op'
 
 type RangeResponse = RangeSummary | RangeLeafList
@@ -122,9 +129,9 @@ describe('the requester answers a summary', () => {
   })
 
   test('differs when it holds an older op of one record', async () => {
-    const stale = rows.map((row, index) =>
-      index === 7 ? { ...row, opHash: hashOf('stale'), order: orderAt(-1) } : row,
-    )
+    const stale = rows.map((row, index) => {
+      return index === 7 ? { ...row, opHash: hashOf('stale'), order: orderAt(-1) } : row
+    })
     expect(await nextRequesterSteps(stale, await summarizeRange(rows, WHOLE))).toEqual([
       { answer: 'differs', bounds: WHOLE },
     ])
@@ -259,7 +266,12 @@ test('a numeric-string version pulls the numeric winner from the responder', asy
       deleted: false,
       meta: { version },
     }
-    return { ...key, hlc, payload, ...(await signRecordOp(identity, claim, TEST_OP_KIND)) }
+    return {
+      ...key,
+      hlc,
+      payload,
+      ...(await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })),
+    }
   }
   const local = await signedVersion('2')
   const remote = await signedVersion('10')
@@ -297,7 +309,13 @@ function responder(visible: ReadonlyArray<RangeLeaf>) {
           continue
         }
         if (step.answer === 'differs') {
-          ranges.push(...(await splitRange(visible, step.bounds, RANGE_LEAF_THRESHOLD)))
+          ranges.push(
+            ...(await splitRange({
+              leaves: visible,
+              rangeBounds: step.bounds,
+              leafThreshold: RANGE_LEAF_THRESHOLD,
+            })),
+          )
         } else if (step.answer === 'empty') {
           records.push(...visible.filter((row) => rangeContains(step.bounds, row)))
         }
@@ -336,7 +354,7 @@ async function runPass(
       if ('leaves' in response) {
         leafLists += 1
       }
-      const advanced = await advanceRecordPull(state, local, response)
+      const advanced = await advanceRecordPull({ state: state, local: local, response: response })
       state = advanced.state
       outgoing.push(...advanced.steps)
     }
@@ -378,9 +396,11 @@ function scenario(count: number, kind: Scenario) {
     case 'one-stale':
       return {
         visible,
-        local: visible.map((row) =>
-          row === middle ? { ...row, opHash: hashOf(`stale-${row.id}`), order: orderAt(-1) } : row,
-        ),
+        local: visible.map((row) => {
+          return row === middle
+            ? { ...row, opHash: hashOf(`stale-${row.id}`), order: orderAt(-1) }
+            : row
+        }),
         fetch: [key(middle)],
         deliver: [],
       }
@@ -519,23 +539,34 @@ describe('advanceRecordPull', () => {
 
   test('narrows a pending range as the split arrives, child by child', async () => {
     const rows = leaves(100)
-    const local = rows.map((row, index) =>
-      index === 0 ? { ...row, opHash: hashOf('stale-0'), order: orderAt(-1) } : row,
-    )
+    const local = rows.map((row, index) => {
+      return index === 0 ? { ...row, opHash: hashOf('stale-0'), order: orderAt(-1) } : row
+    })
     const state = (
-      await advanceRecordPull(beginRecordPull([TYPE]), local, await summarizeRange(rows, WHOLE))
+      await advanceRecordPull({
+        state: beginRecordPull([TYPE]),
+        local: local,
+        response: await summarizeRange(rows, WHOLE),
+      })
     ).state
     expect(state.pending).toEqual([WHOLE])
-    const children = (await splitRange(rows, WHOLE, RANGE_LEAF_THRESHOLD)) as Array<RangeSummary>
+    const children = (await splitRange({
+      leaves: rows,
+      rangeBounds: WHOLE,
+      leafThreshold: RANGE_LEAF_THRESHOLD,
+    })) as Array<RangeSummary>
     const [first, second] = children as [RangeSummary, RangeSummary]
-    const afterFirst = (await advanceRecordPull(state, local, first)).state
+    const afterFirst = (await advanceRecordPull({ state: state, local: local, response: first }))
+      .state
     expect(afterFirst.complete).toBe(false)
     expect(afterFirst.pending).toContainEqual({
       type: TYPE,
       lower: first.bounds.upper,
       upper: null,
     })
-    const afterSecond = (await advanceRecordPull(afterFirst, local, second)).state
+    const afterSecond = (
+      await advanceRecordPull({ state: afterFirst, local: local, response: second })
+    ).state
     expect(afterSecond.pending).toContainEqual({
       type: TYPE,
       lower: second.bounds.upper,
@@ -551,27 +582,35 @@ describe('advanceRecordPull', () => {
   test('refuses a response for a range it is not waiting on', async () => {
     const rows = leaves(40)
     const state = beginRecordPull([TYPE])
-    await expect(
-      async () =>
-        await advanceRecordPull(
-          state,
-          [],
-          await summarizeRange(rows, { type: 'credential.key', lower: null, upper: null }),
-        ),
-    ).rejects.toThrow(RecordRangeError)
-    await expect(
-      async () =>
-        await advanceRecordPull(
-          state,
-          [],
-          await summarizeRange(rows, { type: TYPE, lower: 'a', upper: null }),
-        ),
-    ).rejects.toThrow(RecordRangeError)
-    const done = (await advanceRecordPull(state, rows, await summarizeRange(rows, WHOLE))).state
+    await expect(async () => {
+      return await advanceRecordPull({
+        state: state,
+        local: [],
+        response: await summarizeRange(rows, { type: 'credential.key', lower: null, upper: null }),
+      })
+    }).rejects.toThrow(RecordRangeError)
+    await expect(async () => {
+      return await advanceRecordPull({
+        state: state,
+        local: [],
+        response: await summarizeRange(rows, { type: TYPE, lower: 'a', upper: null }),
+      })
+    }).rejects.toThrow(RecordRangeError)
+    const done = (
+      await advanceRecordPull({
+        state: state,
+        local: rows,
+        response: await summarizeRange(rows, WHOLE),
+      })
+    ).state
     expect(done.complete).toBe(true)
-    await expect(
-      async () => await advanceRecordPull(done, rows, await summarizeRange(rows, WHOLE)),
-    ).rejects.toThrow(RecordRangeError)
+    await expect(async () => {
+      return await advanceRecordPull({
+        state: done,
+        local: rows,
+        response: await summarizeRange(rows, WHOLE),
+      })
+    }).rejects.toThrow(RecordRangeError)
   })
 
   test('a listed id cannot be requested twice in one pass', async () => {
@@ -582,23 +621,34 @@ describe('advanceRecordPull', () => {
       requested: [],
       complete: false,
     }
-    const first = await advanceRecordPull(state, [], {
-      bounds: { type: TYPE, lower: null, upper: 'd' },
-      leaves: [listed],
+    const first = await advanceRecordPull({
+      state: state,
+      local: [],
+      response: {
+        bounds: { type: TYPE, lower: null, upper: 'd' },
+        leaves: [listed],
+      },
     })
     expect(first.state.requested).toEqual([{ type: TYPE, owner: OWNER, id: 'c' }])
     // The part holding `c` is answered; the same list again answers no pending range.
-    await expect(
-      async () =>
-        await advanceRecordPull(first.state, [], {
+    await expect(async () => {
+      return await advanceRecordPull({
+        state: first.state,
+        local: [],
+        response: {
           bounds: { type: TYPE, lower: null, upper: 'd' },
           leaves: [listed],
-        }),
-    ).rejects.toThrow(RecordRangeError)
+        },
+      })
+    }).rejects.toThrow(RecordRangeError)
     // And a list for what remains ignores a leaf outside it.
-    const rest = await advanceRecordPull(first.state, [], {
-      bounds: { type: TYPE, lower: 'd', upper: null },
-      leaves: [listed],
+    const rest = await advanceRecordPull({
+      state: first.state,
+      local: [],
+      response: {
+        bounds: { type: TYPE, lower: 'd', upper: null },
+        leaves: [listed],
+      },
     })
     expect(rest.state).toEqual({
       pending: [],
@@ -612,10 +662,13 @@ describe('advanceRecordPull', () => {
     await expect(
       async () => await nextRequesterSteps([], { bounds: WHOLE, leaves: listed }),
     ).rejects.toThrow(RecordRangeError)
-    await expect(
-      async () =>
-        await advanceRecordPull(beginRecordPull([TYPE]), [], { bounds: WHOLE, leaves: listed }),
-    ).rejects.toThrow(RecordRangeError)
+    await expect(async () => {
+      return await advanceRecordPull({
+        state: beginRecordPull([TYPE]),
+        local: [],
+        response: { bounds: WHOLE, leaves: listed },
+      })
+    }).rejects.toThrow(RecordRangeError)
     expect(
       await nextRequesterSteps([], {
         bounds: WHOLE,
@@ -639,13 +692,16 @@ describe('advanceRecordPull', () => {
   test('refuses a listed leaf whose op hash is not a canonical digest', async () => {
     const [row] = leaves(1) as [RangeLeaf]
     for (const opHash of ['a', `${row.opHash}=`, toB64U(new Uint8Array(31))]) {
-      await expect(
-        async () =>
-          await advanceRecordPull(beginRecordPull([TYPE]), [], {
+      await expect(async () => {
+        return await advanceRecordPull({
+          state: beginRecordPull([TYPE]),
+          local: [],
+          response: {
             bounds: WHOLE,
             leaves: [{ ...row, opHash }],
-          }),
-      ).rejects.toThrow(RecordRangeError)
+          },
+        })
+      }).rejects.toThrow(RecordRangeError)
     }
   })
 
@@ -656,17 +712,17 @@ describe('advanceRecordPull', () => {
       complete: false,
     }
     const past = { bounds: { type: TYPE, lower: 'b', upper: 'n' }, leaves: [] }
-    await expect(async () => await advanceRecordPull(state, [], past)).rejects.toThrow(
-      RecordRangeError,
-    )
+    await expect(
+      async () => await advanceRecordPull({ state: state, local: [], response: past }),
+    ).rejects.toThrow(RecordRangeError)
     const open = { bounds: { type: TYPE, lower: 'b', upper: null }, leaves: [] }
-    await expect(async () => await advanceRecordPull(state, [], open)).rejects.toThrow(
-      RecordRangeError,
-    )
+    await expect(
+      async () => await advanceRecordPull({ state: state, local: [], response: open }),
+    ).rejects.toThrow(RecordRangeError)
     const hollow = { bounds: { type: TYPE, lower: 'b', upper: 'b' }, leaves: [] }
-    await expect(async () => await advanceRecordPull(state, [], hollow)).rejects.toThrow(
-      RecordRangeError,
-    )
+    await expect(
+      async () => await advanceRecordPull({ state: state, local: [], response: hollow }),
+    ).rejects.toThrow(RecordRangeError)
   })
 
   test('asks for an id once, however many times it is listed', async () => {
@@ -679,12 +735,16 @@ describe('advanceRecordPull', () => {
         { type: TYPE, lower: 'm', upper: null },
       ],
     }
-    const first = await advanceRecordPull(state, [], {
-      bounds: { type: TYPE, lower: null, upper: 'm' },
-      leaves: [
-        { ...row, id: 'a' },
-        { ...row, id: 'a' },
-      ],
+    const first = await advanceRecordPull({
+      state: state,
+      local: [],
+      response: {
+        bounds: { type: TYPE, lower: null, upper: 'm' },
+        leaves: [
+          { ...row, id: 'a' },
+          { ...row, id: 'a' },
+        ],
+      },
     })
     expect(first.steps).toEqual([{ get: [{ type: TYPE, owner: OWNER, id: 'a' }] }])
     expect(first.state.requested).toEqual([{ type: TYPE, owner: OWNER, id: 'a' }])
@@ -702,8 +762,9 @@ describe('fetched records still pass through apply', () => {
         const record = rows.get(key(keyValue))
         return record === undefined ? null : decisionOf(record)
       },
-      list: async (types) =>
-        [...rows.values()].filter((record) => types.includes(record.type)).map(decisionOf),
+      list: async (types) => {
+        return [...rows.values()].filter((record) => types.includes(record.type)).map(decisionOf)
+      },
       putCopy: async (record) => {
         rows.set(key(record), record)
       },
@@ -712,17 +773,17 @@ describe('fetched records still pass through apply', () => {
     return store
   }
 
-  async function makeRecord(
-    identity: SigningIdentity,
-    id: string,
-    offsetMS: number,
-    payload: Uint8Array,
-  ): Promise<SignedRecord> {
+  async function makeRecord({
+    identity,
+    id,
+    offsetMS,
+    payload,
+  }: MakeRecordParams): Promise<SignedRecord> {
     const owner = normalizeDID(identity.id)
     const hlc = HLC.serialize({ wallTime: Now + offsetMS, counter: 0, nodeID: identity.id })
-    const signed = await signRecordOp(
-      identity,
-      {
+    const signed = await signRecordOp({
+      identity: identity,
+      claim: {
         type: TYPE,
         id,
         owner,
@@ -731,8 +792,8 @@ describe('fetched records still pass through apply', () => {
         deleted: false,
         meta: {},
       },
-      TEST_OP_KIND,
-    )
+      opKind: TEST_OP_KIND,
+    })
     return { type: TYPE, id, owner, hlc, payload, ...signed }
   }
 
@@ -747,7 +808,10 @@ describe('fetched records still pass through apply', () => {
   async function leavesOf(store: RecordStoreAdapter): Promise<Array<RangeLeaf>> {
     const out: Array<RangeLeaf> = []
     for (const record of await store.list([TYPE])) {
-      const op = await verifySignedRecord(record.copies[0] as SignedRecord, TEST_OP_KIND)
+      const op = await verifySignedRecord({
+        record: record.copies[0] as SignedRecord,
+        opKind: TEST_OP_KIND,
+      })
       const leaf = op === null ? null : await rangeLeaf(record, definition.policy)
       if (leaf !== null) {
         out.push(leaf)
@@ -758,11 +822,36 @@ describe('fetched records still pass through apply', () => {
 
   test('the requester pulls a newer op, applies it, and keeps its own newer one', async () => {
     const identity = randomIdentity()
-    const sharedOld = await makeRecord(identity, 'shared', -2000, new Uint8Array([1]))
-    const sharedNew = await makeRecord(identity, 'shared', -1000, new Uint8Array([2]))
-    const mineOld = await makeRecord(identity, 'mine', -2000, new Uint8Array([3]))
-    const mineNew = await makeRecord(identity, 'mine', -1000, new Uint8Array([4]))
-    const theirs = await makeRecord(identity, 'theirs', -1500, new Uint8Array([5]))
+    const sharedOld = await makeRecord({
+      identity: identity,
+      id: 'shared',
+      offsetMS: -2000,
+      payload: new Uint8Array([1]),
+    })
+    const sharedNew = await makeRecord({
+      identity: identity,
+      id: 'shared',
+      offsetMS: -1000,
+      payload: new Uint8Array([2]),
+    })
+    const mineOld = await makeRecord({
+      identity: identity,
+      id: 'mine',
+      offsetMS: -2000,
+      payload: new Uint8Array([3]),
+    })
+    const mineNew = await makeRecord({
+      identity: identity,
+      id: 'mine',
+      offsetMS: -1000,
+      payload: new Uint8Array([4]),
+    })
+    const theirs = await makeRecord({
+      identity: identity,
+      id: 'theirs',
+      offsetMS: -1500,
+      payload: new Uint8Array([5]),
+    })
     const responderStore = memoryStore([sharedNew, mineOld, theirs])
     const requesterStore = memoryStore([sharedOld, mineNew])
 

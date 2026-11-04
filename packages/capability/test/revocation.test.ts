@@ -1,3 +1,4 @@
+import type { MultiKeyIdentity } from '@kokuin/token'
 import {
   createIdentity,
   createInMemoryDIDCache,
@@ -86,12 +87,15 @@ describe('revocation', () => {
     const checker = createRevocationChecker(backend)
 
     const signer = randomIdentity()
-    const capability = await createCapability(signer, {
-      sub: signer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-1',
+    const capability = await createCapability({
+      signer: signer,
+      payload: {
+        sub: signer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-1',
+      },
     })
 
     // Should not throw
@@ -103,12 +107,15 @@ describe('revocation', () => {
     const checker = createRevocationChecker(backend)
 
     const signer = randomIdentity()
-    const capability = await createCapability(signer, {
-      sub: signer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-revoked',
+    const capability = await createCapability({
+      signer: signer,
+      payload: {
+        sub: signer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-revoked',
+      },
     })
 
     await backend.add(await createRevocationRecord(signer, 'cap-revoked'))
@@ -133,9 +140,9 @@ describe('revocation', () => {
         throw new Error(`Unknown DID: ${did}`)
       }
       if (header?.kid != null && header.kid !== liveKid) {
-        throw new IssuerKeyNotFoundError(
-          `kid names a key the controller does not hold: ${header.kid}`,
-        )
+        throw new IssuerKeyNotFoundError({
+          message: `kid names a key the controller does not hold: ${header.kid}`,
+        })
       }
       return { alg: 'EdDSA' as const, publicKey: identity.publicKey }
     }
@@ -147,18 +154,19 @@ describe('revocation', () => {
     }
     const options = { methods: [resolver] }
 
-    const capability = await createCapability(
-      identity,
-      { sub: profileDID, aud: 'did:key:bob', act: '*', res: '*', jti: 'grant-denied-key' },
-      undefined,
-      options,
-    )
+    const capability = await createCapability({
+      signer: identity,
+      payload: { sub: profileDID, aud: 'did:key:bob', act: '*', res: '*', jti: 'grant-denied-key' },
+      header: undefined,
+      options: options,
+    })
 
-    const bySignedKey = async (kid: string): Promise<RevocationRecord> =>
-      (await identity.signToken(
+    const bySignedKey = async (kid: string): Promise<RevocationRecord> => {
+      return (await identity.signToken(
         { jti: 'grant-denied-key', rev: true, iat: Math.floor(Date.now() / 1000) },
         { header: { kid } },
       )) as RevocationRecord
+    }
 
     // The backend verifies on the way in, so a record signed by an already-denied key could not be
     // stored through it. This is a record stored while the key was live, read back afterwards.
@@ -185,12 +193,15 @@ describe('revocation', () => {
 
     const issuer = randomIdentity()
     const attacker = randomIdentity()
-    const capability = await createCapability(issuer, {
-      sub: issuer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-target',
+    const capability = await createCapability({
+      signer: issuer,
+      payload: {
+        sub: issuer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-target',
+      },
     })
 
     // The attacker signs a revocation for the victim's jti — a valid signature, but wrong issuer.
@@ -206,12 +217,15 @@ describe('revocation', () => {
     // write wins); the checker then sees a foreign issuer and lets the revoked token through.
     const issuer = randomIdentity()
     const holder = randomIdentity()
-    const capability = await createCapability(issuer, {
-      sub: issuer.id,
-      aud: holder.id,
-      act: '*',
-      res: '*',
-      jti: 'cap-squatted',
+    const capability = await createCapability({
+      signer: issuer,
+      payload: {
+        sub: issuer.id,
+        aud: holder.id,
+        act: '*',
+        res: '*',
+        jti: 'cap-squatted',
+      },
     })
     const genuine = await createRevocationRecord(issuer, 'cap-squatted')
     const foreign = await createRevocationRecord(holder, 'cap-squatted')
@@ -233,12 +247,15 @@ describe('revocation', () => {
 
   test('checker asks the backend for the token issuer, normalized', async () => {
     const issuer = randomIdentity()
-    const capability = await createCapability(issuer, {
-      sub: issuer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-asked',
+    const capability = await createCapability({
+      signer: issuer,
+      payload: {
+        sub: issuer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-asked',
+      },
     })
     const calls: Array<[string, string]> = []
     const checker = createRevocationChecker({
@@ -254,12 +271,15 @@ describe('revocation', () => {
 
   test('checker re-verifies and ignores a forged record from an untrusting backend', async () => {
     const issuer = randomIdentity()
-    const capability = await createCapability(issuer, {
-      sub: issuer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-forged',
+    const capability = await createCapability({
+      signer: issuer,
+      payload: {
+        sub: issuer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-forged',
+      },
     })
 
     // A valid record signed by the real issuer, then tampered — a backend that stores without
@@ -285,26 +305,29 @@ describe('revocation', () => {
     const root = randomIdentity()
     const device = randomIdentity()
 
-    const delegation = await createCapability(root, {
-      sub: root.id,
-      aud: device.id,
-      act: '*',
-      res: '*',
-      jti: 'delegation-1',
+    const delegation = await createCapability({
+      signer: root,
+      payload: {
+        sub: root.id,
+        aud: device.id,
+        act: '*',
+        res: '*',
+        jti: 'delegation-1',
+      },
     })
 
-    const subDelegation = await createCapability(
-      device,
-      {
+    const subDelegation = await createCapability({
+      signer: device,
+      payload: {
         sub: root.id,
         aud: 'did:key:service',
         act: 'read',
         res: 'data/*',
         jti: 'sub-delegation-1',
       },
-      undefined,
-      { parentCapability: stringifyToken(delegation) },
-    )
+      header: undefined,
+      options: { parentCapability: stringifyToken(delegation) },
+    })
 
     // Valid before revocation
     await checkDelegationChain(subDelegation.payload, [stringifyToken(delegation)], {
@@ -348,12 +371,15 @@ describe('revocation', () => {
     const backend = createMemoryRevocationBackend()
     await backend.add(record)
 
-    const capability = await createCapability(signer, {
-      sub: signer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-peer4',
+    const capability = await createCapability({
+      signer: signer,
+      payload: {
+        sub: signer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-peer4',
+      },
     })
     const checker = createRevocationChecker(backend)
     await expect(checker(capability, stringifyToken(capability))).rejects.toThrow('revoked')
@@ -363,14 +389,14 @@ describe('revocation', () => {
     const shortFormRecord = (await signer.signToken(
       { jti: 'cap-peer4-short', rev: true, iat: Math.floor(Date.now() / 1000) },
       { embedLongForm: false },
-    )) as typeof record
+    )) as RevocationRecord
     await expect(backend.add(shortFormRecord)).rejects.toThrow(/Unknown DID/)
   })
 
   // A short-form did:peer:4 record carries no document, so it needs a resolver. Fail-closed makes
   // that a hard rejection rather than a silent pass, so `RevocationOptions` has to offer a way in.
   async function buildShortFormRecord(jti: string): Promise<{
-    signer: Awaited<ReturnType<typeof createIdentity>>
+    signer: MultiKeyIdentity
     record: RevocationRecord
     doc: DIDDoc
   }> {
@@ -392,12 +418,15 @@ describe('revocation', () => {
 
   test('a short-form did:peer:4 record revokes when the checker is given a resolver', async () => {
     const { signer, record, doc } = await buildShortFormRecord('cap-shortform')
-    const capability = await createCapability(signer, {
-      sub: signer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-shortform',
+    const capability = await createCapability({
+      signer: signer,
+      payload: {
+        sub: signer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-shortform',
+      },
     })
     const resolver = (did: string) => (did === signer.id ? doc : undefined)
 
@@ -421,12 +450,15 @@ describe('revocation', () => {
     // sufficient on its own. Without `cache` forwarded there is nothing to resolve the short form
     // and this fails closed instead of revoking.
     const { signer, record, doc } = await buildShortFormRecord('cap-cached')
-    const capability = await createCapability(signer, {
-      sub: signer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-cached',
+    const capability = await createCapability({
+      signer: signer,
+      payload: {
+        sub: signer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-cached',
+      },
     })
     const cache = createInMemoryDIDCache()
     await cache.set(signer.id, doc)
@@ -450,12 +482,15 @@ describe('revocation', () => {
     // real-world failure of the three — a network-backed resolver that is down — and if the throw
     // escaped as an ordinary error the checker would swallow it and report "not revoked".
     const { signer, record, doc } = await buildShortFormRecord('cap-throwing')
-    const capability = await createCapability(signer, {
-      sub: signer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-throwing',
+    const capability = await createCapability({
+      signer: signer,
+      payload: {
+        sub: signer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-throwing',
+      },
     })
     const backend = createMemoryRevocationBackend({ resolver: () => doc })
     await backend.add(record)
@@ -494,12 +529,15 @@ describe('revocation', () => {
     // is obtained, so revocation is unknown — and a broken or lying resolver must not be able to
     // suppress a revocation by reading as "not revoked".
     const { signer, record, doc } = await buildShortFormRecord('cap-mismatch')
-    const capability = await createCapability(signer, {
-      sub: signer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-mismatch',
+    const capability = await createCapability({
+      signer: signer,
+      payload: {
+        sub: signer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-mismatch',
+      },
     })
     const backend = createMemoryRevocationBackend({ resolver: () => doc })
     await backend.add(record)
@@ -521,12 +559,15 @@ describe('revocation', () => {
 
   test('a resolver answering with an oversized doc denies rather than silently passing', async () => {
     const { signer, record, doc } = await buildShortFormRecord('cap-oversized')
-    const capability = await createCapability(signer, {
-      sub: signer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-oversized',
+    const capability = await createCapability({
+      signer: signer,
+      payload: {
+        sub: signer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-oversized',
+      },
     })
     const backend = createMemoryRevocationBackend({ resolver: () => doc })
     await backend.add(record)
@@ -537,10 +578,12 @@ describe('revocation', () => {
     if (template === undefined) throw new Error('fixture')
     const oversized = {
       ...doc,
-      verificationMethod: Array.from({ length: 500 }, (_, index) => ({
-        ...template,
-        id: `#key-${index}`,
-      })),
+      verificationMethod: Array.from({ length: 500 }, (_, index) => {
+        return {
+          ...template,
+          id: `#key-${index}`,
+        }
+      }),
     }
     const flooding = createRevocationChecker(backend, { resolver: () => oversized })
     await expect(flooding(capability, stringifyToken(capability))).rejects.toThrow(
@@ -550,12 +593,15 @@ describe('revocation', () => {
 
   test('a revocation record whose issuer cannot be resolved fails closed', async () => {
     const { identity: root, resolver } = buildProfile()
-    const capability = await createCapability(root, {
-      sub: root.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-kokuin',
+    const capability = await createCapability({
+      signer: root,
+      payload: {
+        sub: root.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-kokuin',
+      },
     })
 
     // The backend gets the registry, so the record it stores is a genuine, verified revocation.
@@ -572,12 +618,15 @@ describe('revocation', () => {
 
   test('a revocation record with a bad signature still does not revoke', async () => {
     const { identity: root, resolver } = buildProfile()
-    const capability = await createCapability(root, {
-      sub: root.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-kokuin-forged',
+    const capability = await createCapability({
+      signer: root,
+      payload: {
+        sub: root.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-kokuin-forged',
+      },
     })
 
     // A genuine record, tampered. A backend that stores without verifying would hand it back.
@@ -607,12 +656,15 @@ describe('revocation', () => {
     // by design, so the gate is load-bearing.
     const madeUpDID = 'did:kokuin:zAttackerMadeThisUp' as DIDString
     const issuer = randomIdentity()
-    const capability = await createCapability(issuer, {
-      sub: issuer.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-unrelated',
+    const capability = await createCapability({
+      signer: issuer,
+      payload: {
+        sub: issuer.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-unrelated',
+      },
     })
 
     const genuine = await createRevocationRecord(issuer, 'cap-unrelated')
@@ -644,12 +696,15 @@ describe('revocation', () => {
     // *does* claim the made-up DID as its issuer, must fail closed. The only difference between
     // this assertion and the one above is whether the issuers match.
     const madeUpIdentity = createSigningIdentityForDID(madeUpDID, randomPrivateKey())
-    const targeted = await createCapability(madeUpIdentity, {
-      sub: madeUpDID,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-unrelated',
+    const targeted = await createCapability({
+      signer: madeUpIdentity,
+      payload: {
+        sub: madeUpDID,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-unrelated',
+      },
     })
     await expect(checker(targeted, stringifyToken(targeted))).rejects.toThrow(
       UnresolvableIssuerError,
@@ -658,12 +713,15 @@ describe('revocation', () => {
 
   test('a did:kokuin: revocation record revokes when the registry is supplied', async () => {
     const { identity: root, resolver } = buildProfile()
-    const capability = await createCapability(root, {
-      sub: root.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-kokuin-revoked',
+    const capability = await createCapability({
+      signer: root,
+      payload: {
+        sub: root.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-kokuin-revoked',
+      },
     })
 
     const backend = createMemoryRevocationBackend({ methods: [resolver] })
@@ -687,9 +745,9 @@ describe('revocation', () => {
           throw new Error(`Unknown DID: ${did}`)
         }
         if (header.kid != null && header.kid !== currentKid) {
-          throw new IssuerKeyNotFoundError(
-            `Controller ${did} kid names a key outside the current generation: `,
-          )
+          throw new IssuerKeyNotFoundError({
+            message: `Controller ${did} kid names a key outside the current generation: `,
+          })
         }
         return { alg: 'EdDSA' as const, publicKey: identity.publicKey }
       },
@@ -701,9 +759,9 @@ describe('revocation', () => {
           throw new Error(`Unknown DID: ${did}`)
         }
         if (header.kid != null && header.kid !== currentKid) {
-          throw new IssuerKeyNotFoundError(
-            `Controller ${did} kid names a key outside the current generation: `,
-          )
+          throw new IssuerKeyNotFoundError({
+            message: `Controller ${did} kid names a key outside the current generation: `,
+          })
         }
         return { alg: 'EdDSA' as const, publicKey: identity.publicKey }
       },
@@ -713,12 +771,15 @@ describe('revocation', () => {
   test('a fabricated record with an invented kid does not deny the capability', async () => {
     const root = createSigningIdentityForDID(profileDID, randomPrivateKey())
     const resolver = buildKidProfile(root)
-    const capability = await createCapability(root, {
-      sub: root.id,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-kid-dos',
+    const capability = await createCapability({
+      signer: root,
+      payload: {
+        sub: root.id,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-kid-dos',
+      },
     })
 
     // Nothing here is signed by anyone. The backend is an untrusted extension point, so `iss` and
@@ -735,12 +796,14 @@ describe('revocation', () => {
       },
       signature: 'AAAA',
     } as unknown as RevocationRecord
-    const hostile = (record: RevocationRecord) => ({
-      async add() {},
-      async get() {
-        return record
-      },
-    })
+    const hostile = (record: RevocationRecord) => {
+      return {
+        async add() {},
+        async get() {
+          return record
+        },
+      }
+    }
 
     const checker = createRevocationChecker(hostile(fabricated), { methods: [resolver] })
     await expect(checker(capability, stringifyToken(capability))).resolves.toBeUndefined()
@@ -769,12 +832,15 @@ describe('revocation', () => {
     const resolver = buildKidProfile(current)
     const iat = Math.floor(Date.now() / 1000)
 
-    const capability = await createCapability(current, {
-      sub: profileDID,
-      aud: 'did:key:bob',
-      act: '*',
-      res: '*',
-      jti: 'cap-reused-jti',
+    const capability = await createCapability({
+      signer: current,
+      payload: {
+        sub: profileDID,
+        aud: 'did:key:bob',
+        act: '*',
+        res: '*',
+        jti: 'cap-reused-jti',
+      },
     })
     const stale = (await retired.signToken(
       { jti: 'cap-reused-jti', rev: true, iat },
@@ -817,13 +883,16 @@ describe('revocation', () => {
     ['a non-string iss', { jti: 'grant-shape', iss: 5, rev: true, iat: 0 }],
   ])('a record with %s is not evidence and does not throw', async (_label, payload) => {
     const issuer = randomIdentity()
-    const capability = await createCapability(issuer, {
-      sub: issuer.id,
-      aud: randomIdentity().id,
-      act: 'write',
-      res: 'doc/1',
-      exp: Math.floor(Date.now() / 1000) + 3600,
-      jti: 'grant-shape',
+    const capability = await createCapability({
+      signer: issuer,
+      payload: {
+        sub: issuer.id,
+        aud: randomIdentity().id,
+        act: 'write',
+        res: 'doc/1',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        jti: 'grant-shape',
+      },
     })
     const record = {
       data: 'e30.bnVsbA',
@@ -845,19 +914,21 @@ describe('revocation', () => {
       jti: string,
       options?: { methods: Array<DIDMethodResolver> },
     ) {
-      return await createCapability(
-        issuer,
-        { sub: issuer.id, aud: 'did:key:bob', act: '*', res: '*', jti },
-        undefined,
-        options,
-      )
+      return await createCapability({
+        signer: issuer,
+        payload: { sub: issuer.id, aud: 'did:key:bob', act: '*', res: '*', jti },
+        header: undefined,
+        options: options,
+      })
     }
-    const serving = (record: RevocationRecord) => ({
-      async add() {},
-      async get() {
-        return record
-      },
-    })
+    const serving = (record: RevocationRecord) => {
+      return {
+        async add() {},
+        async get() {
+          return record
+        },
+      }
+    }
 
     test('a genuine revocation of another jti does not revoke', async () => {
       const issuer = randomIdentity()
@@ -909,7 +980,9 @@ describe('revocation', () => {
             throw new Error(`Unknown DID: ${did}`)
           }
           if (header?.kid != null && header.kid !== liveKid) {
-            throw new IssuerKeyNotFoundError('kid names a key the controller does not hold')
+            throw new IssuerKeyNotFoundError({
+              message: 'kid names a key the controller does not hold',
+            })
           }
           return { alg: 'EdDSA' as const, publicKey: identity.publicKey }
         }
@@ -922,11 +995,12 @@ describe('revocation', () => {
         return { identity, options: { methods: [resolver] } }
       }
 
-      const signedUnderDeniedKey = async (identity: SigningIdentity, payload: object) =>
-        (await identity.signToken(
+      const signedUnderDeniedKey = async (identity: SigningIdentity, payload: object) => {
+        return (await identity.signToken(
           { iat: Math.floor(Date.now() / 1000), ...payload },
           { header: { kid: deniedKid } },
         )) as unknown as RevocationRecord
+      }
 
       test('a revocation of another jti does not revoke', async () => {
         const { identity, options } = deniedKeyProfile()

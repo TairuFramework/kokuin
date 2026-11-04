@@ -177,7 +177,7 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
     // and `resolveBranches` orders by `(gen, seq)` — so no branch the root can ever author outranks
     // this one.
     const attackBranch = [icp, forged(did, await digestOfPrefix(did, [icp]))]
-    const reset = await createReset(seed, 0, 1)
+    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
     const recovered = [icp, reset]
     const result = await resolveBranches(did, [recovered, attackBranch, honest])
     expect(result.ok).toBe(true)

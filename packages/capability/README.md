@@ -17,3 +17,12 @@ The strict default rejects crafted ZIP-215-only signatures on reverification. No
 Provider operational errors propagate unchanged through refusal paths.
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `createCapability` | `CreateCapabilityParams` | `signer, payload, header?, options?` |
+| `new TokenRevokedError` | `TokenRevokedErrorParams` | `jti, options?` |
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

@@ -7,6 +7,20 @@ import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from './der
 import type { EpochEventCommon } from './epoch-events.js'
 import { encodeKey, tryDecodeKey } from './keys.js'
 
+export type VerifySignaturesParams = {
+  event: EventCommon | EpochEventCommon
+  sigs: Array<string>
+  keys: Array<string>
+  options?: CryptoOptions
+}
+export type CreateResetParams = {
+  seed: Uint8Array
+  profile: number
+  gen: number
+  snapshot?: StateSnapshot
+  options?: CryptoOptions
+}
+
 export const DID_PREFIX = 'did:kokuin:'
 
 /**
@@ -68,8 +82,8 @@ export type InceptionEvent = EventCommon & {
  * Generic over both tiers: a root-chain event and an epoch event share the envelope and signatures
  * over canonical bytes, and nothing else.
  */
-export type SignedEvent<E extends EventCommon | EpochEventCommon = EventCommon> = {
-  event: E
+export type SignedEvent<TEvent extends EventCommon | EpochEventCommon = EventCommon> = {
+  event: TEvent
   /** base64url ed25519 signatures over the canonical event bytes, positional against `event.k`. */
   sigs: Array<string>
   /**
@@ -85,13 +99,15 @@ export async function signEvent(
   options: CryptoOptions = {},
 ): Promise<Array<string>> {
   const bytes = canonicalBytes(event)
-  const items = privateKeys.map((privateKey) => ({
-    privateKey: privateKey.slice(),
-    message: bytes,
-  }))
-  return (await (options.crypto ?? nobleCrypto).signBatch('EdDSA', items)).map((sig) =>
-    base64urlnopad.encode(sig),
-  )
+  const items = privateKeys.map((privateKey) => {
+    return {
+      privateKey: privateKey.slice(),
+      message: bytes,
+    }
+  })
+  return (await (options.crypto ?? nobleCrypto).signBatch('EdDSA', items)).map((sig) => {
+    return base64urlnopad.encode(sig)
+  })
 }
 
 /**
@@ -140,12 +156,12 @@ function verifyAgreementKeys(ka: Array<string>): boolean {
  * Malformed signatures, keys and non-canonical bodies yield false. Provider failures propagate.
  * Direct callers need the canonicalisation guard even though the fold also checks the body.
  */
-export async function verifySignatures(
-  event: EventCommon | EpochEventCommon,
-  sigs: Array<string>,
-  keys: Array<string>,
-  options: CryptoOptions = {},
-): Promise<boolean> {
+export async function verifySignatures({
+  event,
+  sigs,
+  keys,
+  options = {},
+}: VerifySignaturesParams): Promise<boolean> {
   if (!Array.isArray(sigs) || !Array.isArray(keys)) {
     return false
   }
@@ -267,7 +283,12 @@ export async function verifyInception(
   if (!verifyAgreementKeys(signed.event.ka)) {
     return false
   }
-  return await verifySignatures(signed.event, signed.sigs, signed.event.k, options)
+  return await verifySignatures({
+    event: signed.event,
+    sigs: signed.sigs,
+    keys: signed.event.k,
+    options: options,
+  })
 }
 
 /**
@@ -496,7 +517,7 @@ export async function verifyRotate(
   if (!verifyAgreementKeys(event.ka)) {
     return false
   }
-  return await verifySignatures(event, sigs, event.k, options)
+  return await verifySignatures({ event: event, sigs: sigs, keys: event.k, options: options })
 }
 
 /**
@@ -524,13 +545,13 @@ export async function verifyRotate(
  * competing reset at any generation): a blind root starts at `gen = 1` and retries higher if it
  * learns of one — the cost is a round trip, never loss of control.
  */
-export async function createReset(
-  seed: Uint8Array,
-  profile: number,
-  gen: number,
-  snapshot?: StateSnapshot,
-  options: CryptoOptions = {},
-): Promise<SignedEvent<RotateEvent>> {
+export async function createReset({
+  seed,
+  profile,
+  gen,
+  snapshot,
+  options = {},
+}: CreateResetParams): Promise<SignedEvent<RotateEvent>> {
   if (gen < 1) {
     throw new Error(`Reset: gen must be >= 1, got ${gen}`)
   }
@@ -627,7 +648,7 @@ export async function verifyReset(
   if (revealed == null || digestOf(revealed) !== inception.r) {
     return false
   }
-  return await verifySignatures(event, sigs, [revealed], options)
+  return await verifySignatures({ event: event, sigs: sigs, keys: [revealed], options: options })
 }
 
 /**

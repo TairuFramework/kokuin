@@ -52,8 +52,9 @@ describe('key revocation, independently', () => {
     })
     const denied: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined
+        },
       }),
     ]
 
@@ -65,12 +66,15 @@ describe('key revocation, independently', () => {
       log: { chain: [inception], events: [] },
     })
     const stolen = stringifyToken(
-      await createCapability(stolenIdentity, {
-        sub: did,
-        aud: thief.id,
-        act: '*',
-        res: '*',
-        exp: now() + 3600,
+      await createCapability({
+        signer: stolenIdentity,
+        payload: {
+          sub: did,
+          aud: thief.id,
+          act: '*',
+          res: '*',
+          exp: now() + 3600,
+        },
       }),
     )
 
@@ -93,12 +97,15 @@ describe('key revocation, independently', () => {
     })
     const good = await randomIdentity()
     const honest = stringifyToken(
-      await createCapability(owner, {
-        sub: did,
-        aud: good.id,
-        act: '*',
-        res: '*',
-        exp: now() + 3600,
+      await createCapability({
+        signer: owner,
+        payload: {
+          sub: did,
+          aud: good.id,
+          act: '*',
+          res: '*',
+          exp: now() + 3600,
+        },
       }),
     )
     let honestRefusal = 'ACCEPTED'
@@ -122,8 +129,9 @@ describe('key revocation, independently', () => {
     // the ordinary way — a revocation record, signed by the key that is about to be denied.
     const before: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate], events: [] } : undefined
+        },
       }),
     ]
     const issuer = await createControllerIdentity({
@@ -133,14 +141,17 @@ describe('key revocation, independently', () => {
     })
     const holder = await randomIdentity()
     const grant = stringifyToken(
-      await createCapability(issuer, {
-        sub: did,
-        aud: holder.id,
-        act: 'read',
-        res: 'doc:A',
-        exp: now() + 3600,
-        jti: 'grant-1',
-      } as never),
+      await createCapability({
+        signer: issuer,
+        payload: {
+          sub: did,
+          aud: holder.id,
+          act: 'read',
+          res: 'doc:A',
+          exp: now() + 3600,
+          jti: 'grant-1',
+        } as never,
+      }),
     )
 
     const backend = createMemoryRevocationBackend({ methods: before })
@@ -171,8 +182,9 @@ describe('key revocation, independently', () => {
     })
     const after: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined
+        },
       }),
     ]
     const afterDenial = await invoke(after)
@@ -189,8 +201,9 @@ describe('key revocation, independently', () => {
     // holder and the grant is a revocation record signed by the key about to be denied.
     const before: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate], events: [] } : undefined
+        },
       }),
     ]
     const live = await createControllerIdentity({
@@ -205,14 +218,17 @@ describe('key revocation, independently', () => {
     })
     const holder = await randomIdentity()
     const grant = stringifyToken(
-      await createCapability(live, {
-        sub: did,
-        aud: holder.id,
-        act: 'read',
-        res: 'doc:B',
-        exp: now() + 3600,
-        jti: 'grant-2',
-      } as never),
+      await createCapability({
+        signer: live,
+        payload: {
+          sub: did,
+          aud: holder.id,
+          act: 'read',
+          res: 'doc:B',
+          exp: now() + 3600,
+          jti: 'grant-2',
+        } as never,
+      }),
     )
 
     const backend = createMemoryRevocationBackend({ methods: before })
@@ -246,8 +262,9 @@ describe('key revocation, independently', () => {
     })
     const after: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined
+        },
       }),
     ]
     const afterDenial = await invoke(after)
@@ -269,8 +286,9 @@ describe('key revocation, independently', () => {
     })
     const methods: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined
+        },
       }),
     ]
 
@@ -281,14 +299,17 @@ describe('key revocation, independently', () => {
     })
     const holder = await randomIdentity()
     const grant = stringifyToken(
-      await createCapability(live, {
-        sub: did,
-        aud: holder.id,
-        act: 'read',
-        res: 'doc:C',
-        exp: now() + 3600,
-        jti: 'grant-3',
-      } as never),
+      await createCapability({
+        signer: live,
+        payload: {
+          sub: did,
+          aud: holder.id,
+          act: 'read',
+          res: 'doc:C',
+          exp: now() + 3600,
+          jti: 'grant-3',
+        } as never,
+      }),
     )
 
     // Signed as the profile DID with a key the profile never published. A verifying backend would

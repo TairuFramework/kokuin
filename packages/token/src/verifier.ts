@@ -39,7 +39,14 @@ function providerVerifiers(crypto: CryptoProvider): Verifiers {
           await Promise.all(yields)
           const first = items[0]
           if (items.length === 1 && first !== undefined) {
-            return [await crypto.verify(first.alg, first.signature, first.message, first.publicKey)]
+            return [
+              await crypto.verify({
+                alg: first.alg,
+                signature: first.signature,
+                message: first.message,
+                publicKey: first.publicKey,
+              }),
+            ]
           }
           return crypto.verifyBatch(items)
         })

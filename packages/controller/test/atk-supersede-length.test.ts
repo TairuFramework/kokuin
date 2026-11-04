@@ -4,6 +4,8 @@ import { createInception, createRotate, didFromInception, type SignedEvent } fro
 import { foldLog } from '../src/fold.js'
 import { resolveBranches } from '../src/supersede.js'
 
+type RotateRunParams = { did: string; icp: SignedEvent; length: number; tag: string }
+
 const seed = new Uint8Array(32).fill(1)
 const victim = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
@@ -17,12 +19,7 @@ async function build() {
  * with different tags diverge at their first rotate: both are signed by the pre-committed key, so
  * neither supersedes the other there.
  */
-async function rotateRun(
-  did: string,
-  icp: SignedEvent,
-  length: number,
-  tag: string,
-): Promise<Array<SignedEvent>> {
+async function rotateRun({ did, icp, length, tag }: RotateRunParams): Promise<Array<SignedEvent>> {
   const branch: Array<SignedEvent> = [icp]
   let prior = icp.event
   for (let i = 0; i < length; i++) {
@@ -46,8 +43,8 @@ async function rotateRun(
 describe('superseding is not decided by branch LENGTH', () => {
   test('ROW 1: a longer run of rotates does not outrank a rotate it contradicts', async () => {
     const { icp, did } = await build()
-    const longer = await rotateRun(did, icp, 3, 'a')
-    const shorter = await rotateRun(did, icp, 1, 'b')
+    const longer = await rotateRun({ did: did, icp: icp, length: 3, tag: 'a' })
+    const shorter = await rotateRun({ did: did, icp: icp, length: 1, tag: 'b' })
 
     const result = await resolveBranches(did, [longer, shorter])
     expect(result.ok).toBe(false)
@@ -58,19 +55,29 @@ describe('superseding is not decided by branch LENGTH', () => {
 
   test('ROW 2 (control: both runs are valid, not incidentally malformed)', async () => {
     const { icp, did } = await build()
-    expect((await foldLog(did, { chain: await rotateRun(did, icp, 5, 'a'), events: [] })).ok).toBe(
-      true,
-    )
-    expect((await foldLog(did, { chain: await rotateRun(did, icp, 1, 'b'), events: [] })).ok).toBe(
-      true,
-    )
+    expect(
+      (
+        await foldLog(did, {
+          chain: await rotateRun({ did: did, icp: icp, length: 5, tag: 'a' }),
+          events: [],
+        })
+      ).ok,
+    ).toBe(true)
+    expect(
+      (
+        await foldLog(did, {
+          chain: await rotateRun({ did: did, icp: icp, length: 1, tag: 'b' }),
+          events: [],
+        })
+      ).ok,
+    ).toBe(true)
   })
 
   test('ROW 3: the answer is the same in every presentation order and at every length', async () => {
     const { icp, did } = await build()
     for (const n of [1, 2, 3, 4]) {
-      const a = await rotateRun(did, icp, n + 1, 'a')
-      const b = await rotateRun(did, icp, n, 'b')
+      const a = await rotateRun({ did: did, icp: icp, length: n + 1, tag: 'a' })
+      const b = await rotateRun({ did: did, icp: icp, length: n, tag: 'b' })
       expect(await resolveBranches(did, [a, b])).toEqual(await resolveBranches(did, [b, a]))
       expect((await resolveBranches(did, [a, b])).ok).toBe(false)
     }
@@ -78,7 +85,7 @@ describe('superseding is not decided by branch LENGTH', () => {
 
   test('ROW 4 (control): a longer branch wins when it is the same history carried further', async () => {
     const { icp, did } = await build()
-    const longer = await rotateRun(did, icp, 3, 'a')
+    const longer = await rotateRun({ did: did, icp: icp, length: 3, tag: 'a' })
     const prefix = longer.slice(0, 2)
     const result = await resolveBranches(did, [prefix, longer])
     expect(result.ok && result.winner).toBe(longer)

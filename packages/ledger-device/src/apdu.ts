@@ -74,24 +74,30 @@ export function encodeSignMessageChunks(
 
 export function parsePublicKeyResponse(data: Uint8Array): Uint8Array {
   if (data.length < 32) {
-    throw new LedgerError(`Invalid public key response: expected 32 bytes, got ${data.length}`, 0)
+    throw new LedgerError({
+      message: `Invalid public key response: expected 32 bytes, got ${data.length}`,
+      statusCode: 0,
+    })
   }
   return data.slice(0, 32)
 }
 
 export function parseSignatureResponse(data: Uint8Array): Uint8Array {
   if (data.length < 64) {
-    throw new LedgerError(`Invalid signature response: expected 64 bytes, got ${data.length}`, 0)
+    throw new LedgerError({
+      message: `Invalid signature response: expected 64 bytes, got ${data.length}`,
+      statusCode: 0,
+    })
   }
   return data.slice(0, 64)
 }
 
 export function parseSharedSecretResponse(data: Uint8Array): Uint8Array {
   if (data.length < 32) {
-    throw new LedgerError(
-      `Invalid shared secret response: expected 32 bytes, got ${data.length}`,
-      0,
-    )
+    throw new LedgerError({
+      message: `Invalid shared secret response: expected 32 bytes, got ${data.length}`,
+      statusCode: 0,
+    })
   }
   return data.slice(0, 32)
 }
@@ -105,12 +111,15 @@ export function checkStatusWord(sw: number): void {
     case 0x6a82:
       throw new LedgerAppNotOpenError()
     case 0x6a80:
-      throw new LedgerError('Invalid data', sw)
+      throw new LedgerError({ message: 'Invalid data', statusCode: sw })
     case 0x6d00:
-      throw new LedgerError('Unknown command', sw)
+      throw new LedgerError({ message: 'Unknown command', statusCode: sw })
     case 0x6e00:
-      throw new LedgerError('Unknown CLA', sw)
+      throw new LedgerError({ message: 'Unknown CLA', statusCode: sw })
     default:
-      throw new LedgerError(`Ledger error: 0x${sw.toString(16).padStart(4, '0')}`, sw)
+      throw new LedgerError({
+        message: `Ledger error: 0x${sw.toString(16).padStart(4, '0')}`,
+        statusCode: sw,
+      })
   }
 }

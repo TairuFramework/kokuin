@@ -2,12 +2,14 @@ import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import type { CryptoOptions, MethodRegistry } from '@kokuin/token'
 
 export function captureMethods(methods?: MethodRegistry): MethodRegistry | undefined {
-  return methods?.map((method) => ({
-    ...method,
-    method: method.method,
-    resolve: method.resolve.bind(method),
-    resolveHistoric: method.resolveHistoric?.bind(method),
-  }))
+  return methods?.map((method) => {
+    return {
+      ...method,
+      method: method.method,
+      resolve: method.resolve.bind(method),
+      resolveHistoric: method.resolveHistoric?.bind(method),
+    }
+  })
 }
 
 export class ProviderFailure extends Error {}

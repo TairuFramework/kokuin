@@ -1,5 +1,5 @@
 import type { SignedRecord } from '@kokuin/records'
-import type { DecodedVaultRecord } from '@kokuin/vault'
+import type { DecodedVaultRecord, FactorDescriptor } from '@kokuin/vault'
 
 import { VaultModeConflict } from './record-context.js'
 import type { Bound } from './records-rows.js'
@@ -71,9 +71,7 @@ export async function projection(
         wrapping_id: decoded.id,
         key_id: decoded.meta.keyID,
         key_version: decoded.meta.keyVersion,
-        descriptors: adapter.encodeJSON(
-          decoded.payload.descriptors,
-        ) as typeof decoded.payload.descriptors,
+        descriptors: adapter.encodeJSON(decoded.payload.descriptors) as Array<FactorDescriptor>,
         descriptor_digest: decoded.payload.descriptorDigest,
         iv: adapter.encodeBinary(decoded.payload.iv) as Uint8Array,
         wrapped_key: adapter.encodeBinary(decoded.payload.wrappedKey) as Uint8Array,

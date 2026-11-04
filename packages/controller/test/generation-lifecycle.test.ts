@@ -35,7 +35,7 @@ import { createControllerResolver } from '../src/resolver.js'
 // stolen authority key goes on minting fresh tokens until the profile resets. Both halves are
 // asserted below, side by side.
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -63,7 +63,7 @@ const rotateAgain = await createRotate({
   prior: rotate.event,
   snapshot: { members: [], deny: [] },
 })
-const reset = await createReset(seed, 0, 1)
+const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
 
 function resolverFor(log: Array<SignedEvent>) {
   return createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
@@ -262,8 +262,9 @@ describe('a kid naming a key this profile never published', () => {
 // accumulate denials, then a reset, then more rotates on the far side of the boundary. The
 // two-rotate logs above only approach this.
 
-const settle = async (prior: SignedEvent['event'], deny: Array<string>) =>
-  await createRotate({ seed, profile: 0, did, prior, snapshot: { members: [], deny } })
+const settle = async (prior: SignedEvent['event'], deny: Array<string>) => {
+  return await createRotate({ seed, profile: 0, did, prior, snapshot: { members: [], deny } })
+}
 const rot1 = await settle(inception.event, []) //   gen0 s1
 const rot2 = await settle(rot1.event, [D1]) //      gen0 s2
 const rot3 = await settle(rot2.event, [D1, D2]) //  gen0 s3
@@ -289,8 +290,9 @@ function historicOf(resolver: DIDMethodResolver) {
 
 const resolveHistoric = historicOf(interleavedResolver)
 
-const keyAt = (gen: number, seq: number) =>
-  encodeKey(deriveKeyPair(seed, authorityPath(0, gen, seq), 'EdDSA').publicKey, 'EdDSA')
+const keyAt = (gen: number, seq: number) => {
+  return encodeKey(deriveKeyPair(seed, authorityPath(0, gen, seq), 'EdDSA').publicKey, 'EdDSA')
+}
 
 describe('every event in a rotate/reset interleaving folds', () => {
   test('the whole log folds', async () => {
@@ -300,13 +302,15 @@ describe('every event in a rotate/reset interleaving folds', () => {
   test('each state names the key the log actually committed', async () => {
     const result = await foldLog(did, { chain: interleaved, events: [] })
     if (!result.ok) throw new Error(`did not fold: ${result.reason} at ${result.index}`)
-    const seen = result.states.map((state) => ({
-      gen: state.gen,
-      seq: state.seq,
-      keyGen: state.keyGen,
-      keySeq: state.keySeq,
-      key: state.keys[0],
-    }))
+    const seen = result.states.map((state) => {
+      return {
+        gen: state.gen,
+        seq: state.seq,
+        keyGen: state.keyGen,
+        keySeq: state.keySeq,
+        key: state.keys[0],
+      }
+    })
     expect(seen).toEqual([
       { gen: 0, seq: 0, keyGen: 0, keySeq: 0, key: keyAt(0, 0) },
       { gen: 0, seq: 1, keyGen: 0, keySeq: 1, key: keyAt(0, 1) },

@@ -1,3 +1,4 @@
+import type { ResolvedSigningKey } from '@kokuin/token'
 import { normalizeDID, signingKeysOf } from '@kokuin/token'
 
 import { digestOf } from './canonical.js'
@@ -39,7 +40,7 @@ export const SNAPSHOT_DROPS_RETIRED_KEY = 'snapshot drops a retired key denial'
  * simply not a match.
  */
 export function memberCarriesKey(did: string, key: string): boolean {
-  let keys: ReturnType<typeof signingKeysOf>
+  let keys: Array<ResolvedSigningKey> | null
   try {
     keys = signingKeysOf(did)
   } catch {

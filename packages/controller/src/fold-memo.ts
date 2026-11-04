@@ -1,6 +1,7 @@
 import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 
 import { digestOf } from './canonical.js'
+import type { EpochLimits } from './epoch.js'
 import {
   type AuthoritativeLog,
   type AuthoritativeLogParams,
@@ -19,10 +20,7 @@ export const FOLD_MEMO_SIZE = 256
  */
 type MemoEntry = { log: ControllerLog; unchanged: boolean; result: AuthoritativeLog['result'] }
 
-// Module-level, not per resolver: a consumer that builds a resolver per resolution (kubun's engine
-// does) would otherwise never hit. Sharing is sound because the key is the whole input of a pure
-// function — see `memoKey` — so two resolvers can only share an entry when they would compute the
-// same answer.
+// Share pure folds across resolver instances. The key includes every input.
 const memo = new Map<string, MemoEntry>()
 const providerIDs = new WeakMap<CryptoProvider, number>()
 let nextProviderID = 0
@@ -94,7 +92,7 @@ function memoKey(
  */
 export async function memoizedAuthoritativeLog(
   input: AuthoritativeLogParams,
-  limits?: Parameters<typeof authoritativeLogWithin>[1],
+  limits?: Partial<EpochLimits>,
 ): Promise<AuthoritativeLog> {
   const params = { ...input, loaded: snapshotLog(input.loaded) }
   const key = memoKey(params, limits)

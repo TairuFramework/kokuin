@@ -50,7 +50,7 @@ function leaves(count: number, type = TYPE): Array<RangeLeaf> {
   return Array.from({ length: count }, (_, index) => leafAt(index, type))
 }
 
-function shuffled<T>(values: ReadonlyArray<T>): Array<T> {
+function shuffled<TValue>(values: ReadonlyArray<TValue>): Array<TValue> {
   // Deterministic: reversing and interleaving is enough to break any input order.
   const reversed = [...values].reverse()
   return [
@@ -203,7 +203,11 @@ describe('splitRange', () => {
   test('lists a range at the threshold in id order, without other types or ids', async () => {
     const rows = leaves(RANGE_LEAF_THRESHOLD)
     const others = leaves(3, 'credential.key')
-    const children = await splitRange(shuffled([...rows, ...others]), WHOLE, RANGE_LEAF_THRESHOLD)
+    const children = await splitRange({
+      leaves: shuffled([...rows, ...others]),
+      rangeBounds: WHOLE,
+      leafThreshold: RANGE_LEAF_THRESHOLD,
+    })
     const sorted = [...rows].sort((left, right) => (left.id < right.id ? -1 : 1))
     expect(children).toEqual([{ bounds: WHOLE, leaves: sorted }])
     const [listed] = children as [RangeLeafList]
@@ -213,9 +217,9 @@ describe('splitRange', () => {
   })
 
   test('lists an empty range as no leaves', async () => {
-    expect(await splitRange([], WHOLE, RANGE_LEAF_THRESHOLD)).toEqual([
-      { bounds: WHOLE, leaves: [] },
-    ])
+    expect(
+      await splitRange({ leaves: [], rangeBounds: WHOLE, leafThreshold: RANGE_LEAF_THRESHOLD }),
+    ).toEqual([{ bounds: WHOLE, leaves: [] }])
   })
 
   test.each([
@@ -224,7 +228,11 @@ describe('splitRange', () => {
     [1000, 16],
   ])('splits %i rows into %i summaries that partition the range', async (count, expected) => {
     const rows = leaves(count)
-    const children = await splitRange(shuffled(rows), WHOLE, RANGE_LEAF_THRESHOLD)
+    const children = await splitRange({
+      leaves: shuffled(rows),
+      rangeBounds: WHOLE,
+      leafThreshold: RANGE_LEAF_THRESHOLD,
+    })
     expect(children).toHaveLength(expected)
     expect(children.every(isSummary)).toBe(true)
     const summaries = children as Array<RangeSummary>
@@ -252,31 +260,34 @@ describe('splitRange', () => {
       lower: rangePosition(sorted[49] as RangeLeaf),
       upper: rangePosition(sorted[149] as RangeLeaf),
     }
-    const summaries = (await splitRange(rows, bounds, RANGE_LEAF_THRESHOLD)) as Array<RangeSummary>
+    const summaries = (await splitRange({
+      leaves: rows,
+      rangeBounds: bounds,
+      leafThreshold: RANGE_LEAF_THRESHOLD,
+    })) as Array<RangeSummary>
     expect(summaries[0]?.bounds.lower).toBe(bounds.lower)
     expect(summaries.at(-1)?.bounds.upper).toBe(bounds.upper)
     expect(summaries.reduce((total, summary) => total + summary.count, 0)).toBe(100)
   })
 
   test('refuses a threshold that could not make progress', async () => {
-    await expect(async () => await splitRange(leaves(2), WHOLE, 0)).rejects.toThrow(
-      RecordRangeError,
-    )
-    await expect(async () => await splitRange(leaves(2), WHOLE, 1.5)).rejects.toThrow(
-      RecordRangeError,
-    )
+    await expect(
+      async () => await splitRange({ leaves: leaves(2), rangeBounds: WHOLE, leafThreshold: 0 }),
+    ).rejects.toThrow(RecordRangeError)
+    await expect(
+      async () => await splitRange({ leaves: leaves(2), rangeBounds: WHOLE, leafThreshold: 1.5 }),
+    ).rejects.toThrow(RecordRangeError)
   })
 
   test('refuses two leaves for one record', async () => {
     const [first] = leaves(1) as [RangeLeaf]
-    await expect(
-      async () =>
-        await splitRange(
-          [first, { ...first, opHash: hashOf('other') }],
-          WHOLE,
-          RANGE_LEAF_THRESHOLD,
-        ),
-    ).rejects.toThrow(RecordRangeError)
+    await expect(async () => {
+      return await splitRange({
+        leaves: [first, { ...first, opHash: hashOf('other') }],
+        rangeBounds: WHOLE,
+        leafThreshold: RANGE_LEAF_THRESHOLD,
+      })
+    }).rejects.toThrow(RecordRangeError)
   })
 })
 
@@ -472,8 +483,9 @@ describe('rangeLeaf', () => {
       [Number.MIN_VALUE],
       [-Number.MIN_VALUE],
     ]
-    const orderOf = async (version: Array<number>) =>
-      (await leafFromOp(op('h', { meta: { version } }), VERSIONED))?.order as string
+    const orderOf = async (version: Array<number>) => {
+      return (await leafFromOp(op('h', { meta: { version } }), VERSIONED))?.order as string
+    }
     const orders = new Map(
       await Promise.all(
         versions.map(async (version) => [version, await orderOf(version)] as const),
@@ -481,11 +493,11 @@ describe('rangeLeaf', () => {
     )
     for (const left of versions) {
       for (const right of versions) {
-        const decision = compareRecordOps(
-          op('a', { meta: { version: left } }),
-          op('b', { meta: { version: right } }),
-          VERSIONED,
-        )
+        const decision = compareRecordOps({
+          incoming: op('a', { meta: { version: left } }),
+          stored: op('b', { meta: { version: right } }),
+          policy: VERSIONED,
+        })
         const byOrder =
           (orders.get(left) as string) < (orders.get(right) as string)
             ? -1

@@ -32,10 +32,12 @@ test('batch inputs are copied before the Promise returns', async () => {
 
 test('a large batch leaves the event loop free while it computes', async () => {
   const seed = new Uint8Array(32).fill(5)
-  const items = Array.from({ length: 2000 }, (_, index) => ({
-    privateKey: seed,
-    message: new Uint8Array([index & 255, index >> 8]),
-  }))
+  const items = Array.from({ length: 2000 }, (_, index) => {
+    return {
+      privateKey: seed,
+      message: new Uint8Array([index & 255, index >> 8]),
+    }
+  })
   let ticks = 0
   const timer = setInterval(() => ticks++, 1)
   try {

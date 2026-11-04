@@ -136,10 +136,9 @@ function sameLog(next: ControllerLog, seen: ControllerLog): boolean {
     [next.chain, seen.chain],
     [next.events, seen.events],
   ]
-  return pairs.every(
-    ([mine, theirs]) =>
-      mine.length === theirs.length && mine.every((entry, i) => sameEntry(entry, theirs[i])),
-  )
+  return pairs.every(([mine, theirs]) => {
+    return mine.length === theirs.length && mine.every((entry, i) => sameEntry(entry, theirs[i]))
+  })
 }
 
 /** What {@link authoritativeLog} takes. */
@@ -212,8 +211,9 @@ export async function authoritativeLogWithin(
   { did, loaded, seen, context, crypto }: AuthoritativeLogParams,
   limits?: Partial<EpochLimits>,
 ): Promise<AuthoritativeLog> {
-  const invalid = (reason: string, index: number) =>
-    new Error(`${context}: invalid log for ${did}: ${reason} at event ${index}`)
+  const invalid = (reason: string, index: number) => {
+    return new Error(`${context}: invalid log for ${did}: ${reason} at event ${index}`)
+  }
   // The request limit, before any work: `loaded` is the one untrusted input here.
   if (!isControllerLog(loaded)) {
     throw invalid(MALFORMED_LOG, 0)
@@ -255,7 +255,14 @@ export async function authoritativeLogWithin(
     states = winner.states
   }
 
-  const held = await withEpoch(did, states, loaded.events, limits, memory?.log.events, { crypto })
+  const held = await withEpoch({
+    did: did,
+    states: states,
+    events: loaded.events,
+    limits: limits,
+    trusted: memory?.log.events,
+    options: { crypto },
+  })
   if (!('result' in held)) {
     throw invalid(held.reason, held.index)
   }

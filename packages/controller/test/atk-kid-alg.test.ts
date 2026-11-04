@@ -47,7 +47,7 @@ const rotated = await createRotate({
   prior: inception.event,
   snapshot: { members: [], deny: [] },
 })
-const reset = await createReset(seed, 0, 1)
+const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
 
 function registryFor(log: Array<SignedEvent>, otherLog: Array<SignedEvent> = [otherInception]) {
   const methods: MethodRegistry = [

@@ -3,6 +3,13 @@ import type { CryptoOptions } from '@kokuin/token'
 import { type FoldResult, foldLog, type KeyState } from './fold.js'
 import { type ControllerLog, isControllerLog, MALFORMED_LOG } from './log.js'
 
+type CurrentStateParams = {
+  did: string
+  log: ControllerLog
+  context: string
+  options?: CryptoOptions
+}
+
 /** The fold's last state, turning a fold failure into a throw. `context` names the caller. */
 function lastState(did: string, context: string, result: FoldResult): KeyState {
   if (!result.ok) {
@@ -24,12 +31,12 @@ function lastState(did: string, context: string, result: FoldResult): KeyState {
  * state's `deny`, `members` and `saturated` are therefore the chain's, not the live ones; nothing
  * that builds an identity reads them.
  */
-export async function currentState(
-  did: string,
-  log: ControllerLog,
-  context: string,
-  options: CryptoOptions = {},
-): Promise<KeyState> {
+export async function currentState({
+  did,
+  log,
+  context,
+  options = {},
+}: CurrentStateParams): Promise<KeyState> {
   if (!isControllerLog(log)) {
     throw new Error(`${context}: invalid log for ${did}: ${MALFORMED_LOG} at event 0`)
   }

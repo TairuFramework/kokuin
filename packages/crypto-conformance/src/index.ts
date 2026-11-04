@@ -23,7 +23,7 @@ export { externalConformance, externalVectors } from './external.js'
 
 export type CryptoConformanceCase = { name: string; run(): Promise<void> }
 
-function find<T extends { name: string }>(entries: Array<T>, name: string): T {
+function find<TValue extends { name: string }>(entries: Array<TValue>, name: string): TValue {
   const entry = entries.find((candidate) => candidate.name === name)
   if (entry == null) throw new Error(`Crypto conformance: missing corpus entry ${name}`)
   return entry
@@ -148,7 +148,12 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
         signature.set(hexToBytes(ES_SIGNATURE), 4)
         const message = hexToBytes(ES_MESSAGE)
         const key = hexToBytes(ES_KEY)
-        const verified = provider.verify('ES256', signature.subarray(4, 68), message, key)
+        const verified = provider.verify({
+          alg: 'ES256',
+          signature: signature.subarray(4, 68),
+          message: message,
+          publicKey: key,
+        })
         signature.fill(0)
         message.fill(0)
         key.fill(0)
@@ -231,7 +236,12 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
           message: hexToBytes(entry.message),
           publicKey: hexToBytes(entry.publicKey),
         }
-        const single = await provider.verify(item.alg, item.signature, item.message, item.publicKey)
+        const single = await provider.verify({
+          alg: item.alg,
+          signature: item.signature,
+          message: item.message,
+          publicKey: item.publicKey,
+        })
         assert(single === entry.valid, `${entry.name}: verify returned ${single}`)
         const batch = await provider.verifyBatch([item])
         assert(

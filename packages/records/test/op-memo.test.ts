@@ -66,7 +66,7 @@ async function makeRecord(
     deleted: false,
     meta: { label: id },
   }
-  const signed = await signRecordOp(identity, claim, TEST_OP_KIND)
+  const signed = await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })
   return { type: claim.type, id, owner: claim.owner, hlc: claim.hlc, payload, ...signed }
 }
 
@@ -103,12 +103,12 @@ describe('record op verification memo', () => {
 
   test('a self-certifying op verifies once across calls, and each call gets its own copy', async () => {
     const record = await makeRecord(randomIdentity(), 'a')
-    const first = await verifyRecordOp(record.opJWT, TEST_OP_KIND)
+    const first = await verifyRecordOp({ opJWT: record.opJWT, opKind: TEST_OP_KIND })
     if (first === null) throw new Error('expected a verified op')
     expect(() => {
       first.claim.meta.label = 'changed'
     }).toThrow(TypeError)
-    const second = await verifyRecordOp(record.opJWT, TEST_OP_KIND)
+    const second = await verifyRecordOp({ opJWT: record.opJWT, opKind: TEST_OP_KIND })
 
     expect(verifications.count).toBe(1)
     expect(second?.claim.meta.label).toBe('a')
@@ -118,11 +118,15 @@ describe('record op verification memo', () => {
   test('another op kind, a refusal and a registry-resolved issuer are never answered from memory', async () => {
     const record = await makeRecord(randomIdentity(), 'a')
 
-    expect(await verifyRecordOp(record.opJWT, TEST_OP_KIND)).not.toBeNull()
-    expect(await verifyRecordOp(record.opJWT, 'test/other-kind')).toBeNull()
-    expect(await verifyRecordOp(record.opJWT, 'test/other-kind')).toBeNull()
-    expect(await verifyRecordOp(record.opJWT, TEST_OP_KIND, registry)).not.toBeNull()
-    expect(await verifyRecordOp(record.opJWT, TEST_OP_KIND, registry)).not.toBeNull()
+    expect(await verifyRecordOp({ opJWT: record.opJWT, opKind: TEST_OP_KIND })).not.toBeNull()
+    expect(await verifyRecordOp({ opJWT: record.opJWT, opKind: 'test/other-kind' })).toBeNull()
+    expect(await verifyRecordOp({ opJWT: record.opJWT, opKind: 'test/other-kind' })).toBeNull()
+    expect(
+      await verifyRecordOp({ opJWT: record.opJWT, opKind: TEST_OP_KIND, methods: registry }),
+    ).not.toBeNull()
+    expect(
+      await verifyRecordOp({ opJWT: record.opJWT, opKind: TEST_OP_KIND, methods: registry }),
+    ).not.toBeNull()
     expect(verifications.count).toBe(5)
   })
 

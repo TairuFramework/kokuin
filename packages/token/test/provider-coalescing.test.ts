@@ -57,7 +57,12 @@ test('mixed algorithms and validities receive their individual verification resu
   items[2]?.signature.fill(0)
   const expected = await Promise.all(
     items.map((item) => {
-      return nobleCrypto.verify(item.alg, item.signature, item.message, item.publicKey)
+      return nobleCrypto.verify({
+        alg: item.alg,
+        signature: item.signature,
+        message: item.message,
+        publicKey: item.publicKey,
+      })
     }),
   )
   expect(expected).toEqual([true, false, false, true])
@@ -150,15 +155,14 @@ test('same-turn callers coalesce after every fairness yield including separate m
     expect(yielded).toBe(3)
     return nobleCrypto.verifyBatch(items)
   })
-  vi.mocked(maybeYield).mockImplementation(
-    () =>
-      new Promise<void>((resolve) => {
-        setTimeout(() => {
-          yielded++
-          resolve()
-        }, 0)
-      }),
-  )
+  vi.mocked(maybeYield).mockImplementation(() => {
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        yielded++
+        resolve()
+      }, 0)
+    })
+  })
   const items = [fixture('EdDSA'), fixture('ES256'), fixture('EdDSA', 2)]
   const pending = items.map((item) => verify(p.crypto, item))
   expect(maybeYield).toHaveBeenCalledTimes(3)

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import type { VerifyItem } from '@kokuin/crypto'
 import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
@@ -38,10 +39,15 @@ function provider(verify?: CryptoProvider['verify']) {
       calls.signBatch++
       return nobleCrypto.signBatch(alg, items)
     },
-    async verify(alg, signature, message, key) {
+    async verify({ alg, signature, message, publicKey: key }: VerifyItem) {
       calls.verify++
       inputs.push({ alg, signature: signature.slice(), message: message.slice(), key: key.slice() })
-      return (verify ?? nobleCrypto.verify)(alg, signature, message, key)
+      return (verify ?? nobleCrypto.verify)({
+        alg: alg,
+        signature: signature,
+        message: message,
+        publicKey: key,
+      })
     },
     async verifyBatch(items) {
       calls.verifyBatch++
@@ -186,10 +192,12 @@ test('verified objects re-resolve changed method and resolver policy', async () 
   const token = await identity.signToken({ test: 'context' })
   const verified = await verifyToken(token, { methods: [method] })
   await expect(verifyToken(verified)).rejects.toThrow('Unknown DID')
-  method.resolve = async () => ({
-    alg: 'EdDSA',
-    publicKey: ed25519.getPublicKey(new Uint8Array(32).fill(4)),
-  })
+  method.resolve = async () => {
+    return {
+      alg: 'EdDSA',
+      publicKey: ed25519.getPublicKey(new Uint8Array(32).fill(4)),
+    }
+  }
   await expect(verifyToken(verified, { methods: [method] })).rejects.toThrow('Invalid signature')
 })
 

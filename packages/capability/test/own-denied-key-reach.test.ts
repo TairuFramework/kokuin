@@ -91,12 +91,15 @@ const holder = createSigningIdentity(new Uint8Array(32).fill(61))
 
 async function mint(signer: SigningIdentity, audience: string): Promise<string> {
   return stringifyToken(
-    await createCapability(signer, {
-      sub: did,
-      aud: audience,
-      act: 'write',
-      res: 'doc/1',
-      exp: now() + 3600,
+    await createCapability({
+      signer: signer,
+      payload: {
+        sub: did,
+        aud: audience,
+        act: 'write',
+        res: 'doc/1',
+        exp: now() + 3600,
+      },
     }),
   )
 }
@@ -128,12 +131,12 @@ describe('a key the profile has revoked', () => {
 
   test('ROW 2 — verifyToken, historic: refused, where the rotate alone accepted', async () => {
     const token = await mint(thief, holder.id)
-    const before = await outcome(() =>
-      verifyToken(token, { methods: registry(rotated), historic: true }),
-    )
-    const after = await outcome(() =>
-      verifyToken(token, { methods: registry(revoked), historic: true }),
-    )
+    const before = await outcome(() => {
+      return verifyToken(token, { methods: registry(rotated), historic: true })
+    })
+    const after = await outcome(() => {
+      return verifyToken(token, { methods: registry(revoked), historic: true })
+    })
     // Control: the identical call, one event earlier in the log, accepts. Historic resolution is
     // designed to survive a rotate — that is the whole reason an explicit denial had to exist.
     expect(before).toBe('ACCEPTED')
@@ -143,12 +146,13 @@ describe('a key the profile has revoked', () => {
   test('ROW 3 — checkCapability: the chain link signed by it is refused', async () => {
     const stolen = await mint(thief, holder.id)
     const honest = await mint(owner, holder.id)
-    const invoke = (cap: string) =>
-      checkCapability(
+    const invoke = (cap: string) => {
+      return checkCapability(
         { act: 'write', res: 'doc/1' },
         { iss: holder.id, sub: did, cap: [cap] } as never,
         { methods: registry(revoked) },
       )
+    }
     const denied = await outcome(() => invoke(stolen))
     // Control on the same log: a capability from the key the profile holds still grants, so the
     // refusal above is the denial and not the third event breaking resolution for everyone.
@@ -170,13 +174,16 @@ describe('a key the profile has revoked', () => {
     // that key's private half, and honouring a revocation only ever subtracts authority. Leaving it
     // as it was meant the remedy for a compromise silently resurrected revoked grants, which is
     // fail-open on the one path that must never fail open.
-    const capability = await createCapability(owner, {
-      sub: did,
-      aud: holder.id,
-      act: 'write',
-      res: 'doc/1',
-      exp: now() + 3600,
-      jti: 'grant-1',
+    const capability = await createCapability({
+      signer: owner,
+      payload: {
+        sub: did,
+        aud: holder.id,
+        act: 'write',
+        res: 'doc/1',
+        exp: now() + 3600,
+        jti: 'grant-1',
+      },
     })
     const raw = stringifyToken(capability)
 
@@ -189,13 +196,13 @@ describe('a key the profile has revoked', () => {
 
     const check = async (log: Array<SignedEvent>) => {
       const methods = registry(log)
-      return await outcome(() =>
-        checkCapability(
+      return await outcome(() => {
+        return checkCapability(
           { act: 'write', res: 'doc/1' },
           { iss: holder.id, sub: did, cap: [raw] } as never,
           { methods, verifyToken: createRevocationChecker(backend, { methods }) },
-        ),
-      )
+        )
+      })
     }
 
     // Before the denial the record verifies and revokes. After it, the record no longer verifies —

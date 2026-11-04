@@ -12,7 +12,7 @@ import {
   signToken,
   verifyToken,
 } from '../src/token.js'
-import type { VerifiedToken } from '../src/types.js'
+import type { SignedToken, Token, VerifiedToken } from '../src/types.js'
 import { stringifyToken } from '../src/utils.js'
 
 test('create a signed token and verify it', async () => {
@@ -168,7 +168,7 @@ describe('object token signature/payload binding', () => {
     const identity = randomIdentity()
     const signed = await identity.signToken({ test: true })
     const { data: _data, ...withoutData } = signed
-    const verified = await verifyToken(withoutData as typeof signed)
+    const verified = await verifyToken(withoutData as SignedToken<{ test: boolean }>)
     expect(isVerifiedToken(verified)).toBe(true)
   })
 
@@ -180,7 +180,7 @@ describe('object token signature/payload binding', () => {
     const data = `${b64uFromJSON(header, false)}.${b64uFromJSON(payload, false)}`
     const signature = toB64U(ed25519.sign(fromUTF(data), identity.privateKey))
     const token = { header, payload, signature, data }
-    const verified = await verifyToken(token as Parameters<typeof verifyToken>[0])
+    const verified = await verifyToken(token as string | Token)
     expect(isVerifiedToken(verified)).toBe(true)
   })
 
@@ -188,9 +188,9 @@ describe('object token signature/payload binding', () => {
     const identity = randomIdentity()
     const signed = await identity.signToken({ test: true })
     const forged = { ...signed, data: { malicious: true } }
-    await expect(
-      verifyToken(forged as unknown as Parameters<typeof verifyToken>[0]),
-    ).rejects.toThrow('data does not match')
+    await expect(verifyToken(forged as unknown as string | Token)).rejects.toThrow(
+      'data does not match',
+    )
   })
 })
 

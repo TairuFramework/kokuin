@@ -10,12 +10,7 @@ export type VerifyItem = {
 export type CryptoProvider = {
   sign(alg: 'EdDSA', privateKey: Uint8Array, message: Uint8Array): Promise<Uint8Array>
   signBatch(alg: 'EdDSA', items: Array<SignItem>): Promise<Array<Uint8Array>>
-  verify(
-    alg: CryptoAlgorithm,
-    signature: Uint8Array,
-    message: Uint8Array,
-    publicKey: Uint8Array,
-  ): Promise<boolean>
+  verify(params: VerifyItem): Promise<boolean>
   verifyBatch(items: Array<VerifyItem>): Promise<Array<boolean>>
   blake3(input: Uint8Array, dkLen: number): Promise<Uint8Array>
   blake3Batch(inputs: Array<Uint8Array>, dkLen: number): Promise<Array<Uint8Array>>

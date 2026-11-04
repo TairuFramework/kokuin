@@ -93,21 +93,19 @@ describe('createControllerIdentity()', () => {
     // match the inception's `n`, so the fold rejects it.
     const forged = { ...rotate, event: { ...rotate.event, k: [inception.event.k[0]] } }
 
-    await expect(
-      async () =>
-        await createControllerIdentity({
-          seed,
-          profile: 0,
-          log: { chain: [inception, forged], events: [] },
-        }),
-    ).rejects.toThrow(/invalid rotate/)
+    await expect(async () => {
+      return await createControllerIdentity({
+        seed,
+        profile: 0,
+        log: { chain: [inception, forged], events: [] },
+      })
+    }).rejects.toThrow(/invalid rotate/)
   })
 
   test('refuses an empty log', async () => {
-    await expect(
-      async () =>
-        await createControllerIdentity({ seed, profile: 0, log: { chain: [], events: [] } }),
-    ).rejects.toThrow(/empty log/)
+    await expect(async () => {
+      return await createControllerIdentity({ seed, profile: 0, log: { chain: [], events: [] } })
+    }).rejects.toThrow(/empty log/)
   })
 
   test('refuses a bare event array, the shape a log had before epochs', async () => {
@@ -153,37 +151,38 @@ describe('createControllerIdentity()', () => {
       snapshot: { members: [], deny: [] },
     })
 
-    await expect(
-      async () =>
-        await createControllerIdentity({ seed, profile: 0, log: { chain: [rotate], events: [] } }),
-    ).rejects.toThrow(/must be an inception/)
+    await expect(async () => {
+      return await createControllerIdentity({
+        seed,
+        profile: 0,
+        log: { chain: [rotate], events: [] },
+      })
+    }).rejects.toThrow(/must be an inception/)
   })
 
   test('refuses a seed that does not control this log', async () => {
     const inception = await createInception(seed, 0)
     const other = new Uint8Array(32).fill(9)
 
-    await expect(
-      async () =>
-        await createControllerIdentity({
-          seed: other,
-          profile: 0,
-          log: { chain: [inception], events: [] },
-        }),
-    ).rejects.toThrow(/is not one of the current authority keys/)
+    await expect(async () => {
+      return await createControllerIdentity({
+        seed: other,
+        profile: 0,
+        log: { chain: [inception], events: [] },
+      })
+    }).rejects.toThrow(/is not one of the current authority keys/)
   })
 
   test('refuses the wrong profile index for this log', async () => {
     const inception = await createInception(seed, 0)
 
-    await expect(
-      async () =>
-        await createControllerIdentity({
-          seed,
-          profile: 1,
-          log: { chain: [inception], events: [] },
-        }),
-    ).rejects.toThrow(/is not one of the current authority keys/)
+    await expect(async () => {
+      return await createControllerIdentity({
+        seed,
+        profile: 1,
+        log: { chain: [inception], events: [] },
+      })
+    }).rejects.toThrow(/is not one of the current authority keys/)
   })
 
   test('refuses a log carrying a chain revoke, which the root chain no longer has', async () => {
@@ -204,10 +203,9 @@ describe('createControllerIdentity()', () => {
     } as unknown as SignedEvent
     const log = [inception, revoke]
 
-    await expect(
-      async () =>
-        await createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
-    ).rejects.toThrow(/unknown critical event type: rev/)
+    await expect(async () => {
+      return await createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } })
+    }).rejects.toThrow(/unknown critical event type: rev/)
   })
 })
 
@@ -393,9 +391,12 @@ describe('controller identity is a FullIdentity', () => {
     }
     const tampered = { event, sigs: await signEvent(event, [current.privateKey]) }
 
-    await expect(
-      async () =>
-        await createControllerIdentity({ seed, profile, log: { chain: [tampered], events: [] } }),
-    ).rejects.toThrow(/agreement key is not one of the current agreement keys/)
+    await expect(async () => {
+      return await createControllerIdentity({
+        seed,
+        profile,
+        log: { chain: [tampered], events: [] },
+      })
+    }).rejects.toThrow(/agreement key is not one of the current agreement keys/)
   })
 })

@@ -28,7 +28,9 @@ export async function checkNativeCrypto(native: CryptoProvider): Promise<void> {
   ])
   equal(signatures[0] as Uint8Array, expected)
   equal(signatures[1] as Uint8Array, await strictNoble.sign('EdDSA', seed, new Uint8Array([1])))
-  if (!(await native.verify('EdDSA', retained, message, key)))
+  if (
+    !(await native.verify({ alg: 'EdDSA', signature: retained, message: message, publicKey: key }))
+  )
     throw new Error('Valid Ed25519 signature rejected')
   const results = await native.verifyBatch([
     { alg: 'EdDSA', signature: retained, message, publicKey: key },
@@ -42,7 +44,14 @@ export async function checkNativeCrypto(native: CryptoProvider): Promise<void> {
   secret[31] = 1
   const esKey = p256.getPublicKey(secret)
   const esSignature = p256.sign(message, secret, { lowS: true })
-  if (!(await native.verify('ES256', esSignature, message, esKey)))
+  if (
+    !(await native.verify({
+      alg: 'ES256',
+      signature: esSignature,
+      message: message,
+      publicKey: esKey,
+    }))
+  )
     throw new Error('Valid ES256 signature rejected')
   for (const length of [16, 32, 64]) {
     equal(await native.blake3(message, length), await strictNoble.blake3(message, length))

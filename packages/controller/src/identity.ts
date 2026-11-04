@@ -180,7 +180,7 @@ export async function createControllerIdentity({
     profile,
     did,
     crypto,
-    state: await currentState(did, log, CONTEXT, { crypto }),
+    state: await currentState({ did: did, log: log, context: CONTEXT, options: { crypto } }),
   })
 }
 
@@ -218,7 +218,7 @@ export async function createControllerIdentityWithKey({
     privateKey,
     publicKey: ed25519.getPublicKey(privateKey),
     did,
-    state: await currentState(did, log, CONTEXT, { crypto }),
+    state: await currentState({ did: did, log: log, context: CONTEXT, options: { crypto } }),
     crypto,
     mismatch: 'the supplied key is not one of the current authority keys',
   })

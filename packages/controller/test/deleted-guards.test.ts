@@ -35,11 +35,11 @@ describe('kept: `isKeyList(event.k)` in verifyInception', () => {
 
   for (const value of [42, 'zNotAnArray', {}, null, [42], [[]], [icp.event.k[0], 42]]) {
     test(`k = ${JSON.stringify(value)} never folds and never throws`, async () => {
-      const [forgedDid, forged] = await signedInception(value)
+      const [forgedDID, forged] = await signedInception(value)
       let result: FoldResult | undefined
       await expect(
         (async () => {
-          result = await foldLog(forgedDid, { chain: [forged], events: [] })
+          result = await foldLog(forgedDID, { chain: [forged], events: [] })
         })(),
       ).resolves.toBeUndefined()
       expect(result).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
@@ -47,7 +47,7 @@ describe('kept: `isKeyList(event.k)` in verifyInception', () => {
   }
 
   test('control: an unmutated re-signed inception folds', async () => {
-    const [forgedDid, forged] = await signedInception(icp.event.k)
-    expect((await foldLog(forgedDid, { chain: [forged], events: [] })).ok).toBe(true)
+    const [forgedDID, forged] = await signedInception(icp.event.k)
+    expect((await foldLog(forgedDID, { chain: [forged], events: [] })).ok).toBe(true)
   })
 })

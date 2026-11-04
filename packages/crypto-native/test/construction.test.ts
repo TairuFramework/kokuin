@@ -2,18 +2,20 @@ import { expect, test, vi } from 'vitest'
 
 const registration = vi.hoisted(() => ({ missing: true, abiVersion: 1, created: 0 }))
 
-vi.mock('react-native-nitro-modules', () => ({
-  NitroModules: {
-    hasHybridObject(name: string) {
-      return name === 'Crypto' && !registration.missing
+vi.mock('react-native-nitro-modules', () => {
+  return {
+    NitroModules: {
+      hasHybridObject(name: string) {
+        return name === 'Crypto' && !registration.missing
+      },
+      createHybridObject() {
+        registration.created++
+        if (registration.missing) throw new Error('Native module is not registered')
+        return { abiVersion: registration.abiVersion, execute: async () => [] }
+      },
     },
-    createHybridObject() {
-      registration.created++
-      if (registration.missing) throw new Error('Native module is not registered')
-      return { abiVersion: registration.abiVersion, execute: async () => [] }
-    },
-  },
-}))
+  }
+})
 
 import * as api from '../src/index.js'
 import { createNativeCrypto } from '../src/index.js'

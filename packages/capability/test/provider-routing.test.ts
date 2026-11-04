@@ -28,12 +28,15 @@ async function fixture() {
   const owner = createSigningIdentity(new Uint8Array(32).fill(71))
   const delegate = createSigningIdentity(new Uint8Array(32).fill(72))
   const recipient = createSigningIdentity(new Uint8Array(32).fill(73))
-  const root = await createCapability(owner, {
-    sub: owner.id,
-    aud: delegate.id,
-    act: '*',
-    res: '*',
-    jti: 'root',
+  const root = await createCapability({
+    signer: owner,
+    payload: {
+      sub: owner.id,
+      aud: delegate.id,
+      act: '*',
+      res: '*',
+      jti: 'root',
+    },
   })
   return { owner, delegate, recipient, root, raw: stringifyToken(root) }
 }
@@ -41,12 +44,12 @@ async function fixture() {
 test('parent creation, direct chains and capability checks forward the provider', async () => {
   const { owner, delegate, recipient, raw } = await fixture()
   const routed = provider()
-  const child = await createCapability(
-    delegate,
-    { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
-    undefined,
-    { parentCapability: raw, crypto: routed.crypto },
-  )
+  const child = await createCapability({
+    signer: delegate,
+    payload: { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
+    header: undefined,
+    options: { parentCapability: raw, crypto: routed.crypto },
+  })
   expect(routed.count()).toBe(1)
   const chainProvider = provider()
   await checkDelegationChain(child.payload, [raw], { crypto: chainProvider.crypto })
@@ -60,12 +63,12 @@ test('parent creation, direct chains and capability checks forward the provider'
   expect(leafProvider.count()).toBe(2)
   const rejected = provider(false)
   await expect(
-    createCapability(
-      delegate,
-      { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
-      undefined,
-      { parentCapability: raw, crypto: rejected.crypto },
-    ),
+    createCapability({
+      signer: delegate,
+      payload: { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
+      header: undefined,
+      options: { parentCapability: raw, crypto: rejected.crypto },
+    }),
   ).rejects.toThrow('Invalid signature')
   await expect(
     checkDelegationChain(child.payload, [raw], { crypto: rejected.crypto }),
@@ -110,12 +113,12 @@ test('provider operational failures propagate identically through every refusal 
   const routed = provider(sentinel)
   const options = { crypto: routed.crypto }
   await expect(
-    createCapability(
-      delegate,
-      { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
-      undefined,
-      { ...options, parentCapability: raw },
-    ),
+    createCapability({
+      signer: delegate,
+      payload: { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
+      header: undefined,
+      options: { ...options, parentCapability: raw },
+    }),
   ).rejects.toBe(sentinel)
   await expect(
     checkDelegationChain({ ...root.payload, iss: delegate.id }, [raw], options),
@@ -182,12 +185,12 @@ test('ZIP-215-only capabilities and revocations fail strict default verification
 
 test('a suspended chain retains its captured provider and override policy', async () => {
   const { owner, delegate, recipient, raw } = await fixture()
-  const child = await createCapability(
-    delegate,
-    { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
-    undefined,
-    { parentCapability: raw },
-  )
+  const child = await createCapability({
+    signer: delegate,
+    payload: { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
+    header: undefined,
+    options: { parentCapability: raw },
+  })
   const routed = provider()
   const rejected = provider(false)
   const options = { crypto: routed.crypto, verifiers: { ES256: () => false } }
@@ -231,15 +234,18 @@ test('concurrent revocation verification preserves batch operational failures', 
   expect(singles).toBe(0)
   expect(await backend.get('first', owner.id)).toBeUndefined()
   const tokens = await Promise.all(
-    records.map((record) =>
-      createCapability(owner, {
-        sub: owner.id,
-        aud: owner.id,
-        act: '*',
-        res: '*',
-        jti: record.payload.jti,
-      }),
-    ),
+    records.map((record) => {
+      return createCapability({
+        signer: owner,
+        payload: {
+          sub: owner.id,
+          aud: owner.id,
+          act: '*',
+          res: '*',
+          jti: record.payload.jti,
+        },
+      })
+    }),
   )
   const checker = createRevocationChecker(
     {

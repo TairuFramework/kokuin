@@ -48,12 +48,14 @@ const verifiedTokenData = new WeakMap<object, string>()
 const historicallyVerifiedTokens = new WeakSet<object>()
 
 function captureMethods(methods?: MethodRegistry): MethodRegistry | undefined {
-  return methods?.map((method) => ({
-    ...method,
-    method: method.method,
-    resolve: method.resolve.bind(method),
-    resolveHistoric: method.resolveHistoric?.bind(method),
-  }))
+  return methods?.map((method) => {
+    return {
+      ...method,
+      method: method.method,
+      resolve: method.resolve.bind(method),
+      resolveHistoric: method.resolveHistoric?.bind(method),
+    }
+  })
 }
 
 type MethodPolicy = Pick<DIDMethodResolver, 'method' | 'resolve' | 'resolveHistoric'> & {
@@ -85,12 +87,14 @@ function capturePolicy(options: VerifyTokenOptions): VerificationPolicy {
     resolver: options.resolver,
     cache: options.cache,
     methods: captureMethods(options.methods),
-    methodPolicy: options.methods?.map((method) => ({
-      source: method,
-      method: method.method,
-      resolve: method.resolve,
-      resolveHistoric: method.resolveHistoric,
-    })),
+    methodPolicy: options.methods?.map((method) => {
+      return {
+        source: method,
+        method: method.method,
+        resolve: method.resolve,
+        resolveHistoric: method.resolveHistoric,
+      }
+    }),
     cacheGet: options.cache?.get,
     cacheSet: options.cache?.set,
   }

@@ -47,7 +47,11 @@ async function signedRecord(
   claim: RecordClaim,
   payload: Uint8Array | null,
 ): Promise<SignedRecord> {
-  const { opJWT, opHash } = await signRecordOp(identity, claim, TEST_OP_KIND)
+  const { opJWT, opHash } = await signRecordOp({
+    identity: identity,
+    claim: claim,
+    opKind: TEST_OP_KIND,
+  })
   return {
     type: claim.type,
     id: claim.id,
@@ -162,14 +166,14 @@ describe('signRecordOp / verifyRecordOp', () => {
       deleted: false,
       meta: { keyID: 'key-1', keyVersion: 1 },
     }
-    const signed = await signRecordOp(identity, claim, TEST_OP_KIND)
-    expect(await verifyRecordOp(signed.opJWT, TEST_OP_KIND)).toEqual({
+    const signed = await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })
+    expect(await verifyRecordOp({ opJWT: signed.opJWT, opKind: TEST_OP_KIND })).toEqual({
       issuer: normalizeDID(identity.id),
       claim,
       contentDigest: await recordClaimDigest(claim),
       opHash: signed.opHash,
     })
-    expect(await verifyRecordOp(`${signed.opJWT}x`, TEST_OP_KIND)).toBeNull()
+    expect(await verifyRecordOp({ opJWT: `${signed.opJWT}x`, opKind: TEST_OP_KIND })).toBeNull()
   })
 
   test('one identity is called one at a time, in call order, and a failure frees the queue', async () => {
@@ -199,7 +203,7 @@ describe('signRecordOp / verifyRecordOp', () => {
       [1, 2, 3, 4].map(async (byte) => await liveClaim(identity, new Uint8Array([byte]))),
     )
     const results = await Promise.allSettled(
-      claims.map((claim) => signRecordOp(signer, claim, TEST_OP_KIND)),
+      claims.map((claim) => signRecordOp({ identity: signer, claim: claim, opKind: TEST_OP_KIND })),
     )
 
     expect(results.map((result) => result.status)).toEqual([
@@ -214,7 +218,7 @@ describe('signRecordOp / verifyRecordOp', () => {
   test('the signed token carries the canonical claim bytes under the domain marker', async () => {
     const identity = randomIdentity()
     const claim = await liveClaim(identity, new Uint8Array([7]))
-    const { opJWT } = await signRecordOp(identity, claim, TEST_OP_KIND)
+    const { opJWT } = await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })
     const body = JSON.parse(toUTF(fromB64U(opJWT.split('.')[1] as string)))
     expect(body.kind).toBe(TEST_OP_KIND)
     expect(fromB64U(body.claim)).toEqual(canonicalRecordClaim(claim))
@@ -234,7 +238,7 @@ describe('signRecordOp / verifyRecordOp', () => {
         { embedLongForm: true, header },
       ),
     )
-    expect(await verifyRecordOp(opJWT, TEST_OP_KIND)).toBeNull()
+    expect(await verifyRecordOp({ opJWT: opJWT, opKind: TEST_OP_KIND })).toBeNull()
   })
 
   test('signs and verifies a tombstone with a null digest', async () => {
@@ -245,8 +249,8 @@ describe('signRecordOp / verifyRecordOp', () => {
       deleted: true,
       meta: {},
     }
-    const signed = await signRecordOp(identity, claim, TEST_OP_KIND)
-    expect(await verifyRecordOp(signed.opJWT, TEST_OP_KIND)).toEqual({
+    const signed = await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })
+    expect(await verifyRecordOp({ opJWT: signed.opJWT, opKind: TEST_OP_KIND })).toEqual({
       issuer: normalizeDID(identity.id),
       claim,
       contentDigest: await recordClaimDigest(claim),
@@ -257,22 +261,22 @@ describe('signRecordOp / verifyRecordOp', () => {
   test('opHash addresses the exact token and survives a serialization round trip', async () => {
     const identity = randomIdentity()
     const claim = await liveClaim(identity, new Uint8Array([1, 2, 3]))
-    const signed = await signRecordOp(identity, claim, TEST_OP_KIND)
-    const replayed = JSON.parse(JSON.stringify(signed)) as typeof signed
-    const verified = await verifyRecordOp(replayed.opJWT, TEST_OP_KIND)
+    const signed = await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })
+    const replayed = JSON.parse(JSON.stringify(signed)) as Pick<SignedRecord, 'opJWT' | 'opHash'>
+    const verified = await verifyRecordOp({ opJWT: replayed.opJWT, opKind: TEST_OP_KIND })
     expect(verified?.opHash).toBe(signed.opHash)
     // Signing is deterministic and the token carries no issue time, so re-signing the same
     // claim is the same op — a replay, not a rival at the same position.
-    const again = await signRecordOp(identity, claim, TEST_OP_KIND)
+    const again = await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })
     expect(again).toEqual(signed)
-    const changed = await signRecordOp(
-      identity,
-      {
+    const changed = await signRecordOp({
+      identity: identity,
+      claim: {
         ...claim,
         meta: { keyID: 'key-1', keyVersion: 2 },
       },
-      TEST_OP_KIND,
-    )
+      opKind: TEST_OP_KIND,
+    })
     expect(changed.opHash).not.toBe(signed.opHash)
   })
 
@@ -285,10 +289,10 @@ describe('signRecordOp / verifyRecordOp', () => {
       ...(await liveClaim(author, new Uint8Array([1]))),
       owner: normalizeDID(victim.id),
     }
-    const verified = await verifyRecordOp(
-      (await signRecordOp(author, claim, TEST_OP_KIND)).opJWT,
-      TEST_OP_KIND,
-    )
+    const verified = await verifyRecordOp({
+      opJWT: (await signRecordOp({ identity: author, claim: claim, opKind: TEST_OP_KIND })).opJWT,
+      opKind: TEST_OP_KIND,
+    })
     expect(verified?.issuer).toBe(normalizeDID(author.id))
     expect(verified?.claim.owner).toBe(normalizeDID(victim.id))
   })
@@ -322,12 +326,14 @@ describe('signRecordOp / verifyRecordOp', () => {
         }
       }),
     )
-    expect((await verifySignedRecord(copies[0] as SignedRecord, TEST_OP_KIND))?.issuer).toBe(
-      claim.owner,
-    )
-    expect((await verifySignedRecord(copies[1] as SignedRecord, TEST_OP_KIND))?.issuer).toBe(
-      claim.owner,
-    )
+    expect(
+      (await verifySignedRecord({ record: copies[0] as SignedRecord, opKind: TEST_OP_KIND }))
+        ?.issuer,
+    ).toBe(claim.owner)
+    expect(
+      (await verifySignedRecord({ record: copies[1] as SignedRecord, opKind: TEST_OP_KIND }))
+        ?.issuer,
+    ).toBe(claim.owner)
     const base = {
       key: { type: claim.type, owner: claim.owner, id: claim.id },
       decisionHLC: claim.hlc,
@@ -347,11 +353,19 @@ describe('signRecordOp / verifyRecordOp', () => {
     const identity = randomIdentity()
     const claim = await liveClaim(identity, new Uint8Array([1]))
     await expect(
-      signRecordOp(identity, { ...claim, payloadDigest: null }, TEST_OP_KIND),
+      signRecordOp({
+        identity: identity,
+        claim: { ...claim, payloadDigest: null },
+        opKind: TEST_OP_KIND,
+      }),
     ).rejects.toThrow(RecordClaimError)
-    await expect(signRecordOp(identity, { ...claim, deleted: true }, TEST_OP_KIND)).rejects.toThrow(
-      RecordClaimError,
-    )
+    await expect(
+      signRecordOp({
+        identity: identity,
+        claim: { ...claim, deleted: true },
+        opKind: TEST_OP_KIND,
+      }),
+    ).rejects.toThrow(RecordClaimError)
   })
 
   test('an id is at most MAX_RECORD_ID_LENGTH UTF-16 units', async () => {
@@ -361,12 +375,14 @@ describe('signRecordOp / verifyRecordOp', () => {
     expect(MAX_RECORD_ID_LENGTH).toBe(1024)
     expect(isRecordClaim(atBound)).toBe(true)
     expect(isRecordClaim(past)).toBe(false)
-    await expect(signRecordOp(identity, past, TEST_OP_KIND)).rejects.toThrow(RecordClaimError)
+    await expect(
+      signRecordOp({ identity: identity, claim: past, opKind: TEST_OP_KIND }),
+    ).rejects.toThrow(RecordClaimError)
     const token = await signRaw(identity, {
       kind: TEST_OP_KIND,
       claim: toB64U(fromUTF(canonicalStringify(past))),
     })
-    expect(await verifyRecordOp(token, TEST_OP_KIND)).toBeNull()
+    expect(await verifyRecordOp({ opJWT: token, opKind: TEST_OP_KIND })).toBeNull()
   })
 
   test('an owner has one spelling: a long-form peer:4 owner is refused', async () => {
@@ -380,16 +396,24 @@ describe('signRecordOp / verifyRecordOp', () => {
     const long = { ...short, owner: peer4.longForm }
     expect(isRecordClaim(short)).toBe(true)
     expect(isRecordClaim(long)).toBe(false)
-    await expect(signRecordOp(peer4, long, TEST_OP_KIND)).rejects.toThrow(RecordClaimError)
+    await expect(
+      signRecordOp({ identity: peer4, claim: long, opKind: TEST_OP_KIND }),
+    ).rejects.toThrow(RecordClaimError)
     // Hand-signed canonical bytes naming the long form do not verify either.
     const token = await signRaw(peer4, {
       kind: TEST_OP_KIND,
       claim: toB64U(fromUTF(canonicalStringify(long))),
     })
-    expect(await verifyRecordOp(token, TEST_OP_KIND)).toBeNull()
+    expect(await verifyRecordOp({ opJWT: token, opKind: TEST_OP_KIND })).toBeNull()
     expect(
-      (await verifyRecordOp((await signRecordOp(peer4, short, TEST_OP_KIND)).opJWT, TEST_OP_KIND))
-        ?.claim,
+      (
+        await verifyRecordOp({
+          opJWT: (
+            await signRecordOp({ identity: peer4, claim: short, opKind: TEST_OP_KIND })
+          ).opJWT,
+          opKind: TEST_OP_KIND,
+        })
+      )?.claim,
     ).toEqual(short)
   })
 
@@ -405,20 +429,20 @@ describe('signRecordOp / verifyRecordOp', () => {
           claim: toB64U(canonicalRecordClaim(claim)),
         }),
       )
-      expect(await verifyRecordOp(`${header}.${body}.`, TEST_OP_KIND)).toBeNull()
+      expect(await verifyRecordOp({ opJWT: `${header}.${body}.`, opKind: TEST_OP_KIND })).toBeNull()
     })
 
     test('garbage', async () => {
-      expect(await verifyRecordOp('', TEST_OP_KIND)).toBeNull()
-      expect(await verifyRecordOp('not.a.token', TEST_OP_KIND)).toBeNull()
+      expect(await verifyRecordOp({ opJWT: '', opKind: TEST_OP_KIND })).toBeNull()
+      expect(await verifyRecordOp({ opJWT: 'not.a.token', opKind: TEST_OP_KIND })).toBeNull()
     })
 
     test('a signature over a different body', async () => {
       const identity = randomIdentity()
       const claim = await liveClaim(identity, new Uint8Array([1]))
-      const [header, , signature] = (await signRecordOp(identity, claim, TEST_OP_KIND)).opJWT.split(
-        '.',
-      )
+      const [header, , signature] = (
+        await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })
+      ).opJWT.split('.')
       const forged = b64uFromUTF(
         JSON.stringify({
           iss: identity.id,
@@ -426,16 +450,23 @@ describe('signRecordOp / verifyRecordOp', () => {
           claim: toB64U(canonicalRecordClaim({ ...claim, id: 'entry-2' })),
         }),
       )
-      expect(await verifyRecordOp(`${header}.${forged}.${signature}`, TEST_OP_KIND)).toBeNull()
+      expect(
+        await verifyRecordOp({ opJWT: `${header}.${forged}.${signature}`, opKind: TEST_OP_KIND }),
+      ).toBeNull()
     })
 
     test('a wrong domain marker', async () => {
       const identity = randomIdentity()
       const claim = toB64U(canonicalRecordClaim(await liveClaim(identity, new Uint8Array([1]))))
       expect(
-        await verifyRecordOp(await signRaw(identity, { kind: 'test/other', claim }), TEST_OP_KIND),
+        await verifyRecordOp({
+          opJWT: await signRaw(identity, { kind: 'test/other', claim }),
+          opKind: TEST_OP_KIND,
+        }),
       ).toBeNull()
-      expect(await verifyRecordOp(await signRaw(identity, { claim }), TEST_OP_KIND)).toBeNull()
+      expect(
+        await verifyRecordOp({ opJWT: await signRaw(identity, { claim }), opKind: TEST_OP_KIND }),
+      ).toBeNull()
     })
 
     test('a claim spelled outside its canonical bytes', async () => {
@@ -443,13 +474,15 @@ describe('signRecordOp / verifyRecordOp', () => {
       const claim = await liveClaim(identity, new Uint8Array([1]))
       const spaced = new TextEncoder().encode(JSON.stringify(claim, null, 1))
       const token = await signRaw(identity, { kind: TEST_OP_KIND, claim: toB64U(spaced) })
-      expect(await verifyRecordOp(token, TEST_OP_KIND)).toBeNull()
+      expect(await verifyRecordOp({ opJWT: token, opKind: TEST_OP_KIND })).toBeNull()
       // The same claim in canonical bytes is accepted, so the rejection is the spelling.
       const canonical = await signRaw(identity, {
         kind: TEST_OP_KIND,
         claim: toB64U(canonicalRecordClaim(claim)),
       })
-      expect((await verifyRecordOp(canonical, TEST_OP_KIND))?.claim).toEqual(claim)
+      expect((await verifyRecordOp({ opJWT: canonical, opKind: TEST_OP_KIND }))?.claim).toEqual(
+        claim,
+      )
     })
 
     test.each([
@@ -477,7 +510,7 @@ describe('signRecordOp / verifyRecordOp', () => {
         kind: TEST_OP_KIND,
         claim: toB64U(new TextEncoder().encode(respelled)),
       })
-      expect(await verifyRecordOp(token, TEST_OP_KIND)).toBeNull()
+      expect(await verifyRecordOp({ opJWT: token, opKind: TEST_OP_KIND })).toBeNull()
     })
 
     test.each([
@@ -492,7 +525,11 @@ describe('signRecordOp / verifyRecordOp', () => {
           ...(await liveClaim(identity, new Uint8Array([1]))),
           id: 'e'.repeat(length),
         }
-        const { opJWT } = await signRecordOp(identity, claim, TEST_OP_KIND)
+        const { opJWT } = await signRecordOp({
+          identity: identity,
+          claim: claim,
+          opKind: TEST_OP_KIND,
+        })
         const segments = opJWT.split('.')
         const segment = segments[index] as string
         const padding = '='.repeat((4 - (segment.length % 4)) % 4)
@@ -501,7 +538,7 @@ describe('signRecordOp / verifyRecordOp', () => {
         }
         expect(fromB64U(`${segment}${padding}`)).toEqual(fromB64U(segment))
         segments[index] = `${segment}${padding}`
-        expect(await verifyRecordOp(segments.join('.'), TEST_OP_KIND)).toBeNull()
+        expect(await verifyRecordOp({ opJWT: segments.join('.'), opKind: TEST_OP_KIND })).toBeNull()
         return
       }
       throw new Error('no claim length left room for padding on this segment')
@@ -509,34 +546,44 @@ describe('signRecordOp / verifyRecordOp', () => {
 
     test('a token with padding appended to its header segment', async () => {
       const identity = randomIdentity()
-      const { opJWT } = await signRecordOp(
-        identity,
-        await liveClaim(identity, new Uint8Array([1])),
-        TEST_OP_KIND,
-      )
+      const { opJWT } = await signRecordOp({
+        identity: identity,
+        claim: await liveClaim(identity, new Uint8Array([1])),
+        opKind: TEST_OP_KIND,
+      })
       const [header, payload, signature] = opJWT.split('.') as [string, string, string]
       // The header's length is a multiple of four, so no padded spelling of it decodes; the
       // re-spelled token must still be refused rather than reaching the claim.
       expect(header.length % 4).toBe(0)
-      expect(await verifyRecordOp(`${header}==.${payload}.${signature}`, TEST_OP_KIND)).toBeNull()
-      expect(await verifyRecordOp(`${header}=.${payload}.${signature}`, TEST_OP_KIND)).toBeNull()
+      expect(
+        await verifyRecordOp({
+          opJWT: `${header}==.${payload}.${signature}`,
+          opKind: TEST_OP_KIND,
+        }),
+      ).toBeNull()
+      expect(
+        await verifyRecordOp({ opJWT: `${header}=.${payload}.${signature}`, opKind: TEST_OP_KIND }),
+      ).toBeNull()
     })
 
     test('the signature segment followed by padding', async () => {
       const identity = randomIdentity()
-      const { opJWT } = await signRecordOp(
-        identity,
-        await liveClaim(identity, new Uint8Array([1])),
-        TEST_OP_KIND,
-      )
-      expect(await verifyRecordOp(`${opJWT}==`, TEST_OP_KIND)).toBeNull()
+      const { opJWT } = await signRecordOp({
+        identity: identity,
+        claim: await liveClaim(identity, new Uint8Array([1])),
+        opKind: TEST_OP_KIND,
+      })
+      expect(await verifyRecordOp({ opJWT: `${opJWT}==`, opKind: TEST_OP_KIND })).toBeNull()
     })
 
     test('a claim carried as JSON rather than bytes', async () => {
       const identity = randomIdentity()
       const claim = await liveClaim(identity, new Uint8Array([1]))
       expect(
-        await verifyRecordOp(await signRaw(identity, { kind: TEST_OP_KIND, claim }), TEST_OP_KIND),
+        await verifyRecordOp({
+          opJWT: await signRaw(identity, { kind: TEST_OP_KIND, claim }),
+          opKind: TEST_OP_KIND,
+        }),
       ).toBeNull()
     })
 
@@ -558,7 +605,7 @@ describe('signRecordOp / verifyRecordOp', () => {
       const claim = mutate(await liveClaim(identity, new Uint8Array([1])))
       const bytes = new TextEncoder().encode(canonicalJSONForTest(claim))
       const token = await signRaw(identity, { kind: TEST_OP_KIND, claim: toB64U(bytes) })
-      expect(await verifyRecordOp(token, TEST_OP_KIND)).toBeNull()
+      expect(await verifyRecordOp({ opJWT: token, opKind: TEST_OP_KIND })).toBeNull()
     })
   })
 })
@@ -569,7 +616,7 @@ describe('verifySignedRecord / recordPayloadMatches', () => {
     const payload = new Uint8Array([9, 9])
     const claim = await liveClaim(identity, payload)
     const record = await signedRecord(identity, claim, payload)
-    const verified = await verifySignedRecord(record, TEST_OP_KIND)
+    const verified = await verifySignedRecord({ record: record, opKind: TEST_OP_KIND })
     expect(verified).toEqual({
       issuer: normalizeDID(identity.id),
       claim,
@@ -584,7 +631,7 @@ describe('verifySignedRecord / recordPayloadMatches', () => {
     const payload = new Uint8Array([1])
     const record = await signedRecord(identity, await liveClaim(identity, payload), payload)
     const takeover = { ...record, owner: normalizeDID(randomIdentity().id) }
-    expect(await verifySignedRecord(takeover, TEST_OP_KIND)).toBeNull()
+    expect(await verifySignedRecord({ record: takeover, opKind: TEST_OP_KIND })).toBeNull()
   })
 
   test.each([
@@ -596,7 +643,9 @@ describe('verifySignedRecord / recordPayloadMatches', () => {
     const identity = randomIdentity()
     const payload = new Uint8Array([1])
     const record = await signedRecord(identity, await liveClaim(identity, payload), payload)
-    expect(await verifySignedRecord({ ...record, ...change }, TEST_OP_KIND)).toBeNull()
+    expect(
+      await verifySignedRecord({ record: { ...record, ...change }, opKind: TEST_OP_KIND }),
+    ).toBeNull()
   })
 
   test('rejects a record whose op token was altered', async () => {
@@ -604,7 +653,10 @@ describe('verifySignedRecord / recordPayloadMatches', () => {
     const payload = new Uint8Array([1])
     const record = await signedRecord(identity, await liveClaim(identity, payload), payload)
     expect(
-      await verifySignedRecord({ ...record, opJWT: `${record.opJWT}x` }, TEST_OP_KIND),
+      await verifySignedRecord({
+        record: { ...record, opJWT: `${record.opJWT}x` },
+        opKind: TEST_OP_KIND,
+      }),
     ).toBeNull()
   })
 
@@ -627,7 +679,7 @@ describe('verifySignedRecord / recordPayloadMatches', () => {
       deleted: true,
     }
     const record = await signedRecord(identity, claim, null)
-    expect(await verifySignedRecord(record, TEST_OP_KIND)).not.toBeNull()
+    expect(await verifySignedRecord({ record: record, opKind: TEST_OP_KIND })).not.toBeNull()
     expect(await recordPayloadMatches(record, claim)).toBe(true)
     expect(await recordPayloadMatches({ ...record, payload: new Uint8Array() }, claim)).toBe(false)
   })
@@ -651,7 +703,7 @@ function canonicalJSONForTest(value: unknown): string {
 test('record ops verify only in their signing replay domain', async () => {
   const identity = randomIdentity()
   const claim = await liveClaim(identity, new Uint8Array([1]))
-  const signed = await signRecordOp(identity, claim, 'a/op')
-  expect(await verifyRecordOp(signed.opJWT, 'a/op')).not.toBeNull()
-  expect(await verifyRecordOp(signed.opJWT, 'b/op')).toBeNull()
+  const signed = await signRecordOp({ identity: identity, claim: claim, opKind: 'a/op' })
+  expect(await verifyRecordOp({ opJWT: signed.opJWT, opKind: 'a/op' })).not.toBeNull()
+  expect(await verifyRecordOp({ opJWT: signed.opJWT, opKind: 'b/op' })).toBeNull()
 })

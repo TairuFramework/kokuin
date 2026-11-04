@@ -26,3 +26,12 @@ Ledger construction gains no crypto option. Verification selects providers throu
 The default verifier rejects crafted ZIP-215-only signatures on reverification, without a historical rescan or version gate.
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new LedgerError` | `LedgerErrorParams` | `message, statusCode` |
+| `new LedgerDisconnectedError` | `LedgerDisconnectedErrorParams` | `cause?` |
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

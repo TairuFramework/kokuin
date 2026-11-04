@@ -118,10 +118,8 @@ export function hasPermission(expected: Permission, granted: Permission): boolea
   if (granted.act === '' || granted.res === '') {
     return false
   }
-  // Check for exact or wildcard match of the action and resource
   if (isMatch(expected.act, granted.act) && isMatch(expected.res, granted.res)) {
     return true
   }
-  // Check for partial match of the action and resource
   return hasPartsMatch(expected.act, granted.act) && hasPartsMatch(expected.res, granted.res)
 }

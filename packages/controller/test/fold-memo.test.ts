@@ -14,6 +14,7 @@ import {
 } from '../src/events.js'
 import { foldLog, type KeyState } from '../src/fold.js'
 import { clearFoldMemo } from '../src/fold-memo.js'
+import type * as historyModule from '../src/history.js'
 import * as history from '../src/history.js'
 import { createMemoryLogStore, LOG_NOT_AUTHORITATIVE } from '../src/history.js'
 import { encodeKey } from '../src/keys.js'
@@ -24,7 +25,7 @@ import { EPOCH_SATURATED } from '../src/state-resolver.js'
 // In a file of its own because `vi.mock` replaces the module for every test in the file: the fold is
 // wrapped, not changed, so each test can count how often it actually ran.
 vi.mock('../src/history.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/history.js')>()
+  const actual = await importOriginal<typeof historyModule>()
   return { ...actual, authoritativeLogWithin: vi.fn(actual.authoritativeLogWithin) }
 })
 
@@ -171,12 +172,13 @@ describe('the fold memo', () => {
       loadLog: async () => copy(log),
       history: {
         get: (key) => store.get(key),
-        merge: (key, update) =>
-          store.merge(key, async (current) => {
+        merge: (key, update) => {
+          return store.merge(key, async (current) => {
             const next = await update(current)
             writes.push(next !== current)
             return next
-          }),
+          })
+        },
       },
     })
     await resolver.resolve(did, {})

@@ -43,29 +43,28 @@ export class BrowserKeyEntry implements MutableKeyEntry<StoredKeyRecord> {
   }
 
   provideAsync(): Promise<StoredKeyRecord> {
-    return generateKeyRecord().then(
-      (generated) =>
-        new Promise<StoredKeyRecord>((resolve, reject) => {
-          const store = this.#getStore('readwrite')
-          const getRequest = store.get(this.#keyID)
-          let result: StoredKeyRecord = generated
-          getRequest.onerror = () => reject(getRequest.error)
-          getRequest.onsuccess = () => {
-            const existing = getRequest.result as StoredKeyRecord | undefined
-            if (existing != null) {
-              // A stored record ALWAYS wins over the freshly generated one — including a
-              // legacy ES256 record. Overwriting it would change the identity's DID.
-              result = existing
-            } else {
-              store.put(generated, this.#keyID)
-            }
+    return generateKeyRecord().then((generated) => {
+      return new Promise<StoredKeyRecord>((resolve, reject) => {
+        const store = this.#getStore('readwrite')
+        const getRequest = store.get(this.#keyID)
+        let result: StoredKeyRecord = generated
+        getRequest.onerror = () => reject(getRequest.error)
+        getRequest.onsuccess = () => {
+          const existing = getRequest.result as StoredKeyRecord | undefined
+          if (existing != null) {
+            // A stored record ALWAYS wins over the freshly generated one — including a
+            // legacy ES256 record. Overwriting it would change the identity's DID.
+            result = existing
+          } else {
+            store.put(generated, this.#keyID)
           }
-          const tx = store.transaction
-          tx.oncomplete = () => resolve(result)
-          tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'))
-          tx.onerror = () => reject(tx.error ?? new Error('Transaction failed'))
-        }),
-    )
+        }
+        const tx = store.transaction
+        tx.oncomplete = () => resolve(result)
+        tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'))
+        tx.onerror = () => reject(tx.error ?? new Error('Transaction failed'))
+      })
+    })
   }
 
   removeAsync(): Promise<void> {

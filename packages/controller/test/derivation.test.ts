@@ -40,26 +40,29 @@ describe('paths', () => {
 
 describe('deriveKeyMaterial()', () => {
   test('is deterministic for the same seed, path and algorithm', () => {
-    const a = deriveKeyMaterial(seed, authorityPath(0, 0, 0), 'EdDSA')
-    const b = deriveKeyMaterial(seed, authorityPath(0, 0, 0), 'EdDSA')
+    const a = deriveKeyMaterial({ seed: seed, path: authorityPath(0, 0, 0), alg: 'EdDSA' })
+    const b = deriveKeyMaterial({ seed: seed, path: authorityPath(0, 0, 0), alg: 'EdDSA' })
     expect(a).toEqual(b)
   })
 
   test('separates algorithms at the same path', () => {
     const path = authorityPath(0, 0, 0)
-    expect(deriveKeyMaterial(seed, path, 'EdDSA')).not.toEqual(
-      deriveKeyMaterial(seed, path, 'ML-DSA-65'),
+    expect(deriveKeyMaterial({ seed: seed, path: path, alg: 'EdDSA' })).not.toEqual(
+      deriveKeyMaterial({ seed: seed, path: path, alg: 'ML-DSA-65' }),
     )
   })
 
   test('produces the requested length, so 64-byte algorithms need no path tricks', () => {
-    expect(deriveKeyMaterial(seed, authorityPath(0, 0, 0), 'ML-KEM-768', 64).length).toBe(64)
+    expect(
+      deriveKeyMaterial({ seed: seed, path: authorityPath(0, 0, 0), alg: 'ML-KEM-768', length: 64 })
+        .length,
+    ).toBe(64)
   })
 
   test('different positions produce different material', () => {
-    expect(deriveKeyMaterial(seed, authorityPath(0, 0, 0), 'EdDSA')).not.toEqual(
-      deriveKeyMaterial(seed, authorityPath(0, 0, 1), 'EdDSA'),
-    )
+    expect(
+      deriveKeyMaterial({ seed: seed, path: authorityPath(0, 0, 0), alg: 'EdDSA' }),
+    ).not.toEqual(deriveKeyMaterial({ seed: seed, path: authorityPath(0, 0, 1), alg: 'EdDSA' }))
   })
 })
 

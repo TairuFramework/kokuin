@@ -12,7 +12,7 @@ import {
 import { foldLog } from '../src/fold.js'
 import { resolveBranches } from '../src/supersede.js'
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -67,7 +67,7 @@ describe('resolveBranches()', () => {
       snapshot: { members: [], deny: [] },
     })
     const denying = await settle(did, rot.event, [victim])
-    const reset = await createReset(seed, 0, 1)
+    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
     const result = await resolveBranches(did, [
       [icp, rot, denying],
       [icp, reset],
@@ -177,14 +177,15 @@ describe('resolveBranches()', () => {
   // length, so de-duplication has to break the tie on something other than arrival order.
   test('the representative of a de-duplicated head does not depend on presentation order', async () => {
     const { did, icp } = await build()
-    const noise = (tag: string) =>
-      [
+    const noise = (tag: string) => {
+      return [
         icp,
         {
           event: { v: 1, t: tag, i: did, g: 0, s: 1, p: digestOf(icp.event), crit: false },
           sigs: [],
         } as unknown as SignedEvent,
       ] as Array<SignedEvent>
+    }
     const a = noise('nop')
     const b = noise('pon')
 
@@ -262,9 +263,17 @@ describe('resolveBranches()', () => {
   // rotates, or two resets — since the chain carries no current-key event for a rotate to supersede.
   test('a snapshot reset and a blind one at one generation are duplicity until a higher reset', async () => {
     const { did, icp } = await build()
-    const snapshot = [icp, await createReset(seed, 0, 1, { members: [], deny: [victim] })]
-    const blind = [icp, await createReset(seed, 0, 1)]
-    const higher = [icp, await createReset(seed, 0, 2)]
+    const snapshot = [
+      icp,
+      await createReset({
+        seed: seed,
+        profile: 0,
+        gen: 1,
+        snapshot: { members: [], deny: [victim] },
+      }),
+    ]
+    const blind = [icp, await createReset({ seed: seed, profile: 0, gen: 1 })]
+    const higher = [icp, await createReset({ seed: seed, profile: 0, gen: 2 })]
     const forked = await resolveBranches(did, [snapshot, blind])
     expect(forked).toEqual(await resolveBranches(did, [blind, snapshot]))
     expect(forked.ok).toBe(false)
@@ -272,9 +281,14 @@ describe('resolveBranches()', () => {
     expect(forked.failure).toBe('duplicity')
     expect([forked.duplicity.gen, forked.duplicity.seq]).toEqual([1, 0])
     // CONTROL — the same blind reset twice is one history.
-    expect((await resolveBranches(did, [blind, [icp, await createReset(seed, 0, 1)]])).ok).toBe(
-      true,
-    )
+    expect(
+      (
+        await resolveBranches(did, [
+          blind,
+          [icp, await createReset({ seed: seed, profile: 0, gen: 1 })],
+        ])
+      ).ok,
+    ).toBe(true)
 
     const settled = await resolveBranches(did, [snapshot, higher, blind])
     expect(settled.ok && settled.winner).toEqual(higher)
@@ -290,8 +304,16 @@ describe('a reset re-parented onto a different prefix', async () => {
   const { did, icp } = await build()
   const rot0 = await settle(did, icp.event, [])
   for (const [name, reset] of [
-    ['blind', await createReset(seed, 0, 1)],
-    ['with a snapshot', await createReset(seed, 0, 1, { members: [], deny: [victim] })],
+    ['blind', await createReset({ seed: seed, profile: 0, gen: 1 })],
+    [
+      'with a snapshot',
+      await createReset({
+        seed: seed,
+        profile: 0,
+        gen: 1,
+        snapshot: { members: [], deny: [victim] },
+      }),
+    ],
   ] as const) {
     test(`${name}: the history carried further wins, in either order`, async () => {
       const appended = [icp, rot0, reset]

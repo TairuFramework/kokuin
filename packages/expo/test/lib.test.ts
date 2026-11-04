@@ -2,28 +2,32 @@ import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import * as SecureStore from 'expo-secure-store'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-// Mock expo-secure-store
 let secureStore: Record<string, string>
 
-vi.mock('expo-secure-store', () => ({
-  getItem: vi.fn((key: string) => secureStore[key] ?? null),
-  getItemAsync: vi.fn(async (key: string) => secureStore[key] ?? null),
-  setItem: vi.fn((key: string, value: string) => {
-    secureStore[key] = value
-  }),
-  setItemAsync: vi.fn(async (key: string, value: string) => {
-    secureStore[key] = value
-  }),
-  deleteItemAsync: vi.fn(async (key: string) => {
-    delete secureStore[key]
-  }),
-}))
+vi.mock('expo-secure-store', () => {
+  return {
+    getItem: vi.fn((key: string) => secureStore[key] ?? null),
+    getItemAsync: vi.fn(async (key: string) => secureStore[key] ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      secureStore[key] = value
+    }),
+    setItemAsync: vi.fn(async (key: string, value: string) => {
+      secureStore[key] = value
+    }),
+    deleteItemAsync: vi.fn(async (key: string) => {
+      delete secureStore[key]
+    }),
+  }
+})
 
-// Mock expo-crypto
-vi.mock('expo-crypto', () => ({
-  getRandomBytes: vi.fn((size: number) => crypto.getRandomValues(new Uint8Array(size))),
-  getRandomBytesAsync: vi.fn(async (size: number) => crypto.getRandomValues(new Uint8Array(size))),
-}))
+vi.mock('expo-crypto', () => {
+  return {
+    getRandomBytes: vi.fn((size: number) => crypto.getRandomValues(new Uint8Array(size))),
+    getRandomBytesAsync: vi.fn(async (size: number) => {
+      return crypto.getRandomValues(new Uint8Array(size))
+    }),
+  }
+})
 
 import {
   ExpoKeyEntry,

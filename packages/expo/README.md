@@ -16,3 +16,9 @@ Same-reference reopen succeeds. Explicit noble and omission agree for a default 
 `provideIdentitySync` remains synchronous. Derivation and agreement retain their existing implementations.
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+`ExpoKeyStoreParams` names the existing optional constructor options. Its object shape and defaults are unchanged.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

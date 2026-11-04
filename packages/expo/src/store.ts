@@ -11,6 +11,8 @@ import { withSpan, withSyncSpan } from '@sozai/otel'
 
 import { ExpoKeyEntry, type StoreEntryOptions } from './entry.js'
 
+export type ExpoKeyStoreParams = StoreEntryOptions & { crypto?: CryptoProvider }
+
 const tracer = createTracer('keystore.expo')
 const logger = getLogger(['kokuin', 'expo'])
 
@@ -32,7 +34,7 @@ export class ExpoKeyStore
   #entries: Record<string, ExpoKeyEntry> = Object.create(null)
   #options?: StoreEntryOptions
 
-  constructor(options?: StoreEntryOptions & { crypto?: CryptoProvider }) {
+  constructor(options?: ExpoKeyStoreParams) {
     const { crypto, ...entryOptions } = options ?? {}
     this.#crypto = crypto ?? nobleCrypto
     this.#options = options === undefined ? undefined : entryOptions

@@ -20,6 +20,14 @@ import type {
   SignCapabilityPayload,
 } from './types.js'
 
+export type CreateCapabilityParams<Payload extends SignCapabilityPayload = SignCapabilityPayload> =
+  {
+    signer: SigningIdentity
+    payload: Payload
+    header?: Record<string, unknown>
+    options?: CreateCapabilityOptions
+  }
+
 /**
  * Maximum delegation links an offline verifier will walk.
  *
@@ -55,13 +63,15 @@ function assertExpiryWithinParent(parent: { exp?: number }, child: { exp?: numbe
 
 export async function createCapability<
   Payload extends SignCapabilityPayload = SignCapabilityPayload,
->(
-  signer: SigningIdentity,
-  payload: Payload,
-  header?: Record<string, unknown>,
-  inputOptions?: CreateCapabilityOptions,
-): Promise<CapabilityToken<Payload & { iss: string }, SignedHeader>> {
-  const options = captureOptions(inputOptions)
+>({
+  signer,
+  payload,
+  header,
+  options,
+}: CreateCapabilityParams<Payload>): Promise<
+  CapabilityToken<Payload & { iss: string }, SignedHeader>
+> {
+  const capturedOptions = captureOptions(options)
   const signerID = signer.id
 
   // Validate act/res patterns
@@ -79,8 +89,8 @@ export async function createCapability<
   // grant by: a well-formed claim, both `exp` and `iat`, and `exp` not before `iat`. The lifetime and
   // lease bounds are left to the verifier: the maximum lifetime is the verifier's setting, and a
   // mint-side default would refuse grants a verifier configured wider accepts.
-  if (options?.member != null) {
-    const { member } = options
+  if (capturedOptions?.member != null) {
+    const { member } = capturedOptions
     if (!isMemberClaim(member)) {
       throw new Error('Invalid capability: malformed mbr claim')
     }
@@ -93,20 +103,18 @@ export async function createCapability<
     return await signer.signToken({ ...payload, mbr: { add: member.add, g: member.g } }, { header })
   }
 
-  // Signer is delegating on behalf of someone else - validate authorization
-  if (options?.parentCapability == null) {
+  if (capturedOptions?.parentCapability == null) {
     throw new Error(
       'Invalid capability: parentCapability required when delegating for another subject',
     )
   }
 
-  // Verify and validate the parent capability
-  const parent = await verifyToken<CapabilityPayload>(options.parentCapability, {
-    crypto: options.crypto,
-    cache: options.cache,
-    resolver: options.resolver,
-    methods: options.methods,
-    verifiers: options.verifiers,
+  const parent = await verifyToken<CapabilityPayload>(capturedOptions.parentCapability, {
+    crypto: capturedOptions.crypto,
+    cache: capturedOptions.cache,
+    resolver: capturedOptions.resolver,
+    methods: capturedOptions.methods,
+    verifiers: capturedOptions.verifiers,
     // See {@link HISTORIC_ISSUANCE}. The parent was minted before this delegation exists at all.
     historic: HISTORIC_ISSUANCE,
   })
@@ -120,11 +128,9 @@ export async function createCapability<
     throw new Error('Invalid capability: subject mismatch with parent capability')
   }
 
-  // Check parent is not expired
   assertNonExpired(parent.payload)
   assertExpiryWithinParent(parent.payload, payload)
 
-  // Check that the new capability doesn't exceed parent permissions
   const newPermission: Permission = {
     act: payload.act,
     res: payload.res,

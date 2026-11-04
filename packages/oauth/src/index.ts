@@ -10,6 +10,7 @@ export {
   startAuthorization,
 } from './pending-auth.js'
 export { deriveCodeChallenge, generateCodeVerifier, generateState } from './pkce.js'
+export type { OAuthTokenErrorParams } from './types.js'
 export {
   type OAuthClientMode,
   type OAuthErrorCode,

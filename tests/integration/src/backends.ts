@@ -29,12 +29,11 @@ export type Backend = {
   cleanup(): Promise<void>
 }
 
-declare module 'vitest' {
-  // biome-ignore lint/style/useConsistentTypeDefinitions: module augmentation needs an interface.
-  interface ProvidedContext {
-    postgresURL: string | null
-  }
-}
+export type IntegrationContext = { postgresURL: string | null }
+
+type InjectContext = <TKey extends keyof IntegrationContext>(key: TKey) => IntegrationContext[TKey]
+
+const injectContext = inject as InjectContext
 
 const BACKEND_NAMES: Array<BackendName> = ['node-sqlite', 'postgres']
 
@@ -174,7 +173,7 @@ function fail(message: string): never {
  * selected or no server was available (see `startPostgres`).
  */
 export function backends(): Array<Backend> {
-  const postgresURL = inject('postgresURL')
+  const postgresURL = injectContext('postgresURL')
   return selectedBackends().flatMap((name): Array<Backend> => {
     if (name === 'node-sqlite') return [createNodeSQLiteBackend()]
     return postgresURL == null ? [] : [createPostgresBackend(postgresURL)]

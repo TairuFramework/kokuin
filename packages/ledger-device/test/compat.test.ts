@@ -12,7 +12,7 @@ const MNEMONIC =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
 const SEED = mnemonicToSeedSync(MNEMONIC, '')
 
-const at = <T>(items: ArrayLike<T>, i: number): T => {
+const at = <TValue>(items: ArrayLike<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v

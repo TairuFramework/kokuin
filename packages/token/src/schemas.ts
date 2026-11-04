@@ -17,9 +17,7 @@ export const validateAlgorithm = createValidator(signatureAlgorithmSchema)
 /**
  * The header of a signed token.
  *
- * Supported rather than internal: `@enkaku/protocol` composes its own message schemas out of this,
- * `unsignedHeaderSchema` and `signedPayloadSchema` — a protocol built on kokuin tokens has to
- * describe them in its own wire schema, and it cannot do that from a type alone.
+ * Shared schemas support message validation.
  */
 export const signedHeaderSchema = {
   type: 'object',

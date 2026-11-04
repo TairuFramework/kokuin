@@ -96,17 +96,19 @@ describe('epochHeads', () => {
     ) as unknown as Array<SignedEvent<EpochEvent>>
     await expect(async () => await epochHeads(did, logOf(events))).rejects.toThrow(LOG_TOO_LARGE)
     await expect(async () => await pruneLog(did, logOf(events))).rejects.toThrow(LOG_TOO_LARGE)
-    await expect(async () => await mergeLogs(did, logOf(events), logOf([]))).rejects.toThrow(
-      LOG_TOO_LARGE,
-    )
-    await expect(async () => await mergeLogs(did, logOf([]), logOf(events))).rejects.toThrow(
-      LOG_TOO_LARGE,
-    )
+    await expect(
+      async () => await mergeLogs({ did: did, left: logOf(events), right: logOf([]) }),
+    ).rejects.toThrow(LOG_TOO_LARGE)
+    await expect(
+      async () => await mergeLogs({ did: did, left: logOf([]), right: logOf(events) }),
+    ).rejects.toThrow(LOG_TOO_LARGE)
     // One short of the limit is only junk: dropped, never refused.
     const within = events.slice(1)
     expect(await epochHeads(did, logOf(within))).toEqual([head.epoch])
     expect((await pruneLog(did, logOf(within))).events).toEqual([])
-    expect((await mergeLogs(did, logOf(within), logOf([]))).events).toEqual([])
+    expect((await mergeLogs({ did: did, left: logOf(within), right: logOf([]) })).events).toEqual(
+      [],
+    )
   })
 
   test('a log that does not fold throws with the fold reason', async () => {

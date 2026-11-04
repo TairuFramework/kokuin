@@ -23,7 +23,7 @@ async function records(prefix = ''): Promise<Array<SignedRecord>> {
       return {
         ...claim,
         payload: new Uint8Array([1, 2, 3]),
-        ...(await signRecordOp(identity, claim, 'test/op')),
+        ...(await signRecordOp({ identity: identity, claim: claim, opKind: 'test/op' })),
       }
     }),
   )
@@ -127,7 +127,9 @@ test('the selected provider owns warm ops across chunks and direct callers', asy
   const rows = await records()
   const p = countingProvider()
   for (const row of rows)
-    expect(await verifySignedRecord(row, 'test/op', undefined, p)).not.toBeNull()
+    expect(
+      await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, options: p }),
+    ).not.toBeNull()
   expect(p.singles()).toBe(3)
   await apply(rows, p.crypto).pending
   expect(p.batches).toEqual([])
@@ -143,7 +145,14 @@ test('the selected provider owns warm ops across chunks and direct callers', asy
   await apply(rows, fresh.crypto).pending
   await apply(rows, fresh.crypto).pending
   for (const row of rows)
-    expect(await verifySignedRecord(row, 'test/op', undefined, fresh)).not.toBeNull()
+    expect(
+      await verifySignedRecord({
+        record: row,
+        opKind: 'test/op',
+        methods: undefined,
+        options: fresh,
+      }),
+    ).not.toBeNull()
   expect(fresh.batches).toEqual([3])
   expect(fresh.singles()).toBe(0)
 })
@@ -228,7 +237,9 @@ test('token memo survives sequential chunks after the op memo is cleared', async
   expect({ batches: p.batches, singles: p.singles() }).toEqual({ batches: [3], singles: 0 })
   clearRecordOpMemo()
   for (const row of rows) {
-    expect(await verifySignedRecord(row, 'test/op', undefined, p)).not.toBeNull()
+    expect(
+      await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, options: p }),
+    ).not.toBeNull()
   }
   expect({ batches: p.batches, singles: p.singles() }).toEqual({ batches: [3], singles: 0 })
 })

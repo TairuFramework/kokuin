@@ -34,3 +34,18 @@ against the Rust core, strict noble, `nodeCrypto` and this provider.
 
 Prebuilt binaries are not published yet. In this repository, `pnpm --filter @kokuin/crypto-napi run build:native`
 compiles one for the current host into `native/`. Requires Node.js 22 or later.
+
+## Named params migration
+
+`CryptoProvider.verify` now accepts one `VerifyItem`: `{ alg, signature, message, publicKey }`.
+`sign` keeps its three positional arguments. Batch methods retain their existing signatures.
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `NapiBinding.verify` | `NapiVerifyParams` | `es256, signature, message, publicKey` |
+| `NapiBinding.verifyBatch` | `NapiVerifyBatchParams` | `es256, signatures, messages, publicKeys` |
+
+`NapiBinding` accepts named verification objects. The loader adapts them to the unchanged positional native ABI.
+`NapiCrypto.backend` and `failure` no longer use TypeScript `readonly`. Their runtime properties remain unchanged.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

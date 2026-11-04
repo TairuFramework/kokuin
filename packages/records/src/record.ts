@@ -3,6 +3,8 @@ import { type CryptoOptions, normalizeDID } from '@kokuin/token'
 import { canonicalStringify, fromB64U, fromUTF, toB64U, toUTF } from '@sozai/codec'
 import { isJSONValue } from '@sozai/json'
 
+export type RecordClaimErrorParams = { message: string }
+
 /**
  * What the author of a record signs.
  *
@@ -69,7 +71,7 @@ export async function recordClaimDigest(
 
 /** Thrown when a claim cannot be signed as given. */
 export class RecordClaimError extends Error {
-  constructor(message: string) {
+  constructor({ message }: RecordClaimErrorParams) {
     super(message)
     this.name = 'RecordClaimError'
   }
@@ -161,7 +163,7 @@ export function isRecordClaim(value: unknown): value is RecordClaim {
  */
 export function canonicalRecordClaim(claim: RecordClaim): Uint8Array {
   if (!isRecordClaim(claim)) {
-    throw new RecordClaimError('Record claim is malformed')
+    throw new RecordClaimError({ message: 'Record claim is malformed' })
   }
   return fromUTF(canonicalStringify(claim))
 }

@@ -31,7 +31,7 @@ import { resolveBranches } from '../src/supersede.js'
 // throw — and `resolveBranches` filters branches by folding them, so a
 // throw here is a denial of service on duplicity detection for every well-formed branch too.
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -50,7 +50,7 @@ const rot = await createRotate({
   prior: icp.event,
   snapshot: { members: [], deny: [] },
 })
-const reset = await createReset(seed, 0, 1)
+const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
 // A chain `rev` as an older log carries one, signed by the inception key. The chain no longer has the
 // type, so it reaches the unknown-type path; it is here as a well-formed envelope around a body the
 // fold does not understand.
@@ -266,13 +266,23 @@ describe('foldLog() is total', () => {
 describe('the exported verifiers are total', () => {
   test('verifySignatures answers non-array `sigs` and `keys` with false', async () => {
     expect(
-      await verifySignatures(rot.event, undefined as unknown as Array<string>, rot.event.k),
+      await verifySignatures({
+        event: rot.event,
+        sigs: undefined as unknown as Array<string>,
+        keys: rot.event.k,
+      }),
     ).toBe(false)
-    expect(await verifySignatures(rot.event, rot.sigs, undefined as unknown as Array<string>)).toBe(
-      false,
-    )
+    expect(
+      await verifySignatures({
+        event: rot.event,
+        sigs: rot.sigs,
+        keys: undefined as unknown as Array<string>,
+      }),
+    ).toBe(false)
     // Control: the same call with both arrays present verifies.
-    expect(await verifySignatures(rot.event, rot.sigs, rot.event.k)).toBe(true)
+    expect(await verifySignatures({ event: rot.event, sigs: rot.sigs, keys: rot.event.k })).toBe(
+      true,
+    )
   })
 
   test('verifyReset answers a non-array `sigs` with false', async () => {
@@ -473,15 +483,15 @@ describe('a malformed event its own author signed', async () => {
   test('an inception whose `n` is null is rejected before the next event reads it', async () => {
     // The commitment goes into `KeyState.next`, which the *next* rotate reads — one event away
     // from the log that caused it. Rejecting at publication is what keeps that read safe.
-    const [forgedDid, forged] = await signedInception('n', null)
+    const [forgedDID, forged] = await signedInception('n', null)
     const following = await createRotate({
       seed,
       profile: 0,
-      did: forgedDid,
+      did: forgedDID,
       prior: forged.event,
       snapshot: { members: [], deny: [] },
     })
-    expect(await foldLog(forgedDid, { chain: [forged, following], events: [] })).toEqual({
+    expect(await foldLog(forgedDID, { chain: [forged, following], events: [] })).toEqual({
       ok: false,
       reason: 'invalid inception',
       index: 0,
@@ -489,8 +499,8 @@ describe('a malformed event its own author signed', async () => {
   })
 
   test('an inception whose recovery commitment is not a string is rejected', async () => {
-    const [forgedDid, forged] = await signedInception('r', 42)
-    expect(await foldLog(forgedDid, { chain: [forged], events: [] })).toEqual({
+    const [forgedDID, forged] = await signedInception('r', 42)
+    expect(await foldLog(forgedDID, { chain: [forged], events: [] })).toEqual({
       ok: false,
       reason: 'invalid inception',
       index: 0,
@@ -499,8 +509,8 @@ describe('a malformed event its own author signed', async () => {
 
   test('an unmutated inception still folds', async () => {
     // Control for both rows above: the same re-signing path with nothing changed.
-    const [forgedDid, forged] = await signedInception('kt', 1)
-    expect((await foldLog(forgedDid, { chain: [forged], events: [] })).ok).toBe(true)
+    const [forgedDID, forged] = await signedInception('kt', 1)
+    expect((await foldLog(forgedDID, { chain: [forged], events: [] })).ok).toBe(true)
   })
 })
 

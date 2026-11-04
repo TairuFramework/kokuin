@@ -12,6 +12,13 @@ import {
 import { encodeKey } from '../src/keys.js'
 import { createControllerResolver } from '../src/resolver.js'
 
+type MintWithKeyAtParams = {
+  did: string
+  gen: number
+  seq: number
+  keySeed?: Uint8Array<ArrayBuffer>
+}
+
 const seed = new Uint8Array(32).fill(1)
 const strangerSeed = new Uint8Array(32).fill(88)
 
@@ -27,7 +34,7 @@ function registry(log: Array<SignedEvent>, did: string) {
  * Mint a *fresh* token now, signed with the key at `(gen, seq)`, naming that key in `kid`. This is
  * what a thief holding a stolen authority key does after the owner has rotated away from it.
  */
-async function mintWithKeyAt(did: string, gen: number, seq: number, keySeed = seed) {
+async function mintWithKeyAt({ did, gen, seq, keySeed = seed }: MintWithKeyAtParams) {
   const pair = deriveKeyPair(keySeed, authorityPath(0, gen, seq), 'EdDSA')
   const identity = createSigningIdentityForDID(did as never, pair.privateKey)
   const token = await identity.signToken(
@@ -63,7 +70,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     const log = [icp, rot1, rot2]
 
     // The stolen key is the inception's — (gen 0, seq 0) — two rotations behind the head.
-    const stolen = await mintWithKeyAt(did, 0, 0)
+    const stolen = await mintWithKeyAt({ did: did, gen: 0, seq: 0 })
     let error: unknown
     const verified = await verifyToken(stolen, { methods: registry(log, did) }).catch((e) => {
       error = e
@@ -74,7 +81,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
 
     // ROW 1 control: the head's own key still mints a token that verifies against the same log and
     // the same registry, so the refusal above is the retirement and not the fixture.
-    const live = await mintWithKeyAt(did, 0, 2)
+    const live = await mintWithKeyAt({ did: did, gen: 0, seq: 2 })
     const ok = await verifyToken(live, { methods: registry(log, did) })
     expect(ok.payload.hello).toBe('world')
   })
@@ -90,7 +97,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       snapshot: { members: [], deny: [] },
     })
     const log = [icp, rot1]
-    const stranger = await mintWithKeyAt(did, 0, 0, strangerSeed)
+    const stranger = await mintWithKeyAt({ did: did, gen: 0, seq: 0, keySeed: strangerSeed })
     let error: unknown
     await verifyToken(stranger, { methods: registry(log, did) }).catch((e) => {
       error = e
@@ -108,8 +115,8 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const reset = await createReset(seed, 0, 1)
-    const stolen = await mintWithKeyAt(did, 0, 0)
+    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
+    const stolen = await mintWithKeyAt({ did: did, gen: 0, seq: 0 })
 
     // Before the reset the retired key still verifies historically (throws if it does not), so the
     // refusal after the reset is caused by the reset and not by anything incidental to the token.
@@ -140,7 +147,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const stolen = await mintWithKeyAt(did, 0, 0)
+    const stolen = await mintWithKeyAt({ did: did, gen: 0, seq: 0 })
     let error: unknown
     const verified = await verifyToken(stolen, { methods: registry([icp, rot1], did) }).catch(
       (e) => {
@@ -174,13 +181,13 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     })
     const log = [icp, rot1, rot2]
 
-    const issued = await mintWithKeyAt(did, 0, 0)
+    const issued = await mintWithKeyAt({ did: did, gen: 0, seq: 0 })
     const verified = await verifyToken(issued, { methods: registry(log, did), historic: true })
     expect(verified.payload.hello).toBe('world')
 
     // Control: a key the profile NEVER published is still refused under the opt-in, so `historic`
     // widens the answer to this generation and no further.
-    const stranger = await mintWithKeyAt(did, 0, 0, strangerSeed)
+    const stranger = await mintWithKeyAt({ did: did, gen: 0, seq: 0, keySeed: strangerSeed })
     let error: unknown
     await verifyToken(stranger, { methods: registry(log, did), historic: true }).catch((e) => {
       error = e
@@ -202,7 +209,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       prior: icp.event,
       snapshot: { members: [], deny: [retired] },
     })
-    const stolen = await mintWithKeyAt(did, 0, 0)
+    const stolen = await mintWithKeyAt({ did: did, gen: 0, seq: 0 })
     await expect(
       verifyToken(stolen, { methods: registry([icp, rot1], did), historic: true }),
     ).rejects.toThrow(/kid names a key the controller has revoked/)
@@ -229,7 +236,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     await expect(
       verifyToken(stolen, { methods: registry([icp, rot1, keeping], did), historic: true }),
     ).rejects.toThrow(/kid names a key the controller has revoked/)
-    const live = await mintWithKeyAt(did, 0, 2)
+    const live = await mintWithKeyAt({ did: did, gen: 0, seq: 2 })
     await expect(
       verifyToken(live, { methods: registry([icp, rot1, keeping], did) }),
     ).resolves.toBeDefined()

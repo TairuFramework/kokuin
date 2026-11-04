@@ -27,7 +27,7 @@ export type RecordDecisionMap = Map<string, RecordDecision>
 export type RecordStoreAdapter = {
   /** True when already bound to a caller-owned transaction; required for inline transaction adapters. */
   isTransaction?: boolean
-  transaction<R>(fn: (tx: RecordStoreAdapter) => Promise<R>): Promise<R>
+  transaction<TResult>(fn: (tx: RecordStoreAdapter) => Promise<TResult>): Promise<TResult>
   /**
    * Must accept concurrent calls on one adapter, including one bound to a transaction:
    * `getRecordDecisions` and apply issue several at once when `getMany` is absent.

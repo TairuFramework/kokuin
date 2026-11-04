@@ -79,16 +79,18 @@ test('signing and verification use ordered provider batches over canonical bytes
   const sigs = await signEvent(icp.event, keys, p)
   expect(sigs).toEqual(
     await Promise.all(
-      keys.map(async (key) =>
-        base64urlnopad.encode(await nobleCrypto.sign('EdDSA', key, canonicalBytes(icp.event))),
-      ),
+      keys.map(async (key) => {
+        return base64urlnopad.encode(
+          await nobleCrypto.sign('EdDSA', key, canonicalBytes(icp.event)),
+        )
+      }),
     ),
   )
   expect(p.signed[1]?.map((item) => item.privateKey)).toEqual(keys)
   expect(await verifyInception(icp, didFromInception(icp.event), p)).toBe(true)
   expect(p.verified).toHaveLength(1)
   expect(p.verified[0]?.[0]?.message).toEqual(canonicalBytes(icp.event))
-  await createReset(seed, 0, 1, undefined, p)
+  await createReset({ seed: seed, profile: 0, gen: 1, snapshot: undefined, options: p })
   expect(p.signed).toHaveLength(3)
   expect(p.counts).toEqual({
     sign: 0,
@@ -107,9 +109,13 @@ test('provider failures escape verification and folds unchanged and remain retry
   const p = provider(async () => {
     throw sentinel
   })
-  await expect(verifySignatures(icp.event, icp.sigs, icp.event.k, p)).rejects.toBe(sentinel)
+  await expect(
+    verifySignatures({ event: icp.event, sigs: icp.sigs, keys: icp.event.k, options: p }),
+  ).rejects.toBe(sentinel)
   await expect(foldLog(did, { chain: [icp], events: [] }, p)).rejects.toBe(sentinel)
-  expect(await verifySignatures(icp.event, ['!'], icp.event.k, p)).toBe(false)
+  expect(
+    await verifySignatures({ event: icp.event, sigs: ['!'], keys: icp.event.k, options: p }),
+  ).toBe(false)
   const history = createMemoryLogStore()
   const resolver = createControllerResolver({
     ...p,
@@ -170,21 +176,19 @@ test('hostile epoch candidates stop at the failed signature budget in causal ord
   const folded = await foldLog(did, { chain: [icp], events: [] })
   if (!folded.ok) throw new Error(folded.reason)
   const events = await Promise.all(
-    Array.from(
-      { length: MAX_FAILED_SIGNATURES + 10 },
-      async (_, index) =>
-        await createRevoke({
-          did,
-          head: folded.head,
-          parents: [folded.head.epoch],
-          signer: { root: { seed, profile: 0 } },
-          target: `did:key:hostile${index}`,
-        }),
-    ),
+    Array.from({ length: MAX_FAILED_SIGNATURES + 10 }, async (_, index) => {
+      return await createRevoke({
+        did,
+        head: folded.head,
+        parents: [folded.head.epoch],
+        signer: { root: { seed, profile: 0 } },
+        target: `did:key:hostile${index}`,
+      })
+    }),
   )
-  const p = provider(async (items) =>
-    items.map((item) => new TextDecoder().decode(item.message).includes('"t":"icp"')),
-  )
+  const p = provider(async (items) => {
+    return items.map((item) => new TextDecoder().decode(item.message).includes('"t":"icp"'))
+  })
   const result = await foldLog(did, { chain: [icp], events: events.toReversed() }, p)
   expect(result).toEqual({ ok: false, reason: TOO_MANY_FAILED_SIGNATURES, index: -1 })
   expect(p.verified).toHaveLength(MAX_FAILED_SIGNATURES + 2)
@@ -198,11 +202,11 @@ test('hostile epoch candidates stop at the failed signature budget in causal ord
 
 test('profile enumeration stays synchronous without provider operations', () => {
   const methods = ['sign', 'signBatch', 'verify', 'verifyBatch', 'blake3', 'blake3Batch'] as const
-  const spies = methods.map((method) =>
-    vi.spyOn(nobleCrypto, method).mockImplementation(() => {
+  const spies = methods.map((method) => {
+    return vi.spyOn(nobleCrypto, method).mockImplementation(() => {
       throw new Error('unexpected provider operation')
-    }),
-  )
+    })
+  })
   try {
     const entries = enumerateProfiles(seed, 2)
     expect(Array.isArray(entries)).toBe(true)
@@ -221,7 +225,9 @@ test('root signature sets verify in bounded ordered batches', async () => {
   const keys = privateKeys.map((key) => encodeKey(ed25519.getPublicKey(key), 'EdDSA'))
   const sigs = await signEvent(icp.event, privateKeys)
   const p = provider()
-  expect(await verifySignatures(icp.event, sigs, keys, p)).toBe(true)
+  expect(await verifySignatures({ event: icp.event, sigs: sigs, keys: keys, options: p })).toBe(
+    true,
+  )
   expect(p.verified.map((items) => items.length)).toEqual([4, 4, 4, 4, 1])
   expect(p.verified.flat().map((item) => item.publicKey)).toEqual(
     privateKeys.map((key) => ed25519.getPublicKey(key)),
@@ -282,9 +288,23 @@ test('all controller builders and identity signers retain the selected provider'
   expect(p.signed).toHaveLength(8)
   const seen = p.verified.length
   expect(await epochHeads(did, { ...log, events: [rev] }, p)).toEqual([digestOf(rev.event)])
-  expect(await deviceRevokeIndex(did, [icp, revoked], 'did:key:revoked', p)).toBe(1)
-  expect(await deviceRevokeIndices(did, [icp, revoked], 'did:key:revoked', p)).toEqual([1])
-  await mergeLogs(did, log, { ...log, events: [rev] }, p)
+  expect(
+    await deviceRevokeIndex({
+      did: did,
+      chain: [icp, revoked],
+      subject: 'did:key:revoked',
+      options: p,
+    }),
+  ).toBe(1)
+  expect(
+    await deviceRevokeIndices({
+      did: did,
+      chain: [icp, revoked],
+      subject: 'did:key:revoked',
+      options: p,
+    }),
+  ).toEqual([1])
+  await mergeLogs({ did: did, left: log, right: { ...log, events: [rev] }, options: p })
   await pruneLog(did, { ...log, events: [rev] }, p)
   await resolveBranches(did, [[icp]], p)
   await authoritativeLog({ ...p, did, loaded: log, seen: undefined, context: 'test' })
@@ -436,7 +456,9 @@ for (const invalidFirst of [true, false]) {
     const sigs = await signEvent(icp.event, privateKeys)
     if (invalidFirst) sigs[0] = base64urlnopad.encode(new Uint8Array(64))
     const p = provider()
-    expect(await verifySignatures(icp.event, sigs, keys, p)).toBe(!invalidFirst)
+    expect(await verifySignatures({ event: icp.event, sigs: sigs, keys: keys, options: p })).toBe(
+      !invalidFirst,
+    )
     expect(p.verified.map((items) => items.length)).toEqual(invalidFirst ? [4] : [4, 4, 4, 4])
   })
 }

@@ -174,9 +174,14 @@ describe('resolveMember()', () => {
   })
 
   test('a reset with a snapshot carrying the member does not revive the previous generation', async () => {
-    const reset = await createReset(seed, profile, 1, {
-      members: [{ did: m.did, key: m.key, add, lease: LEASE }],
-      deny: [],
+    const reset = await createReset({
+      seed: seed,
+      profile: profile,
+      gen: 1,
+      snapshot: {
+        members: [{ did: m.did, key: m.key, add, lease: LEASE }],
+        deny: [],
+      },
     })
     const recovered: ControllerLog = { chain: [icp, reset], events: [] }
     // The snapshot keeps the incarnation's add reference: only the generation tells the two apart.
@@ -189,7 +194,10 @@ describe('resolveMember()', () => {
       lease: LEASE,
     })
     // A blind reset carries no one: the member is gone in every generation.
-    const blind = serving({ chain: [icp, await createReset(seed, profile, 1)], events: [] })
+    const blind = serving({
+      chain: [icp, await createReset({ seed: seed, profile: profile, gen: 1 })],
+      events: [],
+    })
     for (const gen of [0, 1]) {
       await expect(blind.resolveMember?.(did, { did: m.did, add, gen })).rejects.toThrow(
         MEMBER_NOT_EFFECTIVE,
@@ -447,14 +455,15 @@ describe('historic management membership', async () => {
     prior: carried.event,
     snapshot: snapshotOf(await headOf(removedAfterSettleLog), { members: [add] }),
   })
-  const prune = async (prior: SignedEvent) =>
-    await createRotate({
+  const prune = async (prior: SignedEvent) => {
+    return await createRotate({
       seed,
       profile,
       did,
       prior: prior.event,
       snapshot: { members: [], deny: [] },
     })
+  }
   const historicCases: Array<[string, ControllerLog, boolean]> = [
     ['effective member', withMember, false],
     ['removed in the current epoch', removedLog, true],
@@ -571,7 +580,7 @@ describe('historic management membership', async () => {
       serving({ chain: [icp, rot, pruned], events: [] }).resolveMemberHistoric?.(did, query),
     ).resolves.toMatchObject({ lease: LEASE })
     for (const snapshot of [undefined, snapshotOf(await headOf(before))]) {
-      const reset = await createReset(seed, profile, 1, snapshot)
+      const reset = await createReset({ seed: seed, profile: profile, gen: 1, snapshot: snapshot })
       const resolver = serving({ chain: [icp, rot, reset], events: [] })
       await expect(resolver.resolveMemberHistoric?.(did, query)).rejects.toThrow(
         'not a historic management member',
@@ -622,7 +631,15 @@ describe('historic management membership', async () => {
       [withMember, { ...query, gen: 1 }],
       [
         {
-          chain: [icp, await createReset(seed, profile, 1, snapshotOf(await headOf(withMember)))],
+          chain: [
+            icp,
+            await createReset({
+              seed: seed,
+              profile: profile,
+              gen: 1,
+              snapshot: snapshotOf(await headOf(withMember)),
+            }),
+          ],
           events: [],
         },
         query,

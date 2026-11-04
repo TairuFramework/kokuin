@@ -120,21 +120,25 @@ export function createControllerStore(
     ): Promise<ControllerLog> {
       return await withLockedDatabase(did, async (trx) => {
         const lock = adapter.kind === 'postgres'
-        const values = (next: ControllerLog) => ({
-          did,
-          log: adapter.encodeJSON(next) as ControllerLog,
-          updated_at: adapter.encodeTimestamp(new Date()) as number,
-        })
+        const values = (next: ControllerLog) => {
+          return {
+            did,
+            log: adapter.encodeJSON(next) as ControllerLog,
+            updated_at: adapter.encodeTimestamp(new Date()) as number,
+          }
+        }
         const write = async (next: ControllerLog): Promise<void> => {
           await trx
             .insertInto('controller_logs')
             .values(values(next))
-            .onConflict((oc) =>
-              oc.column('did').doUpdateSet((eb) => ({
-                log: eb.ref('excluded.log'),
-                updated_at: eb.ref('excluded.updated_at'),
-              })),
-            )
+            .onConflict((oc) => {
+              return oc.column('did').doUpdateSet((eb) => {
+                return {
+                  log: eb.ref('excluded.log'),
+                  updated_at: eb.ref('excluded.updated_at'),
+                }
+              })
+            })
             .execute()
         }
 

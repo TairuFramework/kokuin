@@ -26,52 +26,56 @@ async function setup() {
 
 describe('createReset()', () => {
   test('increments the generation and restarts the sequence', async () => {
-    const { event } = await createReset(seed, 0, 1)
+    const { event } = await createReset({ seed: seed, profile: 0, gen: 1 })
     expect(event.g).toBe(1)
     expect(event.s).toBe(0)
   })
 
   test('is a rotate variant, not a fourth event type', async () => {
-    expect((await createReset(seed, 0, 1)).event.t).toBe('rot')
+    expect((await createReset({ seed: seed, profile: 0, gen: 1 })).event.t).toBe('rot')
   })
 
   test('clears the deny set by carrying an empty snapshot', async () => {
-    expect((await createReset(seed, 0, 1)).event.d).toEqual([])
+    expect((await createReset({ seed: seed, profile: 0, gen: 1 })).event.d).toEqual([])
   })
 
   test('anchors to the inception, with no reference to any event beyond it', async () => {
     const { inception, did } = await setup()
-    const { event } = await createReset(seed, 0, 1)
+    const { event } = await createReset({ seed: seed, profile: 0, gen: 1 })
     expect(event.p).toBe(digestOf(inception.event))
     expect(event.i).toBe(did)
   })
 
   test('is a pure function of (seed, profile, gen) — two blind resets are byte-identical', async () => {
-    expect(await createReset(seed, 0, 1)).toEqual(await createReset(seed, 0, 1))
+    expect(await createReset({ seed: seed, profile: 0, gen: 1 })).toEqual(
+      await createReset({ seed: seed, profile: 0, gen: 1 }),
+    )
   })
 
   test('rejects a generation below 1', async () => {
-    await expect(async () => await createReset(seed, 0, 0)).rejects.toThrow()
+    await expect(
+      async () => await createReset({ seed: seed, profile: 0, gen: 0 }),
+    ).rejects.toThrow()
   })
 })
 
 describe('verifyReset()', () => {
   test('accepts a reset signed by the committed recovery key', async () => {
     const { inception } = await setup()
-    const signed = await createReset(seed, 0, 1)
+    const signed = await createReset({ seed: seed, profile: 0, gen: 1 })
     expect(await verifyReset(signed, inception.event)).toBe(true)
   })
 
   test('rejects a reset signed by any other key — the root always wins the race', async () => {
     const { inception } = await setup()
     const thiefSeed = new Uint8Array(32).fill(9)
-    const signed = await createReset(thiefSeed, 0, 1)
+    const signed = await createReset({ seed: thiefSeed, profile: 0, gen: 1 })
     expect(await verifyReset(signed, inception.event)).toBe(false)
   })
 
   test('rejects a reset that does not increment the generation', async () => {
     const { inception } = await setup()
-    const signed = await createReset(seed, 0, 1)
+    const signed = await createReset({ seed: seed, profile: 0, gen: 1 })
     const tampered = { ...signed, event: { ...signed.event, g: 0 } }
     expect(await verifyReset(tampered, inception.event)).toBe(false)
   })
@@ -81,7 +85,7 @@ describe('verifyReset()', () => {
   // dedicated `ka` check, not a chain/recovery/signature failure, can reject these.
   test('rejects a reset publishing no key agreement key', async () => {
     const { inception } = await setup()
-    const signed = await createReset(seed, 0, 1)
+    const signed = await createReset({ seed: seed, profile: 0, gen: 1 })
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const event = { ...signed.event, ka: [] }
     const sigs = await signEvent(event, [recovery.privateKey])
@@ -92,7 +96,7 @@ describe('verifyReset()', () => {
 
   test('rejects a reset whose ka holds a key that is not X25519-tagged', async () => {
     const { inception } = await setup()
-    const signed = await createReset(seed, 0, 1)
+    const signed = await createReset({ seed: seed, profile: 0, gen: 1 })
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const signingKey = signed.event.k[0]
     if (signingKey === undefined) throw new Error('expected a signing key')
@@ -110,7 +114,7 @@ describe('verifyReset()', () => {
   // real recovery key, so only a dedicated check can reject it.
   test('rejects a reset carrying a deny set but no member list', async () => {
     const { inception } = await setup()
-    const signed = await createReset(seed, 0, 1)
+    const signed = await createReset({ seed: seed, profile: 0, gen: 1 })
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const event = { ...signed.event, d: ['did:key:zStillDenied'] }
     const sigs = await signEvent(event, [recovery.privateKey])
@@ -121,7 +125,12 @@ describe('verifyReset()', () => {
 
   test('rejects a reset carrying a member list but no deny set', async () => {
     const { inception } = await setup()
-    const signed = await createReset(seed, 0, 1, { members: [], deny: ['did:key:zStillDenied'] })
+    const signed = await createReset({
+      seed: seed,
+      profile: 0,
+      gen: 1,
+      snapshot: { members: [], deny: ['did:key:zStillDenied'] },
+    })
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const { d: _d, ...event } = signed.event
     expect(event.m).toEqual([])
@@ -133,7 +142,12 @@ describe('verifyReset()', () => {
 
   test('accepts a reset carrying a whole snapshot', async () => {
     const { inception } = await setup()
-    const signed = await createReset(seed, 0, 1, { members: [], deny: ['did:key:zStillDenied'] })
+    const signed = await createReset({
+      seed: seed,
+      profile: 0,
+      gen: 1,
+      snapshot: { members: [], deny: ['did:key:zStillDenied'] },
+    })
     expect(signed.event.m).toEqual([])
     expect(signed.event.d).toEqual(['did:key:zStillDenied'])
     expect(await verifyReset(signed, inception.event)).toBe(true)
@@ -141,7 +155,7 @@ describe('verifyReset()', () => {
 
   test('rejects a reset carrying a seal', async () => {
     const { inception } = await setup()
-    const signed = await createReset(seed, 0, 1)
+    const signed = await createReset({ seed: seed, profile: 0, gen: 1 })
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const event = { ...signed.event, a: digestOf('an anchored grant') }
     const sigs = await signEvent(event, [recovery.privateKey])
@@ -196,7 +210,7 @@ describe('the recovery commitment is fixed at inception', () => {
 
   test('a reset carrying `r` is refused too — it is a rotate body and shares the check', async () => {
     const { inception, did } = await setup()
-    const signed = await createReset(seed, 0, 1)
+    const signed = await createReset({ seed: seed, profile: 0, gen: 1 })
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const event = { ...signed.event, r: digestOf('anything at all') }
     const sigs = await signEvent(event, [recovery.privateKey])
@@ -227,7 +241,7 @@ describe('the recovery commitment is fixed at inception', () => {
       prior: rot.event,
       snapshot: { members: [], deny: [target] },
     })
-    const reset = await createReset(seed, 0, 1)
+    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
     const after = await createRotate({
       seed,
       profile: 0,

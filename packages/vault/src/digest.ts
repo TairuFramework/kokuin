@@ -97,6 +97,6 @@ export async function checkDescriptorDigest(
 ): Promise<void> {
   const { descriptors, expectedDescriptorDigest, crypto } = params
   if ((await descriptorDigest(descriptors, { crypto })) !== expectedDescriptorDigest) {
-    throw new VaultTampered('Vault factor descriptors differ from the trusted digest')
+    throw new VaultTampered({ message: 'Vault factor descriptors differ from the trusted digest' })
   }
 }

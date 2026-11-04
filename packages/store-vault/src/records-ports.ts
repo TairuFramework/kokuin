@@ -24,7 +24,12 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
       const record = snapshotRecord(input)
       if (!db.isTransaction) throw new Error('Candidate retention requires the apply transaction')
 
-      const op = await verifySignedRecord(record, bound.opKind, bound.methods, bound.params)
+      const op = await verifySignedRecord({
+        record: record,
+        opKind: bound.opKind,
+        methods: bound.methods,
+        options: bound.params,
+      })
 
       if (
         op === null ||

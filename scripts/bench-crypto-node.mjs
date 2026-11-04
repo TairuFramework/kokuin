@@ -109,7 +109,7 @@ function cells() {
           size,
           run: (p) =>
             mode === 'single'
-              ? p.verify('EdDSA', edSignature, message, edKey)
+              ? p.verify({ alg: 'EdDSA', signature: edSignature, message, publicKey: edKey })
               : p.verifyBatch(edItems),
         },
         {
@@ -121,7 +121,7 @@ function cells() {
           delegated: true,
           run: (p) =>
             mode === 'single'
-              ? p.verify('ES256', esSignature, message, esKey)
+              ? p.verify({ alg: 'ES256', signature: esSignature, message, publicKey: esKey })
               : p.verifyBatch(esItems),
         },
       )

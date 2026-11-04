@@ -45,12 +45,12 @@ vi.mock('@napi-rs/keyring', () => {
   return {
     Entry: MockEntry,
     AsyncEntry: MockAsyncEntry,
-    findCredentials: vi.fn((_service?: string) =>
-      Object.entries(mockKeyring).map(([account, password]) => ({ account, password })),
-    ),
-    findCredentialsAsync: vi.fn(async (_service?: string) =>
-      Object.entries(mockKeyring).map(([account, password]) => ({ account, password })),
-    ),
+    findCredentials: vi.fn((_service?: string) => {
+      return Object.entries(mockKeyring).map(([account, password]) => ({ account, password }))
+    }),
+    findCredentialsAsync: vi.fn(async (_service?: string) => {
+      return Object.entries(mockKeyring).map(([account, password]) => ({ account, password }))
+    }),
   }
 })
 
@@ -100,7 +100,6 @@ describe('NodeKeyEntry', () => {
     const provided = entry.provide()
     expect(provided).toBeInstanceOf(Uint8Array)
     expect(provided.length).toBeGreaterThan(0)
-    // Stored in keyring
     expect(entry.get()).toEqual(provided)
   })
 

@@ -11,7 +11,7 @@ import {
   parseSignatureResponse,
 } from '../src/apdu.js'
 
-const at = <T>(items: ArrayLike<T>, i: number): T => {
+const at = <TValue>(items: ArrayLike<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v

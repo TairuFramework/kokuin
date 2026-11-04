@@ -1,23 +1,25 @@
 import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-// Mock electron safeStorage — identity transform for testing
-let encryptionAvailable = true
-vi.mock('electron', () => ({
-  safeStorage: {
-    encryptString: vi.fn((str: string) => Buffer.from(str)),
-    decryptString: vi.fn((buf: Buffer) => buf.toString()),
-    isEncryptionAvailable: vi.fn(() => encryptionAvailable),
-  },
-}))
+type MockStoreParams = { name: string }
 
-// Mock electron-store — in-memory storage
+let encryptionAvailable = true
+vi.mock('electron', () => {
+  return {
+    safeStorage: {
+      encryptString: vi.fn((str: string) => Buffer.from(str)),
+      decryptString: vi.fn((buf: Buffer) => buf.toString()),
+      isEncryptionAvailable: vi.fn(() => encryptionAvailable),
+    },
+  }
+})
+
 let storeData: Record<string, Record<string, string>>
 
 vi.mock('electron-store', () => {
   class MockStore {
     name: string
-    constructor(options: { name: string }) {
+    constructor(options: MockStoreParams) {
       this.name = options.name
     }
     get(key: string, defaultValue: Record<string, string> = {}) {
@@ -166,9 +168,9 @@ describe('ElectronKeyStore', () => {
 
   test('open() throws on conflicting allowInsecureStorage flag for a cached name', () => {
     ElectronKeyStore.open({ name: 'flag-conflict', allowInsecureStorage: false })
-    expect(() =>
-      ElectronKeyStore.open({ name: 'flag-conflict', allowInsecureStorage: true }),
-    ).toThrow(/allowInsecureStorage/i)
+    expect(() => {
+      return ElectronKeyStore.open({ name: 'flag-conflict', allowInsecureStorage: true })
+    }).toThrow(/allowInsecureStorage/i)
   })
 
   test('open() reuses cached instance when flag matches or is omitted', () => {

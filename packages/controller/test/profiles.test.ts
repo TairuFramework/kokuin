@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest'
 import { createInception, didFromInception } from '../src/events.js'
 import { enumerateProfiles, handleForDID } from '../src/profiles.js'
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v

@@ -109,3 +109,20 @@ await checkDescriptorDigest({ descriptors, expectedDescriptorDigest, crypto })
 ```
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection and strict verification.
+
+## Named params migration
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new VaultError` | `VaultErrorParams` | `message, options` |
+| `new NoAvailableFactor` | `NoAvailableFactorParams` | `kind` |
+| `new InvalidVaultFactors` | `InvalidVaultFactorsParams` | `reason` |
+| `new UnsupportedVaultSuite` | `UnsupportedVaultSuiteParams` | `suite` |
+| `new VaultTampered` | `VaultTamperedParams` | `message, options?` |
+| `new VaultSecretRejected` | `VaultSecretRejectedParams` | `kinds, options?` |
+| `new VaultPinRejected` | `VaultPinRejectedParams` | `keyID, options` |
+| `KeyCache.set` | `KeyCacheSetParams` | `keyID, contentKey, keyVersion, branchID` |
+
+`VaultRecordPayloadErrorParams` names the existing constructor object without changing its fields.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

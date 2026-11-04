@@ -55,7 +55,7 @@ The native provider copies inputs synchronously and dispatches computation to a 
 | --- | --- | --- |
 | `sign` | `'EdDSA'`, seed, raw message | Signature bytes |
 | `signBatch` | `'EdDSA'`, array of `{ privateKey, message }` | Ordered signature arrays |
-| `verify` | Algorithm, signature, raw message, public key | Boolean |
+| `verify` | `VerifyItem`: `{ alg, signature, message, publicKey }` | Boolean |
 | `verifyBatch` | Array of `{ alg, signature, message, publicKey }` | Ordered booleans |
 | `blake3` | Input bytes, output length | Hash bytes |
 | `blake3Batch` | Array of inputs, shared output length | Ordered hash arrays |
@@ -304,17 +304,17 @@ Replacing caller option fields cannot change captured policy. Mutating provider 
 
 ### Controller Promise migration
 
-Positional functions append `options?: CryptoOptions`. Existing parameter objects gain `crypto?: CryptoProvider`.
+Functions with four or more arguments now accept named params objects. Existing parameter objects gain `crypto?: CryptoProvider`.
 `CryptoOptions` comes from `@kokuin/token`. Every result below now requires `await`.
 
 | Export | Arguments after migration | Result |
 | --- | --- | --- |
 | `createInception` | `seed, profile, options?` | `Promise<SignedEvent<InceptionEvent>>` |
 | `verifyInception` | `signed, did, options?` | `Promise<boolean>` |
-| `verifySignatures` | `event, sigs, keys, options?` | `Promise<boolean>` |
+| `verifySignatures` | `{ event, sigs, keys, options? }` | `Promise<boolean>` |
 | `createRotate` | `CreateRotateParams` including `crypto?` | `Promise<SignedEvent<RotateEvent>>` |
 | `verifyRotate` | `signed, prior, options?` | `Promise<boolean>` |
-| `createReset` | `seed, profile, gen, snapshot?, options?` | `Promise<SignedEvent<RotateEvent>>` |
+| `createReset` | `{ seed, profile, gen, snapshot?, options? }` | `Promise<SignedEvent<RotateEvent>>` |
 | `verifyReset` | `signed, inception, options?` | `Promise<boolean>` |
 | `createAdd` | `CreateAddParams` including `crypto?` | `Promise<SignedEvent<AddEvent>>` |
 | `createRenew` | `CreateRenewParams` including `crypto?` | `Promise<SignedEvent<RenewEvent>>` |
@@ -325,10 +325,10 @@ Positional functions append `options?: CryptoOptions`. Existing parameter object
 | `resolveBranches` | `did, chains, options?` | `Promise<ResolveResult>` |
 | `authoritativeLog` | `{ did, loaded, seen, context, crypto? }` | `Promise<AuthoritativeLog>` |
 | `epochHeads` | `did, log, options?` | `Promise<Array<string>>` |
-| `mergeLogs` | `did, left, right, options?` | `Promise<ControllerLog>` |
+| `mergeLogs` | `{ did, left, right, options? }` | `Promise<ControllerLog>` |
 | `pruneLog` | `did, log, options?` | `Promise<ControllerLog>` |
-| `deviceRevokeIndices` | `did, chain, subject, options?` | `Promise<Array<number>>` |
-| `deviceRevokeIndex` | `did, chain, subject, options?` | `Promise<number \| undefined>` |
+| `deviceRevokeIndices` | `{ did, chain, subject, options? }` | `Promise<Array<number>>` |
+| `deviceRevokeIndex` | `{ did, chain, subject, options? }` | `Promise<number \| undefined>` |
 | `createDeviceRevoke` | `CreateDeviceRevokeParams` including `crypto?` | `Promise<SignedEvent>` |
 | `createControllerIdentity` | `{ seed, profile, log, crypto? }` | `Promise<FullIdentity>` |
 | `createControllerIdentityWithKey` | `{ privateKey, log, crypto? }` | `Promise<SigningIdentity>` |
@@ -336,7 +336,7 @@ Positional functions append `options?: CryptoOptions`. Existing parameter object
 `provideControllerIdentity({ entry, profile, logStore, crypto? })` already returns `Promise<FullIdentity>` and now forwards the provider.
 `createControllerResolver({ loadLog, history?, crypto? })` remains synchronous. Its resolution methods remain asynchronous.
 `createRotate` still requires a complete `snapshot`. Epoch builders retain their existing head, parent and signer fields.
-`createReset` places options after `snapshot`. Passing options without a snapshot requires `undefined` in that position.
+`createReset({ seed, profile, gen, snapshot?, options? })` makes the snapshot optional within its params object.
 
 The following source-module exports also became asynchronous. They are internal propagation points, without public package subpath exports.
 
@@ -345,11 +345,11 @@ The following source-module exports also became asynchronous. They are internal 
 | `events.ts` | `signEvent(event, privateKeys, options?)` | `Promise<Array<string>>` |
 | `epoch.ts` | `foldEpochDetailed(params)` | `Promise<FoldEpochDetail \| FoldEpochRefusal>` |
 | `epoch.ts` | `foldEpoch(params)` | `Promise<FoldEpochResult \| FoldEpochRefusal>` |
-| `log.ts` | `foldHeld(did, log, limits?, options?)` | `Promise<HeldFold \| Extract<FoldResult, { ok: false }>>` |
-| `log.ts` | `withEpoch(did, states, events, limits?, trusted?, options?)` | `Promise<HeldFold \| Extract<FoldResult, { ok: false }>>` |
+| `log.ts` | `foldHeld({ did, log, limits?, options? })` | `Promise<HeldFold \| Extract<FoldResult, { ok: false }>>` |
+| `log.ts` | `withEpoch({ did, states, events, limits?, trusted?, options? })` | `Promise<HeldFold \| Extract<FoldResult, { ok: false }>>` |
 | `history.ts` | `authoritativeLogWithin(params, limits?)` | `Promise<AuthoritativeLog>` |
 | `fold-memo.ts` | `memoizedAuthoritativeLog(params, limits?)` | `Promise<AuthoritativeLog>` |
-| `state.ts` | `currentState(did, log, context, options?)` | `Promise<KeyState>` |
+| `state.ts` | `currentState({ did, log, context, options? })` | `Promise<KeyState>` |
 
 `FoldEpochParams` and `AuthoritativeLogParams` include `crypto?`.
 Internal `createControllerResolverWithin` remains synchronous and accepts the extended resolver options.
@@ -398,3 +398,115 @@ These examples assume existing replicated configuration and imported factories.
 The raw SQL store needs no provider option or schema change.
 `createDelegationRevocationChecker(api, { crypto, methods })` captures the provider through tracked revocation wrappers.
 Store-controller still accepts asynchronous merge callbacks. Its callback must await authoritative verification before reading `.log`.
+
+## Named params migration
+
+Verification uses `verify({ alg, signature, message, publicKey })` across all providers.
+`VerifyItem` is the shared input type. Signing retains its three positional arguments.
+
+### @kokuin/browser
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new BrowserKeyStore` | `BrowserKeyStoreConstructorParams` | `getStore` |
+
+### @kokuin/capability
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `createCapability` | `CreateCapabilityParams` | `signer, payload, header?, options?` |
+| `new TokenRevokedError` | `TokenRevokedErrorParams` | `jti, options?` |
+
+### @kokuin/controller
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `deriveKeyMaterial` | `DeriveKeyMaterialParams` | `seed, path, alg, length?` |
+| `mergeLogs` | `MergeLogsParams` | `did, left, right, options?` |
+| `verifySignatures` | `VerifySignaturesParams` | `event, sigs, keys, options?` |
+| `createReset` | `CreateResetParams` | `seed, profile, gen, snapshot?, options?` |
+| `deviceRevokeIndices` | `DeviceRevokeIndicesParams` | `did, chain, subject, options?` |
+| `deviceRevokeIndex` | `DeviceRevokeIndexParams` | `did, chain, subject, options?` |
+
+### @kokuin/controller-conformance
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `ControllerImplementation.createRotate` | `CreateRotateParams` | `seed, profile, did, prior, snapshot` |
+| `createReset` | `CreateResetParams` | `seed, profile, gen, snapshot?` |
+| `ControllerImplementation.authorityPrivateKey` | `AuthorityPrivateKeyParams` | `seed, profile, gen, seq` |
+
+### @kokuin/crypto-napi
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `NapiBinding.verify` | `NapiVerifyParams` | `es256, signature, message, publicKey` |
+| `NapiBinding.verifyBatch` | `NapiVerifyBatchParams` | `es256, signatures, messages, publicKeys` |
+
+### @kokuin/ledger-device
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new LedgerError` | `LedgerErrorParams` | `message, statusCode` |
+| `new LedgerDisconnectedError` | `LedgerDisconnectedErrorParams` | `cause?` |
+
+### @kokuin/oauth
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new OAuthTokenError` | `OAuthTokenErrorParams` | `status, code?, description?` |
+
+### @kokuin/records
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new RecordClaimError` | `RecordClaimErrorParams` | `message` |
+| `new RecordOpSigningError` | `RecordOpSigningErrorParams` | `message` |
+| `signRecordOp` | `SignRecordOpParams` | `identity, claim, opKind, options?` |
+| `verifyRecordOp` | `VerifyRecordOpParams` | `opJWT, opKind, methods?, options?` |
+| `verifySignedRecord` | `VerifySignedRecordParams` | `record, opKind, methods?, options?` |
+| `recordDecisionDigest` | `RecordDecisionDigestParams` | `record, opKind, methods?, options?` |
+| `compareRecordOps` | `CompareRecordOpsParams` | `incoming, stored, policy, onEqual?` |
+| `new RecordTypeGraphError` | `RecordTypeGraphErrorParams` | `message` |
+| `new RecordContentRefusalError` | `RecordContentRefusalErrorParams` | `message` |
+| `new RecordRangeError` | `RecordRangeErrorParams` | `message, options?` |
+| `splitRange` | `SplitRangeParams` | `leaves, rangeBounds, leafThreshold, cryptoOptions?` |
+| `advanceRecordPull` | `AdvanceRecordPullParams` | `state, local, response, options?` |
+
+### @kokuin/store-delegation
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new VerifiedRevocationError` | `VerifiedRevocationErrorParams` | `message, options?` |
+
+### @kokuin/store-vault
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new VaultNotAuthorized` | `VaultNotAuthorizedParams` | `verb` |
+
+### @kokuin/token
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new UnresolvableIssuerError` | `UnresolvableIssuerErrorParams` | `message, options?` |
+| `new IssuerKeyNotFoundError` | `IssuerKeyNotFoundErrorParams` | `message, options?` |
+
+### @kokuin/vault
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new VaultError` | `VaultErrorParams` | `message, options` |
+| `new NoAvailableFactor` | `NoAvailableFactorParams` | `kind` |
+| `new InvalidVaultFactors` | `InvalidVaultFactorsParams` | `reason` |
+| `new UnsupportedVaultSuite` | `UnsupportedVaultSuiteParams` | `suite` |
+| `new VaultTampered` | `VaultTamperedParams` | `message, options?` |
+| `new VaultSecretRejected` | `VaultSecretRejectedParams` | `kinds, options?` |
+| `new VaultPinRejected` | `VaultPinRejectedParams` | `keyID, options` |
+| `KeyCache.set` | `KeyCacheSetParams` | `keyID, contentKey, keyVersion, branchID` |
+
+Constructors now take one named object. Existing zero-argument constructors remain unchanged.
+`Identity.id`, `KeyEntry.keyID`, `NapiCrypto.backend` and `NapiCrypto.failure` omit TypeScript `readonly`.
+Their runtime property behaviour remains unchanged.
+
+`VaultSecretUnverifiableParams` names the existing `UnverifiableWrapping` constructor object without changing its shape.

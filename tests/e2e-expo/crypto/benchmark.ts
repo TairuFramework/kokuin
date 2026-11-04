@@ -21,7 +21,7 @@ export type BenchmarkOptions = {
 // This comparison preserves today's noble verification rules, independently of the strict gate baseline.
 const currentNoble: CryptoProvider = {
   ...strictNoble,
-  async verify(alg, signature, message, publicKey) {
+  async verify({ alg, signature, message, publicKey }: VerifyItem) {
     try {
       return alg === 'EdDSA'
         ? ed25519.verify(signature, message, publicKey)
@@ -73,20 +73,22 @@ function prepare(
   }
   const alg = cell.operation === 'verify-ed25519' ? 'EdDSA' : 'ES256'
   const curve = alg === 'EdDSA' ? ed25519 : p256
-  const valid: Array<VerifyItem> = seeds.map((seed) => ({
-    alg,
-    message,
-    publicKey: curve.getPublicKey(seed),
-    signature: curve.sign(message, seed),
-  }))
+  const valid: Array<VerifyItem> = seeds.map((seed) => {
+    return {
+      alg,
+      message,
+      publicKey: curve.getPublicKey(seed),
+      signature: curve.sign(message, seed),
+    }
+  })
   const invalid = valid.map((item) => {
     const signature = item.signature.slice()
     signature[0] = (signature[0] as number) ^ 1
     return { ...item, signature }
   })
-  const mixed = valid.map((item, index) =>
-    index % 2 === 0 ? item : (invalid[index] as VerifyItem),
-  )
+  const mixed = valid.map((item, index) => {
+    return index % 2 === 0 ? item : (invalid[index] as VerifyItem)
+  })
   const items = cell.workload === 'invalid' ? invalid : cell.workload === 'mixed' ? mixed : valid
   return (iteration) => {
     const item =
@@ -94,7 +96,12 @@ function prepare(
         ? (invalid[0] as VerifyItem)
         : (items[0] as VerifyItem)
     return cell.mode === 'single'
-      ? provider.verify(item.alg, item.signature, item.message, item.publicKey)
+      ? provider.verify({
+          alg: item.alg,
+          signature: item.signature,
+          message: item.message,
+          publicKey: item.publicKey,
+        })
       : provider.verifyBatch(cell.batchSize === 1 ? [item] : items)
   }
 }
@@ -117,7 +124,7 @@ export async function runBenchmarkMatrix(options: BenchmarkOptions): Promise<voi
       Object.entries(backends).map(([backend, provider]) => [backend, prepare(cell, provider)]),
     )
     for (let run = 0; run < 5; run++) {
-      const order: Array<keyof typeof backends> = ['current-noble', 'strict-noble', 'native']
+      const order: Array<BenchmarkSample['backend']> = ['current-noble', 'strict-noble', 'native']
       // Rotate both run and cell order to distribute warm-up and thermal bias.
       const rotation = (run + cells.indexOf(cell)) % order.length
       order.push(...order.splice(0, rotation))
@@ -143,9 +150,9 @@ export async function runBenchmarkMatrix(options: BenchmarkOptions): Promise<voi
         for (let iteration = 0; iteration < 200; iteration++) {
           options.signal.throwIfAborted()
           const started = performance.now()
-          const heartbeat = new Promise<number>((resolve) =>
-            setTimeout(() => resolve(performance.now() - started), 0),
-          )
+          const heartbeat = new Promise<number>((resolve) => {
+            return setTimeout(() => resolve(performance.now() - started), 0)
+          })
           const pending = call(iteration)
           const returned = performance.now()
           await pending

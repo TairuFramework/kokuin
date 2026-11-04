@@ -1,13 +1,20 @@
-import type { CryptoAlgorithm, CryptoProvider } from '@kokuin/crypto'
+import type { CryptoAlgorithm, CryptoProvider, VerifyItem } from '@kokuin/crypto'
 import { nodeCrypto } from '@kokuin/crypto-node'
 
 import { loadNapiBinding, type NapiBinding, type NapiLoadFailure } from './binding.js'
 
+type AssertVerifyingParams = {
+  alg: CryptoAlgorithm
+  signature: Uint8Array
+  message: Uint8Array
+  publicKey: Uint8Array
+}
+
 export type NapiCrypto = CryptoProvider & {
   /** `napi` when the Rust binding loaded, `node` when the provider fell back to `nodeCrypto`. */
-  readonly backend: 'napi' | 'node'
+  backend: 'napi' | 'node'
   /** Why the binding did not load, when `backend` is `node`. */
-  readonly failure?: NapiLoadFailure
+  failure?: NapiLoadFailure
 }
 
 export type NapiCryptoOptions = {
@@ -30,12 +37,7 @@ function assertSigning(alg: 'EdDSA', seed: Uint8Array, message: Uint8Array): voi
   if (seed.length !== 32) throw new TypeError('Expected a 32-byte Ed25519 seed')
 }
 
-function assertVerifying(
-  alg: CryptoAlgorithm,
-  signature: Uint8Array,
-  message: Uint8Array,
-  publicKey: Uint8Array,
-): void {
+function assertVerifying({ alg, signature, message, publicKey }: AssertVerifyingParams): void {
   if (alg !== 'EdDSA' && alg !== 'ES256') throw new TypeError('Unsupported verification algorithm')
   for (const bytes of [signature, message, publicKey]) assertBytes(bytes)
 }
@@ -96,14 +98,30 @@ function napiProvider(binding: NapiBinding): CryptoProvider {
         items.map((item) => item.message),
       )
     },
-    async verify(alg, signature, message, publicKey) {
-      assertVerifying(alg, signature, message, publicKey)
-      if (alg === 'ES256') return await nodeCrypto.verify(alg, signature, message, publicKey)
-      return binding.verify(false, signature, message, publicKey)
+    async verify({ alg, signature, message, publicKey }: VerifyItem) {
+      assertVerifying({ alg: alg, signature: signature, message: message, publicKey: publicKey })
+      if (alg === 'ES256')
+        return await nodeCrypto.verify({
+          alg: alg,
+          signature: signature,
+          message: message,
+          publicKey: publicKey,
+        })
+      return binding.verify({
+        es256: false,
+        signature: signature,
+        message: message,
+        publicKey: publicKey,
+      })
     },
     async verifyBatch(items) {
       for (const item of items) {
-        assertVerifying(item.alg, item.signature, item.message, item.publicKey)
+        assertVerifying({
+          alg: item.alg,
+          signature: item.signature,
+          message: item.message,
+          publicKey: item.publicKey,
+        })
       }
       // Capture membership before suspending: the caller may change the array afterwards.
       const algs = items.map((item) => item.alg)
@@ -112,31 +130,38 @@ function napiProvider(binding: NapiBinding): CryptoProvider {
       // and the native batch copies them, so caller mutations afterwards change nothing.
       const es256 = items
         .filter((item) => item.alg === 'ES256')
-        .map((item) => nodeCrypto.verify('ES256', item.signature, item.message, item.publicKey))
+        .map((item) => {
+          return nodeCrypto.verify({
+            alg: 'ES256',
+            signature: item.signature,
+            message: item.message,
+            publicKey: item.publicKey,
+          })
+        })
       const native =
         ed25519.length === 0
           ? Promise.resolve([])
           : ed25519.length === 1
             ? Promise.resolve([
-                binding.verify(
-                  false,
-                  (ed25519[0] as (typeof items)[0]).signature,
-                  (ed25519[0] as (typeof items)[0]).message,
-                  (ed25519[0] as (typeof items)[0]).publicKey,
-                ),
+                binding.verify({
+                  es256: false,
+                  signature: (ed25519[0] as VerifyItem).signature,
+                  message: (ed25519[0] as VerifyItem).message,
+                  publicKey: (ed25519[0] as VerifyItem).publicKey,
+                }),
               ])
-            : binding.verifyBatch(
-                ed25519.map(() => false),
-                ed25519.map((item) => item.signature),
-                ed25519.map((item) => item.message),
-                ed25519.map((item) => item.publicKey),
-              )
+            : binding.verifyBatch({
+                es256: ed25519.map(() => false),
+                signatures: ed25519.map((item) => item.signature),
+                messages: ed25519.map((item) => item.message),
+                publicKeys: ed25519.map((item) => item.publicKey),
+              })
       const [edResults, esResults] = await Promise.all([native, Promise.all(es256)])
       let ed = 0
       let es = 0
-      return algs.map((alg) =>
-        alg === 'EdDSA' ? (edResults[ed++] as boolean) : (esResults[es++] as boolean),
-      )
+      return algs.map((alg) => {
+        return alg === 'EdDSA' ? (edResults[ed++] as boolean) : (esResults[es++] as boolean)
+      })
     },
     async blake3(input, dkLen) {
       assertBytes(input)

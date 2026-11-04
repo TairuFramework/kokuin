@@ -4,6 +4,13 @@ import { compareRecordDecisionHLC, parseCanonicalHLC } from './clock.js'
 import { type VerifiedRecordOp, verifySignedRecord } from './op.js'
 import { RecordClaimError, type RecordKey, type SignedRecord } from './record.js'
 
+export type RecordDecisionDigestParams = {
+  record: SignedRecord
+  opKind: string
+  methods?: MethodRegistry
+  options?: CryptoOptions
+}
+
 export type RecordDecision = {
   key: RecordKey
   decisionHLC: string
@@ -42,24 +49,30 @@ export function recordDecisionFromVerifiedCopies(
     key,
     ...winner,
     copies: entries
-      .filter(
-        ({ op }) =>
+      .filter(({ op }) => {
+        return (
           decisionStamp(op, stampSource) === winner.decisionHLC &&
-          op.contentDigest === winner.contentDigest,
-      )
+          op.contentDigest === winner.contentDigest
+        )
+      })
       .map(({ copy }) => copy)
       .sort((a, b) => (a.opHash < b.opHash ? -1 : a.opHash > b.opHash ? 1 : 0)),
   }
 }
 
 /** Stable identity of signed content, independent of the identity that signed this copy. */
-export async function recordDecisionDigest(
-  record: SignedRecord,
-  opKind: string,
-  methods?: MethodRegistry,
-  options?: CryptoOptions,
-): Promise<string> {
-  const op = await verifySignedRecord(record, opKind, methods, options)
-  if (op === null) throw new RecordClaimError('Record signature is invalid')
+export async function recordDecisionDigest({
+  record,
+  opKind,
+  methods,
+  options,
+}: RecordDecisionDigestParams): Promise<string> {
+  const op = await verifySignedRecord({
+    record: record,
+    opKind: opKind,
+    methods: methods,
+    options: options,
+  })
+  if (op === null) throw new RecordClaimError({ message: 'Record signature is invalid' })
   return op.contentDigest
 }

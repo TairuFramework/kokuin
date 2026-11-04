@@ -68,7 +68,7 @@ function parseOAuthError(status: number, text: string): OAuthTokenError {
   } catch {
     // non-JSON / empty error body → code undefined (treated as transient by callers)
   }
-  return new OAuthTokenError(status, code, description)
+  return new OAuthTokenError({ status: status, code: code, description: description })
 }
 
 async function readCappedText(response: Response, maxBytes: number): Promise<string> {

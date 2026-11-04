@@ -3,14 +3,18 @@ import { describe, expect, test } from 'vitest'
 import * as errors from '../src/errors.js'
 
 const constructors: Record<string, () => errors.VaultError> = {
-  VaultError: () => new errors.VaultError('generic', { code: 'VAULT_ERROR' }),
-  VaultPinRejected: () =>
-    new errors.VaultPinRejected('key', { attemptsRemaining: 2, retryAfter: 0 }),
-  VaultSecretRejected: () => new errors.VaultSecretRejected(['passphrase']),
-  VaultTampered: () => new errors.VaultTampered('descriptors altered'),
-  InvalidVaultFactors: () => new errors.InvalidVaultFactors('duplicate pin factor'),
-  NoAvailableFactor: () => new errors.NoAvailableFactor('did'),
-  UnsupportedVaultSuite: () => new errors.UnsupportedVaultSuite(99),
+  VaultError: () => new errors.VaultError({ message: 'generic', options: { code: 'VAULT_ERROR' } }),
+  VaultPinRejected: () => {
+    return new errors.VaultPinRejected({
+      keyID: 'key',
+      options: { attemptsRemaining: 2, retryAfter: 0 },
+    })
+  },
+  VaultSecretRejected: () => new errors.VaultSecretRejected({ kinds: ['passphrase'] }),
+  VaultTampered: () => new errors.VaultTampered({ message: 'descriptors altered' }),
+  InvalidVaultFactors: () => new errors.InvalidVaultFactors({ reason: 'duplicate pin factor' }),
+  NoAvailableFactor: () => new errors.NoAvailableFactor({ kind: 'did' }),
+  UnsupportedVaultSuite: () => new errors.UnsupportedVaultSuite({ suite: 99 }),
 }
 
 function exportedErrorClasses(): Array<string> {
@@ -31,14 +35,19 @@ describe('vault error codes', () => {
   })
 
   test('a subclass does not inherit its parent code', () => {
-    const pin = new errors.VaultPinRejected('key', { attemptsRemaining: 2, retryAfter: 0 })
+    const pin = new errors.VaultPinRejected({
+      keyID: 'key',
+      options: { attemptsRemaining: 2, retryAfter: 0 },
+    })
     expect(pin).toBeInstanceOf(errors.VaultSecretRejected)
     expect(pin.code).toBe('VAULT_PIN_REJECTED')
-    expect(new errors.VaultSecretRejected(['passphrase']).code).toBe('VAULT_SECRET_REJECTED')
+    expect(new errors.VaultSecretRejected({ kinds: ['passphrase'] }).code).toBe(
+      'VAULT_SECRET_REJECTED',
+    )
   })
 
   test('the code survives serialisation that loses the class', () => {
-    const caught: unknown = new errors.NoAvailableFactor('did')
+    const caught: unknown = new errors.NoAvailableFactor({ kind: 'did' })
     const code = caught instanceof errors.VaultError ? caught.code : null
     expect(JSON.parse(JSON.stringify({ code }))).toEqual({ code: 'VAULT_FACTOR_UNAVAILABLE' })
   })

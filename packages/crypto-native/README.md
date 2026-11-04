@@ -59,3 +59,10 @@ Default integration routes remain noble. Standalone Rust execution does not qual
 Stored measurements, route counters, expanded mobile conformance and final physical workloads remain release qualifications.
 Native registration, ABI and execution failures propagate without dynamic fallback.
 See [provider adoption](../../docs/reference/crypto-provider.md) for immutable options and asynchronous API migration.
+
+## Named params migration
+
+`CryptoProvider.verify` now accepts one `VerifyItem`: `{ alg, signature, message, publicKey }`.
+`sign` keeps its three positional arguments. Batch methods retain their existing signatures.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

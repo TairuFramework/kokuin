@@ -14,7 +14,7 @@ import {
 // ATTACK on the plain capability chain — no controller, no method registry: `did:key` only, so
 // nothing here depends on the fold. This is the surface every downstream consumer calls.
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -139,9 +139,9 @@ async function delegate(
   to: SigningIdentity,
   fields: { act?: string; res?: string; exp?: number; parent?: string },
 ): Promise<string> {
-  const token = await createCapability(
-    from,
-    {
+  const token = await createCapability({
+    signer: from,
+    payload: {
       sub: root.id,
       aud: to.id,
       act: fields.act ?? 'write',
@@ -149,9 +149,9 @@ async function delegate(
       exp: fields.exp,
       cap: fields.parent == null ? undefined : [fields.parent],
     },
-    undefined,
-    { parentCapability: fields.parent },
-  )
+    header: undefined,
+    options: { parentCapability: fields.parent },
+  })
   return stringifyToken(token)
 }
 

@@ -5,6 +5,13 @@ import HDKey from 'micro-key-producer/slip10.js'
 
 import { VERSION_TAG } from './version.js'
 
+export type DeriveKeyMaterialParams = {
+  seed: Uint8Array
+  path: string
+  alg: string
+  length?: number
+}
+
 const BASE_PATH = "m/44'/876'"
 const DELEGABLE = "0'"
 const ROOT_ONLY = "1'"
@@ -61,12 +68,12 @@ const KEY_LENGTHS: Record<string, number> = {
  * algorithm separation and arbitrary lengths, so adding an algorithm needs a new `info` string
  * and no path change.
  */
-export function deriveKeyMaterial(
-  seed: Uint8Array,
-  path: string,
-  alg: string,
-  length: number = KEY_LENGTHS[alg] ?? 32,
-): Uint8Array {
+export function deriveKeyMaterial({
+  seed,
+  path,
+  alg,
+  length = KEY_LENGTHS[alg] ?? 32,
+}: DeriveKeyMaterialParams): Uint8Array {
   const node = HDKey.fromMasterSeed(seed).derive(path)
   const ikm = node.privateKey
   if (ikm == null) {
@@ -81,7 +88,7 @@ export function deriveKeyPair(
   path: string,
   alg: string,
 ): { privateKey: Uint8Array; publicKey: Uint8Array } {
-  const privateKey = deriveKeyMaterial(seed, path, alg)
+  const privateKey = deriveKeyMaterial({ seed: seed, path: path, alg: alg })
   if (alg === 'EdDSA') {
     return { privateKey, publicKey: ed25519.getPublicKey(privateKey) }
   }

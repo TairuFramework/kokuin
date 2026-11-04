@@ -1,3 +1,10 @@
+export type KeyCacheSetParams = {
+  keyID: string
+  contentKey: Uint8Array
+  keyVersion: number
+  branchID: string
+}
+
 export const DEFAULT_UNLOCK_TTL = 15 * 60 * 1000
 
 export type KeyCacheParams = {
@@ -10,7 +17,7 @@ export type KeyCache = {
   get(keyID: string, keyVersion: number): { contentKey: Uint8Array; branchID: string } | null
 
   has(keyID: string, keyVersion: number): boolean
-  set(keyID: string, contentKey: Uint8Array, keyVersion: number, branchID: string): void
+  set(params: KeyCacheSetParams): void
   evictVersion(keyID: string, keyVersion: number): void
   evict(keyID: string): void
   evictAll(): void
@@ -79,7 +86,7 @@ export function createKeyCache(params: KeyCacheParams = {}): KeyCache {
       return live(keyID, keyVersion) != null
     },
 
-    set(keyID, contentKey, keyVersion, branchID) {
+    set({ keyID, contentKey, keyVersion, branchID }: KeyCacheSetParams) {
       evictVersion(keyID, keyVersion)
 
       const versions = entries.get(keyID) ?? new Map<number, CachedKey>()

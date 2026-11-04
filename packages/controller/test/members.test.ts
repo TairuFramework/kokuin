@@ -42,6 +42,8 @@ import { encodeKey } from '../src/keys.js'
 import type { ControllerLog } from '../src/log.js'
 import { createDenialMatcher, denialTargetsMember } from '../src/members.js'
 
+type RenewParams = { signer: EpochSigner; target: string; lease: number; parents?: Array<string> }
+
 /** {@link foldEpochDetailed}, which these fixtures never drive into the failed-signature refusal. */
 async function detailOf(params: FoldEpochParams): Promise<FoldEpochDetail> {
   const detail = await foldEpochDetailed(params)
@@ -81,7 +83,7 @@ function rootKeyAt(gen: number, seq: number): string {
   )
 }
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const value = items[i]
   if (value === undefined) throw new Error(`expected element at ${i}`)
   return value
@@ -140,12 +142,12 @@ async function add(
   })
 }
 
-async function renew(
-  signer: EpochSigner,
-  target: string,
-  lease: number,
-  parents: Array<string> = [epoch],
-): Promise<SignedEvent<EpochEvent>> {
+async function renew({
+  signer,
+  target,
+  lease,
+  parents = [epoch],
+}: RenewParams): Promise<SignedEvent<EpochEvent>> {
   return await createRenew({ signer, did, head, parents, add: target, lease })
 }
 
@@ -207,13 +209,15 @@ async function summary(events: Array<unknown>) {
   }
 }
 
-function permutations<T>(items: Array<T>): Array<Array<T>> {
+function permutations<TValue>(items: Array<TValue>): Array<Array<TValue>> {
   if (items.length <= 1) {
     return [items]
   }
-  return items.flatMap((item, i) =>
-    permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [item, ...rest]),
-  )
+  return items.flatMap((item, i) => {
+    return permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => {
+      return [item, ...rest]
+    })
+  })
 }
 
 /** Every presentation order folds to `expected`: the merge, not the arrival, decides. */
@@ -346,8 +350,8 @@ describe('adding a member', () => {
 
 describe('renewing a member', () => {
   test('another member renews: the lease is the maximum', async () => {
-    const higher = await renew(signerB, memberA.add, 2_000_000_000)
-    const lower = await renew(signerC, memberA.add, 1_500_000_000)
+    const higher = await renew({ signer: signerB, target: memberA.add, lease: 2_000_000_000 })
+    const lower = await renew({ signer: signerC, target: memberA.add, lease: 1_500_000_000 })
     const expected = await expectEveryOrder([higher, lower])
     expect(expected.rejected).toBe(0)
     expect((await folded([higher, lower])).head.members.get(memberA.add)?.lease).toBe(2_000_000_000)
@@ -356,7 +360,7 @@ describe('renewing a member', () => {
   })
 
   test('a member cannot renew itself', async () => {
-    const self = await renew(signerA, memberA.add, 2_000_000_000)
+    const self = await renew({ signer: signerA, target: memberA.add, lease: 2_000_000_000 })
     expect((await reasonsFor([self])).get(digest(self))).toBe(SELF_RENEW)
     expect((await folded([self])).head.members.get(memberA.add)?.lease).toBe(LEASE)
   })
@@ -366,20 +370,39 @@ describe('renewing a member', () => {
     const addA = await add(d)
     const addB = await add({ did: peerDID(d.key), key: d.key })
     const signerK: EpochSigner = { member: { privateKey: d.privateKey, add: digest(addA) } }
-    const renewal = await renew(signerK, digest(addB), 2_000_000_000, [digest(addA), digest(addB)])
+    const renewal = await renew({
+      signer: signerK,
+      target: digest(addB),
+      lease: 2_000_000_000,
+      parents: [digest(addA), digest(addB)],
+    })
     const log = { chain, events: [addA, addB, renewal] }
     expect((await rejectionsOf(did, log)).get(digest(renewal))).toBe(SELF_RENEW)
     // Control: another member renewing the alias, from the same parents, applies.
-    const other = await renew(signerB, digest(addB), 2_000_000_000, [digest(addA), digest(addB)])
+    const other = await renew({
+      signer: signerB,
+      target: digest(addB),
+      lease: 2_000_000_000,
+      parents: [digest(addA), digest(addB)],
+    })
     expect((await rejectionsOf(did, { chain, events: [addA, addB, other] })).size).toBe(0)
   })
 
   test('a renewal of an incarnation unknown to its causal past is refused', async () => {
     const added = await add(d)
     for (const signer of [root, signerB]) {
-      const concurrent = await renew(signer, digest(added), 2_000_000_000)
+      const concurrent = await renew({
+        signer: signer,
+        target: digest(added),
+        lease: 2_000_000_000,
+      })
       expect((await reasonsFor([added, concurrent])).get(digest(concurrent))).toBe(UNKNOWN_MEMBER)
-      const later = await renew(signer, digest(added), 2_000_000_000, [digest(added)])
+      const later = await renew({
+        signer: signer,
+        target: digest(added),
+        lease: 2_000_000_000,
+        parents: [digest(added)],
+      })
       expect((await reasonsFor([added, later])).size).toBe(0)
     }
   })
@@ -409,7 +432,7 @@ describe('removing a member', () => {
 
   test('a removal beats a concurrent renewal', async () => {
     const removal = await remove(signerB, memberA.add)
-    const renewal = await renew(signerC, memberA.add, 2_000_000_000)
+    const renewal = await renew({ signer: signerC, target: memberA.add, lease: 2_000_000_000 })
     const expected = await expectEveryOrder([removal, renewal])
     expect(expected.rejected).toBe(0)
     expect((await folded([removal, renewal])).head.members.get(memberA.add)).toMatchObject({
@@ -445,7 +468,12 @@ describe('removing a member', () => {
 
   test('a removed member signs nothing in its causal future', async () => {
     const removal = await remove(signerB, memberA.add)
-    const late = await renew(signerA, memberC.add, 2_000_000_000, [digest(removal)])
+    const late = await renew({
+      signer: signerA,
+      target: memberC.add,
+      lease: 2_000_000_000,
+      parents: [digest(removal)],
+    })
     expect((await reasonsFor([removal, late])).get(digest(late))).toBe(
       'signer was removed in the causal state',
     )
@@ -453,7 +481,7 @@ describe('removing a member', () => {
 
   test('copying an honest event onto a hostile branch changes nothing', async () => {
     // Honest: A renews C. Hostile: B removes A, then tries to make A's renewal its own descendant.
-    const honest = await renew(signerA, memberC.add, 2_000_000_000)
+    const honest = await renew({ signer: signerA, target: memberC.add, lease: 2_000_000_000 })
     const hostile = await remove(signerB, memberA.add)
     const expected = await summary([honest, hostile])
     expect(expected.rejected).toBe(0)
@@ -473,7 +501,12 @@ describe('removing a member', () => {
     const first = await add(d)
     const removal = await remove(root, digest(first), [digest(first)])
     const readd = await add({ ...d, lease: LEASE + 1 }, [digest(removal)])
-    const delayedRenew = await renew(signerB, digest(first), 2_000_000_000, [digest(first)])
+    const delayedRenew = await renew({
+      signer: signerB,
+      target: digest(first),
+      lease: 2_000_000_000,
+      parents: [digest(first)],
+    })
     const delayedRemove = await remove(signerC, digest(first), [digest(first)])
     const events = [first, removal, readd, delayedRenew, delayedRemove]
     const expected = await expectEveryOrder(events)
@@ -561,8 +594,13 @@ describe('revoking', () => {
 
   test('a denied member issues no further authorised events in its causal future but its concurrent events stand', async () => {
     const denial = await revoke(root, keyTarget(memberA.key))
-    const late = await renew(signerA, memberB.add, 2_000_000_000, [digest(denial)])
-    const concurrent = await renew(signerA, memberC.add, 2_000_000_000)
+    const late = await renew({
+      signer: signerA,
+      target: memberB.add,
+      lease: 2_000_000_000,
+      parents: [digest(denial)],
+    })
+    const concurrent = await renew({ signer: signerA, target: memberC.add, lease: 2_000_000_000 })
     const reasons = await reasonsFor([denial, late, concurrent])
     expect(reasons.get(digest(late))).toBe('signer is denied in the causal state')
     expect(reasons.has(digest(concurrent))).toBe(false)

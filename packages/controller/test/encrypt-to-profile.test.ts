@@ -25,8 +25,9 @@ describe('encrypting to a did:kokuin: profile', () => {
     const agreement = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
     const recipient = {
       id: did,
-      agreeKey: async (ephemeralPublicKey: Uint8Array) =>
-        x25519.getSharedSecret(agreement.privateKey, ephemeralPublicKey),
+      agreeKey: async (ephemeralPublicKey: Uint8Array) => {
+        return x25519.getSharedSecret(agreement.privateKey, ephemeralPublicKey)
+      },
     }
 
     expect(decoder.decode(await decryptToken(recipient, jwe))).toBe('hello')
@@ -54,8 +55,9 @@ describe('encrypting to a did:kokuin: profile', () => {
     const rotatedAgreement = deriveKeyPair(seed, agreementPath(0, 0, 1), 'X25519')
     const rotatedRecipient = {
       id: did,
-      agreeKey: async (ephemeralPublicKey: Uint8Array) =>
-        x25519.getSharedSecret(rotatedAgreement.privateKey, ephemeralPublicKey),
+      agreeKey: async (ephemeralPublicKey: Uint8Array) => {
+        return x25519.getSharedSecret(rotatedAgreement.privateKey, ephemeralPublicKey)
+      },
     }
     expect(decoder.decode(await decryptToken(rotatedRecipient, jwe))).toBe('hello, rotated')
 
@@ -64,8 +66,9 @@ describe('encrypting to a did:kokuin: profile', () => {
     const inceptionAgreement = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
     const inceptionRecipient = {
       id: did,
-      agreeKey: async (ephemeralPublicKey: Uint8Array) =>
-        x25519.getSharedSecret(inceptionAgreement.privateKey, ephemeralPublicKey),
+      agreeKey: async (ephemeralPublicKey: Uint8Array) => {
+        return x25519.getSharedSecret(inceptionAgreement.privateKey, ephemeralPublicKey)
+      },
     }
     // The AEAD tag check is what rejects it. Match both spellings @noble/ciphers has used
     // ("invalid ghash tag" before 2.3, "aes-gcm: invalid tag" from 2.3) so a patch bump does

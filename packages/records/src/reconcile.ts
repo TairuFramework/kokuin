@@ -15,6 +15,13 @@ import {
 } from './range.js'
 import type { RecordKey } from './record.js'
 
+export type AdvanceRecordPullParams = {
+  state: RecordPullState
+  local: ReadonlyArray<RangeLeaf>
+  response: RangeResponse
+  options?: CryptoOptions
+}
+
 /**
  * What a requester says about one range the responder summarized:
  * - `matches`: nothing to pull — it holds the same records, or the responder holds none;
@@ -104,7 +111,7 @@ export async function nextRequesterSteps(
     return [{ answer: await answerFor(local, response, options), bounds }]
   }
   if (response.leaves.length > RANGE_LEAF_THRESHOLD) {
-    throw new RecordRangeError('Leaf list is longer than the leaf threshold')
+    throw new RecordRangeError({ message: 'Leaf list is longer than the leaf threshold' })
   }
   for (const listed of response.leaves) {
     assertListedLeaf(listed)
@@ -145,13 +152,15 @@ function pendingIndexFor(pending: ReadonlyArray<RangeBounds>, bounds: RangeBound
     (range) => range.type === bounds.type && range.lower === bounds.lower,
   )
   if (index === -1) {
-    throw new RecordRangeError('Response for a range the pass is not waiting on')
+    throw new RecordRangeError({ message: 'Response for a range the pass is not waiting on' })
   }
   const range = pending[index] as RangeBounds
   const { lower, upper } = bounds
   const endsInside = range.upper === null ? true : upper !== null && upper <= range.upper
   if (!endsInside || (lower !== null && upper !== null && upper <= lower)) {
-    throw new RecordRangeError('Response reaches outside the range the pass is waiting on')
+    throw new RecordRangeError({
+      message: 'Response reaches outside the range the pass is waiting on',
+    })
   }
   return index
 }
@@ -164,12 +173,12 @@ function pendingIndexFor(pending: ReadonlyArray<RangeBounds>, bounds: RangeBound
  * @throws RecordRangeError when the message answers no pending range, reaches past it, or is
  * a leaf list `nextRequesterSteps` refuses.
  */
-export async function advanceRecordPull(
-  state: RecordPullState,
-  local: ReadonlyArray<RangeLeaf>,
-  response: RangeResponse,
-  options?: CryptoOptions,
-): Promise<{ state: RecordPullState; steps: Array<RequesterStep> }> {
+export async function advanceRecordPull({
+  state,
+  local,
+  response,
+  options,
+}: AdvanceRecordPullParams): Promise<{ state: RecordPullState; steps: Array<RequesterStep> }> {
   const index = pendingIndexFor(state.pending, response.bounds)
   const range = state.pending[index] as RangeBounds
   const pending = state.pending.map((bounds) => ({ ...bounds }))

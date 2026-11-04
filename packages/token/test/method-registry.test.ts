@@ -1,6 +1,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
+import type { SigningIdentity } from '../src/identity.js'
 import { createSigningIdentity, createSigningIdentityForDID } from '../src/identity.js'
 import type { DIDMethodResolver } from '../src/method.js'
 import { verifyToken } from '../src/token.js'
@@ -12,7 +13,7 @@ import { stringifyToken } from '../src/utils.js'
 const did = 'did:kokuin:zTestProfile' as DIDString
 
 function buildProfile(): {
-  identity: ReturnType<typeof createSigningIdentityForDID>
+  identity: SigningIdentity
   resolver: DIDMethodResolver
 } {
   const privateKey = ed25519.utils.randomSecretKey()
@@ -71,10 +72,12 @@ describe('VerifyTokenOptions.methods', () => {
     // answer, this would still pass.
     const impostor: DIDMethodResolver = {
       method: 'kokuin',
-      resolve: async () => ({
-        alg: 'EdDSA',
-        publicKey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
-      }),
+      resolve: async () => {
+        return {
+          alg: 'EdDSA',
+          publicKey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
+        }
+      },
     }
 
     await expect(verifyToken(compact, { methods: [impostor] })).rejects.toThrow('Invalid signature')

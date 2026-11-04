@@ -61,16 +61,16 @@ export function factorsFromDescriptors(
       const recipient = descriptor.params.recipient
 
       if (typeof recipient !== 'string')
-        throw new VaultTampered('did factor descriptor carries no recipient')
+        throw new VaultTampered({ message: 'did factor descriptor carries no recipient' })
 
       return { kind: 'did', recipientDID: recipient }
     }
 
-    if (!isSecretFactorKind(descriptor.kind)) throw new NoAvailableFactor(descriptor.kind)
+    if (!isSecretFactorKind(descriptor.kind)) throw new NoAvailableFactor({ kind: descriptor.kind })
 
     const input = inputs?.[descriptor.kind]
 
-    if (input == null) throw new NoAvailableFactor(descriptor.kind)
+    if (input == null) throw new NoAvailableFactor({ kind: descriptor.kind })
 
     const { m, t, p } = descriptor.params
     const cost =

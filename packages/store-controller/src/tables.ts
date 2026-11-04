@@ -5,7 +5,7 @@ import type { ControllerLog } from '@kokuin/controller'
 // The stored log round-trips through the adapter's JSON column: `encodeJSON`
 // stringifies on SQLite and passes through on Postgres, so the same value
 // serves select, insert and update.
-type JSONValueColumn<T> = ColumnType<T, T, T>
+type JSONValueColumn<TValue> = ColumnType<TValue, TValue, TValue>
 
 export type ControllerLogTable = {
   did: string

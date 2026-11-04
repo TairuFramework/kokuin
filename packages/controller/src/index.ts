@@ -18,6 +18,7 @@ export {
   verifyDigest,
   withinCanonicalDepth,
 } from './canonical.js'
+export type { DeriveKeyMaterialParams } from './derivation.js'
 export {
   agreementPath,
   authorityPath,
@@ -25,6 +26,7 @@ export {
   deriveKeyPair,
   recoveryPath,
 } from './derivation.js'
+export type { DeviceRevokeIndexParams, DeviceRevokeIndicesParams } from './device-revoke.js'
 export {
   type CreateDeviceRevokeParams,
   createDeviceRevoke,
@@ -32,6 +34,7 @@ export {
   deviceRevokeIndices,
 } from './device-revoke.js'
 export { TOO_MANY_FAILED_SIGNATURES } from './epoch.js'
+export type { EpochSignatureSigner } from './epoch-events.js'
 export {
   type AddEvent,
   type CreateAddParams,
@@ -52,6 +55,7 @@ export {
   type RevokeEvent,
   verifyEpochSignature,
 } from './epoch-events.js'
+export type { CreateResetParams, VerifySignaturesParams } from './events.js'
 export {
   type CreateRotateParams,
   createInception,
@@ -125,6 +129,7 @@ export {
   MAX_FAILED_SIGNATURES,
   MAX_LOG_EVENTS,
 } from './limits.js'
+export type { MergeLogsParams } from './log.js'
 export {
   type ControllerLog,
   epochHeads,

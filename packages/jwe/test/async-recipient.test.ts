@@ -98,9 +98,9 @@ describe('createTokenEncrypterAsync()', () => {
       resolve: async () => {
         throw new Error('unused')
       },
-      resolveAgreementKey: async () => [
-        { alg: 'ML-KEM-768' as never, publicKey: new Uint8Array(1184) },
-      ],
+      resolveAgreementKey: async () => {
+        return [{ alg: 'ML-KEM-768' as never, publicKey: new Uint8Array(1184) }]
+      },
     }
     await expect(createTokenEncrypterAsync(kokuinDID, { methods: [exotic] })).rejects.toThrow(
       /no supported key agreement algorithm/i,

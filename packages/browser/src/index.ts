@@ -1,3 +1,4 @@
+export type { BrowserKeyStoreConstructorParams } from './store.js'
 /**
  * Key store for browser.
  *

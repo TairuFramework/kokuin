@@ -46,13 +46,13 @@ async function revokeOf(target: string): Promise<SignedEvent> {
   })
 }
 
-async function mintFor(audienceId: string): Promise<string> {
-  const capability = await createCapability(
-    controller,
-    { sub: did, aud: audienceId, act: 'write', res: 'doc/1', exp: now() + 3600 },
-    undefined,
-    { methods },
-  )
+async function mintFor(audienceID: string): Promise<string> {
+  const capability = await createCapability({
+    signer: controller,
+    payload: { sub: did, aud: audienceID, act: 'write', res: 'doc/1', exp: now() + 3600 },
+    header: undefined,
+    options: { methods },
+  })
   return stringifyToken(capability)
 }
 

@@ -14,6 +14,16 @@ import {
   type RootKeySet,
 } from './members.js'
 
+type EvaluateParams = {
+  candidate: Candidate
+  causal: EpochState
+  anchor: KeyState
+  roots: RootKeySet
+  matches: DenialMatcher
+  budget: SignatureBudget
+  options: CryptoOptions
+}
+
 // Merging an epoch. The epoch's events are a set, not a sequence: nothing here may depend on the order
 // they were presented in, how often, or which copy of a duplicate arrived first. The three places that
 // could leak order are closed deliberately -- duplicates collapse by digest, ready events are taken
@@ -245,21 +255,22 @@ async function canonicalCopy(
  * Judge `event` against the state its parents established, and say what it adds. `null` reason means
  * it applies; the returned `effect` is then the event's own contribution.
  */
-async function evaluate(
-  candidate: Candidate,
-  causal: EpochState,
-  anchor: KeyState,
-  roots: RootKeySet,
-  matches: DenialMatcher,
-  budget: SignatureBudget,
-  options: CryptoOptions,
-): Promise<{ reason: string } | { effect: EpochState }> {
+async function evaluate({
+  candidate,
+  causal,
+  anchor,
+  roots,
+  matches,
+  budget,
+  options,
+}: EvaluateParams): Promise<{ reason: string } | { effect: EpochState }> {
   const { event, digest } = candidate
   // A copy of the same body under a different signature is not a different event, so the event is
   // authentic if any presented copy is. Judging only the first would let a forged copy shadow the
   // genuine one depending on arrival order. A trusted copy was judged so when it was kept.
-  const authenticate = async (verifies: (copy: SignedEvent<EpochEvent>) => Promise<boolean>) =>
-    candidate.trusted ?? (await canonicalCopy(candidate.copies, verifies, budget))
+  const authenticate = async (verifies: (copy: SignedEvent<EpochEvent>) => Promise<boolean>) => {
+    return candidate.trusted ?? (await canonicalCopy(candidate.copies, verifies, budget))
+  }
   let signer: MemberEntry | null = null
   if (event.by === undefined) {
     candidate.authentic = await authenticate(
@@ -457,12 +468,13 @@ export async function foldEpochDetailed(
   const crossEpoch: Array<string> = []
   for (const candidate of candidates.values()) {
     if (
-      candidate.event.p.some(
-        (parent) =>
+      candidate.event.p.some((parent) => {
+        return (
           parent !== anchor.epoch &&
           !candidates.has(parent) &&
-          (otherEpochs.has(parent) || chainDigests.has(parent)),
-      )
+          (otherEpochs.has(parent) || chainDigests.has(parent))
+        )
+      })
     ) {
       crossEpoch.push(candidate.digest)
     }
@@ -530,7 +542,15 @@ export async function foldEpochDetailed(
       }
     }
 
-    const outcome = await evaluate(candidate, causal, anchor, roots, matches, budget, params)
+    const outcome = await evaluate({
+      candidate: candidate,
+      causal: causal,
+      anchor: anchor,
+      roots: roots,
+      matches: matches,
+      budget: budget,
+      options: params,
+    })
     if (exhausted(budget)) {
       return { ok: false, reason: TOO_MANY_FAILED_SIGNATURES }
     }

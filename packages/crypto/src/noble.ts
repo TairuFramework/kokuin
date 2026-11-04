@@ -3,7 +3,7 @@ import { p256 } from '@noble/curves/nist.js'
 import { blake3 } from '@noble/hashes/blake3.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
 
-import type { CryptoAlgorithm, CryptoProvider } from './types.js'
+import type { CryptoProvider, VerifyItem } from './types.js'
 
 function assertBytes(value: Uint8Array): void {
   if (!(value instanceof Uint8Array) || !(value.buffer instanceof ArrayBuffer)) {
@@ -46,12 +46,7 @@ function strictPublicKey(bytes: Uint8Array): boolean {
   return valid
 }
 
-function verify(
-  alg: CryptoAlgorithm,
-  signature: Uint8Array,
-  message: Uint8Array,
-  publicKey: Uint8Array,
-): boolean {
+function verify({ alg, signature, message, publicKey }: VerifyItem): boolean {
   if (alg !== 'EdDSA' && alg !== 'ES256') throw new TypeError('Unsupported verification algorithm')
   for (const bytes of [signature, message, publicKey]) assertBytes(bytes)
   if (signature.length !== 64) return false
@@ -101,11 +96,18 @@ export const nobleCrypto: CryptoProvider = {
     if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
     return items.map((item) => sign(alg, item.privateKey, item.message))
   },
-  async verify(alg, signature, message, publicKey) {
-    return verify(alg, signature, message, publicKey)
+  async verify({ alg, signature, message, publicKey }: VerifyItem) {
+    return verify({ alg: alg, signature: signature, message: message, publicKey: publicKey })
   },
   async verifyBatch(items) {
-    return items.map((item) => verify(item.alg, item.signature, item.message, item.publicKey))
+    return items.map((item) => {
+      return verify({
+        alg: item.alg,
+        signature: item.signature,
+        message: item.message,
+        publicKey: item.publicKey,
+      })
+    })
   },
   async blake3(input, dkLen) {
     return hash(input, dkLen)

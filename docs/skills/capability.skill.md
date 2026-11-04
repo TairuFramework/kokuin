@@ -27,12 +27,15 @@ const rootIdentity = randomIdentity()
 const delegateIdentity = randomIdentity()
 
 // Issue a root capability — signer === sub, so no parentCapability needed
-const rootCap = await createCapability(rootIdentity, {
-  sub: rootIdentity.id, // self-issued: signer is the subject
-  aud: delegateIdentity.id, // who may use this capability
-  act: 'read', // allowed action (or Array<string>)
-  res: 'docs/*', // allowed resource pattern
-  exp: Math.floor(Date.now() / 1000) + 3600, // expires in 1 hour
+const rootCap = await createCapability({
+  signer: rootIdentity,
+  payload: {
+    sub: rootIdentity.id, // self-issued: signer is the subject
+    aud: delegateIdentity.id, // who may use this capability
+    act: 'read', // allowed action (or Array<string>)
+    res: 'docs/*', // allowed resource pattern
+    exp: Math.floor(Date.now() / 1000) + 3600, // expires in 1 hour
+  },
 })
 
 // Stringify before passing to another party or as parentCapability
@@ -56,18 +59,17 @@ import { stringifyToken } from '@kokuin/token'
 // `delegateIdentity` is the aud of rootCap, so it can re-delegate
 const consumerIdentity = randomIdentity()
 
-const delegatedCap = await createCapability(
-  delegateIdentity,
-  {
+const delegatedCap = await createCapability({
+  signer: delegateIdentity,
+  payload: {
     sub: rootIdentity.id, // same subject as root (resource owner)
     aud: consumerIdentity.id, // narrowed audience
     act: 'read', // must be a subset of rootCap's act
     res: 'docs/report', // narrowed from 'docs/*'
     exp: Math.floor(Date.now() / 1000) + 1800,
   },
-  undefined, // no custom JWT header needed
-  { parentCapability: rootCapStr } satisfies CreateCapabilityOptions,
-)
+  options: { parentCapability: rootCapStr } satisfies CreateCapabilityOptions,
+})
 
 const delegatedCapStr = stringifyToken(delegatedCap)
 ```
@@ -76,7 +78,7 @@ const delegatedCapStr = stringifyToken(delegatedCap)
 - `parentCapability` must be a **stringified** `CapabilityToken` (use `stringifyToken` from `@kokuin/token`)
 - The delegated `act`/`res` must not exceed the parent's — `createCapability` throws if it does
 - `sub` must match the parent's `sub` across the entire chain
-- The third argument (`header`) is `undefined` when no custom JWT header fields are needed
+- Omit `header` when no custom JWT header fields are needed
 
 ### Pattern 3: Check a Capability
 
@@ -115,12 +117,11 @@ A `did:kokuin:` profile's management members (devices its log admits by a root a
 import { checkCapability, createCapability } from '@kokuin/capability'
 
 const now = Math.floor(Date.now() / 1000)
-const grant = await createCapability(
-  memberIdentity, // a did:key, or the LONG form of a did:peer:4 — never the short form
-  { sub: profileDID, aud: agentDID, act: 'read', res: 'docs/*', iat: now, exp: now + 3600 },
-  undefined,
-  { member: { add: memberAddDigest, g: head.gen } },
-)
+const grant = await createCapability({
+  signer: memberIdentity, // a did:key, or the LONG form of a did:peer:4
+  payload: { sub: profileDID, aud: agentDID, act: 'read', res: 'docs/*', iat: now, exp: now + 3600 },
+  options: { member: { add: memberAddDigest, g: head.gen } },
+})
 
 // Verifier: one frozen view of the controller resolver per verification.
 await checkCapability(requested, invocationPayload, { methods: [controllerResolver.frozen()] })

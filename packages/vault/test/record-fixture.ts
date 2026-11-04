@@ -11,7 +11,7 @@ import type { SigningIdentity } from '@kokuin/token'
 import { toB64U } from '@sozai/codec'
 import { HLC } from '@sozai/hlc'
 
-import type { VaultRecordHooks, VaultRecordType } from '../src/index.js'
+import type { VaultKeyAddress, VaultRecordHooks, VaultRecordType } from '../src/index.js'
 import {
   createVaultKeyID,
   descriptorDigest,
@@ -19,51 +19,70 @@ import {
   vaultRecordTypes,
 } from '../src/index.js'
 
+export type SignedRecordParams = {
+  type: VaultRecordType
+  id: string
+  owner: string
+  hlc: string
+  payload: Uint8Array | null
+  meta: Record<string, unknown>
+}
+type ResignParams = {
+  signer: SigningIdentity
+  record: SignedRecord
+  changes?: Partial<SignedRecordParams>
+  opKind?: string
+}
+type DependentParams = {
+  signer: SigningIdentity
+  source: Chain
+  type: 'vault.entry' | 'vault.wrapping'
+  options?: {
+    id?: string
+    counter?: number
+    contentCounter?: number
+    nodeID?: string
+    recipient?: string | null
+    factorRecipient?: string
+    deleted?: boolean
+    consumer?: unknown
+  }
+}
+
 export const OP_KIND = 'kokuin/vault-op/v1'
 export const NOW = Date.parse('2026-10-24T12:00:00.000Z')
 export const UNIQUE = new Uint8Array(16).fill(7)
-export const stamp = (counter: number, nodeID = 'node') =>
-  HLC.serialize({ wallTime: NOW - 3600_000, counter, nodeID })
+export const stamp = (counter: number, nodeID = 'node') => {
+  return HLC.serialize({ wallTime: NOW - 3600_000, counter, nodeID })
+}
 
 export async function signed(
   signer: SigningIdentity,
-  params: {
-    type: VaultRecordType
-    id: string
-    owner: string
-    hlc: string
-    payload: Uint8Array | null
-    meta: Record<string, unknown>
-  },
+  params: SignedRecordParams,
   opKind = OP_KIND,
 ): Promise<SignedRecord> {
   const { payload, ...claim } = params
   return {
     ...params,
-    ...(await signRecordOp(
-      signer,
-      {
+    ...(await signRecordOp({
+      identity: signer,
+      claim: {
         ...claim,
         payloadDigest: await recordPayloadDigest(payload),
         deleted: payload === null,
       },
-      opKind,
-    )),
+      opKind: opKind,
+    })),
   }
 }
 
 export async function verified(record: SignedRecord) {
-  const op = await verifySignedRecord(record, OP_KIND)
+  const op = await verifySignedRecord({ record: record, opKind: OP_KIND })
   if (op === null) throw new Error('Fixture signature did not verify')
   return op
 }
 
-export async function resign(
-  signer: SigningIdentity,
-  record: SignedRecord,
-  changes: Partial<Parameters<typeof signed>[1]> = {},
-  opKind = OP_KIND,
-) {
+export async function resign({ signer, record, changes = {}, opKind = OP_KIND }: ResignParams) {
   const op = await verified(record)
   return await signed(
     signer,
@@ -81,7 +100,7 @@ export async function chain(
     state?: 'active' | 'retired'
     consumer?: unknown
   } = {},
-) {
+): Promise<Chain> {
   const owner = params.owner ?? signer.id
   const keyID = await createVaultKeyID(owner, UNIQUE)
   const version = params.version ?? 1
@@ -115,23 +134,16 @@ export async function chain(
   })
   return { key, branch, branchID, keyID, version, owner }
 }
-export type Chain = Awaited<ReturnType<typeof chain>>
+export type Chain = {
+  key: SignedRecord
+  branch: SignedRecord
+  branchID: string
+  keyID: string
+  version: number
+  owner: string
+}
 
-export async function dependent(
-  signer: SigningIdentity,
-  source: Chain,
-  type: 'vault.entry' | 'vault.wrapping',
-  options: {
-    id?: string
-    counter?: number
-    contentCounter?: number
-    nodeID?: string
-    recipient?: string | null
-    factorRecipient?: string
-    deleted?: boolean
-    consumer?: unknown
-  } = {},
-) {
+export async function dependent({ signer, source, type, options = {} }: DependentParams) {
   const payload = options.deleted
     ? null
     : type === 'vault.entry'
@@ -180,7 +192,7 @@ export function memoryStore() {
   let effects: Array<{ ownerDID: string; keyID: string }> = []
   const transactions = new WeakMap<
     RecordStoreAdapter,
-    { candidates: Array<SignedRecord>; effects: typeof effects }
+    { candidates: Array<SignedRecord>; effects: Array<VaultKeyAddress> }
   >()
   function adapter(view: Map<string, RecordDecision>): RecordStoreAdapter {
     const tx: RecordStoreAdapter = {

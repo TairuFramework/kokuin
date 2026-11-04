@@ -2,6 +2,21 @@ import { compareRecordDecisionHLC, parseCanonicalHLC } from './clock.js'
 import type { VerifiedRecordOp } from './op.js'
 import type { RecordClaim } from './record.js'
 
+type CompareMonotonicParams = {
+  incoming: VerifiedRecordOp
+  stored: VerifiedRecordOp
+  policy: Extract<MergePolicy, { kind: 'monotonic' }>
+  onEqual:
+    | ((incoming: VerifiedRecordOp, stored: VerifiedRecordOp) => EqualVersionDecision)
+    | undefined
+}
+export type CompareRecordOpsParams = {
+  incoming: VerifiedRecordOp
+  stored: VerifiedRecordOp | null
+  policy: MergePolicy
+  onEqual?: (incoming: VerifiedRecordOp, stored: VerifiedRecordOp) => EqualVersionDecision
+}
+
 /**
  * How a record type orders two ops for one record.
  *
@@ -121,14 +136,12 @@ function compareTuples(left: ReadonlyArray<number>, right: ReadonlyArray<number>
   return left.length - right.length
 }
 
-function compareMonotonic(
-  incoming: VerifiedRecordOp,
-  stored: VerifiedRecordOp,
-  policy: Extract<MergePolicy, { kind: 'monotonic' }>,
-  onEqual:
-    | ((incoming: VerifiedRecordOp, stored: VerifiedRecordOp) => EqualVersionDecision)
-    | undefined,
-): MergeDecision {
+function compareMonotonic({
+  incoming,
+  stored,
+  policy,
+  onEqual,
+}: CompareMonotonicParams): MergeDecision {
   const incomingVersion = readMonotonicVersion(policy, incoming.claim)
   if (incomingVersion === null) {
     return { status: 'reject', reason: 'version-invalid' }
@@ -204,12 +217,12 @@ function admitFirstWrite(incoming: VerifiedRecordOp, policy: MergePolicy): Merge
  * `onEqual` must be symmetric — the same answer for (a, b) as for (b, a) — or peers that saw
  * the two ops in opposite orders split.
  */
-export function compareRecordOps(
-  incoming: VerifiedRecordOp,
-  stored: VerifiedRecordOp | null,
-  policy: MergePolicy,
-  onEqual?: (incoming: VerifiedRecordOp, stored: VerifiedRecordOp) => EqualVersionDecision,
-): MergeDecision {
+export function compareRecordOps({
+  incoming,
+  stored,
+  policy,
+  onEqual,
+}: CompareRecordOpsParams): MergeDecision {
   if (stored === null) {
     return admitFirstWrite(incoming, policy)
   }
@@ -220,7 +233,12 @@ export function compareRecordOps(
     case 'lww':
       return compareLWW(incoming, stored)
     case 'monotonic':
-      return compareMonotonic(incoming, stored, policy, onEqual)
+      return compareMonotonic({
+        incoming: incoming,
+        stored: stored,
+        policy: policy,
+        onEqual: onEqual,
+      })
     case 'immutable':
       return compareImmutable(incoming, stored)
   }

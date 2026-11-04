@@ -1,3 +1,4 @@
+import type { CapabilityToken } from '@kokuin/capability'
 import {
   createRevocationChecker,
   isTokenRevokedError,
@@ -15,6 +16,8 @@ import {
 
 import type { DelegationStoreAPI } from './api.js'
 
+export type VerifiedRevocationErrorParams = { message: string; options?: ErrorOptions }
+
 const VERIFIED_REVOCATION_BRAND = '@kokuin/store-delegation/VerifiedRevocationError'
 
 /** A revocation proved by `@kokuin/capability` after the store and resolvers answered cleanly. */
@@ -23,7 +26,7 @@ export class VerifiedRevocationError extends Error {
     return VERIFIED_REVOCATION_BRAND
   }
 
-  constructor(message: string, options?: ErrorOptions) {
+  constructor({ message, options }: VerifiedRevocationErrorParams) {
     super(message, options)
     this.name = 'VerifiedRevocationError'
   }
@@ -78,7 +81,7 @@ function isPlainObject(value: unknown): boolean {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-type Verdict = (token: Parameters<VerifyTokenHook>[0], raw: string) => Promise<boolean>
+type Verdict = (token: CapabilityToken, raw: string) => Promise<boolean>
 
 function createDelegationRevocationVerdict(
   api: DelegationStoreAPI,
@@ -113,12 +116,11 @@ function createDelegationRevocationVerdict(
         hadDependencyFault = true
       }
     }
-    const wrap =
-      <Args extends Array<unknown>, Result>(
-        fn: (...args: Args) => Promise<Result>,
-        counts: (args: Args) => boolean,
-      ) =>
-      async (...args: Args): Promise<Result> => {
+    const wrap = <Args extends Array<unknown>, Result>(
+      fn: (...args: Args) => Promise<Result>,
+      counts: (args: Args) => boolean,
+    ) => {
+      return async (...args: Args): Promise<Result> => {
         try {
           return await fn(...args)
         } catch (error) {
@@ -128,19 +130,22 @@ function createDelegationRevocationVerdict(
           throw error
         }
       }
-    const trackedMethods: MethodRegistry | undefined = options?.methods?.map((base) => ({
-      method: base.method,
-      resolve: wrap(base.resolve.bind(base), isOwnIssuer),
-      ...(base.resolveHistoric == null
-        ? {}
-        : { resolveHistoric: wrap(base.resolveHistoric.bind(base), isOwnIssuer) }),
-      ...(base.resolveDenySet == null
-        ? {}
-        : { resolveDenySet: wrap(base.resolveDenySet.bind(base), isOwnIssuer) }),
-      ...(base.resolveAgreementKey == null
-        ? {}
-        : { resolveAgreementKey: wrap(base.resolveAgreementKey.bind(base), isOwnIssuer) }),
-    }))
+    }
+    const trackedMethods: MethodRegistry | undefined = options?.methods?.map((base) => {
+      return {
+        method: base.method,
+        resolve: wrap(base.resolve.bind(base), isOwnIssuer),
+        ...(base.resolveHistoric == null
+          ? {}
+          : { resolveHistoric: wrap(base.resolveHistoric.bind(base), isOwnIssuer) }),
+        ...(base.resolveDenySet == null
+          ? {}
+          : { resolveDenySet: wrap(base.resolveDenySet.bind(base), isOwnIssuer) }),
+        ...(base.resolveAgreementKey == null
+          ? {}
+          : { resolveAgreementKey: wrap(base.resolveAgreementKey.bind(base), isOwnIssuer) }),
+      }
+    })
     const trackedBackend: RevocationBackend = {
       add: backend.add,
       // Store faults always count: a failed read may be hiding this issuer's own record.
@@ -171,7 +176,7 @@ export function createDelegationRevocationChecker(
   const verdict = createDelegationRevocationVerdict(api, options)
   const checker: VerifyTokenHook = async (token, raw) => {
     if (await verdict(token, raw)) {
-      throw new VerifiedRevocationError(`Token revoked: ${token.payload.jti}`)
+      throw new VerifiedRevocationError({ message: `Token revoked: ${token.payload.jti}` })
     }
   }
   return Object.assign(checker, { verdict })

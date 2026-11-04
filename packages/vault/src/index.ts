@@ -11,6 +11,7 @@ export type {
   DecodedVaultRecord,
   VaultEntryMetadata,
   VaultRecordMetas,
+  VaultRecordPayloadErrorParams,
   VaultRecordPayloads,
   VaultRecordType,
 } from './records.js'

@@ -23,10 +23,12 @@ import type { VaultMethods } from './records-methods.js'
 import { settleAll } from './settle.js'
 import type { VaultStoreAPI } from './types.js'
 
+export type VaultRecordRowErrorParams = RecordKey & { cause?: unknown }
+
 export class VaultRecordRowError extends Error {
   #type: string
   #id: string
-  constructor(key: RecordKey & { cause?: unknown }) {
+  constructor(key: VaultRecordRowErrorParams) {
     super(`Stored vault record ${key.type} ${key.id} is corrupt`, { cause: key.cause })
     this.name = 'VaultRecordRowError'
     this.#type = key.type
@@ -149,7 +151,12 @@ export async function checked(row: VaultRecordTable, bound: Bound): Promise<Chec
     // biome-ignore lint/style/useErrorCause: the constructor forwards cause
     throw new VaultRecordRowError({ ...key, cause })
   }
-  const op = await verifySignedRecord(copy, bound.opKind, bound.methods, bound.params)
+  const op = await verifySignedRecord({
+    record: copy,
+    opKind: bound.opKind,
+    methods: bound.methods,
+    options: bound.params,
+  })
   if (op === null) return null
   if (
     !(await recordPayloadMatches(copy, op.claim, bound.params)) ||

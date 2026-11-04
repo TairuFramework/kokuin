@@ -55,7 +55,9 @@ function keyFromKid(did: string, kid: string | undefined): string | null {
     return null
   }
   if (!kid.startsWith('#')) {
-    throw new IssuerKeyNotFoundError(`Controller ${did} kid is not a key fragment: ${kid}`)
+    throw new IssuerKeyNotFoundError({
+      message: `Controller ${did} kid is not a key fragment: ${kid}`,
+    })
   }
   return kid.slice(1)
 }
@@ -76,14 +78,14 @@ function headSigningKey(did: string, head: KeyState, kid?: string): string {
   if (key == null) {
     const first = head.keys[0]
     if (first === undefined) {
-      throw new IssuerKeyNotFoundError(`Controller ${did} has no signing key`)
+      throw new IssuerKeyNotFoundError({ message: `Controller ${did} has no signing key` })
     }
     return first
   }
   if (!head.keys.includes(key)) {
-    throw new IssuerKeyNotFoundError(
-      `Controller ${did} kid names a key that is not current: ${kid}`,
-    )
+    throw new IssuerKeyNotFoundError({
+      message: `Controller ${did} kid names a key that is not current: ${kid}`,
+    })
   }
   return key
 }
@@ -106,7 +108,7 @@ function historicSigningKey(did: string, { states, head }: FoldedView, kid?: str
   if (key == null) {
     const first = head.keys[0]
     if (first === undefined) {
-      throw new IssuerKeyNotFoundError(`Controller ${did} has no signing key`)
+      throw new IssuerKeyNotFoundError({ message: `Controller ${did} has no signing key` })
     }
     return first
   }
@@ -119,9 +121,9 @@ function historicSigningKey(did: string, { states, head }: FoldedView, kid?: str
       return key
     }
   }
-  throw new IssuerKeyNotFoundError(
-    `Controller ${did} kid names a key outside the current generation: ${kid}`,
-  )
+  throw new IssuerKeyNotFoundError({
+    message: `Controller ${did} kid names a key outside the current generation: ${kid}`,
+  })
 }
 
 /**
@@ -175,7 +177,9 @@ export function signingKeyFrom({
   // failed is the key. Retyping it unresolvable would let a `kid` (unauthenticated) make this
   // controller read as unresolvable to every fail-closed caller. See {@link keyFromKid}.
   if (head.deny.has(keyTarget(selected))) {
-    throw new IssuerKeyNotFoundError(`Controller ${did} ${KEY_REVOKED}: ${keyTarget(selected)}`)
+    throw new IssuerKeyNotFoundError({
+      message: `Controller ${did} ${KEY_REVOKED}: ${keyTarget(selected)}`,
+    })
   }
   const key = decodeKey(selected)
   if (key.alg === 'X25519') {
@@ -227,8 +231,11 @@ export function agreementKeysFrom(did: string, head: KeyState): Array<ResolvedAg
  * unresolvable.
  */
 export function memberFrom(did: string, head: KeyState, query: MemberQuery): ResolvedMember {
-  const refuse = (why: string) =>
-    new IssuerKeyNotFoundError(`Controller ${did} ${query.did} is ${MEMBER_NOT_EFFECTIVE}: ${why}`)
+  const refuse = (why: string) => {
+    return new IssuerKeyNotFoundError({
+      message: `Controller ${did} ${query.did} is ${MEMBER_NOT_EFFECTIVE}: ${why}`,
+    })
+  }
   if (query.gen !== head.gen) {
     throw refuse(`generation ${String(query.gen)} is not the current ${head.gen}`)
   }
@@ -257,18 +264,23 @@ export function historicMemberFrom(
   view: FoldedView,
   query: MemberQuery,
 ): ResolvedHistoricMember {
-  const refuse = (cause?: unknown) =>
-    new IssuerKeyNotFoundError(`Controller ${did} ${query.did} is ${MEMBER_NOT_HISTORIC}`, {
-      cause,
+  const refuse = (cause?: unknown) => {
+    return new IssuerKeyNotFoundError({
+      message: `Controller ${did} ${query.did} is ${MEMBER_NOT_HISTORIC}`,
+      options: {
+        cause,
+      },
     })
+  }
   if (query.gen !== view.head.gen) throw refuse()
   const current = view.head.members.get(query.add)
   // A live denial is a compromise response, even when an earlier snapshot admitted the member.
   if (current !== undefined && !current.removed && !current.effective) throw refuse()
-  const historic = view.states.findLast(
-    (state) =>
-      state.gen === query.gen && (state.members.has(query.add) || state.tombstones?.has(query.add)),
-  )
+  const historic = view.states.findLast((state) => {
+    return (
+      state.gen === query.gen && (state.members.has(query.add) || state.tombstones?.has(query.add))
+    )
+  })
   const tombstone = view.head.tombstones?.get(query.add) ?? historic?.tombstones?.get(query.add)
   const member =
     current ??

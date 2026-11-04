@@ -50,7 +50,7 @@ The `id` field on every identity is its DID (e.g. `did:key:z6Mk…`). Because th
 **Type system overview:**
 
 ```typescript
-type Identity = { readonly id: string }
+type Identity = { id: string }
 
 type SigningIdentity = Identity & {
   publicKey: Uint8Array
@@ -469,7 +469,7 @@ Error types exported from `@kokuin/ledger-device`:
 import type { KeyEntry, KeyStore, MutableKeyEntry } from '@kokuin/token'
 
 type KeyEntry<PrivateKeyType> = {
-  readonly keyID: string
+  keyID: string
   getAsync(): Promise<PrivateKeyType | null>
   provideAsync(): Promise<PrivateKeyType> // get-or-create
 }

@@ -9,6 +9,13 @@ import type { FactorDescriptor } from './factors.js'
 import { createVaultKeyID } from './id.js'
 import type { EncryptEntryResult, WrapResult } from './suite.js'
 
+export type VaultRecordPayloadErrorParams = {
+  type: string
+  id: string
+  reason: string
+  cause?: unknown
+}
+
 export const VAULT_OP_KIND = 'kokuin/vault-op/v1'
 export const VAULT_RECORD_TYPES = [
   'vault.key',
@@ -77,7 +84,7 @@ export type DecodedVaultRecord = {
 export class VaultRecordPayloadError extends Error {
   #type: string
   #id: string
-  constructor(params: { type: string; id: string; reason: string; cause?: unknown }) {
+  constructor(params: VaultRecordPayloadErrorParams) {
     const { type, id, reason, cause } = params
 
     super(`Vault record ${type} ${id}: ${reason}`, { cause })

@@ -115,7 +115,12 @@ function storedRowAdmits(
     return true
   }
   // The same winner apply would store: the proof must be the op a merge keeps.
-  const decision = compareRecordOps(proof, stored, definition.policy, definition.onEqual)
+  const decision = compareRecordOps({
+    incoming: proof,
+    stored: stored,
+    policy: definition.policy,
+    onEqual: definition.onEqual,
+  })
   return (
     decision.status === 'apply' ||
     (decision.status === 'fork' && proof.contentDigest > stored.contentDigest)
@@ -128,7 +133,12 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
   if (definition === undefined) {
     return null
   }
-  const op = await verifySignedRecord(proof, ctx.opKind, ctx.methods, ctx)
+  const op = await verifySignedRecord({
+    record: proof,
+    opKind: ctx.opKind,
+    methods: ctx.methods,
+    options: ctx,
+  })
   if (op === null || op.claim.deleted || !(await recordPayloadMatches(proof, op.claim, ctx))) {
     return null
   }
@@ -157,22 +167,27 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
   const storedOp =
     storedRecord === null
       ? null
-      : await verifySignedRecord(storedRecord, ctx.opKind, ctx.methods, ctx)
+      : await verifySignedRecord({
+          record: storedRecord,
+          opKind: ctx.opKind,
+          methods: ctx.methods,
+          options: ctx,
+        })
   if (!storedRowAdmits(op, storedOp, definition)) {
     return null
   }
   // A proof the responder cannot check for lack of a dependency earns nothing, the same as
   // one that fails, rather than parking as it would in apply.
   const unsatisfied = await Promise.all(
-    dependencies.map((dependency) =>
-      isDependencyUnsatisfiedBy(
-        dependency,
-        decisions.get(recordKeyText(dependency)) ?? null,
-        ctx.opKind,
-        ctx.methods,
-        ctx,
-      ),
-    ),
+    dependencies.map((dependency) => {
+      return isDependencyUnsatisfiedBy({
+        dependency: dependency,
+        stored: decisions.get(recordKeyText(dependency)) ?? null,
+        opKind: ctx.opKind,
+        methods: ctx.methods,
+        options: ctx,
+      })
+    }),
   )
   if (unsatisfied.includes(true)) {
     return null
@@ -330,7 +345,12 @@ export async function visibleTo(
   if (rules.length === 0) {
     return false
   }
-  const op = await verifySignedRecord(record, captured.opKind, captured.methods, captured)
+  const op = await verifySignedRecord({
+    record: record,
+    opKind: captured.opKind,
+    methods: captured.methods,
+    options: captured,
+  })
   if (op === null) {
     return false
   }

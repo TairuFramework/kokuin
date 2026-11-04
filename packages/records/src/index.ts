@@ -5,6 +5,7 @@
  * @module records
  */
 
+export type { RecordContentRefusalErrorParams, RecordTypeGraphErrorParams } from './apply.js'
 export {
   type ApplyRecordChunkParams,
   type ApplyResult,
@@ -21,12 +22,19 @@ export {
   type VisibilityContext,
 } from './apply.js'
 export { compareRecordDecisionHLC, parseBoundedHLC, parseCanonicalHLC } from './clock.js'
+export type { RecordDecisionDigestParams } from './decision.js'
 export {
   type RecordDecision,
   recordDecisionDigest,
   recordDecisionFromVerifiedCopies,
   type VerifiedRecordCopy,
 } from './decision.js'
+export type {
+  RecordOpSigningErrorParams,
+  SignRecordOpParams,
+  VerifyRecordOpParams,
+  VerifySignedRecordParams,
+} from './op.js'
 export {
   createRecordVerifier,
   RECORD_OP_MEMO_SIZE,
@@ -36,12 +44,14 @@ export {
   verifyRecordOp,
   verifySignedRecord,
 } from './op.js'
+export type { CompareRecordOpsParams } from './policy.js'
 export {
   compareRecordOps,
   type EqualVersionDecision,
   type MergeDecision,
   type MergePolicy,
 } from './policy.js'
+export type { RecordRangeErrorParams, SplitRangeParams } from './range.js'
 export {
   assertListedLeaf,
   fingerprintRange,
@@ -58,6 +68,7 @@ export {
   splitRange,
   summarizeRange,
 } from './range.js'
+export type { AdvanceRecordPullParams } from './reconcile.js'
 export {
   advanceRecordPull,
   beginRecordPull,
@@ -66,6 +77,7 @@ export {
   type RecordPullState,
   type RequesterStep,
 } from './reconcile.js'
+export type { RecordClaimErrorParams } from './record.js'
 export {
   canonicalRecordClaim,
   isRecordClaim,

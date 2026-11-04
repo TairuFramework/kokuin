@@ -23,3 +23,14 @@ Provider errors propagate unchanged. Strict verification rejects crafted signatu
 There is no historical rescan or version gate.
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new UnresolvableIssuerError` | `UnresolvableIssuerErrorParams` | `message, options?` |
+| `new IssuerKeyNotFoundError` | `IssuerKeyNotFoundErrorParams` | `message, options?` |
+
+`Identity.id` and `KeyEntry.keyID` no longer use TypeScript `readonly`. Existing runtime getters remain unchanged.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

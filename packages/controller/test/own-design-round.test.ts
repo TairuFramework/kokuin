@@ -18,11 +18,18 @@ import { encodeKey } from '../src/keys.js'
 import { createControllerResolver } from '../src/resolver.js'
 import { resolveBranches } from '../src/supersede.js'
 
+type SettleParams = {
+  did: string
+  prior: SignedEvent['event']
+  deny: Array<string>
+  members?: Array<MemberEntry>
+}
+
 // The 2026-08-15 design round. Each row is the attack that found the defect, kept with the
 // assertion flipped to the fixed behaviour, and each carries the control that shows the guard under
 // test is the one deciding.
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -47,12 +54,7 @@ async function build() {
 }
 
 /** A rotate on `prior` whose snapshot denies `deny` and carries `members`. */
-async function settle(
-  did: string,
-  prior: SignedEvent['event'],
-  deny: Array<string>,
-  members: Array<MemberEntry> = [],
-): Promise<SignedEvent> {
+async function settle({ did, prior, deny, members = [] }: SettleParams): Promise<SignedEvent> {
   return await createRotate({ seed, profile: 0, did, prior, snapshot: { members, deny } })
 }
 
@@ -78,8 +80,8 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
     // Two honest, conflicting settlements at position 1: a genuine fork, and the finding that
     // matters.
     const honest = [
-      [inception, await settle(did, inception.event, ['did:key:zA'])],
-      [inception, await settle(did, inception.event, ['did:key:zB'])],
+      [inception, await settle({ did: did, prior: inception.event, deny: ['did:key:zA'] })],
+      [inception, await settle({ did: did, prior: inception.event, deny: ['did:key:zB'] })],
     ]
 
     // CONTROL — the fork alone. This is what must survive the attacker's presence.
@@ -201,7 +203,12 @@ describe('carrying a state forward cannot silently drop the rest of it', () => {
       lease: 1_900_000_000,
     }
     const leaked = keyTarget(at(inception.event.k, 0))
-    const settled = await settle(did, inception.event, [device, leaked], [member])
+    const settled = await settle({
+      did: did,
+      prior: inception.event,
+      deny: [device, leaked],
+      members: [member],
+    })
     const folded = await foldLog(did, { chain: [inception, settled], events: [] })
     expect(folded.ok).toBe(true)
     if (!folded.ok) return
@@ -212,12 +219,12 @@ describe('carrying a state forward cannot silently drop the rest of it', () => {
     // change. The checkpointed retirement cannot be lost that way (the fold refuses the rotate), but
     // the member and every other denial can: this is a legal event that dismisses the management
     // tier and un-revokes nothing it meant to.
-    const byHand = await settle(did, settled.event, [leaked])
+    const byHand = await settle({ did: did, prior: settled.event, deny: [leaked] })
     const lost = await foldLog(did, { chain: [inception, settled, byHand], events: [] })
     expect(lost.ok).toBe(true)
     if (!lost.ok) return
     expect(at(lost.states, 2).members.size, 'the member is no longer in the set').toBe(0)
-    const forgotten = await settle(did, settled.event, [device])
+    const forgotten = await settle({ did: did, prior: settled.event, deny: [device] })
     expect(
       await foldLog(did, { chain: [inception, settled, forgotten], events: [] }),
     ).toMatchObject({
@@ -274,13 +281,12 @@ describe('signing as the profile without the root seed', () => {
 
     // CONTROL — a key the head does not publish is refused at construction, not at verification.
     const retired = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
-    await expect(
-      async () =>
-        await createControllerIdentityWithKey({
-          privateKey: retired.privateKey,
-          log: { chain: log, events: [] },
-        }),
-    ).rejects.toThrow(/not one of the current authority keys/)
+    await expect(async () => {
+      return await createControllerIdentityWithKey({
+        privateKey: retired.privateKey,
+        log: { chain: log, events: [] },
+      })
+    }).rejects.toThrow(/not one of the current authority keys/)
   })
 })
 
@@ -299,7 +305,7 @@ describe('a truncated log is refused when one further along has been seen', () =
   test('a prefix served after the full log is refused', async () => {
     const { inception, did } = await build()
     const device = 'did:key:zThief'
-    const full = [inception, await settle(did, inception.event, [device])]
+    const full = [inception, await settle({ did: did, prior: inception.event, deny: [device] })]
     const truncated = [inception]
 
     const resolver = await resolverOver([full, truncated])
@@ -313,7 +319,10 @@ describe('a truncated log is refused when one further along has been seen', () =
     // The commonest call there is. Comparing by array identity rather than by folded head would
     // reject this, which is a resolver that stops working after its first answer.
     const { inception, did } = await build()
-    const full = [inception, await settle(did, inception.event, ['did:key:zThief'])]
+    const full = [
+      inception,
+      await settle({ did: did, prior: inception.event, deny: ['did:key:zThief'] }),
+    ]
     const resolver = await resolverOver([full, [...full]])
     await resolver.resolveDenySet?.(did)
     expect([...(await denySet(resolver, did))]).toEqual(['did:key:zThief'])
@@ -322,7 +331,10 @@ describe('a truncated log is refused when one further along has been seen', () =
   test('CONTROL — a log carried further is accepted', async () => {
     const { inception, did } = await build()
     const first = [inception]
-    const later = [inception, await settle(did, inception.event, ['did:key:zThief'])]
+    const later = [
+      inception,
+      await settle({ did: did, prior: inception.event, deny: ['did:key:zThief'] }),
+    ]
     const resolver = await resolverOver([first, later])
     await resolver.resolveDenySet?.(did)
     expect([...(await denySet(resolver, did))]).toEqual(['did:key:zThief'])

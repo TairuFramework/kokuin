@@ -206,9 +206,9 @@ export function createDelegationStore(
                 hlc: token.hlc,
                 superseded: 1,
               })
-              .onConflict((oc) =>
-                oc.columns(['grantor', 'audience', 'resource', 'jti']).doNothing(),
-              )
+              .onConflict((oc) => {
+                return oc.columns(['grantor', 'audience', 'resource', 'jti']).doNothing()
+              })
               .execute()
             return false
           }
@@ -235,16 +235,18 @@ export function createDelegationStore(
               hlc: token.hlc,
               superseded: 0,
             })
-            .onConflict((oc) =>
-              oc.columns(['grantor', 'audience', 'resource', 'jti']).doUpdateSet((eb) => ({
-                token: eb.ref('excluded.token'),
-                act: eb.ref('excluded.act'),
-                exp: eb.ref('excluded.exp'),
-                hlc: eb.ref('excluded.hlc'),
-                superseded: 0,
-                updated_at: adapter.encodeTimestamp(new Date()) as number,
-              })),
-            )
+            .onConflict((oc) => {
+              return oc.columns(['grantor', 'audience', 'resource', 'jti']).doUpdateSet((eb) => {
+                return {
+                  token: eb.ref('excluded.token'),
+                  act: eb.ref('excluded.act'),
+                  exp: eb.ref('excluded.exp'),
+                  hlc: eb.ref('excluded.hlc'),
+                  superseded: 0,
+                  updated_at: adapter.encodeTimestamp(new Date()) as number,
+                }
+              })
+            })
             .execute()
 
           return (
@@ -283,23 +285,23 @@ export function createDelegationStore(
     }): Promise<Array<DelegationToken>> {
       return await db
         .selectFrom('delegation_tokens')
-        .leftJoin('revoked_capabilities', (join) =>
-          join
+        .leftJoin('revoked_capabilities', (join) => {
+          return join
             .onRef('revoked_capabilities.jti', '=', 'delegation_tokens.jti')
-            .onRef('revoked_capabilities.revoker_did', '=', 'delegation_tokens.grantor'),
-        )
+            .onRef('revoked_capabilities.revoker_did', '=', 'delegation_tokens.grantor')
+        })
         .selectAll('delegation_tokens')
         .where('audience', '=', normalizeDID(params.audience))
         .where('delegation_tokens.superseded', '=', 0)
         .where('exp', '>', params.atTime)
         // Pending revocations (verified_at IS NULL) are not binding until the
         // cap-arrival cross-check verifies them, so they don't filter tokens.
-        .where((eb) =>
-          eb.or([
+        .where((eb) => {
+          return eb.or([
             eb('revoked_capabilities.jti', 'is', null),
             eb('revoked_capabilities.verified_at', 'is', null),
-          ]),
-        )
+          ])
+        })
         .execute()
     },
 
@@ -316,11 +318,11 @@ export function createDelegationStore(
       const grantor = normalizeDID(params.grantor)
       return await db
         .selectFrom('delegation_tokens')
-        .leftJoin('revoked_capabilities', (join) =>
-          join
+        .leftJoin('revoked_capabilities', (join) => {
+          return join
             .onRef('revoked_capabilities.jti', '=', 'delegation_tokens.jti')
-            .onRef('revoked_capabilities.revoker_did', '=', 'delegation_tokens.grantor'),
-        )
+            .onRef('revoked_capabilities.revoker_did', '=', 'delegation_tokens.grantor')
+        })
         .selectAll('delegation_tokens')
         .where('delegation_tokens.grantor', '=', grantor)
         .where('audience', '=', normalizeDID(params.audience))
@@ -412,19 +414,21 @@ export function createDelegationStore(
             cap_exp: capExp,
             hlc: input.hlc,
           })
-          .onConflict((oc) =>
-            oc
+          .onConflict((oc) => {
+            return oc
               .columns(['jti', 'revoker_did'])
-              .doUpdateSet((eb) => ({
-                revoked_iat: eb.ref('excluded.revoked_iat'),
-                revocation_token: eb.ref('excluded.revocation_token'),
-                verified_at: eb.ref('excluded.verified_at'),
-                cap_exp: eb.ref('excluded.cap_exp'),
-                hlc: eb.ref('excluded.hlc'),
-                updated_at: adapter.encodeTimestamp(new Date()) as number,
-              }))
-              .where((eb) => eb('excluded.hlc', '>', eb.ref('revoked_capabilities.hlc'))),
-          )
+              .doUpdateSet((eb) => {
+                return {
+                  revoked_iat: eb.ref('excluded.revoked_iat'),
+                  revocation_token: eb.ref('excluded.revocation_token'),
+                  verified_at: eb.ref('excluded.verified_at'),
+                  cap_exp: eb.ref('excluded.cap_exp'),
+                  hlc: eb.ref('excluded.hlc'),
+                  updated_at: adapter.encodeTimestamp(new Date()) as number,
+                }
+              })
+              .where((eb) => eb('excluded.hlc', '>', eb.ref('revoked_capabilities.hlc')))
+          })
           .execute()
 
         if (existing == null) {
@@ -484,11 +488,11 @@ export function createDelegationStore(
     async getHeldRevocations(params: { audience: string }): Promise<Array<HeldRevocation>> {
       const rows = await db
         .selectFrom('revoked_capabilities')
-        .innerJoin('delegation_tokens', (join) =>
-          join
+        .innerJoin('delegation_tokens', (join) => {
+          return join
             .onRef('delegation_tokens.jti', '=', 'revoked_capabilities.jti')
-            .onRef('delegation_tokens.grantor', '=', 'revoked_capabilities.revoker_did'),
-        )
+            .onRef('delegation_tokens.grantor', '=', 'revoked_capabilities.revoker_did')
+        })
         .select([
           'revoked_capabilities.jti as jti',
           'delegation_tokens.grantor as grantor',
@@ -501,16 +505,18 @@ export function createDelegationStore(
         .where('revoked_capabilities.verified_at', 'is not', null)
         .where('delegation_tokens.audience', '=', normalizeDID(params.audience))
         .execute()
-      return rows.map((row) => ({
-        jti: row.jti,
-        grantor: row.grantor,
-        audience: row.audience,
-        revoker_did: row.revoker_did,
-        revoked_iat: row.revoked_iat,
-        // Non-null by the WHERE above.
-        verified_at: row.verified_at as number,
-        cap_exp: row.cap_exp,
-      }))
+      return rows.map((row) => {
+        return {
+          jti: row.jti,
+          grantor: row.grantor,
+          audience: row.audience,
+          revoker_did: row.revoker_did,
+          revoked_iat: row.revoked_iat,
+          // Non-null by the WHERE above.
+          verified_at: row.verified_at as number,
+          cap_exp: row.cap_exp,
+        }
+      })
     },
 
     // Promotion is an authorization decision about one author's claim: the

@@ -1,5 +1,9 @@
 export { createVaultStore } from './api.js'
 export { createVaultCoordinator } from './coordinator.js'
+export type {
+  VaultNotAuthorizedParams,
+  VaultSecretUnverifiableParams,
+} from './coordinator-context.js'
 export {
   VaultKeyLocked,
   VaultNotAuthorized,
@@ -20,5 +24,6 @@ export type * from './record-tables.js'
 export type { VaultRecords, VaultRecordsParams, VaultWritePreconditions } from './records.js'
 export { createVaultRecords, VaultRecordRowError, vaultRecordPortsFor } from './records.js'
 export type { VaultMethods, VaultMethodsFor } from './records-methods.js'
+export type { VaultRecordRowErrorParams } from './records-rows.js'
 export type * from './tables.js'
 export type * from './types.js'

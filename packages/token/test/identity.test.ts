@@ -79,7 +79,6 @@ describe('createSigningIdentity', () => {
     expect(isSigningIdentity(identity)).toBe(true)
     const token = await identity.signToken({ test: true })
     expect(token.payload.iss).toBe(identity.id)
-    // Verify the token is cryptographically valid
     const verified = await verifyToken(token)
     expect(verified).toBeDefined()
   })

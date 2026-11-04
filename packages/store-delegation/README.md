@@ -38,3 +38,11 @@ Strict default verification applies on reverification. Custom algorithm verifier
 Provider operational failures propagate unchanged. No historical rescan or version gate is introduced.
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new VerifiedRevocationError` | `VerifiedRevocationErrorParams` | `message, options?` |
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

@@ -19,6 +19,15 @@ import { type ControllerLog, isControllerLog, LOG_TOO_LARGE, MALFORMED_LOG } fro
 import { snapshotLog } from './log-snapshot.js'
 import { denialTargetsMember, ROTATE_NEEDS_SNAPSHOT, validateSnapshot } from './members.js'
 
+type StepEventParams = {
+  did: string
+  inception: InceptionEvent
+  signed: SignedEvent
+  prior: KeyState
+  chain: ReadonlyArray<KeyState>
+  options?: CryptoOptions
+}
+
 /** A reset opens a generation with no removed incarnations. */
 export const RESET_HAS_TOMBSTONES = 'reset must not carry removed incarnations'
 
@@ -166,14 +175,14 @@ type StepOutcome =
  * event fails closed, an unknown `crit: false` event at the next position is skipped (prior state
  * carried forward unchanged), and anything else fails closed.
  */
-async function stepEvent(
-  did: string,
-  inception: InceptionEvent,
-  signed: SignedEvent,
-  prior: KeyState,
-  chain: ReadonlyArray<KeyState>,
-  options: CryptoOptions = {},
-): Promise<StepOutcome> {
+async function stepEvent({
+  did,
+  inception,
+  signed,
+  prior,
+  chain,
+  options = {},
+}: StepEventParams): Promise<StepOutcome> {
   if (!isSignedEventShape(signed)) {
     return { status: 'fail', reason: MALFORMED_EVENT }
   }
@@ -268,9 +277,9 @@ async function stepEvent(
     // so without this a single rotate could publish a key and deny it in one breath, and the
     // `KeyState.deny` invariant would hold only by good manners. Failing the fold is the only answer:
     // applying it leaves a head whose `k` resolves to nothing.
-    const establishedButDenied = [...rot.event.k, ...rot.event.ka].find((key) =>
-      denyAfter.has(keyTarget(key)),
-    )
+    const establishedButDenied = [...rot.event.k, ...rot.event.ka].find((key) => {
+      return denyAfter.has(keyTarget(key))
+    })
     if (establishedButDenied != null) {
       return { status: 'fail', reason: `rotate establishes a denied key: ${establishedButDenied}` }
     }
@@ -466,14 +475,14 @@ async function foldChain(
       return { ok: false, result: fail(INTERNAL_FOLD_INVARIANT, i) }
     }
     // `events[i]` may be a hole or `undefined`; `stepEvent` reports that as `malformed event`.
-    const outcome = await stepEvent(
-      did,
-      inception,
-      events[i] as SignedEvent,
-      prior,
-      states,
-      options,
-    )
+    const outcome = await stepEvent({
+      did: did,
+      inception: inception,
+      signed: events[i] as SignedEvent,
+      prior: prior,
+      chain: states,
+      options: options,
+    })
     if (outcome.status === 'fail') {
       return { ok: false, result: fail(outcome.reason, i) }
     }

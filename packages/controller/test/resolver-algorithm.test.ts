@@ -1,5 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 
+import type * as keysModule from '../src/keys.js'
+
 // `resolve` reads the algorithm off the decoded signing key rather than hardcoding 'EdDSA'
 // (resolver.ts:44-47). `KeyAlgorithm` is a closed two-member union and the encoder rejects
 // anything outside it, so a hand-built event carrying a differently-tagged algorithm is not
@@ -8,7 +10,7 @@ import { describe, expect, test, vi } from 'vitest'
 // than alongside `resolver.test.ts`, because `vi.mock` replaces the module for every test in the
 // file it appears in, and the other resolver tests rely on `decodeKey` behaving for real.
 vi.mock('../src/keys.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/keys.js')>()
+  const actual = await importOriginal<typeof keysModule>()
   return { ...actual, decodeKey: vi.fn(actual.decodeKey) }
 })
 

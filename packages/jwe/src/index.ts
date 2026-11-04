@@ -132,7 +132,6 @@ function agreeWithKey(recipientPublicKey: Uint8Array): SharedSecretResult {
 function encryptWithX25519(recipientPublicKey: Uint8Array, plaintext: Uint8Array): string {
   const { sharedSecret, ephemeralPublicKey } = agreeWithKey(recipientPublicKey)
 
-  // Derive content encryption key via Concat KDF
   const cek = concatKDF({
     sharedSecret,
     keyLength: 256,
@@ -141,10 +140,8 @@ function encryptWithX25519(recipientPublicKey: Uint8Array, plaintext: Uint8Array
     partyVInfo: new Uint8Array(0),
   })
 
-  // Generate random 96-bit IV for AES-GCM
   const iv = randomBytes(12)
 
-  // Build protected header
   const protectedHeader: JWEHeader = {
     alg: 'ECDH-ES',
     enc: 'A256GCM',
@@ -155,13 +152,11 @@ function encryptWithX25519(recipientPublicKey: Uint8Array, plaintext: Uint8Array
     },
   }
 
-  // Encode protected header
   const encodedHeader = b64uFromJSON(protectedHeader as unknown as Record<string, unknown>)
 
   // AAD is the ASCII bytes of the encoded header (per RFC 7516 Section 5.1 step 14)
   const aad = new TextEncoder().encode(encodedHeader)
 
-  // Encrypt with AES-256-GCM (tag is appended to ciphertext)
   const cipher = gcm(cek, iv, aad)
   const ciphertextWithTag = cipher.encrypt(plaintext)
 
@@ -399,7 +394,6 @@ export async function decryptToken(
     throw new Error('Invalid JWE format: expected 5 parts separated by dots')
   }
 
-  // Parse protected header
   const header = b64uToJSON<JWEHeader>(encodedHeader)
 
   if (header.alg !== 'ECDH-ES') {
@@ -409,13 +403,10 @@ export async function decryptToken(
     throw new Error(`Unsupported JWE encryption: ${header.enc}`)
   }
 
-  // Extract ephemeral public key from header
   const ephemeralPublicKey = fromB64U(header.epk.x)
 
-  // Compute shared secret via ECDH key agreement
   const sharedSecret = await decrypter.agreeKey(ephemeralPublicKey)
 
-  // Derive content encryption key
   const cek = concatKDF({
     sharedSecret,
     keyLength: 256,
@@ -424,7 +415,6 @@ export async function decryptToken(
     partyVInfo: header.apv != null ? fromB64U(header.apv) : new Uint8Array(0),
   })
 
-  // Decode components
   const iv = fromB64U(encodedIV)
   const ciphertext = fromB64U(encodedCiphertext)
   const tag = fromB64U(encodedTag)
@@ -437,7 +427,6 @@ export async function decryptToken(
   // AAD is the ASCII bytes of the encoded header
   const aad = new TextEncoder().encode(encodedHeader)
 
-  // Decrypt with AES-256-GCM
   const cipher = gcm(cek, iv, aad)
   return cipher.decrypt(ciphertextWithTag)
 }
@@ -526,7 +515,6 @@ export async function unwrapEnvelope(
     if (isUnsignedToken(token)) {
       return { payload: token.payload as Record<string, unknown>, mode: 'plain' }
     }
-    // Check if payload contains a JWE (jwe-in-jws)
     if ('jwe' in token.payload && typeof token.payload.jwe === 'string') {
       if (options.decrypter == null) throw new Error('Decrypter required for jwe-in-jws message')
       const decrypted = await decryptToken(options.decrypter, token.payload.jwe as string)

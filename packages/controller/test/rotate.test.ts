@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 
 import { canonicalBytes, digestOf } from '../src/canonical.js'
 import { authorityPath, deriveKeyPair } from '../src/derivation.js'
+import type { RotateEvent } from '../src/events.js'
 import {
   createInception,
   createRotate,
@@ -14,7 +15,7 @@ import {
 import { foldLog, keyStateAt } from '../src/fold.js'
 import { encodeKey } from '../src/keys.js'
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -241,7 +242,7 @@ describe('verifyRotate()', () => {
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
     const event = { ...signed.event, k: [encodeKey(current.publicKey, 'X25519')] }
     const sigs = await signEvent(event, [current.privateKey])
-    expect(await verifySignatures(event, sigs, event.k)).toBe(false)
+    expect(await verifySignatures({ event: event, sigs: sigs, keys: event.k })).toBe(false)
   })
 
   // `k` and `p` stay exactly as createRotate produced them, so the pre-rotation and chaining
@@ -352,7 +353,7 @@ describe('a rotate`s thresholds and seal are checked', () => {
       prior: inception.event,
       snapshot: { members: [], deny: [] },
     })
-    const event = { ...base.event, ...patch } as unknown as typeof base.event
+    const event = { ...base.event, ...patch } as unknown as RotateEvent
     const key = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
     return {
       signed: { event, sigs: await signEvent(event, [key.privateKey]) },

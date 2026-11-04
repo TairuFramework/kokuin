@@ -54,15 +54,12 @@ type MemberClaim = { add: string; g: number } // the issuer's add digest and the
 
 ```typescript
 import { createCapability } from '@kokuin/capability'
-import type { CreateCapabilityOptions, SignCapabilityPayload } from '@kokuin/capability'
+import type { CreateCapabilityParams, SignCapabilityPayload } from '@kokuin/capability'
 ```
 
 ```typescript
-async function createCapability<Payload extends SignCapabilityPayload>(
-  signer: SigningIdentity,
-  payload: Payload,
-  header?: Record<string, unknown>,
-  options?: CreateCapabilityOptions,
+declare function createCapability<Payload extends SignCapabilityPayload>(
+  params: CreateCapabilityParams<Payload>,
 ): Promise<CapabilityToken<Payload & { iss: string }, SignedHeader>>
 ```
 
@@ -209,10 +206,19 @@ import { createCapability } from '@kokuin/capability'
 
 const now = Math.floor(Date.now() / 1000)
 const grant = await createCapability(
-  memberIdentity, // iss: the member's did:key, or its long-form did:peer:4
-  { sub: profileDID, aud: agentDID, act: 'read', res: 'docs/*', iat: now, exp: now + 12 * 3600 },
-  undefined,
-  { member: { add: memberAddDigest, g: head.gen } }, // the incarnation, and the log's generation
+  {
+    signer: memberIdentity, // iss: the member's did:key, or its long-form did:peer:4
+    payload: {
+      sub: profileDID,
+      aud: agentDID,
+      act: 'read',
+      res: 'docs/*',
+      iat: now,
+      exp: now + 12 * 3600,
+    },
+    header: undefined,
+    options: { member: { add: memberAddDigest, g: head.gen } },
+  }, // the incarnation, and the log's generation
 )
 ```
 
@@ -356,37 +362,39 @@ import type { Permission } from '@kokuin/capability'
 import { randomIdentity, stringifyToken, signToken, createUnsignedToken } from '@kokuin/token'
 import type { SigningIdentity } from '@kokuin/token'
 
-// --- Step 1: root identity creates a root capability ---
 const rootIdentity: SigningIdentity = randomIdentity()
 const delegateIdentity: SigningIdentity = randomIdentity()
 const consumerIdentity: SigningIdentity = randomIdentity()
 
-const rootCap = await createCapability(rootIdentity, {
-  sub: rootIdentity.id, // signer === subject → root capability
-  aud: delegateIdentity.id,
-  act: 'read',
-  res: 'docs/*',
-  exp: Math.floor(Date.now() / 1000) + 3600,
+const rootCap = await createCapability({
+  signer: rootIdentity,
+  payload: {
+    sub: rootIdentity.id, // signer === subject → root capability
+    aud: delegateIdentity.id,
+    act: 'read',
+    res: 'docs/*',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  },
 })
 // rootCap is a CapabilityToken; stringify it before passing as parentCapability
 const rootCapStr = stringifyToken(rootCap)
 
-// --- Step 2: delegate narrows the capability and re-delegates ---
 const delegatedCap = await createCapability(
-  delegateIdentity,
   {
-    sub: rootIdentity.id, // same subject as root
-    aud: consumerIdentity.id,
-    act: 'read',
-    res: 'docs/report', // narrower than 'docs/*'
-  },
-  undefined,
-  { parentCapability: rootCapStr }, // links back to the root
+    signer: delegateIdentity,
+    payload: {
+      sub: rootIdentity.id, // same subject as root
+      aud: consumerIdentity.id,
+      act: 'read',
+      res: 'docs/report', // narrower than 'docs/*'
+    },
+    header: undefined,
+    options: { parentCapability: rootCapStr },
+  }, // links back to the root
 )
 // stringify before embedding in the consumer token's `cap` claim (a string)
 const delegatedCapStr = stringifyToken(delegatedCap)
 
-// --- Step 3: verify the chain ---
 // The consumer presents a payload claiming the permission they were granted.
 // checkCapability resolves the cap chain and verifies every link.
 const requestedPermission: Permission = { act: 'read', res: 'docs/report' }

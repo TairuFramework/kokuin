@@ -35,7 +35,7 @@ async function makeRecord(
     deleted: false,
     meta: {},
   }
-  const signed = await signRecordOp(identity, claim, TEST_OP_KIND)
+  const signed = await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })
   return { type: claim.type, id, owner: claim.owner, hlc: claim.hlc, payload, ...signed }
 }
 

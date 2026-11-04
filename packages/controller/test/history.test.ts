@@ -39,6 +39,8 @@ import { encodeKey } from '../src/keys.js'
 import { MAX_FAILED_SIGNATURES } from '../src/limits.js'
 import { type ControllerLog, mergeLogs, pruneLog } from '../src/log.js'
 
+type RevokeParams = { target: string; parents?: Array<string>; signer?: EpochSigner; on?: KeyState }
+
 /** {@link foldEpochDetailed}, which these fixtures never drive into the failed-signature refusal. */
 async function detailOf(params: FoldEpochParams): Promise<FoldEpochDetail> {
   const detail = await foldEpochDetailed(params)
@@ -86,12 +88,12 @@ const head = (await folded({ chain, events: [] })).head
 const root: EpochSigner = { root: { seed, profile } }
 const asMember: EpochSigner = { member: { privateKey: memberPrivateKey, add: member.add } }
 
-async function revoke(
-  target: string,
-  parents: Array<string> = [head.epoch],
-  signer: EpochSigner = root,
-  on: KeyState = head,
-): Promise<SignedEvent<EpochEvent>> {
+async function revoke({
+  target,
+  parents = [head.epoch],
+  signer = root,
+  on = head,
+}: RevokeParams): Promise<SignedEvent<EpochEvent>> {
   return await createRevoke({ signer, did, head: on, parents, target })
 }
 
@@ -105,9 +107,9 @@ async function underLimit({
 
 const digest = (signed: SignedEvent<EpochEvent>): string => digestOf(signed.event)
 
-const revA = await revoke('did:key:zA', [head.epoch], asMember)
-const revB = await revoke('did:key:zB')
-const child = await revoke('did:key:zC', [digest(revA), digest(revB)])
+const revA = await revoke({ target: 'did:key:zA', parents: [head.epoch], signer: asMember })
+const revB = await revoke({ target: 'did:key:zB' })
+const child = await revoke({ target: 'did:key:zC', parents: [digest(revA), digest(revB)] })
 const withRevA: ControllerLog = { chain, events: [revA] }
 const withRevB: ControllerLog = { chain, events: [revB] }
 
@@ -131,16 +133,12 @@ function stored(log: ControllerLog): Array<string> {
 describe('authoritativeLog()', () => {
   test('a verifier never forgets an event it has seen', async () => {
     const store = createMemoryLogStore()
-    await store.merge(
-      did,
-      async (current) =>
-        (await authoritativeLog({ did, loaded: withRevA, seen: current, context })).log,
-    )
-    await store.merge(
-      did,
-      async (current) =>
-        (await authoritativeLog({ did, loaded: withRevB, seen: current, context })).log,
-    )
+    await store.merge(did, async (current) => {
+      return (await authoritativeLog({ did, loaded: withRevA, seen: current, context })).log
+    })
+    await store.merge(did, async (current) => {
+      return (await authoritativeLog({ did, loaded: withRevB, seen: current, context })).log
+    })
     const log = await store.get(did)
     if (log === undefined) {
       throw new Error('nothing stored')
@@ -201,16 +199,15 @@ describe('authoritativeLog()', () => {
 
   test('thousands of unsigned epoch events are refused as a whole', async () => {
     const flood = { chain, events: Array.from({ length: 5000 }, (_, n) => unsignedRevoke(n)) }
-    await expect(
-      async () =>
-        await underLimit({
-          did,
-          loaded: flood,
-          seen: undefined,
-          context,
-          limits: { MAX_EPOCH_EVENTS: 2 },
-        }),
-    ).rejects.toThrow(TOO_MANY_FAILED_SIGNATURES)
+    await expect(async () => {
+      return await underLimit({
+        did,
+        loaded: flood,
+        seen: undefined,
+        context,
+        limits: { MAX_EPOCH_EVENTS: 2 },
+      })
+    }).rejects.toThrow(TOO_MANY_FAILED_SIGNATURES)
   })
 
   test('a forged event riding along with a valid one is dropped, the valid one kept', async () => {
@@ -274,7 +271,7 @@ describe('authoritativeLog()', () => {
 
   test('saturation persists when a later presentation carries only a subset', async () => {
     const limits = { MAX_EPOCH_EVENTS: 2 }
-    const all = [revA, revB, child, await revoke('did:key:zD')]
+    const all = [revA, revB, child, await revoke({ target: 'did:key:zD' })]
     const first = await underLimit({
       did,
       loaded: { chain, events: all },
@@ -303,12 +300,13 @@ describe('authoritativeLog()', () => {
 
   test('concurrent merges for one DID never lose an event', async () => {
     const store = createMemoryLogStore()
-    const merge = (loaded: ControllerLog) =>
-      store.merge(did, async (current) => {
+    const merge = (loaded: ControllerLog) => {
+      return store.merge(did, async (current) => {
         // Yield inside the update, so an unserialised store would interleave the read and the write.
         await Promise.resolve()
         return (await authoritativeLog({ did, loaded, seen: current, context })).log
       })
+    }
     await Promise.all([merge(withRevA), merge(withRevB)])
     const log = await store.get(did)
     if (log === undefined) {
@@ -373,7 +371,12 @@ describe('authoritativeLog()', () => {
     // Root settles, carrying what it chooses, and the next epoch starts.
     const settled = await settle(rot.event, ['did:key:zA'])
     const nextHead = (await folded({ chain: [icp, rot, settled], events: [] })).head
-    const next = await revoke('did:key:zNext', [nextHead.epoch], root, nextHead)
+    const next = await revoke({
+      target: 'did:key:zNext',
+      parents: [nextHead.epoch],
+      signer: root,
+      on: nextHead,
+    })
     const loaded = { chain: [icp, rot, settled], events: [next] }
     const { log, result } = await underLimit({ did, loaded, seen: flooded.log, context, limits })
     expect(result.head.saturated).toBe(false)
@@ -406,9 +409,14 @@ describe('authoritativeLog()', () => {
     for (let round = 0; round < 3; round++) {
       const on = (await folded({ chain: presented, events: [] })).head
       const events = await Promise.all(
-        ['zW', 'zX', 'zY', 'zZ'].map(
-          async (name) => await revoke(`did:key:${name}${round}`, [on.epoch], root, on),
-        ),
+        ['zW', 'zX', 'zY', 'zZ'].map(async (name) => {
+          return await revoke({
+            target: `did:key:${name}${round}`,
+            parents: [on.epoch],
+            signer: root,
+            on: on,
+          })
+        }),
       )
       const { log, result } = await underLimit({
         did,
@@ -432,45 +440,55 @@ describe('mergeLogs()', () => {
   test('a chain that extends the other wins, whichever side it is on', async () => {
     const longer = { chain: [icp, rot, await settle(rot.event)], events: [] }
     const shorter = { chain: [icp, rot], events: [] }
-    expect((await mergeLogs(did, shorter, longer)).chain).toEqual(longer.chain)
-    expect((await mergeLogs(did, longer, shorter)).chain).toEqual(longer.chain)
+    expect((await mergeLogs({ did: did, left: shorter, right: longer })).chain).toEqual(
+      longer.chain,
+    )
+    expect((await mergeLogs({ did: did, left: longer, right: shorter })).chain).toEqual(
+      longer.chain,
+    )
   })
 
   test('events are a union, deduplicated by digest', async () => {
-    const merged = await mergeLogs(
-      did,
-      { chain, events: [revA, revB] },
-      { chain, events: [revB, child] },
-    )
+    const merged = await mergeLogs({
+      did: did,
+      left: { chain, events: [revA, revB] },
+      right: { chain, events: [revB, child] },
+    })
     expect(stored(merged)).toEqual([revA, revB, child].map(digest).sort())
   })
 
   test('a pending event applies once merged with the log carrying its parent', async () => {
     const early = { chain, events: [child] }
     expect((await folded(early)).pending).toBe(1)
-    const merged = await mergeLogs(did, early, { chain, events: [revA, revB] })
+    const merged = await mergeLogs({
+      did: did,
+      left: early,
+      right: { chain, events: [revA, revB] },
+    })
     expect((await folded(merged)).pending).toBe(0)
     expect((await folded(merged)).head.deny.has('did:key:zC')).toBe(true)
   })
 
   test('a forged copy merged first does not shadow the genuine one', async () => {
     const forged = { event: revA.event, sigs: [revB.sigs[0] as string] }
-    const merged = await mergeLogs(did, { chain, events: [forged] }, withRevA)
+    const merged = await mergeLogs({ did: did, left: { chain, events: [forged] }, right: withRevA })
     expect((await folded(merged)).head.deny.has('did:key:zA')).toBe(true)
   })
 
   test('a fork does not merge', async () => {
     const one = { chain: [icp, rot, await settle(rot.event, ['did:key:zOne'])], events: [] }
     const two = { chain: [icp, rot, await settle(rot.event, ['did:key:zTwo'])], events: [] }
-    await expect(async () => await mergeLogs(did, one, two)).rejects.toThrow(LOG_FORKED)
+    await expect(async () => await mergeLogs({ did: did, left: one, right: two })).rejects.toThrow(
+      LOG_FORKED,
+    )
   })
 
   test('a higher-generation reset wins over a longer lower generation', async () => {
-    const reset = await createReset(seed, profile, 1)
+    const reset = await createReset({ seed: seed, profile: profile, gen: 1 })
     const lower = { chain: [icp, rot, await settle(rot.event)], events: [revA] }
     const higher = { chain: [icp, reset], events: [] }
-    expect((await mergeLogs(did, lower, higher)).chain).toEqual(higher.chain)
-    expect((await mergeLogs(did, higher, lower)).chain).toEqual(higher.chain)
+    expect((await mergeLogs({ did: did, left: lower, right: higher })).chain).toEqual(higher.chain)
+    expect((await mergeLogs({ did: did, left: higher, right: lower })).chain).toEqual(higher.chain)
   })
 })
 
@@ -484,7 +502,7 @@ describe('the copy the fold verifies', async () => {
     ...head,
     keys: [...head.keys, encodeKey(ed25519.getPublicKey(secondKey), 'EdDSA')],
   }
-  const once = await revoke('did:key:zTwoKeys')
+  const once = await revoke({ target: 'did:key:zTwoKeys' })
   const genuine = {
     event: once.event,
     sigs: [...once.sigs, ...(await signEvent(once.event, [secondKey]))],
@@ -514,7 +532,7 @@ describe('the copy the fold verifies', async () => {
 describe('a reset re-parented onto a different prefix', async () => {
   // The verifier appended the reset to the generation-0 chain it held; a pruned peer carries the same
   // reset straight after the inception and further. One history, whichever side holds which.
-  const reset = await createReset(seed, profile, 1)
+  const reset = await createReset({ seed: seed, profile: profile, gen: 1 })
   const appended = { chain: [icp, rot, reset], events: [] }
   const carried = {
     chain: [
@@ -532,8 +550,12 @@ describe('a reset re-parented onto a different prefix', async () => {
   }
 
   test('mergeLogs keeps the history carried further, in either order', async () => {
-    expect((await mergeLogs(did, appended, carried)).chain).toEqual(carried.chain)
-    expect((await mergeLogs(did, carried, appended)).chain).toEqual(carried.chain)
+    expect((await mergeLogs({ did: did, left: appended, right: carried })).chain).toEqual(
+      carried.chain,
+    )
+    expect((await mergeLogs({ did: did, left: carried, right: appended })).chain).toEqual(
+      carried.chain,
+    )
   })
 
   test('authoritativeLog accepts it carried further and refuses it served behind', async () => {
@@ -550,9 +572,14 @@ describe('pruneLog()', () => {
   test('a pruned and a full store fold to the same head', async () => {
     // Generation 0 with an epoch of its own, a reset, then a settled generation 1 with live events.
     const oldEvent = revA
-    const reset = await createReset(seed, profile, 1, {
-      members: [member],
-      deny: ['did:key:zCarried'],
+    const reset = await createReset({
+      seed: seed,
+      profile: profile,
+      gen: 1,
+      snapshot: {
+        members: [member],
+        deny: ['did:key:zCarried'],
+      },
     })
     const resetHead = (
       await folded({ chain: [icp, rot, await settle(rot.event), reset], events: [] })
@@ -567,9 +594,24 @@ describe('pruneLog()', () => {
     const fullChain = [icp, rot, await settle(rot.event), reset, genOneRot]
     const liveHead = (await folded({ chain: fullChain, events: [] })).head
     expect(liveHead.gen).toBe(1)
-    const live = await revoke('did:key:zLive', [liveHead.epoch], root, liveHead)
-    const liveMember = await revoke('did:key:zLiveMember', [liveHead.epoch], asMember, liveHead)
-    const stale = await revoke('did:key:zStale', [resetHead.epoch], root, resetHead)
+    const live = await revoke({
+      target: 'did:key:zLive',
+      parents: [liveHead.epoch],
+      signer: root,
+      on: liveHead,
+    })
+    const liveMember = await revoke({
+      target: 'did:key:zLiveMember',
+      parents: [liveHead.epoch],
+      signer: asMember,
+      on: liveHead,
+    })
+    const stale = await revoke({
+      target: 'did:key:zStale',
+      parents: [resetHead.epoch],
+      signer: root,
+      on: resetHead,
+    })
     const full = {
       chain: fullChain,
       events: [oldEvent, stale, live, liveMember, unsignedRevoke(1)],

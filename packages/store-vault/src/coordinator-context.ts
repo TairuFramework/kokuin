@@ -38,8 +38,41 @@ import { settleAll, settledValue } from './settle.js'
 import { snapshotCall } from './snapshot.js'
 import type { KeyAddress, KeyRow, VaultStoreAPI, WrappingRow } from './types.js'
 
+export type VaultNotAuthorizedParams = { verb: 'read' | 'administer' }
+type AuthorizeParams = {
+  operation: string
+  verb: 'read' | 'administer'
+  address: { ownerDID: string; keyID?: string; entryID?: string } & CoordinatorCall
+  store?: VaultStoreAPI
+}
+type SignedParams<Type extends VaultRecordType> = {
+  type: Type
+  address: { ownerDID: string; id: string }
+  payload: VaultRecordPayloads[Type] | null
+  meta: VaultRecordMetas[Type]
+  hlc?: string
+}
+type BranchParams = {
+  address: KeyAddress
+  version: number
+  store?: VaultStoreAPI
+  specific?: string
+}
+type WriteParams = {
+  store: VaultStoreAPI
+  output: Array<SignedRecord>
+  preconditions: VaultWritePreconditions
+  call: CoordinatorCall
+}
+type KeyRecordsParams = {
+  row: KeyRow
+  store: VaultStoreAPI
+  unique?: string
+  consumer?: unknown
+}
+
 export class VaultNotAuthorized extends Error {
-  constructor(verb: 'read' | 'administer') {
+  constructor({ verb }: VaultNotAuthorizedParams) {
     super(`Vault ${verb} authority refused the operation`)
     this.name = 'VaultNotAuthorized'
   }
@@ -52,10 +85,12 @@ export class VaultNotFound extends Error {
   }
 }
 
+export type VaultSecretUnverifiableParams = UnverifiableWrapping
+
 export class VaultSecretUnverifiable extends Error {
   #wrapping: UnverifiableWrapping
 
-  constructor(wrapping: UnverifiableWrapping) {
+  constructor(wrapping: VaultSecretUnverifiableParams) {
     super('Retained foreign DID wrapping requires explicit trust and supplied secret inputs')
     this.name = 'VaultSecretUnverifiable'
     this.#wrapping = { ...wrapping, factorKinds: [...wrapping.factorKinds] }
@@ -121,20 +156,9 @@ export type CoordinatorContext = {
   records: VaultRecords | undefined
   methodsFor(store: VaultStoreAPI): VaultMethods | undefined
   recordsFor(store: VaultStoreAPI): VaultRecords
-  authorize(
-    operation: string,
-    verb: 'read' | 'administer',
-    address: { ownerDID: string; keyID?: string; entryID?: string } & CoordinatorCall,
-    store?: VaultStoreAPI,
-  ): Promise<void>
+  authorize(params: AuthorizeParams): Promise<void>
   key(address: KeyAddress, store?: VaultStoreAPI): Promise<KeyRow>
-  signed<Type extends VaultRecordType>(
-    type: Type,
-    address: { ownerDID: string; id: string },
-    payload: VaultRecordPayloads[Type] | null,
-    meta: VaultRecordMetas[Type],
-    hlc?: string,
-  ): Promise<SignedRecord>
+  signed<Type extends VaultRecordType>(params: SignedParams<Type>): Promise<SignedRecord>
   verified(record: SignedRecord, store: VaultStoreAPI): Promise<VerifiedRecordOp>
   stored(address: RecordKey, store?: VaultStoreAPI): Promise<StoredRecordEvidence>
   /** One batched read. Throws the first missing or unverifiable record in address order. */
@@ -153,24 +177,9 @@ export type CoordinatorContext = {
     version: number,
     store?: VaultStoreAPI,
   ): Promise<Array<VaultKeyBranch>>
-  branch(
-    address: KeyAddress,
-    version: number,
-    store?: VaultStoreAPI,
-    specific?: string,
-  ): Promise<KeyBranch>
-  write(
-    store: VaultStoreAPI,
-    output: Array<SignedRecord>,
-    preconditions: VaultWritePreconditions,
-    call: CoordinatorCall,
-  ): Promise<void>
-  keyRecords(
-    row: KeyRow,
-    store: VaultStoreAPI,
-    unique?: string,
-    consumer?: unknown,
-  ): Promise<KeyRecords>
+  branch(params: BranchParams): Promise<KeyBranch>
+  write(params: WriteParams): Promise<void>
+  keyRecords(params: KeyRecordsParams): Promise<KeyRecords>
   locked<Result>(
     addresses: ReadonlyArray<KeyAddress>,
     fn: (store: VaultStoreAPI) => Promise<Result>,
@@ -226,12 +235,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
   }
   const records = params.mode === 'replicated' ? recordsFor(params.store) : undefined
 
-  async function authorize(
-    operation: string,
-    verb: 'read' | 'administer',
-    address: { ownerDID: string; keyID?: string; entryID?: string } & CoordinatorCall,
-    store = params.store,
-  ) {
+  async function authorize({ operation, verb, address, store = params.store }: AuthorizeParams) {
     const allowed = await params.authority.authorize({
       source: 'local',
       mode: params.mode,
@@ -252,7 +256,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
       },
     })
 
-    if (!allowed) throw new VaultNotAuthorized(verb)
+    if (!allowed) throw new VaultNotAuthorized({ verb: verb })
   }
 
   async function key(address: KeyAddress, store = params.store): Promise<KeyRow> {
@@ -263,13 +267,13 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     return row
   }
 
-  async function signed<Type extends VaultRecordType>(
-    type: Type,
-    address: { ownerDID: string; id: string },
-    payload: VaultRecordPayloads[Type] | null,
-    meta: VaultRecordMetas[Type],
-    hlc?: string,
-  ): Promise<SignedRecord> {
+  async function signed<Type extends VaultRecordType>({
+    type,
+    address,
+    payload,
+    meta,
+    hlc,
+  }: SignedParams<Type>): Promise<SignedRecord> {
     if (params.mode !== 'replicated') throw new TypeError('Local writes are unsigned')
 
     const bytes = payload === null ? null : encodeVaultRecordPayload(type, payload)
@@ -290,22 +294,27 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
       owner: address.ownerDID,
       hlc: stamp,
       payload: bytes,
-      ...(await signRecordOp(params.signer, claim, params.records.opKind, params)),
+      ...(await signRecordOp({
+        identity: params.signer,
+        claim: claim,
+        opKind: params.records.opKind,
+        options: params,
+      })),
     }
   }
 
   async function verified(record: SignedRecord, store: VaultStoreAPI): Promise<VerifiedRecordOp> {
     if (params.mode !== 'replicated') throw new TypeError('Local rows have no signed evidence')
 
-    const op = await verifySignedRecord(
-      record,
-      params.records.opKind,
-      storeMethods(store, {
+    const op = await verifySignedRecord({
+      record: record,
+      opKind: params.records.opKind,
+      methods: storeMethods(store, {
         ...params.records,
         methodsFor: params.records.methodsFor ?? params.methodsFor,
       }),
-      params,
-    )
+      options: params,
+    })
 
     if (op === null) throw new VaultNotFound()
 
@@ -350,7 +359,9 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
       decoded.meta.branchID !== row.provenance ||
       decoded.meta.recipient !== row.recipientDID
     )
-      throw new VaultTampered('Wrapping projection disagrees with authenticated metadata')
+      throw new VaultTampered({
+        message: 'Wrapping projection disagrees with authenticated metadata',
+      })
 
     await checkDescriptorDigest({
       crypto: params.crypto,
@@ -363,7 +374,9 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     }
 
     if (!equal(row.iv, decoded.payload.iv) || !equal(row.wrappedKey, decoded.payload.wrappedKey))
-      throw new VaultTampered('Wrapping projection disagrees with authenticated ciphertext')
+      throw new VaultTampered({
+        message: 'Wrapping projection disagrees with authenticated ciphertext',
+      })
 
     return { ...evidence, expectedDescriptorDigest: decoded.payload.descriptorDigest }
   }
@@ -414,12 +427,12 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
       : recordsFor(store).listKeyBranches({ ...address, keyVersion: version })
   }
 
-  async function branch(
-    address: KeyAddress,
-    version: number,
+  async function branch({
+    address,
+    version,
     store = params.store,
-    specific?: string,
-  ): Promise<KeyBranch> {
+    specific,
+  }: BranchParams): Promise<KeyBranch> {
     if (params.mode === 'local')
       return { branchID: '', branchRecordID: '', suite: (await key(address, store)).suite }
 
@@ -518,12 +531,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     throw new VaultRepairPending()
   }
 
-  async function write(
-    store: VaultStoreAPI,
-    output: Array<SignedRecord>,
-    preconditions: VaultWritePreconditions,
-    call: CoordinatorCall,
-  ) {
+  async function write({ store, output, preconditions, call }: WriteParams) {
     const result = await recordsFor(store).write({
       records: output,
       preconditions,
@@ -550,12 +558,12 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     )
   }
 
-  async function keyRecords(
-    row: KeyRow,
-    store: VaultStoreAPI,
-    unique?: string,
-    consumer?: unknown,
-  ): Promise<KeyRecords> {
+  async function keyRecords({
+    row,
+    store,
+    unique,
+    consumer,
+  }: KeyRecordsParams): Promise<KeyRecords> {
     const previous =
       unique === undefined
         ? await stored({ type: 'vault.key', owner: row.ownerDID, id: row.keyID }, store)
@@ -564,18 +572,18 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
 
     if (typeof keyUnique !== 'string') throw new VaultNotFound()
 
-    const record = await signed(
-      'vault.key',
-      { ownerDID: row.ownerDID, id: row.keyID },
-      { suite: row.suite, state: row.state },
-      {
+    const record = await signed({
+      type: 'vault.key',
+      address: { ownerDID: row.ownerDID, id: row.keyID },
+      payload: { suite: row.suite, state: row.state },
+      meta: {
         keyID: row.keyID,
         keyUnique,
         version: row.version,
         state: row.state,
         consumer: consumer === undefined ? (previous?.op.claim.meta.consumer ?? null) : consumer,
       },
-    )
+    })
     const op = await verified(record, store)
     const branchID = `${record.hlc}:${record.opHash}`
     const payload = {
@@ -592,18 +600,18 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
 
     if (branchRecordID === null) throw new Error('Branch has no payload digest')
 
-    const proof = await signed(
-      'vault.key-branch',
-      { ownerDID: row.ownerDID, id: branchRecordID },
-      payload,
-      {
+    const proof = await signed({
+      type: 'vault.key-branch',
+      address: { ownerDID: row.ownerDID, id: branchRecordID },
+      payload: payload,
+      meta: {
         keyID: row.keyID,
         keyVersion: row.version,
         branchID,
         consumer: consumer === undefined ? (previous?.op.claim.meta.consumer ?? null) : consumer,
       },
-      record.hlc,
-    )
+      hlc: record.hlc,
+    })
 
     return { records: [record, proof], branchID, branchRecordID }
   }

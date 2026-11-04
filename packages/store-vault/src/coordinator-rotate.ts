@@ -183,13 +183,15 @@ export function createRotateFunctions(
     if (!Number.isInteger(sourceVersion) || sourceVersion < 1 || sourceVersion > key.version)
       throw new VaultNotFound()
     const sourceBranch =
-      request.sourceVersion === undefined ? undefined : await ctx.branch(key, sourceVersion, store)
+      request.sourceVersion === undefined
+        ? undefined
+        : await ctx.branch({ address: key, version: sourceVersion, store: store })
     if (request.sourceVersion !== undefined) {
-      const source = await open.open(
-        { ...request, atVersion: sourceVersion },
-        store,
-        sourceBranch?.branchID || undefined,
-      )
+      const source = await open.open({
+        address: { ...request, atVersion: sourceVersion },
+        store: store,
+        specific: sourceBranch?.branchID || undefined,
+      })
       source.contentKey.fill(0)
     }
     const revocations =
@@ -198,19 +200,20 @@ export function createRotateFunctions(
         : await ctx.recordsFor(store).listRevocations(key)
     const wrappingsRead = async () => {
       const existing = await store.listWrappings(key)
-      const current = existing.filter(
-        (w) =>
+      const current = existing.filter((w) => {
+        return (
           w.keyVersion === sourceVersion &&
           (request.sourceVersion === undefined ||
             params.mode === 'local' ||
-            w.provenance === sourceBranch?.branchID),
-      )
+            w.provenance === sourceBranch?.branchID)
+        )
+      })
 
       return { existing, current, evidence: await ctx.wrappingEvidences(current, store) }
     }
     // Ordered settling keeps the original precedence: branch, then wrapping, then entry failures.
     const [winner, wrappingState, currentSelections] = await settleAll([
-      ctx.branch(key, key.version, store),
+      ctx.branch({ address: key, version: key.version, store: store }),
       wrappingsRead(),
       currentEntries(key, store),
     ])
@@ -234,11 +237,11 @@ export function createRotateFunctions(
     try {
       const openSource = (row: EntryRow): Promise<SourceKey> => {
         const run = async (): Promise<SourceKey> => {
-          const opened = await open.open(
-            { ...request, atVersion: row.keyVersion },
-            store,
-            params.mode === 'replicated' ? row.provenance : undefined,
-          )
+          const opened = await open.open({
+            address: { ...request, atVersion: row.keyVersion },
+            store: store,
+            specific: params.mode === 'replicated' ? row.provenance : undefined,
+          })
 
           return { contentKey: opened.contentKey, suite: opened.suite }
         }
@@ -342,7 +345,7 @@ export function createRotateFunctions(
           let branch = versionBranches.get(selection.keyVersion)
 
           if (branch === undefined) {
-            branch = ctx.branch(key, selection.keyVersion, store)
+            branch = ctx.branch({ address: key, version: selection.keyVersion, store: store })
             versionBranches.set(selection.keyVersion, branch)
           }
 
@@ -356,10 +359,9 @@ export function createRotateFunctions(
           addsEntry ||
           addsRecipient ||
           unreadableProjection ||
-          request.reissue.some(
-            (instruction) =>
-              instruction.action !== 'preserve' || instruction.contentHLC !== undefined,
-          ) ||
+          request.reissue.some((instruction) => {
+            return instruction.action !== 'preserve' || instruction.contentHLC !== undefined
+          }) ||
           request.excludedRecipients.length !== 0
 
         const unique = new Map<string, WrappingRow>()
@@ -410,10 +412,11 @@ export function createRotateFunctions(
           })
           if (!request.trustUnverifiableSecrets) throw refusal
           if (
-            previous.descriptors.some(
-              (descriptor) =>
-                isSecretFactorKind(descriptor.kind) && request.inputs?.[descriptor.kind] == null,
-            )
+            previous.descriptors.some((descriptor) => {
+              return (
+                isSecretFactorKind(descriptor.kind) && request.inputs?.[descriptor.kind] == null
+              )
+            })
           )
             throw refusal
 
@@ -422,12 +425,12 @@ export function createRotateFunctions(
           continue
         }
 
-        const verified = await open.open(
-          { ...request, atVersion: previous.keyVersion },
-          store,
-          params.mode === 'replicated' ? previous.provenance : undefined,
-          previous.wrappingID,
-        )
+        const verified = await open.open({
+          address: { ...request, atVersion: previous.keyVersion },
+          store: store,
+          specific: params.mode === 'replicated' ? previous.provenance : undefined,
+          wrappingID: previous.wrappingID,
+        })
         verified.contentKey.fill(0)
       }
 
@@ -441,7 +444,12 @@ export function createRotateFunctions(
       // Key records and wraps are independent. Wrapping IDs are drawn in retained order.
       const [chain, wrapped] = await settleAll([
         params.mode === 'replicated'
-          ? ctx.keyRecords(next, store, undefined, request.consumer)
+          ? ctx.keyRecords({
+              row: next,
+              store: store,
+              unique: undefined,
+              consumer: request.consumer,
+            })
           : Promise.resolve({ records: [], branchID: '', branchRecordID: '' }),
         settleAll(
           retained.map(async (previous) => {
@@ -488,12 +496,13 @@ export function createRotateFunctions(
           if (prior === undefined) throw new VaultNotFound()
 
           await sign(
-            records.wrapping(
-              row,
-              chain,
-              request.consumer === undefined ? prior.op.claim.meta.consumer : request.consumer,
-              await params.nextHLC(),
-            ),
+            records.wrapping({
+              row: row,
+              branch: chain,
+              consumer:
+                request.consumer === undefined ? prior.op.claim.meta.consumer : request.consumer,
+              hlc: await params.nextHLC(),
+            }),
           )
         }
       }
@@ -532,11 +541,11 @@ export function createRotateFunctions(
 
           if (params.mode === 'replicated')
             await sign(
-              ctx.signed(
-                'vault.entry',
-                { ownerDID: key.ownerDID, id: selected.entryID },
-                null,
-                {
+              ctx.signed({
+                type: 'vault.entry',
+                address: { ownerDID: key.ownerDID, id: selected.entryID },
+                payload: null,
+                meta: {
                   keyID: key.keyID,
                   keyVersion: next.version,
                   branchID: chain.branchID,
@@ -544,8 +553,8 @@ export function createRotateFunctions(
                   contentHLC,
                   consumer,
                 },
-                hlc,
-              ),
+                hlc: hlc,
+              }),
             )
 
           continue
@@ -575,7 +584,9 @@ export function createRotateFunctions(
         entries.push(row)
 
         if (params.mode === 'replicated')
-          await sign(records.entry(row, chain, contentHLC, consumer))
+          await sign(
+            records.entry({ row: row, branch: chain, contentHLC: contentHLC, consumer: consumer }),
+          )
       }
 
       if (params.mode === 'replicated') {
@@ -584,22 +595,22 @@ export function createRotateFunctions(
           const revokedDID = id.slice(id.indexOf('/') + 1)
 
           await sign(
-            ctx.signed(
-              'vault.revocation',
-              { ownerDID: key.ownerDID, id },
-              {},
-              { keyID: key.keyID, revokedDID, consumer: request.consumer ?? null },
-              await params.nextHLC(),
-            ),
+            ctx.signed({
+              type: 'vault.revocation',
+              address: { ownerDID: key.ownerDID, id },
+              payload: {},
+              meta: { keyID: key.keyID, revokedDID, consumer: request.consumer ?? null },
+              hlc: await params.nextHLC(),
+            }),
           )
         }
 
-        await ctx.write(
-          store,
-          output,
-          { key: { ...key, expectedVersion: key.version, expectedBranches } },
-          request,
-        )
+        await ctx.write({
+          store: store,
+          output: output,
+          preconditions: { key: { ...key, expectedVersion: key.version, expectedBranches } },
+          call: request,
+        })
       } else {
         await store.putKey(next)
         // Each set names distinct rows, so the batched writes run together. The first failure in
@@ -629,14 +640,19 @@ export function createRotateFunctions(
 
   async function rotate(input: RotateKeyParams): Promise<number> {
     const request = snapshotCall(input)
-    await ctx.authorize('rotate', 'administer', request)
+    await ctx.authorize({ operation: 'rotate', verb: 'administer', address: request })
 
     const observed = request.sourceVersion === undefined ? undefined : await ctx.key(request)
     const version = await ctx.locked([request], async (tx) => {
       if (observed !== undefined && (await ctx.key(request, tx)).version !== observed.version)
         throw new VaultWriteConflict()
       if (request.sourceVersion !== undefined)
-        await ctx.authorize('rotate', 'administer', request, tx)
+        await ctx.authorize({
+          operation: 'rotate',
+          verb: 'administer',
+          address: request,
+          store: tx,
+        })
       return rotateLocked(request, tx, false)
     })
 
@@ -649,7 +665,7 @@ export function createRotateFunctions(
 
   async function repairFork(input: RotateKeyParams): Promise<ForkRepairResult> {
     const request = snapshotCall(input)
-    await ctx.authorize('repairFork', 'administer', request)
+    await ctx.authorize({ operation: 'repairFork', verb: 'administer', address: request })
 
     if (params.mode === 'local') return { status: 'not-needed' }
 

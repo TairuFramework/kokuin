@@ -1,3 +1,17 @@
+import type { MemberState } from '../src/fold.js'
+
+type FoldSummary =
+  | { ok: false; reason: string; index: number }
+  | {
+      deny: Array<string>
+      members: Array<[string, MemberState]>
+      saturated: boolean
+      applied: Array<string>
+      pending: number
+      rejected: number
+    }
+type RevokeParams = { signer: EpochSigner; target: string; parents?: Array<string>; on?: KeyState }
+
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
@@ -97,12 +111,12 @@ const root: EpochSigner = { root: { seed, profile } }
 const signerA: EpochSigner = { member: { privateKey: a.privateKey, add: memberA.add } }
 const signerB: EpochSigner = { member: { privateKey: b.privateKey, add: memberB.add } }
 
-async function revoke(
-  signer: EpochSigner,
-  target: string,
-  parents: Array<string> = [epoch],
-  on: KeyState = head,
-): Promise<SignedEvent<EpochEvent>> {
+async function revoke({
+  signer,
+  target,
+  parents = [epoch],
+  on = head,
+}: RevokeParams): Promise<SignedEvent<EpochEvent>> {
   return await createRevoke({ signer, did, head: on, parents, target })
 }
 
@@ -110,8 +124,8 @@ function digest(signed: SignedEvent<EpochEvent>): string {
   return digestOf(signed.event)
 }
 
-const revA = await revoke(signerA, 'did:key:zA')
-const revB = await revoke(signerB, 'did:key:zB')
+const revA = await revoke({ signer: signerA, target: 'did:key:zA' })
+const revB = await revoke({ signer: signerB, target: 'did:key:zB' })
 const renew = await createRenew({
   signer: root,
   did,
@@ -120,7 +134,11 @@ const renew = await createRenew({
   add: memberA.add,
   lease: 2_000_000_000,
 })
-const child = await revoke(root, 'did:key:zC', [digest(revA), digest(revB)])
+const child = await revoke({
+  signer: root,
+  target: 'did:key:zC',
+  parents: [digest(revA), digest(revB)],
+})
 
 async function fold(
   events: Array<unknown>,
@@ -138,7 +156,7 @@ async function folded(events: Array<unknown>, presented?: Array<SignedEvent>) {
 }
 
 /** Everything order independence promises about a fold, in a form `toEqual` compares exactly. */
-function summary(result: FoldResult) {
+function summary(result: FoldResult): FoldSummary {
   if (!result.ok) {
     return result
   }
@@ -152,13 +170,15 @@ function summary(result: FoldResult) {
   }
 }
 
-function permutations<T>(items: Array<T>): Array<Array<T>> {
+function permutations<TValue>(items: Array<TValue>): Array<Array<TValue>> {
   if (items.length <= 1) {
     return [items]
   }
-  return items.flatMap((item, i) =>
-    permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [item, ...rest]),
-  )
+  return items.flatMap((item, i) => {
+    return permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => {
+      return [item, ...rest]
+    })
+  })
 }
 
 describe('the log shape', () => {
@@ -238,35 +258,64 @@ describe('merging an epoch', () => {
   test('an event naming an older epoch has no effect', async () => {
     // Built against the inception's epoch; the chain head is the later rotate.
     const atInception = (await chainFolded([inception])).head
-    const stale = await revoke(root, 'did:key:zOld', [atInception.epoch], atInception)
+    const stale = await revoke({
+      signer: root,
+      target: 'did:key:zOld',
+      parents: [atInception.epoch],
+      on: atInception,
+    })
     expect(stale.event.e).not.toBe(epoch)
     expect(summary(await fold([stale]))).toEqual(summary(await fold([])))
   })
 
   test('an event with a parent from an older epoch is rejected', async () => {
     // The older chain event itself as a parent.
-    const onChain = await revoke(root, 'did:key:zX', [epoch, digestOf(inception.event)])
+    const onChain = await revoke({
+      signer: root,
+      target: 'did:key:zX',
+      parents: [epoch, digestOf(inception.event)],
+    })
     expect(summary(await fold([onChain]))).toMatchObject({ applied: [], rejected: 1, pending: 0 })
     // An event of the older epoch, presented alongside, as a parent.
     const atInception = (await chainFolded([inception])).head
-    const stale = await revoke(root, 'did:key:zOld', [atInception.epoch], atInception)
-    const crossing = await revoke(root, 'did:key:zY', [epoch, digest(stale)])
+    const stale = await revoke({
+      signer: root,
+      target: 'did:key:zOld',
+      parents: [atInception.epoch],
+      on: atInception,
+    })
+    const crossing = await revoke({
+      signer: root,
+      target: 'did:key:zY',
+      parents: [epoch, digest(stale)],
+    })
     expect(summary(await fold([stale, crossing]))).toMatchObject({
       applied: [],
       rejected: 1,
       pending: 0,
     })
     // Control: the same event with only same-epoch parents applies.
-    expect(summary(await fold([await revoke(root, 'did:key:zY')]))).toMatchObject({ rejected: 0 })
+    expect(
+      summary(await fold([await revoke({ signer: root, target: 'did:key:zY' })])),
+    ).toMatchObject({ rejected: 0 })
   })
 
   test('a refused child never takes down the parent it also names', async () => {
     const atInception = (await chainFolded([inception])).head
-    const stale = await revoke(root, 'did:key:zOld', [atInception.epoch], atInception)
-    const parent = await revoke(root, 'did:key:zP')
+    const stale = await revoke({
+      signer: root,
+      target: 'did:key:zOld',
+      parents: [atInception.epoch],
+      on: atInception,
+    })
+    const parent = await revoke({ signer: root, target: 'did:key:zP' })
     // Cross-epoch parents of two kinds: a chain event, and an event of an older epoch.
     for (const foreign of [digestOf(inception.event), digest(stale)]) {
-      const crossing = await revoke(root, 'did:key:zC', [digest(parent), foreign])
+      const crossing = await revoke({
+        signer: root,
+        target: 'did:key:zC',
+        parents: [digest(parent), foreign],
+      })
       for (const order of permutations([parent, crossing, stale])) {
         expect(summary(await fold(order))).toMatchObject({
           applied: [digest(parent)],
@@ -279,7 +328,11 @@ describe('merging an epoch', () => {
   })
 
   test('an event whose parent is missing is pending, not applied', async () => {
-    const orphan = await revoke(root, 'did:key:zX', [digestOf('never presented')])
+    const orphan = await revoke({
+      signer: root,
+      target: 'did:key:zX',
+      parents: [digestOf('never presented')],
+    })
     expect(summary(await fold([orphan]))).toMatchObject({
       applied: [],
       pending: 1,
@@ -334,28 +387,33 @@ describe('who may sign', () => {
   test('a root revoke may not deny a key the chain head publishes', async () => {
     const publishing = [...head.keys, ...head.agreement]
     for (const key of publishing) {
-      expect(summary(await fold([await revoke(root, `#${key}`)]))).toMatchObject({
+      expect(
+        summary(await fold([await revoke({ signer: root, target: `#${key}` })])),
+      ).toMatchObject({
         rejected: 1,
         deny: [],
       })
     }
     const retired = `#${inception.event.k[0]}`
-    expect(summary(await fold([await revoke(root, retired)]))).toMatchObject({
+    expect(summary(await fold([await revoke({ signer: root, target: retired })]))).toMatchObject({
       rejected: 0,
       deny: [retired],
     })
   })
 
   test('a member event under an unknown add reference is rejected', async () => {
-    const stranger = await revoke(
-      { member: { privateKey: a.privateKey, add: digestOf('nobody') } },
-      'x',
-    )
+    const stranger = await revoke({
+      signer: { member: { privateKey: a.privateKey, add: digestOf('nobody') } },
+      target: 'x',
+    })
     expect(summary(await fold([stranger]))).toMatchObject({ applied: [], rejected: 1 })
   })
 
   test('a member event signed by another member`s key is rejected', async () => {
-    const borrowed = await revoke({ member: { privateKey: b.privateKey, add: memberA.add } }, 'x')
+    const borrowed = await revoke({
+      signer: { member: { privateKey: b.privateKey, add: memberA.add } },
+      target: 'x',
+    })
     expect(summary(await fold([borrowed]))).toMatchObject({ applied: [], rejected: 1 })
   })
 
@@ -410,8 +468,12 @@ describe('who may sign', () => {
       member: { did: c.did, key: c.key, lease: 1_900_000_000 },
     })
     const signerC: EpochSigner = { member: { privateKey: c.privateKey, add: digest(add) } }
-    const after = await revoke(signerC, 'did:key:zAfter', [digest(add)])
-    const concurrent = await revoke(signerC, 'did:key:zConcurrent')
+    const after = await revoke({
+      signer: signerC,
+      target: 'did:key:zAfter',
+      parents: [digest(add)],
+    })
+    const concurrent = await revoke({ signer: signerC, target: 'did:key:zConcurrent' })
     const result = await folded([add, after, concurrent])
     expect(result.applied).toEqual(expect.arrayContaining([digest(add), digest(after)]))
     expect(result.rejected).toBe(1)
@@ -426,7 +488,11 @@ describe('who may sign', () => {
       parents: [epoch],
       add: memberA.add,
     })
-    const late = await revoke(signerA, 'did:key:zLate', [digest(removal)])
+    const late = await revoke({
+      signer: signerA,
+      target: 'did:key:zLate',
+      parents: [digest(removal)],
+    })
     expect(summary(await fold([removal, late]))).toMatchObject({
       applied: [digest(removal)],
       rejected: 1,
@@ -449,8 +515,12 @@ describe('who may sign', () => {
   })
 
   test('a member denied in its causal past may not sign; concurrently it still may', async () => {
-    const denial = await revoke(root, memberA.did)
-    const late = await revoke(signerA, 'did:key:zLate', [digest(denial)])
+    const denial = await revoke({ signer: root, target: memberA.did })
+    const late = await revoke({
+      signer: signerA,
+      target: 'did:key:zLate',
+      parents: [digest(denial)],
+    })
     expect(summary(await fold([denial, late]))).toMatchObject({ rejected: 1, deny: [memberA.did] })
     const result = await folded([denial, revA])
     expect(result.rejected).toBe(0)
@@ -486,7 +556,7 @@ describe('limits', () => {
     const junk = [
       ...events,
       { event: revA.event, sigs: [] },
-      await revoke(root, 'x', [digestOf('absent')]),
+      await revoke({ signer: root, target: 'x', parents: [digestOf('absent')] }),
     ]
     expect(
       (await epochOf({ did, chainStates: states, events: junk, limits: { MAX_EPOCH_EVENTS: 3 } }))
@@ -530,7 +600,12 @@ describe('totality under hostile presentation', async () => {
   }
 
   const atInception = (await chainFolded([inception])).head
-  const stale = await revoke(root, 'did:key:zOld', [atInception.epoch], atInception)
+  const stale = await revoke({
+    signer: root,
+    target: 'did:key:zOld',
+    parents: [atInception.epoch],
+    on: atInception,
+  })
   // Two members root admits in the epoch, one of them twice (a retried add: one key, two
   // incarnations), so the generated events can reach adds that are concurrent, aliased, and
   // removed or denied along some branches and not others.
@@ -540,8 +615,8 @@ describe('totality under hostile presentation', async () => {
     pair: { did: string; key: string },
     parents: Array<string>,
     lease = 1_900_000_000,
-  ) =>
-    await createAdd({
+  ) => {
+    return await createAdd({
       seed,
       profile,
       did,
@@ -549,6 +624,7 @@ describe('totality under hostile presentation', async () => {
       parents,
       member: { did: pair.did, key: pair.key, lease },
     })
+  }
   const addC = await addMember(c, [epoch])
   const addCRetry = await addMember(c, [epoch], 1_900_000_001)
   const addE = await addMember(e, [digest(revA)])
@@ -605,12 +681,12 @@ describe('totality under hostile presentation', async () => {
     parents: [epoch],
     add: memberB.add,
   })
-  const deniesA = await revoke(root, memberA.did, [digest(revB)])
+  const deniesA = await revoke({ signer: root, target: memberA.did, parents: [digest(revB)] })
   pool.push(
     removesB,
     deniesA,
-    await revoke(signerA, memberB.did),
-    await revoke(root, `#${head.keys[0]}`),
+    await revoke({ signer: signerA, target: memberB.did }),
+    await revoke({ signer: root, target: `#${head.keys[0]}` }),
     await addMember(a, [epoch]),
     await createRenew({
       signer: signerA,
@@ -629,14 +705,16 @@ describe('totality under hostile presentation', async () => {
       add: memberA.add,
       lease: 2_000_000_000,
     }),
-    await revoke(signerA, 'did:key:zLate', [digest(deniesA)]),
+    await revoke({ signer: signerA, target: 'did:key:zLate', parents: [digest(deniesA)] }),
   )
   // Two of them as parents too, so generated events also land in a past where B is removed or A
   // is denied. The refused ones are not: see the feedback below.
   parentChoices.push(digest(removesB), digest(deniesA))
   for (let n = 0; n < 48; n++) {
     const pick = rng(n + 1000)
-    const choose = <T>(items: Array<T>): T => items[Math.floor(pick() * items.length)] as T
+    const choose = <TValue>(items: Array<TValue>): TValue => {
+      return items[Math.floor(pick() * items.length)] as TValue
+    }
     const second = pick() < 0.1 ? choose(foreignParents) : choose(parentChoices)
     const parents = [...new Set([choose(parentChoices), second])]
     const signer = choose(signers)
@@ -669,7 +747,11 @@ describe('totality under hostile presentation', async () => {
         break
       }
       default:
-        event = await revoke(signer, pick() < 0.5 ? choose(targets) : `did:key:zGen${n}`, parents)
+        event = await revoke({
+          signer: signer,
+          target: pick() < 0.5 ? choose(targets) : `did:key:zGen${n}`,
+          parents: parents,
+        })
     }
     pool.push(event)
     // Only an event that applies becomes a parent: a refused one would leave every descendant
@@ -688,11 +770,11 @@ describe('totality under hostile presentation', async () => {
     }
   }
 
-  function shuffled<T>(items: Array<T>, next: () => number): Array<T> {
+  function shuffled<TValue>(items: Array<TValue>, next: () => number): Array<TValue> {
     const out = [...items]
     for (let i = out.length - 1; i > 0; i--) {
       const j = Math.floor(next() * (i + 1))
-      ;[out[i], out[j]] = [out[j] as T, out[i] as T]
+      ;[out[i], out[j]] = [out[j] as TValue, out[i] as TValue]
     }
     return out
   }
@@ -716,11 +798,12 @@ describe('totality under hostile presentation', async () => {
     ]) {
       expect(reasons, rule).toContain(rule)
     }
-    const deep = pool.filter(
-      (event) =>
+    const deep = pool.filter((event) => {
+      return (
         detail.applied.includes(digest(event)) &&
-        event.event.p.some((parent) => detail.applied.includes(parent)),
-    )
+        event.event.p.some((parent) => detail.applied.includes(parent))
+      )
+    })
     expect(deep.length).toBeGreaterThan(5)
   })
 
@@ -740,7 +823,7 @@ describe('totality under hostile presentation', async () => {
         }
       }
       entries.push(...[null, 7, 'x', {}, [], undefined].filter(() => next() < 0.3))
-      let expected: ReturnType<typeof summary> | undefined
+      let expected: FoldSummary | undefined
       for (let round = 0; round < 2; round++) {
         const order = shuffled(entries, next)
         let result: FoldResult | undefined

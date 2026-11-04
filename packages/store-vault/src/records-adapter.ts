@@ -7,7 +7,8 @@ import {
   snapshotRecord,
   verifySignedRecord,
 } from '@kokuin/records'
-import { decodeVaultRecord, type VAULT_RECORD_TYPES, vaultRecordMeta } from '@kokuin/vault'
+import type { VaultRecordType } from '@kokuin/vault'
+import { decodeVaultRecord, vaultRecordMeta } from '@kokuin/vault'
 
 import { upsertReplicatedDecision } from './batch.js'
 import { getVaultStore } from './definition.js'
@@ -183,7 +184,12 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
 
       await assertDomain(bound)
 
-      const op = await verifySignedRecord(record, bound.opKind, bound.methods, bound.params)
+      const op = await verifySignedRecord({
+        record: record,
+        opKind: bound.opKind,
+        methods: bound.methods,
+        options: bound.params,
+      })
 
       if (
         op === null ||
@@ -192,7 +198,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
       )
         throw new Error('Invalid vault record copy')
 
-      const type = record.type as (typeof VAULT_RECORD_TYPES)[number]
+      const type = record.type as VaultRecordType
 
       if ((await vaultRecordMeta(type, op.claim, bound.params)) === null)
         throw new Error('Invalid vault record metadata')
@@ -280,7 +286,12 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         current.copies.map(async (copy) => {
           return {
             copy,
-            op: await verifySignedRecord(copy, bound.opKind, bound.methods, bound.params),
+            op: await verifySignedRecord({
+              record: copy,
+              opKind: bound.opKind,
+              methods: bound.methods,
+              options: bound.params,
+            }),
           }
         }),
       )

@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest'
 import { digestOf } from '../src/canonical.js'
 import { authorityPath, deriveKeyPair, recoveryPath } from '../src/derivation.js'
 import { createRemove } from '../src/epoch-events.js'
+import type { RotateEvent, SignedEvent } from '../src/events.js'
 import {
   createInception,
   createReset,
@@ -184,7 +185,7 @@ describe('tombstones in resets', () => {
     if (!after.ok) throw new Error(after.reason)
     const snapshot = snapshotOf(after.head)
     expect(snapshot.removed).toEqual([entry])
-    const reset = await createReset(seed, 0, 1, snapshot)
+    const reset = await createReset({ seed: seed, profile: 0, gen: 1, snapshot: snapshot })
     expect('u' in reset.event).toBe(false)
     const result = await foldLog(did, { chain: [icp, admitted, reset], events: [] })
     expect(result.ok).toBe(true)
@@ -194,7 +195,12 @@ describe('tombstones in resets', () => {
     expect(snapshot.removed).toEqual([entry])
   })
   test('a recovery-signed reset refuses the tombstone field regardless of its value', async () => {
-    const reset = await createReset(seed, 0, 1, { members: [entry], deny: [] })
+    const reset = await createReset({
+      seed: seed,
+      profile: 0,
+      gen: 1,
+      snapshot: { members: [entry], deny: [] },
+    })
     for (const u of [[], [{ ...entry, add: 'removed-add' }], null, {}, false, undefined]) {
       const event = { ...reset.event, u }
       const signed = {
@@ -202,9 +208,9 @@ describe('tombstones in resets', () => {
         event,
         sigs: await signEvent(event, [deriveKeyPair(seed, recoveryPath(0), 'EdDSA').privateKey]),
       }
-      expect(await verifyReset(signed as typeof reset, icp.event)).toBe(true)
+      expect(await verifyReset(signed as SignedEvent<RotateEvent>, icp.event)).toBe(true)
       expect(
-        await foldLog(did, { chain: [icp, signed as typeof reset], events: [] }),
+        await foldLog(did, { chain: [icp, signed as SignedEvent<RotateEvent>], events: [] }),
       ).toMatchObject({
         ok: false,
         reason: RESET_HAS_TOMBSTONES,
@@ -215,7 +221,7 @@ describe('tombstones in resets', () => {
     expect((await foldLog(did, { chain: [icp, reset], events: [] })).ok).toBe(true)
   })
   test('tombstones without a full snapshot refuse, even with valid root signatures', async () => {
-    const reset = await createReset(seed, 0, 1)
+    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
     const event = { ...reset.event, u: [entry] }
     const signed = {
       ...reset,

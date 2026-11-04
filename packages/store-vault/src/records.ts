@@ -127,8 +127,8 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
     // Apply creates its own transaction after preflight. Keep its verifier and hooks in that scope.
     const scopedStore: RecordStoreAdapter = {
       ...store,
-      transaction: (fn) =>
-        store.transaction(async (tx) => {
+      transaction: (fn) => {
+        return store.transaction(async (tx) => {
           const inner = boundAdapters.get(tx)
           if (inner === undefined) throw new Error('Missing transaction adapter')
           const previous = current
@@ -138,7 +138,8 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
           } finally {
             current = previous
           }
-        }),
+        })
+      },
     }
     const types = vaultRecordTypes({
       ...params,
@@ -222,7 +223,12 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
         // The address precondition reads nothing, so it runs before any store read, as it did.
         const ops = await settleAll(
           request.records.map(async (record) => {
-            const op = await verifySignedRecord(record, params.opKind, inner.methods, params)
+            const op = await verifySignedRecord({
+              record: record,
+              opKind: params.opKind,
+              methods: inner.methods,
+              options: params,
+            })
 
             if (
               op !== null &&
@@ -257,7 +263,14 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
 
             const copies = old.get(recordKeyText(record))?.copies ?? []
             const priors = await settleAll(
-              copies.map((copy) => verifySignedRecord(copy, params.opKind, inner.methods, params)),
+              copies.map((copy) => {
+                return verifySignedRecord({
+                  record: copy,
+                  opKind: params.opKind,
+                  methods: inner.methods,
+                  options: params,
+                })
+              }),
             )
 
             for (const [index, prior] of priors.entries()) {
@@ -320,7 +333,12 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
         const currentOps = await settleAll(
           request.records.flatMap((record) => {
             return (current.get(recordKeyText(record))?.copies ?? []).map((copy) => {
-              return verifySignedRecord(copy, params.opKind, inner.methods, params)
+              return verifySignedRecord({
+                record: copy,
+                opKind: params.opKind,
+                methods: inner.methods,
+                options: params,
+              })
             })
           }),
         )
@@ -368,7 +386,14 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
       })
       // Root-bound resolvers need the connection released before verification.
       const ops = await settleAll(
-        rows.map((row) => verifyRecordOp(row.op_jwt, params.opKind, bound.methods, params)),
+        rows.map((row) => {
+          return verifyRecordOp({
+            opJWT: row.op_jwt,
+            opKind: params.opKind,
+            methods: bound.methods,
+            options: params,
+          })
+        }),
       )
       const result: Array<VaultKeyBranch> = []
 
@@ -409,9 +434,14 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
         return record !== undefined && record.owner === address.ownerDID ? [record] : []
       })
       const ops = await settleAll(
-        candidates.map((record) =>
-          verifySignedRecord(record, params.opKind, bound.methods, params),
-        ),
+        candidates.map((record) => {
+          return verifySignedRecord({
+            record: record,
+            opKind: params.opKind,
+            methods: bound.methods,
+            options: params,
+          })
+        }),
       )
       const rows: Array<VaultKeyBranchTable> = []
 

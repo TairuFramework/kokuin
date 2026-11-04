@@ -18,6 +18,8 @@ import {
 import { now } from './time.js'
 import type { CapabilityToken, VerifyTokenHook } from './types.js'
 
+export type TokenRevokedErrorParams = { jti: string; options?: ErrorOptions }
+
 const TOKEN_REVOKED_BRAND = '@kokuin/capability/TokenRevokedError'
 
 /**
@@ -37,7 +39,7 @@ export class TokenRevokedError extends Error {
     return TOKEN_REVOKED_BRAND
   }
 
-  constructor(jti: string, options?: ErrorOptions) {
+  constructor({ jti, options }: TokenRevokedErrorParams) {
     super(`Token revoked: ${jti}`, options)
     this.name = 'TokenRevokedError'
   }
@@ -283,7 +285,8 @@ export function createRevocationChecker(
         (await namesADeniedKey(record, captured))
       ) {
         // Same error as the verified path below; the resolution failure rides along as `cause`.
-        throw new TokenRevokedError(jti, { cause: error })
+        // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
+        throw new TokenRevokedError({ jti: jti, options: { cause: error } })
       }
       return
     }
@@ -294,7 +297,7 @@ export function createRevocationChecker(
       revokesJTI(verified.payload, jti) &&
       normalizeDID(verified.payload.iss) === normalizeDID(token.payload.iss)
     ) {
-      throw new TokenRevokedError(jti)
+      throw new TokenRevokedError({ jti: jti })
     }
   }
 }

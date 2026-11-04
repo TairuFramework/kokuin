@@ -1,4 +1,5 @@
 import { encodeKey } from '@kokuin/controller'
+import type { OwnIdentity } from '@kokuin/token'
 import {
   createIdentity,
   createInMemoryDIDCache,
@@ -30,7 +31,7 @@ import {
   now,
 } from '../src/index.js'
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -49,25 +50,28 @@ describe('createCapability() - child expiry attenuation', () => {
     const manager = randomIdentity()
     const device = randomIdentity()
     const expiry = now() + 3600
-    const parent = await createCapability(root, {
-      sub: root.id,
-      aud: manager.id,
-      act: 'write',
-      res: '*',
-      exp: bounded ? expiry : undefined,
+    const parent = await createCapability({
+      signer: root,
+      payload: {
+        sub: root.id,
+        aud: manager.id,
+        act: 'write',
+        res: '*',
+        exp: bounded ? expiry : undefined,
+      },
     })
-    const result = createCapability(
-      manager,
-      {
+    const result = createCapability({
+      signer: manager,
+      payload: {
         sub: root.id,
         aud: device.id,
         act: 'write',
         res: 'doc/1',
         exp: offset == null ? undefined : expiry + offset,
       },
-      undefined,
-      { parentCapability: stringifyToken(parent) },
-    )
+      header: undefined,
+      options: { parentCapability: stringifyToken(parent) },
+    })
     if (accepted) {
       await expect(result).resolves.toMatchObject({ payload: { aud: device.id } })
     } else {
@@ -468,34 +472,37 @@ describe('checkDelegationChain()', () => {
     const signerB = randomIdentity()
     const signerC = randomIdentity()
     const signerD = randomIdentity()
-    const delegateToB = await createCapability(signerA, {
-      sub: signerA.id,
-      aud: signerB.id,
-      act: '*',
-      res: 'foo/*',
+    const delegateToB = await createCapability({
+      signer: signerA,
+      payload: {
+        sub: signerA.id,
+        aud: signerB.id,
+        act: '*',
+        res: 'foo/*',
+      },
     })
-    const delegateToC = await createCapability(
-      signerB,
-      {
+    const delegateToC = await createCapability({
+      signer: signerB,
+      payload: {
         sub: signerA.id,
         aud: signerC.id,
         act: 'test/*',
         res: ['foo/bar', 'foo/baz'],
       },
-      undefined,
-      { parentCapability: stringifyToken(delegateToB) },
-    )
-    const delegateToD = await createCapability(
-      signerC,
-      {
+      header: undefined,
+      options: { parentCapability: stringifyToken(delegateToB) },
+    })
+    const delegateToD = await createCapability({
+      signer: signerC,
+      payload: {
         sub: signerA.id,
         aud: signerD.id,
         act: ['test/read', 'test/write'],
         res: 'foo/baz',
       },
-      undefined,
-      { parentCapability: stringifyToken(delegateToC) },
-    )
+      header: undefined,
+      options: { parentCapability: stringifyToken(delegateToC) },
+    })
     await expect(
       checkDelegationChain(delegateToD.payload, [
         stringifyToken(delegateToC),
@@ -511,34 +518,37 @@ describe('checkCapability()', () => {
     const signerB = randomIdentity()
     const signerC = randomIdentity()
     const signerD = randomIdentity()
-    const delegateToB = await createCapability(signerA, {
-      sub: signerA.id,
-      aud: signerB.id,
-      act: '*',
-      res: ['foo/*'],
+    const delegateToB = await createCapability({
+      signer: signerA,
+      payload: {
+        sub: signerA.id,
+        aud: signerB.id,
+        act: '*',
+        res: ['foo/*'],
+      },
     })
-    const delegateToC = await createCapability(
-      signerB,
-      {
+    const delegateToC = await createCapability({
+      signer: signerB,
+      payload: {
         sub: signerA.id,
         aud: signerC.id,
         act: 'test/*',
         res: ['foo/bar', 'foo/baz'],
       },
-      undefined,
-      { parentCapability: stringifyToken(delegateToB) },
-    )
-    const delegateToD = await createCapability(
-      signerC,
-      {
+      header: undefined,
+      options: { parentCapability: stringifyToken(delegateToB) },
+    })
+    const delegateToD = await createCapability({
+      signer: signerC,
+      payload: {
         sub: signerA.id,
         aud: signerD.id,
         act: 'test/*',
         res: ['foo/baz'],
       },
-      undefined,
-      { parentCapability: stringifyToken(delegateToC) },
-    )
+      header: undefined,
+      options: { parentCapability: stringifyToken(delegateToC) },
+    })
     const token = await signerD.signToken({
       sub: signerA.id,
       prc: 'test/call',
@@ -554,13 +564,15 @@ describe('checkCapability()', () => {
     const alice = randomIdentity()
     const bob = randomIdentity()
 
-    // Create an expired capability
-    const capability = await createCapability(alice, {
-      sub: alice.id,
-      aud: bob.id,
-      act: 'test/read',
-      res: 'foo/bar',
-      exp: fixedTime - 100, // Expired
+    const capability = await createCapability({
+      signer: alice,
+      payload: {
+        sub: alice.id,
+        aud: bob.id,
+        act: 'test/read',
+        res: 'foo/bar',
+        exp: fixedTime - 100, // Expired
+      },
     })
 
     const bobToken = await bob.signToken({
@@ -585,12 +597,15 @@ describe('checkCapability()', () => {
     const alice = randomIdentity()
     const bob = randomIdentity()
 
-    const capability = await createCapability(alice, {
-      sub: alice.id,
-      aud: bob.id,
-      act: 'test/read',
-      res: 'foo/bar',
-      exp: referenceTime + 100,
+    const capability = await createCapability({
+      signer: alice,
+      payload: {
+        sub: alice.id,
+        aud: bob.id,
+        act: 'test/read',
+        res: 'foo/bar',
+        exp: referenceTime + 100,
+      },
     })
 
     const bobToken = await bob.signToken({
@@ -611,11 +626,14 @@ describe('checkCapability()', () => {
   test('forwards verifiers to every capability in the chain', async () => {
     const alice = randomIdentity()
     const bob = randomIdentity()
-    const capability = await createCapability(alice, {
-      sub: alice.id,
-      aud: bob.id,
-      act: 'test/read',
-      res: 'foo/bar',
+    const capability = await createCapability({
+      signer: alice,
+      payload: {
+        sub: alice.id,
+        aud: bob.id,
+        act: 'test/read',
+        res: 'foo/bar',
+      },
     })
     const bobToken = await bob.signToken({
       sub: alice.id,
@@ -707,21 +725,21 @@ describe('checkCapability() - self-issued tokens (C-02)', () => {
 })
 
 describe('checkDelegationChain() - depth limits (H-04)', () => {
-  async function buildDelegationChain(signers: Array<ReturnType<typeof randomIdentity>>) {
+  async function buildDelegationChain(signers: Array<OwnIdentity>) {
     const capabilities: Array<string> = []
     for (let i = 0; i < signers.length - 1; i++) {
       const parentOption = i > 0 ? { parentCapability: capabilities[i - 1] } : undefined
-      const cap = await createCapability(
-        at(signers, i),
-        {
+      const cap = await createCapability({
+        signer: at(signers, i),
+        payload: {
           sub: at(signers, 0).id,
           aud: at(signers, i + 1).id,
           act: '*',
           res: '*',
         },
-        undefined,
-        parentOption,
-      )
+        header: undefined,
+        options: parentOption,
+      })
       capabilities.push(stringifyToken(cap))
     }
     return capabilities
@@ -730,7 +748,6 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
   test('rejects delegation chains exceeding max depth', async () => {
     const signers = Array.from({ length: 25 }, () => randomIdentity())
 
-    // Build a chain of 24 delegations (exceeds default limit of 20)
     const capabilities = await buildDelegationChain(signers)
 
     const finalPayload = {
@@ -1024,9 +1041,9 @@ describe('assertValidPattern() (M-06)', () => {
     // is `{ act: 'revoke', res: <target> }`. Without `#` the only grant that could authorise
     // revoking a key would be `res: '*'` — a wildcard has to be a whole component — so delegating
     // "retire this one leaked key" would have meant delegating "revoke anything".
-    expect(() =>
-      assertValidPattern('#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'),
-    ).not.toThrow()
+    expect(() => {
+      return assertValidPattern('#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK')
+    }).not.toThrow()
     // Still not a licence for wildcards inside a component.
     expect(() => assertValidPattern('#z6Mk*')).toThrow('Invalid pattern')
   })
@@ -1049,11 +1066,14 @@ describe('createCapability() - delegation validation (C-03)', () => {
     const alice = randomIdentity()
 
     // Alice creates a capability for herself - always allowed
-    const cap = await createCapability(alice, {
-      sub: alice.id,
-      aud: 'did:test:bob',
-      act: 'test/read',
-      res: 'foo/bar',
+    const cap = await createCapability({
+      signer: alice,
+      payload: {
+        sub: alice.id,
+        aud: 'did:test:bob',
+        act: 'test/read',
+        res: 'foo/bar',
+      },
     })
 
     expect(cap.payload.iss).toBe(alice.id)
@@ -1065,26 +1085,29 @@ describe('createCapability() - delegation validation (C-03)', () => {
     const bob = randomIdentity()
 
     // Alice creates root capability for Bob
-    const rootCap = await createCapability(alice, {
-      sub: alice.id,
-      aud: bob.id,
-      act: '*',
-      res: 'foo/*',
+    const rootCap = await createCapability({
+      signer: alice,
+      payload: {
+        sub: alice.id,
+        aud: bob.id,
+        act: '*',
+        res: 'foo/*',
+      },
     })
 
     // Bob can delegate to Carol with valid parent
     const carol = randomIdentity()
-    const delegatedCap = await createCapability(
-      bob,
-      {
+    const delegatedCap = await createCapability({
+      signer: bob,
+      payload: {
         sub: alice.id,
         aud: carol.id,
         act: 'test/read',
         res: 'foo/bar',
       },
-      undefined,
-      { parentCapability: stringifyToken(rootCap) },
-    )
+      header: undefined,
+      options: { parentCapability: stringifyToken(rootCap) },
+    })
 
     expect(delegatedCap.payload.iss).toBe(bob.id)
     expect(delegatedCap.payload.sub).toBe(alice.id)
@@ -1094,28 +1117,31 @@ describe('createCapability() - delegation validation (C-03)', () => {
     const alice = randomIdentity()
     const bob = randomIdentity()
 
-    const rootCap = await createCapability(alice, {
-      sub: alice.id,
-      aud: bob.id,
-      act: 'test/read', // Only read
-      res: 'foo/bar',
+    const rootCap = await createCapability({
+      signer: alice,
+      payload: {
+        sub: alice.id,
+        aud: bob.id,
+        act: 'test/read', // Only read
+        res: 'foo/bar',
+      },
     })
 
     const carol = randomIdentity()
 
     // Bob tries to delegate 'write' which he doesn't have
     await expect(
-      createCapability(
-        bob,
-        {
+      createCapability({
+        signer: bob,
+        payload: {
           sub: alice.id,
           aud: carol.id,
           act: 'test/write', // Exceeds parent
           res: 'foo/bar',
         },
-        undefined,
-        { parentCapability: stringifyToken(rootCap) },
-      ),
+        header: undefined,
+        options: { parentCapability: stringifyToken(rootCap) },
+      }),
     ).rejects.toThrow('permission')
   })
 
@@ -1125,11 +1151,14 @@ describe('createCapability() - delegation validation (C-03)', () => {
 
     // Bob tries to delegate for Alice without providing a parent capability
     await expect(
-      createCapability(bob, {
-        sub: alice.id,
-        aud: 'did:test:carol',
-        act: 'test/read',
-        res: 'foo/bar',
+      createCapability({
+        signer: bob,
+        payload: {
+          sub: alice.id,
+          aud: 'did:test:carol',
+          act: 'test/read',
+          res: 'foo/bar',
+        },
       }),
     ).rejects.toThrow('parentCapability required')
   })
@@ -1139,26 +1168,29 @@ describe('createCapability() - delegation validation (C-03)', () => {
     const bob = randomIdentity()
     const eve = randomIdentity() // Attacker
 
-    const rootCap = await createCapability(alice, {
-      sub: alice.id,
-      aud: bob.id,
-      act: '*',
-      res: '*',
+    const rootCap = await createCapability({
+      signer: alice,
+      payload: {
+        sub: alice.id,
+        aud: bob.id,
+        act: '*',
+        res: '*',
+      },
     })
 
     // Eve tries to use Bob's capability
     await expect(
-      createCapability(
-        eve,
-        {
+      createCapability({
+        signer: eve,
+        payload: {
           sub: alice.id,
           aud: 'did:test:victim',
           act: '*',
           res: '*',
         },
-        undefined,
-        { parentCapability: stringifyToken(rootCap) },
-      ),
+        header: undefined,
+        options: { parentCapability: stringifyToken(rootCap) },
+      }),
     ).rejects.toThrow('audience')
   })
 
@@ -1189,41 +1221,44 @@ describe('createCapability() - delegation validation (C-03)', () => {
     const bob = randomIdentity()
     const carol = randomIdentity()
 
-    const rootCap = await createCapability(root, {
-      sub: profileDID,
-      aud: bob.id,
-      act: '*',
-      res: 'foo/*',
+    const rootCap = await createCapability({
+      signer: root,
+      payload: {
+        sub: profileDID,
+        aud: bob.id,
+        act: '*',
+        res: 'foo/*',
+      },
     })
 
-    const delegated = await createCapability(
-      bob,
-      {
+    const delegated = await createCapability({
+      signer: bob,
+      payload: {
         sub: profileDID,
         aud: carol.id,
         act: 'test/read',
         res: 'foo/bar',
       },
-      undefined,
-      { parentCapability: stringifyToken(rootCap), methods: [resolver] },
-    )
+      header: undefined,
+      options: { parentCapability: stringifyToken(rootCap), methods: [resolver] },
+    })
     expect(delegated.payload.iss).toBe(bob.id)
     expect(delegated.payload.sub).toBe(profileDID)
 
     // Without the registry, the did:kokuin: parent capability cannot be verified at all -- an
     // implementation that ignores `methods` here would pass the assertion above but not this one.
     await expect(
-      createCapability(
-        bob,
-        {
+      createCapability({
+        signer: bob,
+        payload: {
           sub: profileDID,
           aud: carol.id,
           act: 'test/read',
           res: 'foo/bar',
         },
-        undefined,
-        { parentCapability: stringifyToken(rootCap) },
-      ),
+        header: undefined,
+        options: { parentCapability: stringifyToken(rootCap) },
+      }),
     ).rejects.toThrow(`Unknown DID: ${profileDID}`)
   })
 
@@ -1253,12 +1288,12 @@ describe('createCapability() - delegation validation (C-03)', () => {
     // Note: no `resolver` anywhere in this test -- this isolates `cache` from `resolver`, so a
     // future implementation that forwards `resolver` but not `cache` cannot pass this test by
     // accident.
-    const delegated = await createCapability(
-      bob,
-      { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
-      undefined,
-      { parentCapability: stringifyToken(rootCap), cache },
-    )
+    const delegated = await createCapability({
+      signer: bob,
+      payload: { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+      header: undefined,
+      options: { parentCapability: stringifyToken(rootCap), cache },
+    })
     // First contact with carol: bob's own signer embeds his long form, unrelated to the option
     // under test.
     expect(delegated.payload.iss).toBe(bob.longForm)
@@ -1267,19 +1302,19 @@ describe('createCapability() - delegation validation (C-03)', () => {
     // Without the cache, an implementation that ignores it here would pass the assertion above
     // but not this one.
     await expect(
-      createCapability(
-        bob,
-        { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
-        undefined,
-        { parentCapability: stringifyToken(rootCap) },
-      ),
+      createCapability({
+        signer: bob,
+        payload: { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+        header: undefined,
+        options: { parentCapability: stringifyToken(rootCap) },
+      }),
     ).rejects.toThrow(`Unknown DID: ${alice.id}`)
   })
 
   test('delegates from a did:peer:4 short-form root when resolver is provided, and fails without it', async () => {
     // Isolates `resolver` from `cache`: no `cache` anywhere in this test, on either call, so a
     // resolver-only path is the only way the short-form root capability's issuer can resolve.
-    // Models the sibling resolver-only case in `test/revocation.test.ts` (Task 26).
+    // Models the sibling resolver-only case in `test/revocation.test.ts`.
     const alice = await createIdentity({
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],
       didMethod: 'peer:4',
@@ -1296,24 +1331,24 @@ describe('createCapability() - delegation validation (C-03)', () => {
     const doc = decodePeer4(alice.longForm).doc
     const resolver: DIDResolver = (did: string) => (did === alice.id ? doc : undefined)
 
-    const delegated = await createCapability(
-      bob,
-      { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
-      undefined,
-      { parentCapability: stringifyToken(rootCap), resolver },
-    )
+    const delegated = await createCapability({
+      signer: bob,
+      payload: { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+      header: undefined,
+      options: { parentCapability: stringifyToken(rootCap), resolver },
+    })
     expect(delegated.payload.iss).toBe(bob.id)
     expect(delegated.payload.sub).toBe(alice.id)
 
     // Without the resolver, an implementation that ignores it here would pass the assertion
     // above but not this one.
     await expect(
-      createCapability(
-        bob,
-        { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
-        undefined,
-        { parentCapability: stringifyToken(rootCap) },
-      ),
+      createCapability({
+        signer: bob,
+        payload: { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
+        header: undefined,
+        options: { parentCapability: stringifyToken(rootCap) },
+      }),
     ).rejects.toThrow(`Unknown DID: ${alice.id}`)
   })
 })
@@ -1324,23 +1359,26 @@ describe('verifyToken hook', () => {
     const signerB = randomIdentity()
     const signerC = randomIdentity()
 
-    const delegateToB = await createCapability(signerA, {
-      sub: signerA.id,
-      aud: signerB.id,
-      act: '*',
-      res: '*',
+    const delegateToB = await createCapability({
+      signer: signerA,
+      payload: {
+        sub: signerA.id,
+        aud: signerB.id,
+        act: '*',
+        res: '*',
+      },
     })
-    const delegateToC = await createCapability(
-      signerB,
-      {
+    const delegateToC = await createCapability({
+      signer: signerB,
+      payload: {
         sub: signerA.id,
         aud: signerC.id,
         act: 'test/*',
         res: 'foo/*',
       },
-      undefined,
-      { parentCapability: stringifyToken(delegateToB) },
-    )
+      header: undefined,
+      options: { parentCapability: stringifyToken(delegateToB) },
+    })
 
     const verified: Array<string> = []
     const verifyToken = vi.fn((_token: unknown, raw: string) => {
@@ -1357,11 +1395,14 @@ describe('verifyToken hook', () => {
     const signerA = randomIdentity()
     const signerB = randomIdentity()
 
-    const delegateToB = await createCapability(signerA, {
-      sub: signerA.id,
-      aud: signerB.id,
-      act: '*',
-      res: '*',
+    const delegateToB = await createCapability({
+      signer: signerA,
+      payload: {
+        sub: signerA.id,
+        aud: signerB.id,
+        act: '*',
+        res: '*',
+      },
     })
 
     const verifyToken = vi.fn(() => {
@@ -1377,11 +1418,14 @@ describe('verifyToken hook', () => {
     const alice = randomIdentity()
     const bob = randomIdentity()
 
-    const capability = await createCapability(alice, {
-      sub: alice.id,
-      aud: bob.id,
-      act: 'test/read',
-      res: 'foo/bar',
+    const capability = await createCapability({
+      signer: alice,
+      payload: {
+        sub: alice.id,
+        aud: bob.id,
+        act: 'test/read',
+        res: 'foo/bar',
+      },
     })
 
     const capString = stringifyToken(capability)
@@ -1410,11 +1454,14 @@ describe('verifyToken hook', () => {
     const alice = randomIdentity()
     const bob = randomIdentity()
 
-    const capability = await createCapability(alice, {
-      sub: alice.id,
-      aud: bob.id,
-      act: 'test/read',
-      res: 'foo/bar',
+    const capability = await createCapability({
+      signer: alice,
+      payload: {
+        sub: alice.id,
+        aud: bob.id,
+        act: 'test/read',
+        res: 'foo/bar',
+      },
     })
 
     const token = await bob.signToken({
@@ -1457,23 +1504,26 @@ describe('verifyToken hook', () => {
     const signerB = randomIdentity()
     const signerC = randomIdentity()
 
-    const delegateToB = await createCapability(signerA, {
-      sub: signerA.id,
-      aud: signerB.id,
-      act: '*',
-      res: 'foo/*',
+    const delegateToB = await createCapability({
+      signer: signerA,
+      payload: {
+        sub: signerA.id,
+        aud: signerB.id,
+        act: '*',
+        res: 'foo/*',
+      },
     })
-    const delegateToC = await createCapability(
-      signerB,
-      {
+    const delegateToC = await createCapability({
+      signer: signerB,
+      payload: {
         sub: signerA.id,
         aud: signerC.id,
         act: 'test/*',
         res: 'foo/bar',
       },
-      undefined,
-      { parentCapability: stringifyToken(delegateToB) },
-    )
+      header: undefined,
+      options: { parentCapability: stringifyToken(delegateToB) },
+    })
 
     const token = await signerC.signToken({
       sub: signerA.id,
@@ -1495,11 +1545,14 @@ describe('verifyToken hook', () => {
     const alice = randomIdentity()
     const bob = randomIdentity()
 
-    const capability = await createCapability(alice, {
-      sub: alice.id,
-      aud: bob.id,
-      act: 'test/read',
-      res: 'foo/bar',
+    const capability = await createCapability({
+      signer: alice,
+      payload: {
+        sub: alice.id,
+        aud: bob.id,
+        act: 'test/read',
+        res: 'foo/bar',
+      },
     })
 
     const token = await bob.signToken({
@@ -1525,9 +1578,9 @@ describe('checkCapability() - a capability presented directly rather than invoke
   // A capability carries no invocation token, so its own payload is what reaches `checkCapability`.
   // Its own claims are the last hop of the chain and have to bind like any other link's.
   async function presented(): Promise<{
-    root: ReturnType<typeof randomIdentity>
-    manager: ReturnType<typeof randomIdentity>
-    device: ReturnType<typeof randomIdentity>
+    root: OwnIdentity
+    manager: OwnIdentity
+    device: OwnIdentity
     leaf: CapabilityPayload
     parent: string
   }> {
@@ -1536,17 +1589,20 @@ describe('checkCapability() - a capability presented directly rather than invoke
     const device = randomIdentity()
     // root → manager: write anything. manager → device: write `doc/1` only.
     const parent = stringifyToken(
-      await createCapability(root, {
-        sub: root.id,
-        aud: manager.id,
-        act: 'write',
-        res: '*',
-        exp: now() + 3600,
+      await createCapability({
+        signer: root,
+        payload: {
+          sub: root.id,
+          aud: manager.id,
+          act: 'write',
+          res: '*',
+          exp: now() + 3600,
+        },
       }),
     )
-    const leafToken = await createCapability(
-      manager,
-      {
+    const leafToken = await createCapability({
+      signer: manager,
+      payload: {
         sub: root.id,
         aud: device.id,
         act: 'write',
@@ -1554,9 +1610,9 @@ describe('checkCapability() - a capability presented directly rather than invoke
         exp: now() + 3600,
         cap: [parent],
       },
-      undefined,
-      { parentCapability: parent },
-    )
+      header: undefined,
+      options: { parentCapability: parent },
+    })
     return { root, manager, device, leaf: leafToken.payload as CapabilityPayload, parent }
   }
 
@@ -1614,12 +1670,15 @@ describe('checkCapability() - a capability presented directly rather than invoke
     const root = randomIdentity()
     const device = randomIdentity()
     const capability = stringifyToken(
-      await createCapability(root, {
-        sub: root.id,
-        aud: device.id,
-        act: 'write',
-        res: 'doc/1',
-        exp: now() + 3600,
+      await createCapability({
+        signer: root,
+        payload: {
+          sub: root.id,
+          aud: device.id,
+          act: 'write',
+          res: 'doc/1',
+          exp: now() + 3600,
+        },
       }),
     )
     // The invocation shape: `act`/`res` absent, authority entirely in `cap`. Dropping the pair is
@@ -1645,12 +1704,15 @@ describe('checkCapability() - a capability presented directly rather than invoke
       const manager = randomIdentity()
       const device = randomIdentity()
       const parent = stringifyToken(
-        await createCapability(root, {
-          sub: root.id,
-          aud: manager.id,
-          act: 'write',
-          res: '*',
-          exp: reference + 7200,
+        await createCapability({
+          signer: root,
+          payload: {
+            sub: root.id,
+            aud: manager.id,
+            act: 'write',
+            res: '*',
+            exp: reference + 7200,
+          },
         }),
       )
       // Hand-signed: the mint path would refuse some of these outright, and what is under test is

@@ -33,9 +33,11 @@ export async function provideControllerIdentity({
   if (log == null || log.chain.length === 0) {
     const inception = [await createInception(seed, profile, { crypto })]
     // Through the merge, so a log another writer stored meanwhile is kept rather than overwritten.
-    log = await logStore.merge(did, async (current) =>
-      current != null && current.chain.length > 0 ? current : { chain: inception, events: [] },
-    )
+    log = await logStore.merge(did, async (current) => {
+      return current != null && current.chain.length > 0
+        ? current
+        : { chain: inception, events: [] }
+    })
   }
   return await createControllerIdentity({ seed, profile, log, crypto })
 }

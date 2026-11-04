@@ -8,3 +8,11 @@ A true leaf package — depends only on `@sozai/runtime`, `@noble/hashes`, and
 `@sozai/codec`. It owns no application-specific concern (no DID/credential
 wrapping, no connector registry, no MCP resource discovery, no provider-specific
 authorization policy).
+
+## Named params migration
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new OAuthTokenError` | `OAuthTokenErrorParams` | `status, code?, description?` |
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

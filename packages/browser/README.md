@@ -26,3 +26,11 @@ Browser constructors gain no crypto option. Verification selects providers throu
 Reverification rejects crafted ZIP-215-only signatures under the default policy. No historical rescan or version gate is introduced.
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new BrowserKeyStore` | `BrowserKeyStoreConstructorParams` | `getStore` |
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

@@ -30,6 +30,8 @@ import { isFullIdentity, verifyToken } from '@kokuin/token'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { beforeEach, describe, expect, test } from 'vitest'
 
+type EncodeAPDUParams = { cla: number; ins: number; p1: number; p2: number; data?: Uint8Array }
+
 const SPECULOS_API_URL = process.env.SPECULOS_URL ?? 'http://127.0.0.1:9999'
 const SPECULOS_AVAILABLE = await checkSpeculosAvailable()
 
@@ -126,7 +128,7 @@ async function setAutomation(ruleset: AutomationRuleset): Promise<void> {
 
 // -- Raw APDU exchange --
 
-function encodeAPDU(cla: number, ins: number, p1: number, p2: number, data?: Uint8Array): string {
+function encodeAPDU({ cla, ins, p1, p2, data }: EncodeAPDUParams): string {
   const dataHex = data != null ? Buffer.from(data).toString('hex') : ''
   const lc = data != null ? data.length : 0
   return (
@@ -180,7 +182,9 @@ function createSpeculosTransport(): LedgerTransport {
       p2: number,
       data?: Uint8Array,
     ): Promise<Uint8Array> {
-      const { data: responseData, sw } = await exchangeAPDU(encodeAPDU(cla, ins, p1, p2, data))
+      const { data: responseData, sw } = await exchangeAPDU(
+        encodeAPDU({ cla: cla, ins: ins, p1: p1, p2: p2, data: data }),
+      )
       if (sw !== SW_OK) {
         throw new Error(`APDU error: status word 0x${sw.toString(16)}`)
       }
@@ -247,7 +251,7 @@ describe.skipIf(!SPECULOS_AVAILABLE)('Ledger app: review rejection and guards', 
     data.set(message, pathBytes.length)
 
     const { data: responseData, sw } = await exchangeAPDU(
-      encodeAPDU(CLA, INS.SIGN_MESSAGE, 0x00, 0x00, data),
+      encodeAPDU({ cla: CLA, ins: INS.SIGN_MESSAGE, p1: 0x00, p2: 0x00, data: data }),
     )
     expect(sw).toBe(SW_USER_REJECTED)
     expect(responseData.length).toBe(0)
@@ -263,7 +267,7 @@ describe.skipIf(!SPECULOS_AVAILABLE)('Ledger app: review rejection and guards', 
     data.set(ephPub, pathBytes.length)
 
     const { data: responseData, sw } = await exchangeAPDU(
-      encodeAPDU(CLA, INS.ECDH_X25519, 0x00, 0x00, data),
+      encodeAPDU({ cla: CLA, ins: INS.ECDH_X25519, p1: 0x00, p2: 0x00, data: data }),
     )
     expect(sw).toBe(SW_USER_REJECTED)
     expect(responseData.length).toBe(0)
@@ -276,14 +280,22 @@ describe.skipIf(!SPECULOS_AVAILABLE)('Ledger app: review rejection and guards', 
     const first = new Uint8Array(pathBytes.length + message.length)
     first.set(pathBytes)
     first.set(message, pathBytes.length)
-    const completed = await exchangeAPDU(encodeAPDU(CLA, INS.SIGN_MESSAGE, 0x00, 0x00, first))
+    const completed = await exchangeAPDU(
+      encodeAPDU({ cla: CLA, ins: INS.SIGN_MESSAGE, p1: 0x00, p2: 0x00, data: first }),
+    )
     expect(completed.sw).toBe(SW_OK)
     expect(completed.data.length).toBe(64)
 
     // A stray one-byte continuation (P1=0x80) must fail the request-type guard
     // rather than append to now-cleared state.
     const stale = await exchangeAPDU(
-      encodeAPDU(CLA, INS.SIGN_MESSAGE, 0x80, 0x00, new Uint8Array([0x41])),
+      encodeAPDU({
+        cla: CLA,
+        ins: INS.SIGN_MESSAGE,
+        p1: 0x80,
+        p2: 0x00,
+        data: new Uint8Array([0x41]),
+      }),
     )
     expect(stale.sw).toBe(SW_INVALID_DATA)
     expect(stale.data.length).toBe(0)

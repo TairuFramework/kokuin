@@ -17,6 +17,7 @@ export { isUnresolvableIssuerError, UnresolvableIssuerError } from '@kokuin/toke
 
 export { AUDIENCE_REVOKED, DENY_SET_UNAVAILABLE } from './audience.js'
 export { audienceConfirmation } from './controller.js'
+export type { CreateCapabilityParams } from './delegation.js'
 export {
   assertValidDelegation,
   checkCapability,
@@ -40,6 +41,7 @@ export type {
   RevocationClaims,
   RevocationOptions,
   RevocationRecord,
+  TokenRevokedErrorParams,
 } from './revocation.js'
 export {
   createMemoryRevocationBackend,

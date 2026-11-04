@@ -13,7 +13,7 @@ import {
 import { foldLog, keyStateAt } from '../src/fold.js'
 import { encodeKey } from '../src/keys.js'
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -66,10 +66,10 @@ describe('foldLog()', () => {
     // and a forged one is buildable, because an inception is self-certifying: the DID is the hash
     // of the body, so a body with any `s` is a valid log for the DID it hashes to.
     const event = { ...(await createInception(seed, 0)).event, s: 3 }
-    const forgedDid = didFromInception(event)
+    const forgedDID = didFromInception(event)
     const forged = { event, sigs: await signEvent(event, [authorityKey.privateKey]) }
 
-    const result = await foldLog(forgedDid, { chain: [forged], events: [] })
+    const result = await foldLog(forgedDID, { chain: [forged], events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 0).seq).toBe(3)
@@ -133,7 +133,7 @@ describe('foldLog()', () => {
   test('a reset increments the generation and clears the deny set', async () => {
     const { did, icp, rot, denying } = await build()
     // Anchored to the inception, not to the head.
-    const reset = await createReset(seed, 0, 1)
+    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
     const result = await foldLog(did, { chain: [icp, rot, denying, reset], events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return

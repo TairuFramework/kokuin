@@ -10,21 +10,24 @@ describe('attenuation at the last hop (independent reproduction)', () => {
     const device = await randomIdentity()
 
     // The profile grants the manager everything.
-    const parent = await createCapability(profile, {
-      sub: profile.id,
-      aud: manager.id,
-      act: '*',
-      res: '*',
+    const parent = await createCapability({
+      signer: profile,
+      payload: {
+        sub: profile.id,
+        aud: manager.id,
+        act: '*',
+        res: '*',
+      },
     })
     const parentRaw = stringifyToken(parent)
 
     // The manager delegates a DELIBERATELY NARROW capability to the device: read one document.
-    const narrow = await createCapability(
-      manager,
-      { sub: profile.id, aud: device.id, act: 'read', res: 'doc:A', cap: parentRaw },
-      undefined,
-      { parentCapability: parentRaw },
-    )
+    const narrow = await createCapability({
+      signer: manager,
+      payload: { sub: profile.id, aud: device.id, act: 'read', res: 'doc:A', cap: parentRaw },
+      header: undefined,
+      options: { parentCapability: parentRaw },
+    })
 
     // The device presents its narrow capability and asks to revoke someone.
     let refused: string | undefined

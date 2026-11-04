@@ -1,8 +1,11 @@
+import type { CryptoOptions } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
 import { TOO_MANY_FAILED_SIGNATURES } from '../src/epoch.js'
+import type * as epochEventsModule from '../src/epoch-events.js'
+import type { EpochSignatureSigner } from '../src/epoch-events.js'
 import { createRevoke, type EpochEvent } from '../src/epoch-events.js'
 import {
   createInception,
@@ -22,12 +25,16 @@ import { createControllerResolver } from '../src/resolver.js'
 // rather than on elapsed time.
 const checks = vi.hoisted(() => ({ count: 0 }))
 vi.mock('../src/epoch-events.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/epoch-events.js')>()
+  const actual = await importOriginal<typeof epochEventsModule>()
   return {
     ...actual,
-    verifyEpochSignature: async (...args: Parameters<typeof actual.verifyEpochSignature>) => {
+    verifyEpochSignature: async (
+      signed: SignedEvent<EpochEvent>,
+      signer: EpochSignatureSigner,
+      options?: CryptoOptions,
+    ) => {
       checks.count++
-      return await actual.verifyEpochSignature(...args)
+      return await actual.verifyEpochSignature(signed, signer, options)
     },
   }
 })
@@ -86,7 +93,7 @@ function forged(i: number): SignedEvent<EpochEvent> {
   return { event: { ...template.event, x: `did:key:zForgedOther${i}` }, sigs: template.sigs }
 }
 
-function shuffled<T>(items: Array<T>, salt: number): Array<T> {
+function shuffled<TValue>(items: Array<TValue>, salt: number): Array<TValue> {
   return items
     .map((item, i) => ({ item, rank: digestOf(`${salt}:${i}`) }))
     .sort((x, y) => (x.rank < y.rank ? -1 : 1))
@@ -204,10 +211,12 @@ describe('held memory', async () => {
 
   test('forged copies of a held event are not charged', async () => {
     const [one] = honest as [SignedEvent<EpochEvent>]
-    const copies = Array.from({ length: 2 * MAX_FAILED_SIGNATURES }, (_, i) => ({
-      event: one.event,
-      sigs: [`A${i}`],
-    }))
+    const copies = Array.from({ length: 2 * MAX_FAILED_SIGNATURES }, (_, i) => {
+      return {
+        event: one.event,
+        sigs: [`A${i}`],
+      }
+    })
     const result = await authoritativeLog({
       did,
       loaded: { chain, events: copies },
