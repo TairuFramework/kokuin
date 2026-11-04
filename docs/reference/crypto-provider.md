@@ -2,7 +2,8 @@
 
 `@kokuin/crypto` exports the `CryptoProvider` contract and strict `nobleCrypto` implementation.
 `@kokuin/crypto-native` exports `createNativeCrypto()` for explicit Nitro construction.
-Both packages are prepared at version 0.1.0. Publishing is a separate step.
+`@kokuin/crypto-node` exports `nodeCrypto`, which runs part of the contract on `node:crypto` (see [Node provider](#node-provider)).
+All three packages are prepared at version 0.1.0. Publishing is a separate step.
 
 Provider injection into existing token, controller and records APIs remains pending.
 Applications can use the standalone methods or accept the structural provider contract in their own code.
@@ -67,6 +68,20 @@ ES256 accepts compact 64-byte signatures and compressed 33-byte or uncompressed 
 It hashes raw messages once with SHA-256 and rejects high-S signatures without normalising them.
 Malformed signatures and keys resolve `false`. Unsupported algorithms and invalid signing seeds reject with `TypeError`.
 blake3 output lengths must be integers from 1 through 65536. Invalid lengths reject with `RangeError`.
+
+## Node provider
+
+`nodeCrypto` from `@kokuin/crypto-node` runs Ed25519 signing and ES256 verification through `node:crypto`.
+Ed25519 verification and blake3 delegate to strict noble.
+OpenSSL accepts small-order and mixed-order Ed25519 points that the contract rejects, and `node:crypto` has no blake3.
+Ed25519 signing is deterministic, so OpenSSL and noble produce identical signatures.
+OpenSSL accepts high-S ES256 signatures, so the provider rejects the high half before calling it.
+OpenSSL itself enforces non-zero in-range scalars, curve membership and the ECDSA equation.
+
+The provider passes the shared conformance suite. Its tests also compare it with strict noble on random inputs,
+including high-S, mutated-message and wrong-key cases, and show that OpenSSL alone accepts the high-S corpus vector.
+With key import on every call, Ed25519 signing measured about 8× and ES256 verification about 15× faster than noble
+on one x86_64 container with Node 22. It needs no native addon and runs synchronously on the calling thread.
 
 ## Shared corpus and backend agreement
 

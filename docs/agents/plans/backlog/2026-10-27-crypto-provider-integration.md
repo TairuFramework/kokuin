@@ -127,9 +127,12 @@ The Ed25519 subgroup checks need curve arithmetic per signature and would restor
 - N-API is ABI-stable, so one binary per platform covers every Node and Electron version. Electron still unpacks `.node` files from asar.
 - Bun and Deno load napi addons but were not tested.
 
-### Open decisions
+### Decisions (2026-11-04)
 
-- Package shape: a separate `@kokuin/crypto-node` floating independently, like `@kokuin/crypto-native`.
-- Unsupported platforms: falling back to strict noble at provider construction differs from the mobile no-fallback rule and needs an explicit decision.
-- Gate: reuse the benchmark gate on CI hosts, including arm64, before committing to the build matrix.
-- Whether the conformant `node:crypto` ES256 verifier is worth adopting independently, since it needs no native packaging.
+- Two packages, each floating independently like `@kokuin/crypto-native`, and acceptable as experimental standalone releases before this migration lands:
+  `@kokuin/crypto-node` on `node:crypto` with no native addon, and `@kokuin/crypto-napi` for the Rust N-API backend.
+- `@kokuin/crypto-napi` falls back to `@kokuin/crypto-node` when no prebuilt binary loads, decided once at provider construction.
+  This deliberately differs from the mobile no-fallback rule: Node has a conformant pure-JavaScript route, and an unsupported platform must not fail installation.
+- `@kokuin/crypto-node` exists. It runs Ed25519 signing and ES256 verification on `node:crypto` (OpenSSL), with a JavaScript low-S check,
+  and delegates Ed25519 verification and blake3 to strict noble. With key import per call it measured about 8× faster signing and 15× faster ES256 verification than noble.
+- Still open: reuse the benchmark gate on CI hosts, including arm64, before committing to the `@kokuin/crypto-napi` build matrix.
