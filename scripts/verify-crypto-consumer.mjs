@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -56,7 +56,11 @@ for (const name of [
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim()
-    symlinkSync(path, join(bin, name))
+    // A wrapper rather than a symlink: shims such as pnpm's resolve their target relative to
+    // the directory they are invoked from, which a symlink would move into this sandbox.
+    const wrapper = join(bin, name)
+    writeFileSync(wrapper, `#!/bin/sh\nexec '${path.replaceAll("'", "'\\''")}' "$@"\n`)
+    chmodSync(wrapper, 0o755)
   } catch {
     // Optional platform tools are only needed when that platform's fixture is built.
   }
