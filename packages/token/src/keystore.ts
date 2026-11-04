@@ -29,6 +29,9 @@ export type KeyEntry<PrivateKeyType> = {
    * Idempotent under concurrency: racing callers converge on a single key. Backends that
    * share storage across processes need a cross-process lock to hold this (see `lockPath`
    * on `NodeKeyStore` / `ElectronKeyStore`); an in-process promise chain is not enough.
+   * Without that lock a concurrent create is outside this guarantee, and how it fails is
+   * platform-dependent: Linux Secret Service upserts, so both callers succeed with different
+   * keys and only one survives; macOS Keychain makes the loser throw a duplicate-item error.
    */
   provideAsync(): Promise<PrivateKeyType>
 }

@@ -26,11 +26,11 @@ work that remains came from elsewhere: one live fail-open found downstream in ku
    Small, and the drift compounds until it lands.
 3. **CI pipeline gating** — `next/2026-07-02-ci-release-gating.md`. The remaining three audit
    High items, plus workflow pinning and permanent doc-snippet typechecking.
-4. **Verify the e2e-node keyring behaviour on Linux** —
-   `next/2026-08-03-verify-e2e-node-keyring-on-linux.md`. Reading one CI run; cheaper to close
-   than to carry.
 
-Item 1 is correctness. Items 2–4 are the pipeline that should have caught them.
+Item 1 is correctness. Items 2–3 are the pipeline that should have caught them.
+
+The e2e-node keyring verification landed on 2026-11-04 —
+`completed/2026-08-03-verify-e2e-node-keyring-on-linux.complete.md`.
 
 The `did:peer:4` audience-less `iss` fail-open that led this list landed on 2026-08-04 —
 `completed/2026-08-04-peer4-audienceless-iss-and-verify-hardening.complete.md`.
