@@ -18,3 +18,11 @@ is. If you supply your own `LedgerTransport`, do not impose a short timeout on
 seconds will abort every signature before it can be approved.
 
 Rejecting a review throws `LedgerUserRejectedError` (status word `0x6985`).
+
+## Verification dependency update to 0.2.6
+
+This dependency patch joins the strict-token cutover. Hardware APDU signing, construction options and the device protocol remain unchanged.
+Ledger construction gains no crypto option. Verification selects providers through token, capability or controller options.
+The default verifier rejects crafted ZIP-215-only signatures on reverification, without a historical rescan or version gate.
+
+See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.

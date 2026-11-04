@@ -9,7 +9,7 @@
 ## Reference
 
 - [Authentication & keys](./reference/auth.md) -- identities, tokens, JWE, keystores.
-- [Standalone crypto providers](./reference/crypto-provider.md) -- portable noble and explicit native providers.
+- [Crypto providers and adoption](./reference/crypto-provider.md) -- provider selection, Promise migration and strict verification.
 - [Capabilities & delegation](./reference/capability.md) -- scoped grants, chains, revocation.
 - [`did:kokuin:` controllers](./reference/controller.md) -- the profile DID method and its key event log.
 - [Vault](./reference/vault.md) -- content-key crypto, signed vault records, storage and coordinators.

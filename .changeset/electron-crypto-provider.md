@@ -2,4 +2,4 @@
 "@kokuin/electron": minor
 ---
 
-Capture an immutable crypto provider for software identity signing. Reject conflicting providers when reopening a cached keystore.
+Pass crypto through ElectronKeyStoreParams for captured software identity signing. Reopening a cached store with a different resolved provider now rejects, including omission after custom selection.

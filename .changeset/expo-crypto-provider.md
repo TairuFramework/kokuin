@@ -2,4 +2,4 @@
 "@kokuin/expo": minor
 ---
 
-Capture an immutable crypto provider for software identity signing. Reject conflicting providers when reopening a cached keystore.
+Pass crypto alongside SecureStore entry options for captured software identity signing. Conflicting cached-store reopens now reject. SecureStore receives only entry options.

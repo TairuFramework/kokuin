@@ -25,6 +25,14 @@ Detached buffers and shared buffers reject with `TypeError`.
 blake3 output lengths must be integers from 1 through 65536. Invalid lengths reject with `RangeError`.
 Empty batches resolve empty arrays. Batch results preserve input order and own independent output storage.
 
-Existing kokuin identity, token, controller and records APIs do not yet accept this provider.
+Identity, token, controller, records and vault APIs accept this provider through explicit options.
 Applications can use its standalone methods or pass the structural contract to their own code.
-Native performance and public API migration remain subject to physical-device measurements.
+Native route qualification still requires stored measurements and final physical-device retesting.
+
+## Provider adoption
+
+Identity, controller, record and vault APIs now accept this provider contract.
+The six-method asynchronous contract is unchanged. Strict noble caches public-key validation in a bounded 256-entry cache.
+Every signature point still receives strict validation. Applications must keep provider behaviour immutable throughout its lifetime.
+
+See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.

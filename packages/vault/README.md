@@ -72,3 +72,40 @@ Recipient DIDs retain their resolvable long form. `wrappableDID` selects that fo
 
 The package also exports the public key, wrapping, entry-set and descriptor digest helpers,
 pure factor reconstruction and eligibility checks, a cloning TTL key cache, and an optional in-memory PIN throttle.
+
+## Crypto provider migration to 0.2.0
+
+All functions below accept appended `options?: CryptoOptions` and now require `await`.
+
+| Export | Result |
+| --- | --- |
+| `digestParts(parts, options?)` | `Promise<string>` |
+| `vaultKeyDigest(key, options?)` | `Promise<string>` |
+| `vaultWrappingDigest(wrapping, options?)` | `Promise<string>` |
+| `vaultEntriesDigest(entries, options?)` | `Promise<string>` |
+| `vaultEntryDigest(entry, options?)` | `Promise<string>` |
+| `descriptorDigest(descriptors, options?)` | `Promise<string>` |
+| `createVaultKeyID(owner, unique, options?)` | `Promise<string>` |
+| `createVaultKeyReference(owner, unique, options?)` | `Promise<{ keyID: string; keyUnique: string }>` |
+| `vaultRecordMeta(type, claim, options?)` | `Promise<VaultRecordMetas[Type] \| null>` |
+| `decodeVaultRecord(record, recordMeta, options?)` | `Promise<DecodedVaultRecord>` |
+
+`checkDescriptorDigest({ descriptors, expectedDescriptorDigest, crypto? })` now returns `Promise<void>`.
+`VaultRecordTypeParams`, `WrapParams` and `UnwrapParams` gain `crypto?`.
+`vaultRecordTypes` and `vaultProofAuthorizer` capture provider options at construction.
+`vaultKeyVersionReader(store, { opKind, methods?, crypto? })` captures the provider and returns its existing asynchronous callback.
+`vaultHolderTypes(types)`, `getSuite`, wrapping and unwrapping retain their return contracts.
+
+Public metadata validation still checks owner/key-ID commitments. Internal structural parsing does not replace that validation boundary.
+`compareVaultBranches` and `selectWinningBranch` remain synchronous and consume verified `contentDigest` values.
+Canonical IDs, digests and encrypted formats remain unchanged. Provider errors propagate through decoding and authorisation.
+SHA-256, X25519, HKDF, AES-GCM, BIP39 and randomness retain their existing implementations.
+
+```ts
+const { keyID, keyUnique } = await createVaultKeyReference(ownerDID, unique, { crypto })
+const meta = await vaultRecordMeta('vault.key', claim, { crypto })
+const decoded = await decodeVaultRecord(record, recordMeta, { crypto })
+await checkDescriptorDigest({ descriptors, expectedDescriptorDigest, crypto })
+```
+
+See [provider adoption](../../docs/reference/crypto-provider.md) for selection and strict verification.

@@ -64,7 +64,7 @@ Addresses require an explicit `ownerDID`. Base storage preserves owner and recip
 It reads matching base rows in local and replicated mode. Deleted rows and signed tombstones are excluded.
 The lookup only reads and joins the caller's transaction, including uncommitted rows.
 Results identify candidates without granting authority.
-Callers must verify each candidate, for example `createVaultKeyID(owner, unique) === keyID`, and apply their own authority checks.
+Callers must verify each candidate, for example `await createVaultKeyID(owner, unique) === keyID`, and apply their own authority checks.
 
 Rows contain public key/version/state metadata, ordered descriptors, IVs and opaque encrypted bytes.
 Entry `kind`, `label` and string `attributes` remain public.
@@ -348,3 +348,10 @@ Revocation and erasure cannot recover plaintext or old keys already retained by 
 `VaultRepairPending` reports missing authenticated branch material. `VaultSupersededBranch` reports an entry on a non-selected branch.
 `VaultKeyLocked` reports required supplied factors. `VaultNotFound` covers missing keys, entries or authenticated evidence.
 Invalid API configuration can also throw standard `TypeError`, `RangeError` or `Error`.
+
+## Provider migration
+
+Digest helpers, key IDs, references, metadata validation, decoding and descriptor checks now require awaits.
+The [package migration notes](../../packages/vault/README.md#crypto-provider-migration-to-020) list exact options and Promise results.
+Record and coordinator factories capture one provider. Explicit conflicting nested providers reject before work.
+See [provider adoption](crypto-provider.md) for strict verification and the trusted-storage boundary.

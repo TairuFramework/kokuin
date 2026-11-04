@@ -2,4 +2,4 @@
 "@kokuin/jwe": minor
 ---
 
-Accept a crypto provider for signed envelope verification, including both nested encryption modes. Retain identity-owned signing and adopt strict default token verification.
+Pass crypto through UnwrapOptions for signed-envelope verification, including both nested JWE/JWS modes. Default reverification is strict. Wrapping retains identity-owned signing.

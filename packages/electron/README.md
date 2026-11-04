@@ -22,3 +22,13 @@ throws on timeout rather than proceeding unlocked.
 The synchronous `entry.provide()` cannot hold a cross-process lock (a file lock can't be
 acquired synchronously), so it throws when the store was opened with a `lockPath`; use
 `provideAsync()` instead.
+
+## Crypto provider migration to 0.5.0
+
+`ElectronKeyStoreParams` gains `crypto?: CryptoProvider` for construction and `ElectronKeyStore.open(params?)`.
+Software identities capture that provider for asynchronous signing. Omission selects strict `nobleCrypto`.
+Reopening a cached name with a different resolved provider throws, including omission after custom selection.
+Same-reference reopen succeeds. Explicit noble and omission agree for a default store.
+`provideIdentitySync` remains synchronous. Derivation and agreement retain their existing implementations.
+
+See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.

@@ -31,7 +31,7 @@ import {
   handleForDID,
 } from '@kokuin/controller'
 
-const inception = createInception(seed, 0) // profile index 0
+const inception = await createInception(seed, 0) // profile index 0
 const did = didFromInception(inception.event) // did:kokuin:z…
 
 enumerateProfiles(seed, 5) // [{ index, did, handle }, …] — for a cold recovery picker
@@ -123,9 +123,9 @@ Reveals the keys the prior event committed in `n`, commits the next set, and rep
 ```typescript
 import { createRotate, foldLog, snapshotOf } from '@kokuin/controller'
 
-const folded = foldLog(did, log)
+const folded = await foldLog(did, log)
 if (!folded.ok) throw new Error(folded.reason)
-const rotate = createRotate({
+const rotate = await createRotate({
   seed,
   profile: 0,
   did,
@@ -152,8 +152,8 @@ The fold judges every snapshot against the generation it lands on, each rule wit
 A rotate signed by the **recovery** key that increments the generation and discards everything under the prior one — including every grant minted there. It anchors to the **inception**, not to the log head, which the root recomputes from the seed alone.
 
 ```typescript
-createReset(seed, profile, gen) // blind: a pure function of (seed, profile, gen)
-createReset(seed, profile, gen, snapshot) // carries the whole recovered state
+await createReset(seed, profile, gen) // blind: a pure function of (seed, profile, gen)
+await createReset(seed, profile, gen, snapshot) // carries the whole recovered state
 ```
 
 - **Blind** (no snapshot): no seal, `d: []` and no `m`. Two blind resets at one generation therefore produce identical bytes and resolve as idempotent re-derivation rather than as a fork. The new epoch starts empty and root re-adds members with individual adds. This is the worst-case path, for a root that does not know the log's state. An empty snapshot is the same state and is written the same way, so it stays byte-identical to a blind reset rather than becoming a second encoding of it.
@@ -174,8 +174,8 @@ Both helpers require an `icp` at index zero and only `rot` events afterwards, wi
 ```typescript
 import { createDeviceRevoke, deviceRevokeIndex } from '@kokuin/controller'
 
-const revoke = createDeviceRevoke({ seed, profile: 0, did, chain, subject })
-const index = deviceRevokeIndex(did, [...chain, revoke], subject)
+const revoke = await createDeviceRevoke({ seed, profile: 0, did, chain, subject })
+const index = await deviceRevokeIndex(did, [...chain, revoke], subject)
 ```
 
 `createDeviceRevoke` folds the chain and carries `snapshotOf(head)` forward, appending the subject to the head's deny set.
@@ -216,13 +216,13 @@ import {
 const now = Math.floor(Date.now() / 1000)
 // `head` is the fold's head; `parents` the current epoch's heads this party holds (at most
 // `MAX_EVENT_PARENTS`).
-const folded = foldLog(did, log)
+const folded = await foldLog(did, log)
 if (!folded.ok) throw new Error(folded.reason)
 const head = folded.head
-const parents = epochHeads(did, log)
+const parents = await epochHeads(did, log)
 
 // Root admits a member.
-const add = createAdd({
+const add = await createAdd({
   did,
   head,
   parents,
@@ -235,7 +235,7 @@ const add = createAdd({
 // built from the same `parents` is concurrent with the others; refold and recompute `epochHeads`
 // to build one that sees them.
 const desktop = { member: { privateKey: desktopPrivateKey, add: desktopAdd } }
-const renew = createRenew({
+const renew = await createRenew({
   did,
   head,
   parents,
@@ -243,8 +243,8 @@ const renew = createRenew({
   add: phoneAdd,
   lease: now + DEFAULT_LEASE_SECONDS,
 })
-const revoke = createRevoke({ did, head, parents, signer: desktop, target: agentDID })
-const remove = createRemove({ did, head, parents, signer: desktop, add: phoneAdd })
+const revoke = await createRevoke({ did, head, parents, signer: desktop, target: agentDID })
+const remove = await createRemove({ did, head, parents, signer: desktop, add: phoneAdd })
 ```
 
 `signer` is an `EpochSigner`: `{ root: { seed, profile } }` or `{ member: { privateKey, add } }`. The builders throw rather than emit an event the fold would reject on shape — an empty or oversized parent list, a fractional lease, a body past `MAX_EVENT_BYTES` — and, for a root signer whose seed is this DID's, a `head` whose `keyGen`/`keySeq` do not name its one published key. Nothing in a builder judges authorisation; who may sign what is a question about the causal past, which only the fold has.
@@ -258,7 +258,7 @@ A key the chain head **currently publishes** in `k` or `ka` cannot be denied —
 ## The fold
 
 ```typescript
-foldLog(did, log: ControllerLog): FoldResult   // synchronous
+foldLog(did, log: ControllerLog, options?: CryptoOptions): Promise<FoldResult>
 
 type FoldResult =
   | { ok: true; states: Array<KeyState>; head: KeyState; applied: Array<string>; pending: number; rejected: number }
@@ -336,7 +336,7 @@ A skipped event is the only one the fold accepts without verifying a signature, 
 ## Branch selection
 
 ```typescript
-resolveBranches(did, chains: Array<Array<SignedEvent>>): ResolveResult
+resolveBranches(did, chains: Array<Array<SignedEvent>>, options?: CryptoOptions): Promise<ResolveResult>
 
 type ResolveResult =
   | { ok: true; winner: Array<SignedEvent>; superseded: number }
@@ -356,8 +356,8 @@ Comparing heads would make chain _length_ the deciding factor, and length is the
 ## Merging and pruning
 
 ```typescript
-mergeLogs(did, a, b): ControllerLog   // a party's log joined with one it was handed
-pruneLog(did, log): ControllerLog     // the least of a log that still folds to the same head
+mergeLogs(did, a, b, options?: CryptoOptions): Promise<ControllerLog>   // a party's log joined with one it was handed
+pruneLog(did, log, options?: CryptoOptions): Promise<ControllerLog>     // the least of a log that still folds to the same head
 ```
 
 `mergeLogs` is a pure merge, for joining what a party holds with what it was handed — a grant's proof bundle, a peer's copy — before folding. The chain is settled by the branch rules and a fork throws (`LOG_FORKED`) rather than merging two histories root never wrote as one; the events are a union, deduplicated by digest _and_ signatures, since keeping only the first copy would let a forged copy shadow the genuine one. Nothing here authenticates an event: the result is input to a fold, not memory.
@@ -454,11 +454,13 @@ The lifecycle, end to end:
 ## Signing as a profile
 
 ```typescript
-createControllerIdentity({ seed, profile, log }) // root: derives the key from the seed
-createControllerIdentityWithKey({ privateKey, log }) // daily: the key, and nothing else
+await createControllerIdentity({ seed, profile, log, crypto }) // root: derives the key from the seed
+await createControllerIdentityWithKey({ privateKey, log, crypto }) // daily: the key, and nothing else
 ```
 
-Both fold the log's chain and bind to the key its current state establishes, both stamp `kid: #<the key that signed>` on every token, and both refuse a caller-supplied `kid` that names another key rather than dropping it. They fold the chain alone: epoch events never change a root key, so folding them would cost up to `MAX_EPOCH_EVENTS` signature checks on a path that must stay synchronous and cheap.
+Both constructors asynchronously fold the chain and bind signing to its current authority key.
+Every token carries `kid: #<the key that signed>`. A mismatched caller-supplied `kid` rejects.
+Epoch events never change root keys, so identity construction omits their potentially expensive verification.
 
 Prefer the key form on any path that runs often. The seed is the root of everything the profile can ever do, and the design keeps it for rare ceremonies; a key holder can sign as the profile and cannot rotate, because a rotate must reveal the key the log pre-committed and only the seed derives that. Both throw when the key they hold is not one of the profile's current authority keys — a stale log, a wrong profile index, or a key the profile has rotated away.
 
@@ -534,3 +536,9 @@ Only then can its unchanged add digest resolve under the new generation.
 A reset must never carry `u`, even an empty list: nobody has been removed in the new generation.
 `createReset` silently drops `snapshot.removed`, so `createReset(seed, profile, gen, snapshotOf(head))` works after removal.
 The fold still refuses any reset carrying `u` with `RESET_HAS_TOMBSTONES`.
+
+## Provider migration
+
+Signing, verification and fold-dependent operations now return Promises. Positional APIs append `CryptoOptions`, while existing parameter objects gain `crypto?`.
+The [complete Promise migration list](crypto-provider.md#controller-promise-migration) covers public and internal source-module operations.
+Strict reverification applies without a historical rescan or version gate. Stored epoch authentication remains trusted across provider changes.

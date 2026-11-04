@@ -2,4 +2,4 @@
 "@kokuin/store-delegation": minor
 ---
 
-Capture crypto options in revocation checkers and forward the selected provider through tracked dependency wrappers.
+Pass crypto through createDelegationRevocationChecker options. The checker captures provider policy and forwards it through tracked revocation backend and resolver wrappers.

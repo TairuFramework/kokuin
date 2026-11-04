@@ -28,3 +28,13 @@ const verifyToken = createDelegationRevocationChecker(store, { methods })
 
 Every write carries a caller-supplied `hlc` stamp, and the purge methods must be scheduled by the
 consumer. See [docs/reference/stores.md](../../docs/reference/stores.md).
+
+## Crypto provider migration to 0.4.0
+
+`createDelegationRevocationChecker(api, options?: RevocationOptions)` accepts `options.crypto?: CryptoProvider`.
+It captures options and forwards the provider through tracked backend and resolver wrappers.
+`createDelegationRevocationBackend` retains its signature. Checker construction stays synchronous and its returned hook stays asynchronous.
+Strict default verification applies on reverification. Custom algorithm verifiers retain precedence and own their policy.
+Provider operational failures propagate unchanged. No historical rescan or version gate is introduced.
+
+See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.

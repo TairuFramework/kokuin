@@ -2,4 +2,4 @@
 "@kokuin/capability": minor
 ---
 
-Forward crypto providers through capability parents, delegation chains and revocation verification. Preserve provider failures and adopt strict default token verification.
+Add crypto to capability, delegation-chain and revocation options. Forward providers through parent and historic revocation verification. Default reverification rejects crafted ZIP-215-only signatures.

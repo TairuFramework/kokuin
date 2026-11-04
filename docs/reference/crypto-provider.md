@@ -1,11 +1,11 @@
-# Standalone crypto providers
+# Crypto providers and adoption
 
 `@kokuin/crypto` exports the `CryptoProvider` contract and strict `nobleCrypto` implementation.
 `@kokuin/crypto-native` exports `createNativeCrypto()` for explicit Nitro construction.
 Both packages are prepared at version 0.1.0. Publishing is a separate step.
 
 Token identities, token verification, capabilities, revocations and JWE envelope verification accept provider injection.
-Controller and records provider migration remains pending.
+Controller, records, vault and software identity stores also accept provider injection.
 Applications can use the standalone methods or accept the structural provider contract in their own code.
 The complete physical-device benchmark gate remains pending.
 An [exploratory physical Android probe](crypto-benchmarks/2026-10-27-android-probe/README.md) records initial results.
@@ -196,3 +196,137 @@ The native package's prepack checks require matching binary hashes and source fi
 The private conformance package is a test fixture. It is not a published dependency of either provider.
 
 See [consumer verification](crypto-consumer-verification.md) for the recorded build and runtime evidence.
+
+## Integrated adoption
+
+Omitted `crypto` resolves to strict `nobleCrypto`. Pass one resolved provider through identities, resolvers and verification constructors.
+The six-method `CryptoProvider` contract comes from `@kokuin/crypto`.
+`createNativeCrypto()` from `@kokuin/crypto-native` constructs the standalone Nitro provider explicitly.
+Portable packages require no Nitro dependency. No Node N-API or browser WASM backend is delivered.
+
+Default integration routes remain noble. No measured manifest is supplied with this migration.
+Standalone native methods execute Rust, but that fact does not qualify integrated native routes.
+Native selection needs stored measurements, exact route counters, expanded mobile conformance and final physical workload retesting.
+Registration, ABI and execution failures propagate. Route composition must never catch failures and retry on noble.
+
+Browser WebCrypto and Ledger APDU signing retain their existing paths. Their constructors gain no crypto option.
+Public-key derivation, key agreement, SHA-256, X25519, HKDF, AES-GCM, BIP39 and randomness remain outside provider selection.
+
+### Verification policy and storage boundary
+
+This is a coordinated 0.x minor cutover, including controller and records.
+Crafted signatures accepted only under the previous ZIP-215 policy become invalid when reverified.
+There is no historical rescan, compatibility switch or version gate.
+Strict Ed25519 rejects noncanonical encodings, noncanonical scalars, small-order points and mixed-order points in both A and R.
+ES256 receives raw messages, hashes once and rejects high-S compact signatures.
+Ordinary deterministic signatures and canonical bytes remain unchanged.
+
+Algorithm-specific custom verifiers take precedence. Missing overrides use the selected provider.
+Custom overrides own their verification policy. They may deliberately accept signatures the default provider rejects.
+Provider operational failures propagate unchanged. They must not become malformed-input refusals or trigger dynamic fallback.
+False results and rejected operations never enter success caches.
+Application verification caches need equivalent provider, verifier and resolution-policy isolation.
+
+Controller history trusts stored epoch authentication. Changing providers does not reauthenticate those stored copies.
+Only authoritative accepted logs belong in that trusted storage. Untrusted presentations must pass authoritative verification before persistence.
+Provider-isolated fold memos prevent cross-provider success reuse without changing this durable storage contract.
+
+Providers must remain behaviourally immutable throughout their lifetime. Constructors capture references, not copies of provider implementations.
+Replacing caller option fields cannot change captured policy. Mutating provider internals violates the contract.
+
+### Controller Promise migration
+
+Positional functions append `options?: CryptoOptions`. Existing parameter objects gain `crypto?: CryptoProvider`.
+`CryptoOptions` comes from `@kokuin/token`. Every result below now requires `await`.
+
+| Export | Arguments after migration | Result |
+| --- | --- | --- |
+| `createInception` | `seed, profile, options?` | `Promise<SignedEvent<InceptionEvent>>` |
+| `verifyInception` | `signed, did, options?` | `Promise<boolean>` |
+| `verifySignatures` | `event, sigs, keys, options?` | `Promise<boolean>` |
+| `createRotate` | `CreateRotateParams` including `crypto?` | `Promise<SignedEvent<RotateEvent>>` |
+| `verifyRotate` | `signed, prior, options?` | `Promise<boolean>` |
+| `createReset` | `seed, profile, gen, snapshot?, options?` | `Promise<SignedEvent<RotateEvent>>` |
+| `verifyReset` | `signed, inception, options?` | `Promise<boolean>` |
+| `createAdd` | `CreateAddParams` including `crypto?` | `Promise<SignedEvent<AddEvent>>` |
+| `createRenew` | `CreateRenewParams` including `crypto?` | `Promise<SignedEvent<RenewEvent>>` |
+| `createRemove` | `CreateRemoveParams` including `crypto?` | `Promise<SignedEvent<RemoveEvent>>` |
+| `createRevoke` | `CreateRevokeParams` including `crypto?` | `Promise<SignedEvent<RevokeEvent>>` |
+| `verifyEpochSignature` | `signed, signer, options?` | `Promise<boolean>` |
+| `foldLog` | `did, log, options?` | `Promise<FoldResult>` |
+| `resolveBranches` | `did, chains, options?` | `Promise<ResolveResult>` |
+| `authoritativeLog` | `{ did, loaded, seen, context, crypto? }` | `Promise<AuthoritativeLog>` |
+| `epochHeads` | `did, log, options?` | `Promise<Array<string>>` |
+| `mergeLogs` | `did, left, right, options?` | `Promise<ControllerLog>` |
+| `pruneLog` | `did, log, options?` | `Promise<ControllerLog>` |
+| `deviceRevokeIndices` | `did, chain, subject, options?` | `Promise<Array<number>>` |
+| `deviceRevokeIndex` | `did, chain, subject, options?` | `Promise<number \| undefined>` |
+| `createDeviceRevoke` | `CreateDeviceRevokeParams` including `crypto?` | `Promise<SignedEvent>` |
+| `createControllerIdentity` | `{ seed, profile, log, crypto? }` | `Promise<FullIdentity>` |
+| `createControllerIdentityWithKey` | `{ privateKey, log, crypto? }` | `Promise<SigningIdentity>` |
+
+`provideControllerIdentity({ entry, profile, logStore, crypto? })` already returns `Promise<FullIdentity>` and now forwards the provider.
+`createControllerResolver({ loadLog, history?, crypto? })` remains synchronous. Its resolution methods remain asynchronous.
+`createRotate` still requires a complete `snapshot`. Epoch builders retain their existing head, parent and signer fields.
+`createReset` places options after `snapshot`. Passing options without a snapshot requires `undefined` in that position.
+
+The following source-module exports also became asynchronous. They are internal propagation points, without public package subpath exports.
+
+| Source module | Function | Result |
+| --- | --- | --- |
+| `events.ts` | `signEvent(event, privateKeys, options?)` | `Promise<Array<string>>` |
+| `epoch.ts` | `foldEpochDetailed(params)` | `Promise<FoldEpochDetail \| FoldEpochRefusal>` |
+| `epoch.ts` | `foldEpoch(params)` | `Promise<FoldEpochResult \| FoldEpochRefusal>` |
+| `log.ts` | `foldHeld(did, log, limits?, options?)` | `Promise<HeldFold \| Extract<FoldResult, { ok: false }>>` |
+| `log.ts` | `withEpoch(did, states, events, limits?, trusted?, options?)` | `Promise<HeldFold \| Extract<FoldResult, { ok: false }>>` |
+| `history.ts` | `authoritativeLogWithin(params, limits?)` | `Promise<AuthoritativeLog>` |
+| `fold-memo.ts` | `memoizedAuthoritativeLog(params, limits?)` | `Promise<AuthoritativeLog>` |
+| `state.ts` | `currentState(did, log, context, options?)` | `Promise<KeyState>` |
+
+`FoldEpochParams` and `AuthoritativeLogParams` include `crypto?`.
+Internal `createControllerResolverWithin` remains synchronous and accepts the extended resolver options.
+`didFor`, `didFromInception`, canonicalisation, SHA-256 digests, key derivation and `enumerateProfiles` remain synchronous.
+`appliedCopies`, `keyStateAt`, `snapshotOf`, state-view selectors and memory-store construction also remain synchronous.
+
+### Identity-store options
+
+| Package target | Provider entry points |
+| --- | --- |
+| node 0.5.0 | `NodeKeyStoreParams.crypto?`, constructor and `NodeKeyStore.open(params)` |
+| electron 0.5.0 | `ElectronKeyStoreParams.crypto?`, constructor and `ElectronKeyStore.open(params?)` |
+| expo 0.5.0 | Constructor and `ExpoKeyStore.open(options?)` accept `StoreEntryOptions & { crypto?: CryptoProvider }` |
+| deterministic 0.3.0 | `HDKeyStoreParams.crypto?`, constructor, `fromSeed(seed, options?)`, `fromMnemonic(mnemonic, options?)` |
+
+HD factory options retain `basePath?` alongside `crypto?`.
+Node, Electron and Expo reject reopening cached stores with a different resolved provider reference.
+Omission and explicit `nobleCrypto` are equivalent. Omission after custom-provider selection is a conflict.
+Same-reference reopen succeeds. Equivalent-looking replacement provider objects still conflict.
+`provideIdentitySync` on Node, Electron and Expo remains synchronous. Identity signing remains asynchronous.
+Expo strips `crypto` before passing entry options to SecureStore.
+
+### Record and vault adoption
+
+Records hashing, range summaries and requester reconciliation now require awaits.
+Verified operations carry `contentDigest` for synchronous decisions. Payload checks must finish before persistence.
+The [records reference](records.md#records-migration-to-030) lists exact signatures and context options.
+The [vault migration notes](../../packages/vault/README.md#crypto-provider-migration-to-020) list digest, ID, metadata and decoder changes.
+
+`createVaultRecords` and `createVaultCoordinator` remain synchronous. Both capture `crypto?` from their parameter objects.
+Replicated coordinators inherit the outer provider into nested `records` options.
+An explicit unequal nested provider throws `TypeError` before provider or storage work.
+Omitting the outer provider selects noble, so an explicit custom nested provider also conflicts.
+
+```ts
+const records = createVaultRecords({ ...recordsParams, crypto })
+const coordinator = createVaultCoordinator({
+  ...coordinatorParams,
+  mode: 'replicated',
+  crypto,
+  records: { ...coordinatorParams.records, crypto },
+})
+```
+
+These examples assume existing replicated configuration and imported factories.
+The raw SQL store needs no provider option or schema change.
+`createDelegationRevocationChecker(api, { crypto, methods })` captures the provider through tracked revocation wrappers.
+Store-controller still accepts asynchronous merge callbacks. Its callback must await authoritative verification before reading `.log`.

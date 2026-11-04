@@ -217,3 +217,50 @@ An empty requester receives visible records directly.
 Leaf lists request missing decisions, later decisions, greater equal-order content digests, or changed signer sets for identical content.
 A requester-only record causes no fetch in this direction. The reverse pass handles the other direction.
 Fetched records still require `applyRecordChunk` with the same `opKind` and authorization policy.
+
+### Records migration to 0.3.0
+
+`VerifiedRecordOp` now requires `contentDigest: string`. Verification computes it before returning the operation.
+Verified operations contain frozen, owned claims and a protected digest. Synchronous decisions consume this carried digest.
+Fixtures must obtain it through verification or an awaited digest of the exact fixture claim.
+Persisted-operation reconstruction must verify the signed operation again before trusting its content digest.
+No database schema migration is required for the carried field.
+
+Positional APIs append `options?: CryptoOptions`. Existing `methods?` arguments keep their positions.
+
+| Export | Arguments after migration | Result |
+| --- | --- | --- |
+| `recordClaimDigest` | `claim, options?` | `Promise<string>` |
+| `recordPayloadDigest` | `payload, options?` | `Promise<string \| null>` |
+| `recordPayloadMatches` | `record, claim, options?` | `Promise<boolean>` |
+| `recordDecisionDigest` | `record, opKind, methods?, options?` | `Promise<string>` |
+| `fingerprintRange` | `leaves, options?` | `Promise<string>` |
+| `summarizeRange` | `leaves, bounds, options?` | `Promise<RangeSummary>` |
+| `splitRange` | `leaves, bounds, leafThreshold, options?` | `Promise<Array<RangeSummary \| RangeLeafList>>` |
+| `rangeLeaf` | `decision, policy, options?` | `Promise<RangeLeaf \| null>` |
+| `nextRequesterSteps` | `local, response, options?` | `Promise<Array<RequesterStep>>` |
+| `advanceRecordPull` | `state, local, response, options?` | `Promise<{ state: RecordPullState; steps: Array<RequesterStep> }>` |
+
+`signRecordOp(identity, claim, opKind, options?)` keeps its Promise result. Options select hashing, while the identity owns signing.
+`verifyRecordOp(opJWT, opKind, methods?, options?)` and `verifySignedRecord(record, opKind, methods?, options?)` keep `Promise<VerifiedRecordOp | null>`.
+`createRecordVerifier(opKind, methods?, options?)` remains synchronous and captures options for its asynchronous verifier.
+`ApplyRecordChunkParams`, `RecordReceiveContext` and `VisibilityContext` gain `crypto?`.
+`verifyHolderProof`, `visibleTo` and `filterVisibleRecords` keep their asynchronous contracts and forward that context.
+`visibilityRules(rules)` keeps its signature. Its returned hook consumes the extended context.
+Internal `isDependencyUnsatisfied` and `isDependencyUnsatisfiedBy` append options after `methods?` and remain asynchronous.
+
+`beginRecordPull`, ordering, policies, decisions and content comparisons remain synchronous.
+Hashing preserves canonical bytes, string `meta.version` substitution, tombstones and range framing.
+Payload checks must be awaited before persistence. A Promise itself is always truthy.
+Provider operational failures reject rather than becoming invalid-input refusals.
+
+```ts
+const options = { crypto }
+const op = await verifySignedRecord(record, opKind, methods, options)
+if (op !== null && await recordPayloadMatches(record, op.claim, options)) {
+  const digest = op.contentDigest
+  // Apply authorisation and persistence policy using this verified content.
+}
+```
+
+See [provider adoption](crypto-provider.md) for selection, strict verification and provider failures.

@@ -24,7 +24,7 @@ const logs = await getControllerStore(db)
 // current epoch are not re-verified, so a forged one would be applied.
 await logs.merge(
   did,
-  async (seen) => authoritativeLog({ did, loaded: presented, seen, context: 'sync' }).log,
+  async (seen) => (await authoritativeLog({ did, loaded: presented, seen, context: 'sync' })).log,
 )
 const stored = await logs.get(did)
 ```
@@ -42,3 +42,13 @@ Timestamp precision follows the adapter: SQLite stores whole seconds.
 Unchanged `merge` calls still write nothing and require an explicit `markObserved` to refresh observation time.
 
 See [docs/reference/stores.md](../../docs/reference/stores.md).
+
+## Controller contract alignment to 0.5.0
+
+The store retains its existing factory signatures and asynchronous merge callbacks.
+Controller verification now returns Promises. Merge callbacks must await `authoritativeLog` before reading its `.log` result.
+Provider selection belongs to controller options, rather than SQL store construction.
+Only authoritative accepted logs belong in storage. Stored epoch authentication remains trusted across provider changes.
+Strict verification applies on reverification, without a historical rescan or version gate.
+
+See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.

@@ -1,5 +1,5 @@
 ---
-"@kokuin/controller-conformance": minor
+"@kokuin/controller-conformance": none
 ---
 
-Make controller construction, signing, folding and branch-resolution implementation contracts asynchronous, including epoch event creation. Await the contract throughout the framework-independent suite.
+Await inception, rotate, reset, fold, branch resolution, epoch creation and test signing in implementation adapters. This private contract remains unpublished.
