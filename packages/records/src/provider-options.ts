@@ -31,6 +31,13 @@ export function guardedProvider(crypto: CryptoProvider): CryptoProvider {
           throw new ProviderFailure('Crypto provider failed', { cause })
         }
       },
+      async verifyBatch(items) {
+        try {
+          return await crypto.verifyBatch(items)
+        } catch (cause) {
+          throw new ProviderFailure('Crypto provider failed', { cause })
+        }
+      },
       async blake3(...args) {
         try {
           return await crypto.blake3(...args)

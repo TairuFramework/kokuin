@@ -137,6 +137,13 @@ function captureOptions(options?: RevocationOptions): RevocationOptions {
           throw new ProviderFailure('Crypto provider failed', { cause })
         }
       },
+      async verifyBatch(items) {
+        try {
+          return await crypto.verifyBatch(items)
+        } catch (cause) {
+          throw new ProviderFailure('Crypto provider failed', { cause })
+        }
+      },
     }
     guardedProviders.set(crypto, guarded)
   }

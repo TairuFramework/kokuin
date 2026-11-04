@@ -201,3 +201,60 @@ test('a suspended chain retains its captured provider and override policy', asyn
   expect(routed.count()).toBe(2)
   expect(rejected.count()).toBe(0)
 })
+
+test('concurrent revocation verification preserves batch operational failures', async () => {
+  const { owner } = await fixture()
+  const records = await Promise.all([
+    createRevocationRecord(owner, 'first'),
+    createRevocationRecord(owner, 'second'),
+  ])
+  const sentinel = new Error('batch offline')
+  let batches = 0
+  let singles = 0
+  const crypto: CryptoProvider = {
+    ...nobleCrypto,
+    async verify(...args) {
+      singles++
+      return nobleCrypto.verify(...args)
+    },
+    async verifyBatch() {
+      batches++
+      throw sentinel
+    },
+  }
+  const backend = createMemoryRevocationBackend({ crypto })
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const results = await Promise.allSettled(records.map((record) => backend.add(record)))
+    expect(results).toEqual(records.map(() => ({ status: 'rejected', reason: sentinel })))
+  }
+  expect(batches).toBe(2)
+  expect(singles).toBe(0)
+  expect(await backend.get('first', owner.id)).toBeUndefined()
+  const tokens = await Promise.all(
+    records.map((record) =>
+      createCapability(owner, {
+        sub: owner.id,
+        aud: owner.id,
+        act: '*',
+        res: '*',
+        jti: record.payload.jti,
+      }),
+    ),
+  )
+  const checker = createRevocationChecker(
+    {
+      async add() {},
+      async get(jti) {
+        return records.find((record) => record.payload.jti === jti)
+      },
+    },
+    { crypto },
+  )
+  for (let attempt = 0; attempt < 2; attempt++) {
+    expect(
+      await Promise.allSettled(tokens.map((token) => checker(token, stringifyToken(token)))),
+    ).toEqual(tokens.map(() => ({ status: 'rejected', reason: sentinel })))
+  }
+  expect(batches).toBe(4)
+  expect(singles).toBe(0)
+})

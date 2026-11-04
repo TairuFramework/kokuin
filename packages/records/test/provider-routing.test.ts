@@ -118,6 +118,10 @@ test('permissive providers cannot authorise rejecting providers, concurrently or
       calls++
       return false
     },
+    async verifyBatch(items) {
+      calls++
+      return items.map(() => false)
+    },
   })
   let calls = 0
   await verifySignedRecord(row, 'test/op', undefined, accepting)
