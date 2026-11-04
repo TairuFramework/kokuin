@@ -1,3 +1,4 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import * as SecureStore from 'expo-secure-store'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -147,5 +148,44 @@ describe('provideIdentity()', () => {
   test('async variant works', async () => {
     const identity = await new ExpoKeyStore().provideIdentity('k1')
     expect(identity.id).toMatch(/^did:key:z/)
+  })
+})
+
+describe('provider capture', () => {
+  test.each(['default-custom', 'custom-omitted', 'custom-different', 'same', 'explicit-noble'])(
+    'reopen %s',
+    async (scenario) => {
+      vi.resetModules()
+      const { ExpoKeyStore: Store } = await import('../src/store.js')
+      const { nobleCrypto } = await import('@kokuin/crypto')
+      const crypto = { ...nobleCrypto }
+      const first =
+        scenario.startsWith('default') || scenario === 'explicit-noble' ? undefined : { crypto }
+      const store = Store.open(first)
+      const next =
+        scenario === 'custom-omitted'
+          ? undefined
+          : {
+              crypto:
+                scenario === 'custom-different'
+                  ? { ...nobleCrypto }
+                  : scenario === 'explicit-noble'
+                    ? nobleCrypto
+                    : crypto,
+            }
+      if (['same', 'explicit-noble'].includes(scenario)) expect(Store.open(next)).toBe(store)
+      else expect(() => Store.open(next)).toThrow(/crypto/i)
+    },
+  )
+  test('both identity paths sign through the captured provider', async () => {
+    const sign = vi.fn(nobleCrypto.sign)
+    const crypto = { ...nobleCrypto, sign }
+    const options: { crypto: CryptoProvider } = { crypto }
+    const store = new ExpoKeyStore(options)
+    options.crypto = { ...nobleCrypto }
+    await store.provideIdentitySync('sync').signToken({ value: 1 })
+    await (await store.provideIdentity('async')).signToken({ value: 2 })
+    expect(sign).toHaveBeenCalledTimes(2)
+    expect(SecureStore.getItem).toHaveBeenLastCalledWith('sync', {})
   })
 })

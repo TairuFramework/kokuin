@@ -112,7 +112,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
       Array.isArray(attributes) ||
       Object.keys(attributes).length !== Object.keys(row.attributes).length ||
       Object.entries(attributes).some(([name, value]) => row.attributes[name] !== value) ||
-      (await recordPayloadDigest(encodeVaultRecordPayload('vault.entry', row))) !==
+      (await recordPayloadDigest(encodeVaultRecordPayload('vault.entry', row), ctx.params)) !==
         op.claim.payloadDigest
     )
       throw new VaultTampered('Entry projection disagrees with authenticated content')
@@ -216,7 +216,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
         // Re-sign the entire original claim. Consumer evidence and content intent stay authenticated.
         output.push({
           ...record,
-          ...(await signRecordOp(params.signer, op.claim, params.records.opKind)),
+          ...(await signRecordOp(params.signer, op.claim, params.records.opKind, params)),
         })
       }
 

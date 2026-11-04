@@ -114,7 +114,7 @@ async function chain(
   } = {},
 ) {
   const owner = params.owner ?? signer.id
-  const keyID = createVaultKeyID(owner, UNIQUE)
+  const keyID = await createVaultKeyID(owner, UNIQUE)
   const version = params.version ?? 1
   const hlc = stamp(params.counter ?? version * 10)
   const state = params.state ?? 'active'
@@ -756,10 +756,10 @@ export function replicationCases(harness: StoreHarness): void {
         () => left.store.deleteKey(source.address),
         () => left.store.updateEntryIfPresent(row),
         () => left.store.updateEntryIfUnchanged({ ...row, expectedHLC: row.hlc }),
-        () =>
+        async () =>
           left.store.moveEntry({
             ...row,
-            keyID: createVaultKeyID(owner.id, new Uint8Array(16).fill(9)),
+            keyID: await createVaultKeyID(owner.id, new Uint8Array(16).fill(9)),
           }),
         () => left.store.deleteEntry(entryAddress),
         () => left.store.deleteWrapping(wrappingAddress),

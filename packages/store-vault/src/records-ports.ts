@@ -24,12 +24,12 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
       const record = snapshotRecord(input)
       if (!db.isTransaction) throw new Error('Candidate retention requires the apply transaction')
 
-      const op = await verifySignedRecord(record, bound.opKind, bound.methods)
+      const op = await verifySignedRecord(record, bound.opKind, bound.methods, bound.params)
 
       if (
         op === null ||
-        !(await recordPayloadMatches(record, op.claim)) ||
-        vaultRecordMeta('vault.entry', op.claim) === null
+        !(await recordPayloadMatches(record, op.claim, bound.params)) ||
+        (await vaultRecordMeta('vault.entry', op.claim, bound.params)) === null
       )
         throw new Error('Invalid entry candidate')
 

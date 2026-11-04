@@ -36,6 +36,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
+    "@kokuin/crypto": "workspace:^",
     "@kokuin/otel": "workspace:^",
     "@kokuin/token": "workspace:^",
     "@scure/bip39": "catalog:",

@@ -1,3 +1,4 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import type { KeyStore } from '@kokuin/token'
 import { createFullIdentity, type FullIdentity, type IdentityProvider } from '@kokuin/token'
@@ -14,6 +15,7 @@ const logger = getLogger(['kokuin', 'deterministic'])
 
 export type HDKeyStoreParams = {
   seed: Uint8Array
+  crypto?: CryptoProvider
   basePath?: string
 }
 
@@ -22,18 +24,26 @@ export class HDKeyStore
 {
   #seed: Uint8Array
   #basePath: string
+  #crypto: CryptoProvider
   #entries: Record<string, HDKeyEntry> = Object.create(null)
 
-  static fromMnemonic(mnemonic: string, options?: { basePath?: string }): HDKeyStore {
+  static fromMnemonic(
+    mnemonic: string,
+    options?: { basePath?: string; crypto?: CryptoProvider },
+  ): HDKeyStore {
     const seed = mnemonicToSeedSync(mnemonic)
-    return new HDKeyStore({ seed, basePath: options?.basePath })
+    return new HDKeyStore({ seed, basePath: options?.basePath, crypto: options?.crypto })
   }
 
-  static fromSeed(seed: Uint8Array, options?: { basePath?: string }): HDKeyStore {
-    return new HDKeyStore({ seed, basePath: options?.basePath })
+  static fromSeed(
+    seed: Uint8Array,
+    options?: { basePath?: string; crypto?: CryptoProvider },
+  ): HDKeyStore {
+    return new HDKeyStore({ seed, basePath: options?.basePath, crypto: options?.crypto })
   }
 
   constructor(params: HDKeyStoreParams) {
+    this.#crypto = params.crypto ?? nobleCrypto
     this.#seed = params.seed
     this.#basePath = params.basePath ?? DEFAULT_BASE_PATH
   }
@@ -55,7 +65,7 @@ export class HDKeyStore
       async (span) => {
         const entry = this.entry(keyID)
         const privateKey = await entry.provideAsync()
-        const identity = createFullIdentity(privateKey)
+        const identity = createFullIdentity(privateKey, { crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         logger.info('HD identity derived: {did}', { did: identity.id })
         return identity

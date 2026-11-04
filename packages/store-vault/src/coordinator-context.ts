@@ -1,4 +1,5 @@
 import { withKeyLocks, withStoreTransaction } from '@hozon/db'
+import { nobleCrypto } from '@kokuin/crypto'
 import type { RecordDecision, RecordKey, SignedRecord, VerifiedRecordOp } from '@kokuin/records'
 import {
   getRecordDecisions,
@@ -32,7 +33,7 @@ import { VaultWriteConflict, vaultDatabases } from './record-context.js'
 import type { VaultKeyBranch, VaultRecords, VaultWritePreconditions } from './records.js'
 import { createVaultRecords, VaultRecordRowError } from './records.js'
 import type { VaultMethods } from './records-methods.js'
-import { storeMethods } from './records-methods.js'
+import { snapshotMethods, storeMethods } from './records-methods.js'
 import { settleAll, settledValue } from './settle.js'
 import { snapshotCall } from './snapshot.js'
 import type { KeyAddress, KeyRow, VaultStoreAPI, WrappingRow } from './types.js'
@@ -180,7 +181,23 @@ export type CoordinatorContext = {
   generation(address: KeyAddress): string
 }
 
-export function createCoordinatorContext(params: VaultCoordinatorParams): CoordinatorContext {
+export function createCoordinatorContext(input: VaultCoordinatorParams): CoordinatorContext {
+  const crypto = input.crypto ?? nobleCrypto
+  if (
+    input.mode === 'replicated' &&
+    input.records.crypto !== undefined &&
+    input.records.crypto !== crypto
+  )
+    throw new TypeError('Conflicting coordinator and records crypto providers')
+  const params: VaultCoordinatorParams =
+    input.mode === 'replicated'
+      ? {
+          ...input,
+          crypto,
+          methods: snapshotMethods(input.methods),
+          records: { ...input.records, methods: snapshotMethods(input.records.methods), crypto },
+        }
+      : { ...input, crypto, methods: snapshotMethods(input.methods) }
   if (params.authority === undefined) throw new TypeError('CredentialAuthority is required')
 
   const cache = createKeyCache(params.cache)
@@ -262,7 +279,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
       id: address.id,
       owner: address.ownerDID,
       hlc: stamp,
-      payloadDigest: await recordPayloadDigest(bytes),
+      payloadDigest: await recordPayloadDigest(bytes, params),
       deleted: bytes === null,
       meta,
     }
@@ -273,7 +290,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
       owner: address.ownerDID,
       hlc: stamp,
       payload: bytes,
-      ...(await signRecordOp(params.signer, claim, params.records.opKind)),
+      ...(await signRecordOp(params.signer, claim, params.records.opKind, params)),
     }
   }
 
@@ -287,6 +304,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
         ...params.records,
         methodsFor: params.records.methodsFor ?? params.methodsFor,
       }),
+      params,
     )
 
     if (op === null) throw new VaultNotFound()
@@ -323,7 +341,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
     row: WrappingRow,
     evidence: StoredRecordEvidence,
   ): Promise<WrappingEvidence> {
-    const decoded = await decodeVaultRecord(evidence.record, evidence.op.claim.meta)
+    const decoded = await decodeVaultRecord(evidence.record, evidence.op.claim.meta, params)
 
     if (
       decoded.type !== 'vault.wrapping' ||
@@ -334,7 +352,8 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
     )
       throw new VaultTampered('Wrapping projection disagrees with authenticated metadata')
 
-    checkDescriptorDigest({
+    await checkDescriptorDigest({
+      crypto: params.crypto,
       descriptors: row.descriptors,
       expectedDescriptorDigest: decoded.payload.descriptorDigest,
     })
@@ -488,7 +507,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
         continue
       }
 
-      const decoded = await decodeVaultRecord(record, op.claim.meta)
+      const decoded = await decodeVaultRecord(record, op.claim.meta, params)
 
       if (decoded.type === 'vault.key-branch')
         return { branchID, branchRecordID: record.id, suite: decoded.payload.suite }
@@ -568,6 +587,7 @@ export function createCoordinatorContext(params: VaultCoordinatorParams): Coordi
     }
     const branchRecordID = await recordPayloadDigest(
       encodeVaultRecordPayload('vault.key-branch', payload),
+      params,
     )
 
     if (branchRecordID === null) throw new Error('Branch has no payload digest')

@@ -29,8 +29,9 @@ import { settleAll, settledValue } from './settle.js'
 import { snapshotCall } from './snapshot.js'
 import type { KeyAddress, KeyRow, WrappingRow } from './types.js'
 
-export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoordinator {
-  const ctx = createCoordinatorContext(params)
+export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoordinator {
+  const ctx = createCoordinatorContext(input)
+  const params = ctx.params
   const open = createOpenFunctions(ctx)
   const records = createRecordFunctions(ctx)
   const rotate = createRotateFunctions(ctx, open, records)
@@ -41,7 +42,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
     await ctx.authorize('createKey', 'administer', request)
 
     const unique = params.runtime.getRandomValues(new Uint8Array(16))
-    const { keyID, keyUnique } = createVaultKeyReference(request.ownerDID, unique)
+    const { keyID, keyUnique } = await createVaultKeyReference(request.ownerDID, unique, params)
     const key: KeyRow = {
       ownerDID: request.ownerDID,
       keyID,
@@ -82,6 +83,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
             factorSets.map(async (factors) => {
               const wrappingID = params.runtime.getRandomID()
               const result = await suite.wrap({
+                crypto: params.crypto,
                 runtime: params.runtime,
                 contentKey,
                 factors,
@@ -167,6 +169,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         const wrappingID = params.runtime.getRandomID()
         const factors = change(factorsFromDescriptors(existing.descriptors, request.inputs))
         const wrapped = await getSuite(opened.suite).wrap({
+          crypto: params.crypto,
           runtime: params.runtime,
           contentKey: opened.contentKey,
           factors,
@@ -401,6 +404,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         try {
           const wrappingID = params.runtime.getRandomID()
           const wrapped = await getSuite(opened.suite).wrap({
+            crypto: params.crypto,
             runtime: params.runtime,
             contentKey: opened.contentKey,
             factors: [{ kind: 'did', recipientDID: request.recipientDID }],
@@ -490,7 +494,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         )
           throw new VaultNotFound()
         if (evidence.record.opHash !== request.expectedOpHash) throw new VaultWriteConflict()
-        const decoded = await decodeVaultRecord(evidence.record, evidence.op.claim.meta)
+        const decoded = await decodeVaultRecord(evidence.record, evidence.op.claim.meta, params)
         if (decoded.type !== 'vault.wrapping') throw new VaultNotFound()
         const hlc = await params.nextHLC()
         if (compareRecordDecisionHLC(hlc, evidence.record.hlc) <= 0) throw new VaultWriteConflict()

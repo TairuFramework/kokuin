@@ -1,6 +1,7 @@
+import type { CryptoOptions } from '@kokuin/token'
 import { isFullIdentity, verifyToken } from '@kokuin/token'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import { CLA, INS } from '../src/apdu.js'
 import { createLedgerIdentityProvider } from '../src/provider.js'
@@ -98,4 +99,20 @@ describe('createLedgerIdentityProvider()', () => {
     const identity = await provider.provideIdentity('0')
     await expect(identity.signToken({ data: 'test' })).rejects.toThrow(LedgerUserRejectedError)
   })
+})
+
+const providerSigning = vi.hoisted(() => ({ sign: vi.fn(), signBatch: vi.fn() }))
+vi.mock('@kokuin/crypto', async (importOriginal) => {
+  const actual = await importOriginal<{ nobleCrypto: NonNullable<CryptoOptions['crypto']> }>()
+  return { ...actual, nobleCrypto: { ...actual.nobleCrypto, ...providerSigning } }
+})
+
+test('Ledger APDU signs without provider signing', async () => {
+  const transport = createMockTransport()
+  const send = vi.spyOn(transport, 'send')
+  const identity = await createLedgerIdentityProvider(transport).provideIdentity('0')
+  await verifyToken(await identity.signToken({ sub: 'retained' }))
+  expect(send.mock.calls.some((call) => call[1] === INS.SIGN_MESSAGE)).toBe(true)
+  expect(providerSigning.sign).not.toHaveBeenCalled()
+  expect(providerSigning.signBatch).not.toHaveBeenCalled()
 })

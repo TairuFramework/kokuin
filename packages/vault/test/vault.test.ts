@@ -102,7 +102,7 @@ describe('vault crypto', () => {
   test('opens did, passphrase and pin in their authenticated order', async () => {
     const { identity, contentKey, wrapped } = await multifactor()
     expect(wrapped.descriptors.map((factor) => factor.kind)).toEqual(['did', 'passphrase', 'pin'])
-    expect(wrapped.descriptorDigest).toBe(descriptorDigest(wrapped.descriptors))
+    expect(wrapped.descriptorDigest).toBe(await descriptorDigest(wrapped.descriptors))
     expect(
       await suite.unwrap({
         ...openParams(wrapped),
@@ -131,12 +131,12 @@ describe('vault crypto', () => {
     const descriptors = [...wrapped.descriptors].reverse()
     const agreeKey = vi.fn(identity.agreeKey)
     vi.mocked(gcm).mockClear()
-    expect(() =>
+    await expect(
       checkDescriptorDigest({
         descriptors,
         expectedDescriptorDigest: wrapped.descriptorDigest,
       }),
-    ).toThrow(VaultTampered)
+    ).rejects.toThrow(VaultTampered)
     await expect(
       suite.unwrap({
         ...openParams(wrapped),
@@ -185,7 +185,7 @@ describe('vault crypto', () => {
         suite.unwrap({
           ...openParams(wrapped),
           descriptors,
-          descriptorDigest: descriptorDigest(descriptors),
+          descriptorDigest: await descriptorDigest(descriptors),
           identity: { id: identity.id, agreeKey },
           inputs: { passphrase, pin },
         }),

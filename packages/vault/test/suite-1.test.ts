@@ -316,6 +316,33 @@ describe('suite 1 passphrase and pin factors', () => {
   const passphraseInput = new TextEncoder().encode('correct horse battery staple')
   const pinInput = new TextEncoder().encode('1234')
 
+  test.each(['nonempty', ''])(
+    'an undefined passphrase is unavailable for wrapping input %j',
+    async (passphrase) => {
+      const wrapped = await suite.wrap({
+        runtime,
+        contentKey: suite.generateContentKey(runtime),
+        factors: [
+          { kind: 'passphrase', input: new TextEncoder().encode(passphrase), cost: testCost },
+        ],
+        wrappingID: WRAPPING_ID,
+        keyID: KEY_ID,
+        keyVersion: 1,
+      })
+
+      await expect(
+        suite.unwrap({
+          ...wrapped,
+          identity: null,
+          inputs: { passphrase: undefined },
+          wrappingID: WRAPPING_ID,
+          keyID: KEY_ID,
+          keyVersion: 1,
+        }),
+      ).rejects.toThrow(NoAvailableFactor)
+    },
+  )
+
   test('a passphrase factor stands alone and round-trips', async () => {
     const contentKey = suite.generateContentKey(runtime)
     const { descriptors, iv, wrappedKey } = await suite.wrap({

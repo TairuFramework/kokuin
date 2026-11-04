@@ -40,8 +40,12 @@ const ENTRY: VaultEntryDigestInput = {
   hlc: '2026-08-11T00:00:00.000Z-0000-node',
 }
 
+const wrappingBaseline = await vaultWrappingDigest(WRAPPING)
+const keyBaseline = await vaultKeyDigest(KEY)
+const entryBaseline = await vaultEntryDigest(ENTRY)
+
 describe('every field a wrapping digest covers moves it', () => {
-  const baseline = vaultWrappingDigest(WRAPPING)
+  const baseline = wrappingBaseline
 
   test.each<[string, VaultWrappingDigestInput]>([
     ['wrappingID', { ...WRAPPING, wrappingID: 'wrap-2' }],
@@ -72,20 +76,20 @@ describe('every field a wrapping digest covers moves it', () => {
     ['factor order', { ...WRAPPING, factors: [WRAPPING_FACTOR_1, WRAPPING_FACTOR_0] }],
     ['a dropped factor', { ...WRAPPING, factors: [WRAPPING_FACTOR_0] }],
     ['an absent recipient', { ...WRAPPING, recipientDID: null }],
-  ])('%s', (_name, changed) => {
-    expect(vaultWrappingDigest(changed)).not.toBe(baseline)
+  ])('%s', async (_name, changed) => {
+    expect(await vaultWrappingDigest(changed)).not.toBe(baseline)
   })
 
-  test('param key order does not, because a params record is an unordered bag', () => {
+  test('param key order does not, because a params record is an unordered bag', async () => {
     const reordered: VaultWrappingDigestInput = {
       ...WRAPPING,
       factors: [WRAPPING_FACTOR_0, { kind: 'pin', params: { p: 1, t: 3, m: 65536, salt: 'ZZZZ' } }],
     }
-    expect(vaultWrappingDigest(reordered)).toBe(baseline)
+    expect(await vaultWrappingDigest(reordered)).toBe(baseline)
   })
 
-  test('a field moved between neighbours does not collide', () => {
-    const shifted = vaultWrappingDigest({
+  test('a field moved between neighbours does not collide', async () => {
+    const shifted = await vaultWrappingDigest({
       ...WRAPPING,
       wrappingID: 'wrap-1x',
       iv: 'AECAwQFBgcICQoL',
@@ -95,42 +99,42 @@ describe('every field a wrapping digest covers moves it', () => {
 })
 
 describe('every field a key digest covers moves it', () => {
-  const baseline = vaultKeyDigest(KEY)
+  const baseline = keyBaseline
 
   test.each<[string, VaultKeyDigestInput]>([
     ['ownerDID', { ...KEY, ownerDID: 'did:key:z6MkjChhTKPDTvxYYFJHrsvHrbmYAzJdmhCoUcSbLU4NWq3F' }],
     ['suite', { ...KEY, suite: 2 }],
     ['version', { ...KEY, version: 3 }],
     ['state', { ...KEY, state: 'retired' }],
-  ])('%s', (_name, changed) => {
-    expect(vaultKeyDigest(changed)).not.toBe(baseline)
+  ])('%s', async (_name, changed) => {
+    expect(await vaultKeyDigest(changed)).not.toBe(baseline)
   })
 })
 
 describe('every field an entry digest covers moves it', () => {
-  const baseline = vaultEntryDigest(ENTRY)
+  const baseline = entryBaseline
 
   test.each<[string, VaultEntryDigestInput]>([
     ['entryID', { ...ENTRY, entryID: 'entry-2' }],
     ['iv', { ...ENTRY, iv: 'CwoJCAcGBQQDAgEA' }],
     ['ciphertext', { ...ENTRY, ciphertext: 'JCMiISAfHh0cGxoZ' }],
     ['hlc', { ...ENTRY, hlc: '2026-08-11T00:00:00.001Z-0000-node' }],
-  ])('%s', (_name, changed) => {
-    expect(vaultEntryDigest(changed)).not.toBe(baseline)
+  ])('%s', async (_name, changed) => {
+    expect(await vaultEntryDigest(changed)).not.toBe(baseline)
   })
 
-  test('one entry digests as the one-element set, not as a second framing', () => {
-    expect(vaultEntryDigest(ENTRY)).toBe(vaultEntriesDigest([ENTRY]))
+  test('one entry digests as the one-element set, not as a second framing', async () => {
+    expect(await vaultEntryDigest(ENTRY)).toBe(await vaultEntriesDigest([ENTRY]))
   })
 
-  test('a set digests the same however it is ordered', () => {
+  test('a set digests the same however it is ordered', async () => {
     const other = { ...ENTRY, entryID: 'entry-0' }
-    expect(vaultEntriesDigest([ENTRY, other])).toBe(vaultEntriesDigest([other, ENTRY]))
+    expect(await vaultEntriesDigest([ENTRY, other])).toBe(await vaultEntriesDigest([other, ENTRY]))
   })
 
-  test('an entry added to a set moves it', () => {
-    expect(vaultEntriesDigest([ENTRY, { ...ENTRY, entryID: 'entry-0' }])).not.toBe(
-      vaultEntriesDigest([ENTRY]),
+  test('an entry added to a set moves it', async () => {
+    expect(await vaultEntriesDigest([ENTRY, { ...ENTRY, entryID: 'entry-0' }])).not.toBe(
+      await vaultEntriesDigest([ENTRY]),
     )
   })
 })

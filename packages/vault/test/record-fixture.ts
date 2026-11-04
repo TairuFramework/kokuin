@@ -83,7 +83,7 @@ export async function chain(
   } = {},
 ) {
   const owner = params.owner ?? signer.id
-  const keyID = createVaultKeyID(owner, UNIQUE)
+  const keyID = await createVaultKeyID(owner, UNIQUE)
   const version = params.version ?? 1
   const state = params.state ?? 'active'
   const consumer = params.consumer ?? {}
@@ -143,7 +143,7 @@ export async function dependent(
           descriptors: [
             { kind: 'did', params: { recipient: options.factorRecipient ?? signer.id } },
           ],
-          descriptorDigest: descriptorDigest([
+          descriptorDigest: await descriptorDigest([
             { kind: 'did', params: { recipient: options.factorRecipient ?? signer.id } },
           ]),
           iv: new Uint8Array([0, 255]),

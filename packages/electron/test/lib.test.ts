@@ -1,3 +1,4 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 // Mock electron safeStorage — identity transform for testing
@@ -229,5 +230,31 @@ describe('ElectronKeyStore#provideIdentitySync / #provideIdentity', () => {
     const store = ElectronKeyStore.open({ name: 'eid-3' })
     const identity = await store.provideIdentity('k1')
     expect(identity.id).toMatch(/^did:key:z/)
+  })
+})
+
+describe('provider capture', () => {
+  test('reopen compares resolved providers by reference', () => {
+    const crypto = { ...nobleCrypto }
+    const different = { ...nobleCrypto }
+    const defaults = ElectronKeyStore.open({ name: 'provider-default' })
+    expect(() => ElectronKeyStore.open({ name: 'provider-default', crypto })).toThrow(/crypto/i)
+    expect(ElectronKeyStore.open({ name: 'provider-default', crypto: nobleCrypto })).toBe(defaults)
+    const custom = ElectronKeyStore.open({ name: 'provider-custom', crypto })
+    expect(() => ElectronKeyStore.open({ name: 'provider-custom' })).toThrow(/crypto/i)
+    expect(() => ElectronKeyStore.open({ name: 'provider-custom', crypto: different })).toThrow(
+      /crypto/i,
+    )
+    expect(ElectronKeyStore.open({ name: 'provider-custom', crypto })).toBe(custom)
+  })
+  test('both identity paths sign through the captured provider', async () => {
+    const sign = vi.fn(nobleCrypto.sign)
+    const crypto = { ...nobleCrypto, sign }
+    const options: { name: string; crypto: CryptoProvider } = { name: 'provider-sign', crypto }
+    const store = new ElectronKeyStore(options)
+    options.crypto = { ...nobleCrypto }
+    await store.provideIdentitySync('sync').signToken({ value: 1 })
+    await (await store.provideIdentity('async')).signToken({ value: 2 })
+    expect(sign).toHaveBeenCalledTimes(2)
   })
 })

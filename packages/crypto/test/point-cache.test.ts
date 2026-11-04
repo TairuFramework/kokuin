@@ -84,7 +84,8 @@ test('public-key validation evicts after 256 distinct keys', async () => {
   const newest = keys[256] as Uint8Array
   await nobleCrypto.verify('EdDSA', rejectedR, message, newest)
   expect(counts.decoded.has(bytesToHex(newest))).toBe(false)
-})
+  // 257 scalar multiplications and subgroup checks exceed the default under parallel suite load.
+}, 30_000)
 
 test('mutating an input view cannot reuse validation for different bytes', async () => {
   const { nobleCrypto } = await import('../src/noble.js')

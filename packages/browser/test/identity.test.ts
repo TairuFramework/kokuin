@@ -1,6 +1,7 @@
 import { createTokenEncrypter, decryptToken, encryptToken } from '@kokuin/jwe'
+import type { CryptoOptions } from '@kokuin/token'
 import { CODECS, getDID, verifyToken } from '@kokuin/token'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import { createBrowserIdentity, createLegacyES256Identity } from '../src/identity.js'
 import { generateKeyRecord } from '../src/utils.js'
@@ -64,4 +65,28 @@ describe('createLegacyES256Identity', () => {
       await expect(verifyToken(token)).resolves.toBeDefined()
     }
   })
+})
+
+const providerSigning = vi.hoisted(() => ({ sign: vi.fn(), signBatch: vi.fn() }))
+vi.mock('@kokuin/crypto', async (importOriginal) => {
+  const actual = await importOriginal<{ nobleCrypto: NonNullable<CryptoOptions['crypto']> }>()
+  return { ...actual, nobleCrypto: { ...actual.nobleCrypto, ...providerSigning } }
+})
+
+test('WebCrypto signs both algorithms without provider signing', async () => {
+  const subtleSign = vi.spyOn(crypto.subtle, 'sign')
+  try {
+    const identity = await createBrowserIdentity(await generateKeyRecord())
+    const pair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
+      'sign',
+    ])) as CryptoKeyPair
+    const legacy = await createLegacyES256Identity(pair)
+    for (const signer of [identity, legacy])
+      await verifyToken(await signer.signToken({ sub: 'retained' }))
+    expect(subtleSign).toHaveBeenCalledTimes(2)
+    expect(providerSigning.sign).not.toHaveBeenCalled()
+    expect(providerSigning.signBatch).not.toHaveBeenCalled()
+  } finally {
+    subtleSign.mockRestore()
+  }
 })

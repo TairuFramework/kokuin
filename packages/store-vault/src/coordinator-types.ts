@@ -1,3 +1,4 @@
+import type { CryptoProvider } from '@kokuin/crypto'
 import type { SignedRecord } from '@kokuin/records'
 import type { SigningIdentity } from '@kokuin/token'
 import type {
@@ -110,6 +111,7 @@ export type KeyStatus =
   | { state: 'locked'; unlockOptions: Array<Array<SecretFactorKind>> }
 
 type CommonParams = {
+  crypto?: CryptoProvider
   store: VaultStoreAPI
   principal: string
   identity: UnwrapParams['identity']

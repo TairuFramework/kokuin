@@ -7,6 +7,21 @@ export * from './id.js'
 export * from './key-cache.js'
 export * from './pin-throttle.js'
 export * from './record-types.js'
-export * from './records.js'
+export type {
+  DecodedVaultRecord,
+  VaultEntryMetadata,
+  VaultRecordMetas,
+  VaultRecordPayloads,
+  VaultRecordType,
+} from './records.js'
+export {
+  decodeVaultRecord,
+  encodeVaultRecordPayload,
+  VAULT_OP_KIND,
+  VAULT_RECORD_TYPES,
+  VaultRecordPayloadError,
+  vaultRecordMeta,
+  vaultRevocationRecordID,
+} from './records.js'
 export * from './suite.js'
 export * from './wrappable.js'

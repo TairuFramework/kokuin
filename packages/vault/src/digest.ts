@@ -1,4 +1,5 @@
-import { blake3 } from '@noble/hashes/blake3.js'
+import { nobleCrypto } from '@kokuin/crypto'
+import type { CryptoOptions } from '@kokuin/token'
 import { fromUTF, toB64U } from '@sozai/codec'
 import { canonicalize } from '@sozai/json'
 
@@ -11,10 +12,10 @@ function descriptorJSON(descriptors: ReadonlyArray<FactorDescriptor>): string {
   return json
 }
 
-export function digestParts(parts: Array<string>): string {
+export async function digestParts(parts: Array<string>, options?: CryptoOptions): Promise<string> {
   const framed = parts.map((part) => `${part.length}:${part}`).join('')
 
-  return toB64U(blake3(fromUTF(framed), { dkLen: 32 }))
+  return toB64U(await (options?.crypto ?? nobleCrypto).blake3(fromUTF(framed), 32))
 }
 
 export type VaultKeyDigestInput = {
@@ -39,44 +40,63 @@ export type VaultEntryDigestInput = {
   hlc: string
 }
 
-export function vaultKeyDigest(key: VaultKeyDigestInput): string {
-  return digestParts([key.ownerDID, String(key.suite), String(key.version), key.state])
+export function vaultKeyDigest(key: VaultKeyDigestInput, options?: CryptoOptions): Promise<string> {
+  return digestParts([key.ownerDID, String(key.suite), String(key.version), key.state], options)
 }
 
-export function vaultWrappingDigest(wrapping: VaultWrappingDigestInput): string {
-  return digestParts([
-    wrapping.wrappingID,
-    wrapping.recipientDID ?? '',
-    wrapping.iv,
-    wrapping.wrappedKey,
-    descriptorJSON(wrapping.factors),
-  ])
+export function vaultWrappingDigest(
+  wrapping: VaultWrappingDigestInput,
+  options?: CryptoOptions,
+): Promise<string> {
+  return digestParts(
+    [
+      wrapping.wrappingID,
+      wrapping.recipientDID ?? '',
+      wrapping.iv,
+      wrapping.wrappedKey,
+      descriptorJSON(wrapping.factors),
+    ],
+    options,
+  )
 }
 
-export function vaultEntriesDigest(entries: ReadonlyArray<VaultEntryDigestInput>): string {
+export function vaultEntriesDigest(
+  entries: ReadonlyArray<VaultEntryDigestInput>,
+  options?: CryptoOptions,
+): Promise<string> {
   const ordered = [...entries].sort((left, right) => {
     return left.entryID < right.entryID ? -1 : left.entryID > right.entryID ? 1 : 0
   })
 
   return digestParts(
     ordered.flatMap((entry) => [entry.entryID, entry.iv, entry.ciphertext, entry.hlc]),
+    options,
   )
 }
 
-export function vaultEntryDigest(entry: VaultEntryDigestInput): string {
-  return vaultEntriesDigest([entry])
+export function vaultEntryDigest(
+  entry: VaultEntryDigestInput,
+  options?: CryptoOptions,
+): Promise<string> {
+  return vaultEntriesDigest([entry], options)
 }
 
 /** Same canonical descriptor encoding and length framing as the wrapping digest. */
-export function descriptorDigest(descriptors: Array<FactorDescriptor>): string {
-  return digestParts([descriptorJSON(descriptors)])
+export function descriptorDigest(
+  descriptors: Array<FactorDescriptor>,
+  options?: CryptoOptions,
+): Promise<string> {
+  return digestParts([descriptorJSON(descriptors)], options)
 }
 
-export function checkDescriptorDigest(params: {
-  descriptors: Array<FactorDescriptor>
-  expectedDescriptorDigest: string
-}): void {
-  if (descriptorDigest(params.descriptors) !== params.expectedDescriptorDigest) {
+export async function checkDescriptorDigest(
+  params: CryptoOptions & {
+    descriptors: Array<FactorDescriptor>
+    expectedDescriptorDigest: string
+  },
+): Promise<void> {
+  const { descriptors, expectedDescriptorDigest, crypto } = params
+  if ((await descriptorDigest(descriptors, { crypto })) !== expectedDescriptorDigest) {
     throw new VaultTampered('Vault factor descriptors differ from the trusted digest')
   }
 }

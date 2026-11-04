@@ -97,7 +97,7 @@ export function createRotateFunctions(
     let row: EntryRow | undefined
 
     if (!op.claim.deleted) {
-      const decoded = await decodeVaultRecord(record, meta)
+      const decoded = await decodeVaultRecord(record, meta, params)
 
       if (
         decoded.type !== 'vault.entry' ||
@@ -447,6 +447,7 @@ export function createRotateFunctions(
           retained.map(async (previous) => {
             const wrappingID = params.runtime.getRandomID()
             const result = await suite.wrap({
+              crypto: params.crypto,
               runtime: params.runtime,
               contentKey,
               factors: factorsFromDescriptors(previous.descriptors, request.inputs),

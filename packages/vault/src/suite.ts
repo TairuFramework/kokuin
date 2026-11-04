@@ -1,5 +1,5 @@
 import { deriveSharedSecretAsync } from '@kokuin/jwe'
-import type { KeyAgreementIdentity, MethodRegistry } from '@kokuin/token'
+import type { CryptoOptions, KeyAgreementIdentity, MethodRegistry } from '@kokuin/token'
 import { gcm } from '@noble/ciphers/aes.js'
 import { argon2idAsync } from '@noble/hashes/argon2.js'
 import { hkdf } from '@noble/hashes/hkdf.js'
@@ -73,7 +73,7 @@ export type VaultSuite = {
   decryptEntry(params: DecryptEntryParams): Uint8Array
 }
 
-export type WrapParams = {
+export type WrapParams = CryptoOptions & {
   runtime: Runtime
   contentKey: Uint8Array
   factors: Array<FactorInput>
@@ -95,7 +95,7 @@ export type WrapResult = {
   wrappedKey: Uint8Array
 }
 
-export type UnwrapParams = {
+export type UnwrapParams = CryptoOptions & {
   /** Trusted local state or authenticated metadata, independent of presented descriptors. */
   expectedDescriptorDigest?: string
   /** Informational digest from the presented wrapping, never used as a trust anchor. */
@@ -277,7 +277,20 @@ const suite1: VaultSuite = {
     return runtime.getRandomValues(new Uint8Array(CONTENT_KEY_LENGTH))
   },
 
-  async wrap(params) {
+  async wrap(input) {
+    const params = {
+      ...input,
+      contentKey: new Uint8Array(input.contentKey),
+      factors: input.factors.map((factor) =>
+        factor.kind === 'did'
+          ? { ...factor }
+          : {
+              ...factor,
+              input: new Uint8Array(factor.input),
+              ...(factor.cost === undefined ? {} : { cost: { ...factor.cost } }),
+            },
+      ),
+    }
     validateFactorList(params.factors.map((factor) => factor.kind))
 
     const secrets: Array<Uint8Array> = []
@@ -321,15 +334,30 @@ const suite1: VaultSuite = {
 
     return {
       descriptors,
-      descriptorDigest: descriptorDigest(descriptors),
+      descriptorDigest: await descriptorDigest(descriptors, params),
       iv,
       wrappedKey: gcm(kek, iv, wrappingAAD(descriptors)).encrypt(params.contentKey),
     }
   },
 
-  async unwrap(params) {
+  async unwrap(input) {
+    const params = {
+      ...input,
+      descriptors: JSON.parse(JSON.stringify(input.descriptors)) as Array<FactorDescriptor>,
+      iv: new Uint8Array(input.iv),
+      wrappedKey: new Uint8Array(input.wrappedKey),
+      inputs:
+        input.inputs === undefined
+          ? undefined
+          : Object.fromEntries(
+              Object.entries(input.inputs).flatMap(([kind, bytes]) =>
+                bytes === undefined ? [] : [[kind, new Uint8Array(bytes)]],
+              ),
+            ),
+    }
     if (params.expectedDescriptorDigest !== undefined) {
-      checkDescriptorDigest({
+      await checkDescriptorDigest({
+        crypto: params.crypto,
         descriptors: params.descriptors,
         expectedDescriptorDigest: params.expectedDescriptorDigest,
       })

@@ -1,12 +1,14 @@
 import type { StoreProvider } from '@hozon/db'
 import { HozonDB } from '@hozon/db'
 import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
+import { signRecordOp, verifySignedRecord } from '@kokuin/records'
 import type { MethodRegistry } from '@kokuin/token'
 import { createSigningIdentityForDID, randomIdentity } from '@kokuin/token'
 import { VAULT_OP_KIND } from '@kokuin/vault'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { createRuntime } from '@sozai/runtime'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
 import {
   createVaultCoordinator,
@@ -290,3 +292,174 @@ test('coordinator writes own plaintext before awaiting authority', async () => {
     await f.db.close()
   }
 })
+
+test('coordinator rejects conflicting nested crypto before any provider call', async () => {
+  const f = await fixture()
+  try {
+    const blake3 = vi.fn(nobleCrypto.blake3)
+    const crypto = { ...nobleCrypto, blake3 }
+    expect(() =>
+      createVaultCoordinator({
+        ...f.params,
+        crypto,
+        records: { ...f.params.records, crypto: { ...nobleCrypto } },
+      }),
+    ).toThrow(/crypto/i)
+    expect(blake3).not.toHaveBeenCalled()
+  } finally {
+    await f.db.close()
+  }
+})
+
+test('coordinator captures one provider for key IDs, records, projections and descriptor checks', async () => {
+  const f = await fixture()
+  try {
+    const blake3 = vi.fn(nobleCrypto.blake3)
+    const verify = vi.fn(nobleCrypto.verify)
+    const crypto = { ...nobleCrypto, blake3, verify }
+    const params: typeof f.params & { crypto: CryptoProvider } = { ...f.params, crypto }
+    const manager = createVaultCoordinator(params)
+    params.crypto = {
+      ...nobleCrypto,
+      blake3: async () => {
+        throw new Error('replacement')
+      },
+    }
+    const key = await manager.createKey({ ownerDID: f.key.ownerDID })
+    expect(blake3).toHaveBeenCalled()
+    expect(verify).toHaveBeenCalled()
+    blake3.mockClear()
+    await manager.openKey(key)
+    expect(blake3).toHaveBeenCalled()
+  } finally {
+    await f.db.close()
+  }
+})
+
+for (const failure of ['provider', 'payload', 'commitment'] as const) {
+  test.each([false, true])(
+    `${failure} failure rolls back prior adapter writes in ambient=%s transactions`,
+    async (ambient) => {
+      const f = await fixture()
+      try {
+        const sentinel = new Error('provider failed')
+        let reject = false
+        const crypto = {
+          ...nobleCrypto,
+          blake3: async (input: Uint8Array, length: number) => {
+            if (reject) throw sentinel
+            return nobleCrypto.blake3(input, length)
+          },
+        }
+        const record = (await f.manager.records.adapter.list(['vault.entry']))[0]?.copies[0]
+        if (record === undefined) throw new Error('Missing entry fixture')
+        const op = await verifySignedRecord(record, VAULT_OP_KIND, f.params.records.methods)
+        if (op === null) throw new Error('Fixture signature failed')
+        const marker = {
+          ...record,
+          id: 'rollback-marker',
+          ...(await signRecordOp(
+            f.params.signer,
+            { ...op.claim, id: 'rollback-marker' },
+            VAULT_OP_KIND,
+          )),
+        }
+        let invalid: typeof record = { ...record, payload: bytes('mismatched payload') }
+        if (failure === 'commitment') {
+          const key = (await f.manager.records.adapter.list(['vault.key']))[0]?.copies[0]
+          if (key === undefined || key.payload === null) throw new Error('Missing key fixture')
+          const keyOp = await verifySignedRecord(key, VAULT_OP_KIND, f.params.records.methods)
+          if (keyOp === null) throw new Error('Fixture key signature failed')
+          invalid = {
+            ...key,
+            payload: key.payload,
+            ...(await signRecordOp(
+              f.params.signer,
+              {
+                ...keyOp.claim,
+                meta: { ...keyOp.claim.meta, keyUnique: 'AAAAAAAAAAAAAAAAAAAAAA' },
+              },
+              VAULT_OP_KIND,
+            )),
+          }
+        }
+        const write = async (provider: StoreProvider) => {
+          const store = await getVaultStore(provider)
+          const manager = createVaultCoordinator({ ...f.params, store, crypto })
+          return manager.records.adapter.transaction(async (adapter) => {
+            await adapter.putCopy(marker)
+            reject = failure === 'provider'
+            await adapter.putCopy(failure === 'provider' ? record : invalid)
+          })
+        }
+        const pending = ambient ? f.db.withTransaction(write) : write(f.db)
+        if (failure === 'provider') await expect(pending).rejects.toBe(sentinel)
+        else await expect(pending).rejects.toThrow(/Invalid vault record/)
+        expect(
+          await f.params.store.getEntry({ ownerDID: f.key.ownerDID, entryID: marker.id }),
+        ).toBeUndefined()
+        expect(await f.params.store.getEntry(f.entry)).toBeDefined()
+      } finally {
+        await f.db.close()
+      }
+    },
+  )
+}
+
+test.each([false, true])(
+  'caught late provider rejection preserves previous copies in ambient=%s transactions',
+  async (ambient) => {
+    const f = await fixture()
+    try {
+      const { decodeVaultRecord, encodeVaultRecordPayload } = await import('@kokuin/vault')
+      const { recordPayloadDigest } = await import('@kokuin/records')
+      const original = (await f.manager.records.adapter.list(['vault.entry']))[0]?.copies[0]
+      if (original === undefined) throw new Error('Missing fixture')
+      const op = await verifySignedRecord(original, VAULT_OP_KIND, f.params.records.methods)
+      if (op === null) throw new Error('Invalid fixture')
+      const decoded = await decodeVaultRecord(original, op.claim.meta)
+      if (decoded.type !== 'vault.entry') throw new Error('Wrong fixture type')
+      const payload = encodeVaultRecordPayload('vault.entry', {
+        ...decoded.payload,
+        ciphertext: new Uint8Array([7, 8, 9]),
+      })
+      const incoming = {
+        ...original,
+        payload,
+        ...(await signRecordOp(
+          f.params.signer,
+          { ...op.claim, payloadDigest: await recordPayloadDigest(payload) },
+          VAULT_OP_KIND,
+        )),
+      }
+      const sentinel = new Error('Late provider failure')
+      let payloadCalls = 0
+      const crypto = {
+        ...nobleCrypto,
+        blake3: async (bytes: Uint8Array, length: number) => {
+          if (
+            bytes.length === payload.length &&
+            bytes.every((value, index) => value === payload[index]) &&
+            ++payloadCalls === 2
+          )
+            throw sentinel
+          return nobleCrypto.blake3(bytes, length)
+        },
+      }
+      const write = async (provider: StoreProvider) => {
+        const store = await getVaultStore(provider)
+        const manager = createVaultCoordinator({ ...f.params, store, crypto })
+        await manager.records.adapter.transaction(async (adapter) => {
+          await expect(adapter.putCopy(incoming)).rejects.toBe(sentinel)
+        })
+      }
+      if (ambient) await f.db.withTransaction(write)
+      else await write(f.db)
+      expect(payloadCalls).toBe(2)
+      const kept = await f.manager.records.adapter.get(original)
+      expect(kept?.copies.map((record) => record.opJWT)).toEqual([original.opJWT])
+    } finally {
+      await f.db.close()
+    }
+  },
+)

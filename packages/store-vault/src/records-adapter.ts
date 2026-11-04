@@ -7,7 +7,7 @@ import {
   snapshotRecord,
   verifySignedRecord,
 } from '@kokuin/records'
-import { type VAULT_RECORD_TYPES, vaultRecordMeta } from '@kokuin/vault'
+import { decodeVaultRecord, type VAULT_RECORD_TYPES, vaultRecordMeta } from '@kokuin/vault'
 
 import { upsertReplicatedDecision } from './batch.js'
 import { getVaultStore } from './definition.js'
@@ -183,14 +183,19 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
 
       await assertDomain(bound)
 
-      const op = await verifySignedRecord(record, bound.opKind, bound.methods)
+      const op = await verifySignedRecord(record, bound.opKind, bound.methods, bound.params)
 
-      if (op === null || !supported(record.type) || !(await recordPayloadMatches(record, op.claim)))
+      if (
+        op === null ||
+        !supported(record.type) ||
+        !(await recordPayloadMatches(record, op.claim, bound.params))
+      )
         throw new Error('Invalid vault record copy')
 
       const type = record.type as (typeof VAULT_RECORD_TYPES)[number]
 
-      if (vaultRecordMeta(type, op.claim) === null) throw new Error('Invalid vault record metadata')
+      if ((await vaultRecordMeta(type, op.claim, bound.params)) === null)
+        throw new Error('Invalid vault record metadata')
 
       const previousRows = await whereKey(db, record).orderBy('op_hash').execute()
       const previous = await decision(previousRows, bound)
@@ -216,6 +221,10 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
       }
 
       if (!same) {
+        const decoded =
+          record.payload === null
+            ? null
+            : await decodeVaultRecord(record, op.claim.meta, bound.params)
         await db
           .deleteFrom('vault_records')
           .where('type', '=', record.type)
@@ -223,7 +232,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
           .where('id', '=', record.id)
           .execute()
 
-        await projection(record, op, bound)
+        await projection(record, decoded, bound)
       } else {
         const dropped = previousRows
           .filter((row, index) => {
@@ -271,7 +280,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         current.copies.map(async (copy) => {
           return {
             copy,
-            op: await verifySignedRecord(copy, bound.opKind, bound.methods),
+            op: await verifySignedRecord(copy, bound.opKind, bound.methods, bound.params),
           }
         }),
       )

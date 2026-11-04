@@ -82,8 +82,9 @@ type Verdict = (token: Parameters<VerifyTokenHook>[0], raw: string) => Promise<b
 
 function createDelegationRevocationVerdict(
   api: DelegationStoreAPI,
-  options?: RevocationOptions,
+  input?: RevocationOptions,
 ): Verdict {
+  const options = input === undefined ? undefined : { ...input, methods: input.methods?.slice() }
   const backend = createDelegationRevocationBackend(api)
   return async (token, raw) => {
     // Capability's checker reads an unresolvable or failing dependency in several ways, some of

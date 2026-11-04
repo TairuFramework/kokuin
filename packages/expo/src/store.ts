@@ -1,3 +1,4 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import {
   createFullIdentity,
@@ -19,16 +20,22 @@ export class ExpoKeyStore
   static #default?: ExpoKeyStore
 
   /** The process-wide store. `options` apply to every entry it creates. */
-  static open(options?: StoreEntryOptions): ExpoKeyStore {
+  static open(options?: StoreEntryOptions & { crypto?: CryptoProvider }): ExpoKeyStore {
     ExpoKeyStore.#default ??= new ExpoKeyStore(options)
+    if ((options?.crypto ?? nobleCrypto) !== ExpoKeyStore.#default.#crypto) {
+      throw new Error('Cannot reopen a keystore with conflicting crypto provider')
+    }
     return ExpoKeyStore.#default
   }
 
+  #crypto: CryptoProvider
   #entries: Record<string, ExpoKeyEntry> = Object.create(null)
   #options?: StoreEntryOptions
 
-  constructor(options?: StoreEntryOptions) {
-    this.#options = options
+  constructor(options?: StoreEntryOptions & { crypto?: CryptoProvider }) {
+    const { crypto, ...entryOptions } = options ?? {}
+    this.#crypto = crypto ?? nobleCrypto
+    this.#options = options === undefined ? undefined : entryOptions
   }
 
   /**
@@ -52,7 +59,7 @@ export class ExpoKeyStore
         const entry = this.entry(keyID)
         const existing = await entry.getAsync()
         const privateKey = existing ?? (await entry.provideAsync())
-        const identity = createFullIdentity(privateKey)
+        const identity = createFullIdentity(privateKey, { crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, existing == null)
         if (existing == null) {
@@ -73,7 +80,7 @@ export class ExpoKeyStore
         const entry = this.entry(keyID)
         const existing = entry.get()
         const privateKey = existing ?? entry.provide()
-        const identity = createFullIdentity(privateKey)
+        const identity = createFullIdentity(privateKey, { crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, existing == null)
         if (existing == null) {

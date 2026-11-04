@@ -15,6 +15,7 @@ import {
   keyTarget,
   type SignedEvent,
 } from '@kokuin/controller'
+import type { CryptoOptions } from '@kokuin/token'
 import {
   randomIdentity as createIdentity,
   createIdentity as createPeer4Identity,
@@ -597,4 +598,75 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     // Control: the same record under its own jti comes back.
     expect(await backend.get('jti-A', normalizeDID(x.id))).toBeDefined()
   })
+})
+
+test('tracked revocation dependencies retain crypto verification and sentinel errors', async () => {
+  const { db, store } = await openStore()
+  try {
+    const issuer = createSigningIdentityForDID(
+      'did:test:tracked-provider',
+      new Uint8Array(32).fill(25),
+    )
+    const token = await capability(issuer, 'provider-revocation')
+    const record = await createRevocationRecord(issuer, 'provider-revocation')
+    await store.addRevocation(
+      revocation({
+        jti: 'provider-revocation',
+        revoker_did: issuer.id,
+        revocation_token: stringifyToken(record),
+      }),
+    )
+    const sentinel = new Error('revocation provider failed')
+    let calls = 0
+    let resolutions = 0
+    const crypto: NonNullable<CryptoOptions['crypto']> = {
+      sign: async () => {
+        throw new Error('Unexpected sign')
+      },
+      signBatch: async () => {
+        throw new Error('Unexpected sign batch')
+      },
+      verify: async () => {
+        calls++
+        throw sentinel
+      },
+      verifyBatch: async () => {
+        throw new Error('Unexpected verify batch')
+      },
+      blake3: async () => {
+        throw new Error('Unexpected hash')
+      },
+      blake3Batch: async () => {
+        throw new Error('Unexpected hash batch')
+      },
+    }
+    const options: CryptoOptions & { methods: MethodRegistry } = {
+      crypto,
+      methods: [
+        {
+          method: 'test',
+          resolveHistoric: async () => {
+            resolutions++
+            return { alg: 'EdDSA', publicKey: issuer.publicKey }
+          },
+          resolve: async () => {
+            resolutions++
+            return { alg: 'EdDSA', publicKey: issuer.publicKey }
+          },
+        },
+      ],
+    }
+    const checker = createDelegationRevocationChecker(store, options)
+    options.crypto = {
+      ...crypto,
+      verify: async () => {
+        throw new Error('Replacement provider')
+      },
+    }
+    await expect(checker(token, stringifyToken(token))).rejects.toBe(sentinel)
+    expect(calls).toBe(1)
+    expect(resolutions).toBeGreaterThan(0)
+  } finally {
+    await db.close()
+  }
 })

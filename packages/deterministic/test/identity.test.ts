@@ -1,5 +1,6 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { isFullIdentity, verifyToken } from '@kokuin/token'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import { HDKeyStore } from '../src/store.js'
 
@@ -55,4 +56,18 @@ describe('HDKeyStore as IdentityProvider', () => {
     const idB = await b.provideIdentity('0')
     expect(idA.id).toBe(idB.id)
   })
+})
+
+test('all deterministic factories capture the signing provider', async () => {
+  const sign = vi.fn(nobleCrypto.sign)
+  const crypto = { ...nobleCrypto, sign }
+  const options: { crypto: CryptoProvider } = { crypto }
+  const stores = [
+    new HDKeyStore({ seed: new Uint8Array(32).fill(1), crypto }),
+    HDKeyStore.fromSeed(new Uint8Array(32).fill(1), options),
+    HDKeyStore.fromMnemonic(MNEMONIC, options),
+  ]
+  options.crypto = { ...nobleCrypto }
+  for (const store of stores) await (await store.provideIdentity('0')).signToken({ value: 1 })
+  expect(sign).toHaveBeenCalledTimes(3)
 })

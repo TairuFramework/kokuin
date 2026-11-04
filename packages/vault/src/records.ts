@@ -1,5 +1,7 @@
+import { nobleCrypto } from '@kokuin/crypto'
 import type { RecordClaim, SignedRecord } from '@kokuin/records'
 import { parseCanonicalHLC, recordPayloadDigest } from '@kokuin/records'
+import type { CryptoOptions } from '@kokuin/token'
 import { normalizeDID } from '@kokuin/token'
 import { canonicalStringify, fromB64U, fromUTF, toB64U, toUTF } from '@sozai/codec'
 
@@ -164,7 +166,7 @@ const entryMetadata = {
 }
 
 /** Structural metadata only. Consumer evidence is checked by the injected validator. */
-export function vaultRecordMeta<Type extends VaultRecordType>(
+export function parseVaultRecordMeta<Type extends VaultRecordType>(
   type: Type,
   claim: RecordClaim,
 ): VaultRecordMetas[Type] | null {
@@ -182,9 +184,7 @@ export function vaultRecordMeta<Type extends VaultRecordType>(
           version: count,
           state: (v) => (claim.deleted ? v === 'deleted' : v === 'active' || v === 'retired'),
           ...consumer,
-        }) &&
-        m.keyID === claim.id &&
-        createVaultKeyID(claim.owner, fromB64U(m.keyUnique as string)) === claim.id
+        }) && m.keyID === claim.id
       break
     case 'vault.key-branch':
       valid = !claim.deleted && shape(m, { keyID, keyVersion: count, branchID: text, ...consumer })
@@ -228,6 +228,22 @@ export function vaultRecordMeta<Type extends VaultRecordType>(
   }
 
   return valid ? (m as VaultRecordMetas[Type]) : null
+}
+
+export async function vaultRecordMeta<Type extends VaultRecordType>(
+  type: Type,
+  claim: RecordClaim,
+  options?: CryptoOptions,
+): Promise<VaultRecordMetas[Type] | null> {
+  const { id, owner } = claim
+  const parsed = parseVaultRecordMeta(type, claim)
+  if (parsed === null) return null
+  const meta: VaultRecordMetas[Type] = JSON.parse(JSON.stringify(parsed))
+  if (type === 'vault.key') {
+    const key = meta as VaultRecordMetas['vault.key']
+    if ((await createVaultKeyID(owner, fromB64U(key.keyUnique), options)) !== id) return null
+  }
+  return meta
 }
 
 function wire(type: VaultRecordType, payload: VaultRecordPayloads[VaultRecordType]): unknown {
@@ -330,28 +346,39 @@ function payloadOf(type: VaultRecordType, data: Uint8Array): VaultRecordPayloads
 export async function decodeVaultRecord(
   record: Pick<SignedRecord, 'type' | 'id' | 'owner' | 'hlc' | 'payload'>,
   recordMeta: Record<string, unknown>,
+  options?: CryptoOptions,
 ): Promise<DecodedVaultRecord> {
   const { type, id, owner, hlc } = record
+  const captured = { crypto: options?.crypto ?? nobleCrypto }
   const payload = record.payload === null ? null : new Uint8Array(record.payload)
 
+  let meta: Record<string, unknown>
   try {
-    const meta = JSON.parse(JSON.stringify(recordMeta))
+    meta = JSON.parse(JSON.stringify(recordMeta))
+  } catch (cause) {
+    // biome-ignore lint/style/useErrorCause: the constructor carries cause in its parameter object
+    throw new VaultRecordPayloadError({
+      type,
+      id,
+      reason: cause instanceof Error ? cause.message : 'invalid record',
+      cause,
+    })
+  }
+  const payloadDigest = payload === null ? null : await recordPayloadDigest(payload, captured)
+  const recordType = type as VaultRecordType
+  const decodedMeta = (VAULT_RECORD_TYPES as ReadonlyArray<string>).includes(type)
+    ? await vaultRecordMeta(
+        recordType,
+        { type, id, owner, hlc, meta, deleted: false, payloadDigest },
+        captured,
+      )
+    : null
+
+  try {
     if (!(VAULT_RECORD_TYPES as ReadonlyArray<string>).includes(type))
       throw new Error('unknown record type')
 
     if (payload === null) throw new Error('a tombstone has no payload')
-
-    const payloadDigest = await recordPayloadDigest(payload)
-    const recordType = type as VaultRecordType
-    const decodedMeta = vaultRecordMeta(recordType, {
-      type,
-      id,
-      owner,
-      hlc,
-      meta,
-      deleted: false,
-      payloadDigest,
-    })
 
     if (decodedMeta === null) throw new Error('record metadata')
 

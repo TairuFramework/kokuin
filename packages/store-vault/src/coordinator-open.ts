@@ -104,6 +104,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
 
       try {
         const contentKey = await getSuite(branch.suite).unwrap({
+          crypto: params.crypto,
           ...row,
           identity: params.identity,
           inputs: address.inputs,
