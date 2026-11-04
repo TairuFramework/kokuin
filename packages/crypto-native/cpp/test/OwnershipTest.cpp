@@ -26,6 +26,12 @@ void operator delete[](void* ptr) noexcept {
   std::free(ptr);
 }
 
+// GCC requires the sized form alongside the unsized replacement (-Wsized-deallocation); route
+// it through the same erasure check so either deallocation path is observed.
+void operator delete[](void* ptr, size_t) noexcept {
+  operator delete[](ptr);
+}
+
 int main() {
   const uint8_t input[] = {99, 1, 2, 3, 99};
   {

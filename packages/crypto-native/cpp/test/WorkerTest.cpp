@@ -25,6 +25,11 @@ void operator delete[](void* ptr) noexcept {
   }
   std::free(ptr);
 }
+// GCC requires the sized form alongside the unsized replacement (-Wsized-deallocation); route
+// it through the same erasure check so either deallocation path is observed.
+void operator delete[](void* ptr, size_t) noexcept {
+  operator delete[](ptr);
+}
 
 OwnedRequest signingRequest(size_t seedSize) {
   const uint8_t seed[32] = {42};
