@@ -11,12 +11,16 @@ const seed = new Uint8Array(32).fill(7)
 
 describe('verifying a token issued by a did:kokuin: profile', () => {
   test('verifyToken accepts a token signed by the current authority key', async () => {
-    const inception = createInception(seed, 0)
+    const inception = await createInception(seed, 0)
     const log = [inception]
     const did = didFromInception(inception.event)
     const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
 
-    const identity = createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } })
+    const identity = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: log, events: [] },
+    })
     const token = await signToken(identity, createUnsignedToken({ hello: 'world' }))
 
     const verified = await verifyToken(token, { methods: [resolver] })
@@ -25,11 +29,15 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
   })
 
   test('without the registry the same token is unresolvable', async () => {
-    const inception = createInception(seed, 0)
+    const inception = await createInception(seed, 0)
     const log = [inception]
     const did = didFromInception(inception.event)
 
-    const identity = createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } })
+    const identity = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: log, events: [] },
+    })
     const token = await signToken(identity, createUnsignedToken({ hello: 'world' }))
 
     // No `methods`: nothing can turn a did:kokuin: identifier into a key, so verification must
@@ -44,11 +52,11 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
   })
 
   test('a token signed by the pre-rotation key is rejected once the log has reset', async () => {
-    const inception = createInception(seed, 0)
-    const reset = createReset(seed, 0, 1)
+    const inception = await createInception(seed, 0)
+    const reset = await createReset(seed, 0, 1)
 
     // Signed before the reset, by an identity that only ever saw the inception.
-    const stale = createControllerIdentity({
+    const stale = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
@@ -78,10 +86,14 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
 
   test('a token signed under a kid verifies end to end', async () => {
     // A hand-built two-key inception — see `two-key-log.ts`. The controller signs with `k[1]`.
-    const { did, log, cosignerKey, controllerKey } = buildTwoKeyLog(seed)
+    const { did, log, cosignerKey, controllerKey } = await buildTwoKeyLog(seed)
     const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
 
-    const identity = createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } })
+    const identity = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: log, events: [] },
+    })
     const token = await signToken(identity, createUnsignedToken({ hello: 'world' }))
     expect(token.header.kid).toBe(`#${controllerKey}`)
 
@@ -102,9 +114,9 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     // key that the profile has rotated away still verifies with `historic: true` — it must, or
     // every already-issued capability dies at the next rotate. Denying the key is the event that
     // ends that, and this is the whole point of the feature.
-    const inception = createInception(seed, 0)
+    const inception = await createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate({
+    const rotate = await createRotate({
       seed,
       profile: 0,
       did,
@@ -113,7 +125,7 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     })
     const leaked = inception.event.k[0]
 
-    const thief = createControllerIdentity({
+    const thief = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
@@ -127,7 +139,7 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     })
     await expect(verifyToken(token, { methods: [rotated], historic: true })).resolves.toBeDefined()
 
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -139,7 +151,7 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     })
     // Control: the same third rotate with an empty snapshot leaves the historic answer at yes, so
     // what refuses the token below is the denial and not the extra rotate.
-    const undenied = createRotate({
+    const undenied = await createRotate({
       seed,
       profile: 0,
       did,
@@ -158,7 +170,7 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
 
     // Second control: the same log, and a token signed by the key the profile actually holds,
     // still verifies both ways — so the rejection is the denial, not the third event.
-    const owner = createControllerIdentity({
+    const owner = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception, rotate, revoke], events: [] },
@@ -169,9 +181,9 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
   })
 
   test('a token signed after the rotation verifies against the rotated log', async () => {
-    const inception = createInception(seed, 0)
+    const inception = await createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate({
+    const rotate = await createRotate({
       seed,
       profile: 0,
       did,
@@ -181,7 +193,11 @@ describe('verifying a token issued by a did:kokuin: profile', () => {
     const log = [inception, rotate]
     const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
 
-    const identity = createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } })
+    const identity = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: log, events: [] },
+    })
     const token = await signToken(identity, createUnsignedToken({ hello: 'world' }))
 
     const verified = await verifyToken(token, { methods: [resolver] })

@@ -16,8 +16,8 @@ import { encodeKey } from '../src/keys.js'
 
 const seed = new Uint8Array(32).fill(1)
 
-function setup() {
-  const inception = createInception(seed, 0)
+async function setup() {
+  const inception = await createInception(seed, 0)
   return {
     inception,
     did: didFromInception(inception.event),
@@ -25,82 +25,82 @@ function setup() {
 }
 
 describe('createReset()', () => {
-  test('increments the generation and restarts the sequence', () => {
-    const { event } = createReset(seed, 0, 1)
+  test('increments the generation and restarts the sequence', async () => {
+    const { event } = await createReset(seed, 0, 1)
     expect(event.g).toBe(1)
     expect(event.s).toBe(0)
   })
 
-  test('is a rotate variant, not a fourth event type', () => {
-    expect(createReset(seed, 0, 1).event.t).toBe('rot')
+  test('is a rotate variant, not a fourth event type', async () => {
+    expect((await createReset(seed, 0, 1)).event.t).toBe('rot')
   })
 
-  test('clears the deny set by carrying an empty snapshot', () => {
-    expect(createReset(seed, 0, 1).event.d).toEqual([])
+  test('clears the deny set by carrying an empty snapshot', async () => {
+    expect((await createReset(seed, 0, 1)).event.d).toEqual([])
   })
 
-  test('anchors to the inception, with no reference to any event beyond it', () => {
-    const { inception, did } = setup()
-    const { event } = createReset(seed, 0, 1)
+  test('anchors to the inception, with no reference to any event beyond it', async () => {
+    const { inception, did } = await setup()
+    const { event } = await createReset(seed, 0, 1)
     expect(event.p).toBe(digestOf(inception.event))
     expect(event.i).toBe(did)
   })
 
-  test('is a pure function of (seed, profile, gen) — two blind resets are byte-identical', () => {
-    expect(createReset(seed, 0, 1)).toEqual(createReset(seed, 0, 1))
+  test('is a pure function of (seed, profile, gen) — two blind resets are byte-identical', async () => {
+    expect(await createReset(seed, 0, 1)).toEqual(await createReset(seed, 0, 1))
   })
 
-  test('rejects a generation below 1', () => {
-    expect(() => createReset(seed, 0, 0)).toThrow()
+  test('rejects a generation below 1', async () => {
+    await expect(async () => await createReset(seed, 0, 0)).rejects.toThrow()
   })
 })
 
 describe('verifyReset()', () => {
-  test('accepts a reset signed by the committed recovery key', () => {
-    const { inception } = setup()
-    const signed = createReset(seed, 0, 1)
-    expect(verifyReset(signed, inception.event)).toBe(true)
+  test('accepts a reset signed by the committed recovery key', async () => {
+    const { inception } = await setup()
+    const signed = await createReset(seed, 0, 1)
+    expect(await verifyReset(signed, inception.event)).toBe(true)
   })
 
-  test('rejects a reset signed by any other key — the root always wins the race', () => {
-    const { inception } = setup()
+  test('rejects a reset signed by any other key — the root always wins the race', async () => {
+    const { inception } = await setup()
     const thiefSeed = new Uint8Array(32).fill(9)
-    const signed = createReset(thiefSeed, 0, 1)
-    expect(verifyReset(signed, inception.event)).toBe(false)
+    const signed = await createReset(thiefSeed, 0, 1)
+    expect(await verifyReset(signed, inception.event)).toBe(false)
   })
 
-  test('rejects a reset that does not increment the generation', () => {
-    const { inception } = setup()
-    const signed = createReset(seed, 0, 1)
+  test('rejects a reset that does not increment the generation', async () => {
+    const { inception } = await setup()
+    const signed = await createReset(seed, 0, 1)
     const tampered = { ...signed, event: { ...signed.event, g: 0 } }
-    expect(verifyReset(tampered, inception.event)).toBe(false)
+    expect(await verifyReset(tampered, inception.event)).toBe(false)
   })
 
   // `p`/`s`/`g` and the revealed recovery key stay exactly as createReset produced them, and the
   // event is re-signed with the real recovery private key over the tampered bytes — so only a
   // dedicated `ka` check, not a chain/recovery/signature failure, can reject these.
-  test('rejects a reset publishing no key agreement key', () => {
-    const { inception } = setup()
-    const signed = createReset(seed, 0, 1)
+  test('rejects a reset publishing no key agreement key', async () => {
+    const { inception } = await setup()
+    const signed = await createReset(seed, 0, 1)
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const event = { ...signed.event, ka: [] }
-    const sigs = signEvent(event, [recovery.privateKey])
-    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
-      false,
-    )
+    const sigs = await signEvent(event, [recovery.privateKey])
+    expect(
+      await verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event),
+    ).toBe(false)
   })
 
-  test('rejects a reset whose ka holds a key that is not X25519-tagged', () => {
-    const { inception } = setup()
-    const signed = createReset(seed, 0, 1)
+  test('rejects a reset whose ka holds a key that is not X25519-tagged', async () => {
+    const { inception } = await setup()
+    const signed = await createReset(seed, 0, 1)
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const signingKey = signed.event.k[0]
     if (signingKey === undefined) throw new Error('expected a signing key')
     const event = { ...signed.event, ka: [signingKey] }
-    const sigs = signEvent(event, [recovery.privateKey])
-    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
-      false,
-    )
+    const sigs = await signEvent(event, [recovery.privateKey])
+    expect(
+      await verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event),
+    ).toBe(false)
   })
 
   // A blind reset carries `d: []`, no `m` and no seal — that is what makes "blind reset" mean the
@@ -108,46 +108,46 @@ describe('verifyReset()', () => {
   // blind resets at one generation as idempotent rather than as a fork. A reset may instead carry a
   // whole snapshot, `m` and `d` together; half of one is refused. Each body below is re-signed by the
   // real recovery key, so only a dedicated check can reject it.
-  test('rejects a reset carrying a deny set but no member list', () => {
-    const { inception } = setup()
-    const signed = createReset(seed, 0, 1)
+  test('rejects a reset carrying a deny set but no member list', async () => {
+    const { inception } = await setup()
+    const signed = await createReset(seed, 0, 1)
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const event = { ...signed.event, d: ['did:key:zStillDenied'] }
-    const sigs = signEvent(event, [recovery.privateKey])
-    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
-      false,
-    )
+    const sigs = await signEvent(event, [recovery.privateKey])
+    expect(
+      await verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event),
+    ).toBe(false)
   })
 
-  test('rejects a reset carrying a member list but no deny set', () => {
-    const { inception } = setup()
-    const signed = createReset(seed, 0, 1, { members: [], deny: ['did:key:zStillDenied'] })
+  test('rejects a reset carrying a member list but no deny set', async () => {
+    const { inception } = await setup()
+    const signed = await createReset(seed, 0, 1, { members: [], deny: ['did:key:zStillDenied'] })
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const { d: _d, ...event } = signed.event
     expect(event.m).toEqual([])
-    const sigs = signEvent(event, [recovery.privateKey])
-    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
-      false,
-    )
+    const sigs = await signEvent(event, [recovery.privateKey])
+    expect(
+      await verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event),
+    ).toBe(false)
   })
 
-  test('accepts a reset carrying a whole snapshot', () => {
-    const { inception } = setup()
-    const signed = createReset(seed, 0, 1, { members: [], deny: ['did:key:zStillDenied'] })
+  test('accepts a reset carrying a whole snapshot', async () => {
+    const { inception } = await setup()
+    const signed = await createReset(seed, 0, 1, { members: [], deny: ['did:key:zStillDenied'] })
     expect(signed.event.m).toEqual([])
     expect(signed.event.d).toEqual(['did:key:zStillDenied'])
-    expect(verifyReset(signed, inception.event)).toBe(true)
+    expect(await verifyReset(signed, inception.event)).toBe(true)
   })
 
-  test('rejects a reset carrying a seal', () => {
-    const { inception } = setup()
-    const signed = createReset(seed, 0, 1)
+  test('rejects a reset carrying a seal', async () => {
+    const { inception } = await setup()
+    const signed = await createReset(seed, 0, 1)
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const event = { ...signed.event, a: digestOf('an anchored grant') }
-    const sigs = signEvent(event, [recovery.privateKey])
-    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
-      false,
-    )
+    const sigs = await signEvent(event, [recovery.privateKey])
+    expect(
+      await verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event),
+    ).toBe(false)
   })
 })
 
@@ -163,9 +163,9 @@ describe('the recovery commitment is fixed at inception', () => {
   // no log knowledge or availability, and a movable commitment makes the root read the log first.
   const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
-  test('a rotate carrying `r` is refused, at every position and by both verifiers', () => {
-    const { inception, did } = setup()
-    const rot = createRotate({
+  test('a rotate carrying `r` is refused, at every position and by both verifiers', async () => {
+    const { inception, did } = await setup()
+    const rot = await createRotate({
       seed,
       profile: 0,
       did,
@@ -174,12 +174,12 @@ describe('the recovery commitment is fixed at inception', () => {
     })
     const withRecovery = { ...rot.event, r: digestOf('anything at all') }
     const key = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
-    const forged = { event: withRecovery, sigs: signEvent(withRecovery, [key.privateKey]) }
+    const forged = { event: withRecovery, sigs: await signEvent(withRecovery, [key.privateKey]) }
 
-    expect(verifyRotate(forged, { digest: digestOf(inception.event), n: inception.event.n })).toBe(
-      false,
-    )
-    expect(foldLog(did, { chain: [inception, forged], events: [] })).toEqual({
+    expect(
+      await verifyRotate(forged, { digest: digestOf(inception.event), n: inception.event.n }),
+    ).toBe(false)
+    expect(await foldLog(did, { chain: [inception, forged], events: [] })).toEqual({
       ok: false,
       reason: 'invalid rotate',
       index: 1,
@@ -187,48 +187,48 @@ describe('the recovery commitment is fixed at inception', () => {
 
     // Control: the identical body without `r`, signed by the same key. The rejection is the member.
     const plain = { ...rot.event }
-    const control = { event: plain, sigs: signEvent(plain, [key.privateKey]) }
-    expect(verifyRotate(control, { digest: digestOf(inception.event), n: inception.event.n })).toBe(
-      true,
-    )
-    expect(foldLog(did, { chain: [inception, control], events: [] }).ok).toBe(true)
+    const control = { event: plain, sigs: await signEvent(plain, [key.privateKey]) }
+    expect(
+      await verifyRotate(control, { digest: digestOf(inception.event), n: inception.event.n }),
+    ).toBe(true)
+    expect((await foldLog(did, { chain: [inception, control], events: [] })).ok).toBe(true)
   })
 
-  test('a reset carrying `r` is refused too — it is a rotate body and shares the check', () => {
-    const { inception, did } = setup()
-    const signed = createReset(seed, 0, 1)
+  test('a reset carrying `r` is refused too — it is a rotate body and shares the check', async () => {
+    const { inception, did } = await setup()
+    const signed = await createReset(seed, 0, 1)
     const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
     const event = { ...signed.event, r: digestOf('anything at all') }
-    const sigs = signEvent(event, [recovery.privateKey])
+    const sigs = await signEvent(event, [recovery.privateKey])
 
-    expect(verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event)).toBe(
-      false,
-    )
+    expect(
+      await verifyReset({ event, sigs, recoveryKey: signed.recoveryKey }, inception.event),
+    ).toBe(false)
     // Control: the same reset without the member verifies and folds.
-    expect(verifyReset(signed, inception.event)).toBe(true)
-    expect(foldLog(did, { chain: [inception, signed], events: [] }).ok).toBe(true)
+    expect(await verifyReset(signed, inception.event)).toBe(true)
+    expect((await foldLog(did, { chain: [inception, signed], events: [] })).ok).toBe(true)
   })
 
-  test('`KeyState.recovery` is the inception commitment at every position of a mixed log', () => {
+  test('`KeyState.recovery` is the inception commitment at every position of a mixed log', async () => {
     // Including across a reset, which opens a new generation under the same root — and this is the
     // value `verifyReset` enforces, so the state and the verifier agree by construction now.
-    const { inception, did } = setup()
-    const rot = createRotate({
+    const { inception, did } = await setup()
+    const rot = await createRotate({
       seed,
       profile: 0,
       did,
       prior: inception.event,
       snapshot: { members: [], deny: [] },
     })
-    const denying = createRotate({
+    const denying = await createRotate({
       seed,
       profile: 0,
       did,
       prior: rot.event,
       snapshot: { members: [], deny: [target] },
     })
-    const reset = createReset(seed, 0, 1)
-    const after = createRotate({
+    const reset = await createReset(seed, 0, 1)
+    const after = await createRotate({
       seed,
       profile: 0,
       did,
@@ -236,7 +236,10 @@ describe('the recovery commitment is fixed at inception', () => {
       snapshot: { members: [], deny: [] },
     })
 
-    const result = foldLog(did, { chain: [inception, rot, denying, reset, after], events: [] })
+    const result = await foldLog(did, {
+      chain: [inception, rot, denying, reset, after],
+      events: [],
+    })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.states.map((state) => state.recovery)).toEqual(

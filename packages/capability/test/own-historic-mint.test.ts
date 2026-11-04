@@ -27,9 +27,9 @@ import { checkCapability, createCapability, now } from '../src/index.js'
 describe('a rotated-away authority key, at the capability path', () => {
   test('can it mint a fresh capability granting itself everything?', async () => {
     const seed = new Uint8Array(32).fill(31)
-    const inception = createInception(seed, 0)
+    const inception = await createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate({
+    const rotate = await createRotate({
       seed,
       profile: 0,
       did,
@@ -47,7 +47,7 @@ describe('a rotated-away authority key, at the capability path', () => {
 
     // The thief signs as the profile using only the PREFIX — i.e. with the rotated-away key,
     // naming it in `kid`. This is what holding a leaked, since-rotated authority key gives you.
-    const stolen = createControllerIdentity({
+    const stolen = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
@@ -97,7 +97,7 @@ describe('a rotated-away authority key, at the capability path', () => {
     // is not allowed to be what retires.
     const leakedKey = inception.event.k[0]
     if (leakedKey === undefined) throw new Error('expected inception key')
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -129,7 +129,7 @@ describe('a rotated-away authority key, at the capability path', () => {
     // profile currently holds still grants. Without this row a rejection above could just as well
     // be the third event making the log unfoldable, or historic resolution collapsing outright —
     // both of which would "pass" the assertion while denying every honest holder too.
-    const owner = createControllerIdentity({
+    const owner = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: remediedLog, events: [] },

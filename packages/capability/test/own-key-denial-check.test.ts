@@ -29,9 +29,9 @@ import {
 // the revocation records that key had already signed?
 
 const seed = new Uint8Array(32).fill(41)
-const inception = createInception(seed, 0)
+const inception = await createInception(seed, 0)
 const did = didFromInception(inception.event)
-const rotate = createRotate({
+const rotate = await createRotate({
   seed,
   profile: 0,
   did,
@@ -43,7 +43,7 @@ if (leakedKey === undefined) throw new Error('expected inception key')
 
 describe('key revocation, independently', () => {
   test('the denial stops the leaked key and leaves the live key working', async () => {
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -59,7 +59,7 @@ describe('key revocation, independently', () => {
 
     // Minted by the leaked key, before the denial existed.
     const thief = await randomIdentity()
-    const stolenIdentity = createControllerIdentity({
+    const stolenIdentity = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
@@ -86,7 +86,7 @@ describe('key revocation, independently', () => {
     }
 
     // CONTROL — the live key, same log, same shape. If this also fails the denial proves nothing.
-    const owner = createControllerIdentity({
+    const owner = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception, rotate, revoke], events: [] },
@@ -126,7 +126,7 @@ describe('key revocation, independently', () => {
           asked === did ? { chain: [inception, rotate], events: [] } : undefined,
       }),
     ]
-    const issuer = createControllerIdentity({
+    const issuer = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
@@ -162,7 +162,7 @@ describe('key revocation, independently', () => {
 
     const beforeDenial = await invoke(before)
 
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -193,12 +193,12 @@ describe('key revocation, independently', () => {
           asked === did ? { chain: [inception, rotate], events: [] } : undefined,
       }),
     ]
-    const live = createControllerIdentity({
+    const live = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception, rotate], events: [] },
     })
-    const leaked = createControllerIdentity({
+    const leaked = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
@@ -237,7 +237,7 @@ describe('key revocation, independently', () => {
 
     const beforeDenial = await invoke(before)
 
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -260,7 +260,7 @@ describe('key revocation, independently', () => {
     // The plant-a-record denial of service the swallow exists to stop. An untrusted backend hands
     // back a record signed by a key this DID never had, claiming to revoke a live grant. If
     // honouring denied-key records had widened into honouring unverifiable ones, this would deny.
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -274,7 +274,7 @@ describe('key revocation, independently', () => {
       }),
     ]
 
-    const live = createControllerIdentity({
+    const live = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception, rotate, revoke], events: [] },

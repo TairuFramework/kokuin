@@ -1,3 +1,5 @@
+import type { CryptoOptions } from '@kokuin/token'
+
 import { type FoldResult, foldLog, type KeyState } from './fold.js'
 import { type ControllerLog, isControllerLog, MALFORMED_LOG } from './log.js'
 
@@ -18,13 +20,18 @@ function lastState(did: string, context: string, result: FoldResult): KeyState {
  *
  * The chain alone, deliberately. Epoch events never change a root key (`k`, `ka`, `n` and the
  * derivation indices live on the chain only), so folding them would buy an identity nothing but up
- * to `MAX_EPOCH_EVENTS` signature checks on a path that must stay synchronous and cheap. The returned
+ * to `MAX_EPOCH_EVENTS` signature checks on a path that only needs root keys. The returned
  * state's `deny`, `members` and `saturated` are therefore the chain's, not the live ones; nothing
  * that builds an identity reads them.
  */
-export function currentState(did: string, log: ControllerLog, context: string): KeyState {
+export async function currentState(
+  did: string,
+  log: ControllerLog,
+  context: string,
+  options: CryptoOptions = {},
+): Promise<KeyState> {
   if (!isControllerLog(log)) {
     throw new Error(`${context}: invalid log for ${did}: ${MALFORMED_LOG} at event 0`)
   }
-  return lastState(did, context, foldLog(did, { chain: log.chain, events: [] }))
+  return lastState(did, context, await foldLog(did, { chain: log.chain, events: [] }, options))
 }

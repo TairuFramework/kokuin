@@ -263,9 +263,9 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     'controller lookup fault (%s) while checking a stored revocation rejects',
     async (message) => {
       const seed = new Uint8Array(32).fill(61)
-      const icp = createInception(seed, 0)
+      const icp = await createInception(seed, 0)
       const issuer = didFromInception(icp.event)
-      const identity = createControllerIdentity({
+      const identity = await createControllerIdentity({
         seed,
         profile: 0,
         log: { chain: [icp], events: [] },
@@ -316,9 +316,13 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
   // from reading "not revoked".
   test('an own-issuer resolver fault rejects even when the checker returns normally', async () => {
     const seed = new Uint8Array(32).fill(63)
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const issuer = createControllerIdentity({ seed, profile: 0, log: { chain: [icp], events: [] } })
+    const issuer = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [icp], events: [] },
+    })
     const jti = 'jti-fault-own-issuer'
     const fragmented = createSigningIdentityForDID(
       `${did}#key-1` as typeof did,
@@ -348,8 +352,8 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
   // deny the check.
   test('an unresolvable foreign issuer in the row revokes nothing', async () => {
     const seed = new Uint8Array(32).fill(64)
-    const icp = createInception(seed, 0)
-    const foreign = createControllerIdentity({
+    const icp = await createInception(seed, 0)
+    const foreign = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [icp], events: [] },
@@ -390,16 +394,16 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
   // earlier key: the record is past-minted and verifies historically.
   test('rotated issuer: a revocation signed before a rotate still revokes', async () => {
     const seed = new Uint8Array(32).fill(71)
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rotate = createRotate({
+    const rotate = await createRotate({
       seed,
       profile: 0,
       did,
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const beforeRotate = createControllerIdentity({
+    const beforeRotate = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [icp], events: [] },
@@ -418,9 +422,9 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
   // Denying a leaked key must not undo the revocations that key signed.
   test('denied key: a revocation signed by a since-denied key still revokes', async () => {
     const seed = new Uint8Array(32).fill(53)
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rotate = createRotate({
+    const rotate = await createRotate({
       seed,
       profile: 0,
       did,
@@ -432,7 +436,7 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     const revoked: Array<SignedEvent> = [
       icp,
       rotate,
-      createRotate({
+      await createRotate({
         seed,
         profile: 0,
         did,
@@ -440,8 +444,12 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
         snapshot: { members: [], deny: [keyTarget(leaked)] },
       }),
     ]
-    const thief = createControllerIdentity({ seed, profile: 0, log: { chain: [icp], events: [] } })
-    const owner = createControllerIdentity({
+    const thief = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [icp], events: [] },
+    })
+    const owner = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: revoked, events: [] },
@@ -459,10 +467,14 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
   // fault: it must neither revoke nor reject.
   test('a record naming a key the issuer never published revokes nothing', async () => {
     const seed = new Uint8Array(32).fill(81)
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const issuer = createControllerIdentity({ seed, profile: 0, log: { chain: [icp], events: [] } })
-    const unpublished = createInception(new Uint8Array(32).fill(82), 0).event.k[0]
+    const issuer = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [icp], events: [] },
+    })
+    const unpublished = (await createInception(new Uint8Array(32).fill(82), 0)).event.k[0]
     if (unpublished === undefined) throw new Error('expected inception key')
     const forger = createSigningIdentityForDID(did, createIdentity().privateKey)
     const jti = 'jti-unpublished-kid'
@@ -479,9 +491,13 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
 
   test('never-published key: a record from an unrelated identity revokes nothing', async () => {
     const seed = new Uint8Array(32).fill(91)
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const issuer = createControllerIdentity({ seed, profile: 0, log: { chain: [icp], events: [] } })
+    const issuer = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [icp], events: [] },
+    })
     const jti = 'jti-never-published'
     const record = await createRevocationRecord(createIdentity(), jti)
     // Filed under the issuer's DID, so the lookup does return it.

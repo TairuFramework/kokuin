@@ -1,3 +1,5 @@
+import type { CryptoOptions } from '@kokuin/token'
+
 import { digestOf, isCanonicalizable } from './canonical.js'
 import type { EpochLimits } from './epoch.js'
 import type { SignedEvent } from './events.js'
@@ -13,6 +15,7 @@ import {
   MALFORMED_LOG,
   withEpoch,
 } from './log.js'
+import { snapshotLog } from './log-snapshot.js'
 import { resolveBranches } from './supersede.js'
 
 export { LOG_FORKED, LOG_NOT_AUTHORITATIVE }
@@ -98,14 +101,15 @@ export function createMemoryLogStore(): LogStore {
 }
 
 /** The stored log and its chain's fold, or undefined when there is no usable memory. */
-function recall(
+async function recall(
   did: string,
   seen: ControllerLog | undefined,
-): { log: ControllerLog; head: KeyState } | undefined {
+  options: CryptoOptions = {},
+): Promise<{ log: ControllerLog; head: KeyState } | undefined> {
   if (seen == null || !isControllerLog(seen) || seen.chain.length === 0) {
     return undefined
   }
-  const folded = foldLog(did, { chain: seen.chain, events: [] })
+  const folded = await foldLog(did, { chain: seen.chain, events: [] }, options)
   const head = folded.ok ? folded.states[folded.states.length - 1] : undefined
   return head === undefined ? undefined : { log: seen, head }
 }
@@ -139,7 +143,7 @@ function sameLog(next: ControllerLog, seen: ControllerLog): boolean {
 }
 
 /** What {@link authoritativeLog} takes. */
-export type AuthoritativeLogParams = {
+export type AuthoritativeLogParams = CryptoOptions & {
   did: string
   loaded: ControllerLog
   seen: ControllerLog | undefined
@@ -196,18 +200,18 @@ export type AuthoritativeLog = { log: ControllerLog; result: Extract<FoldResult,
  * it applied (a member added, say), not merely make this party forget. Only ever write what this
  * function returned for the same DID.
  */
-export function authoritativeLog(params: AuthoritativeLogParams): AuthoritativeLog {
-  return authoritativeLogWithin(params)
+export async function authoritativeLog(params: AuthoritativeLogParams): Promise<AuthoritativeLog> {
+  return await authoritativeLogWithin(params)
 }
 
 /**
  * {@link authoritativeLog} under lowered epoch limits. Test-only: saturation is then reachable
  * without thousands of signatures. Not exported from the package.
  */
-export function authoritativeLogWithin(
-  { did, loaded, seen, context }: AuthoritativeLogParams,
+export async function authoritativeLogWithin(
+  { did, loaded, seen, context, crypto }: AuthoritativeLogParams,
   limits?: Partial<EpochLimits>,
-): AuthoritativeLog {
+): Promise<AuthoritativeLog> {
   const invalid = (reason: string, index: number) =>
     new Error(`${context}: invalid log for ${did}: ${reason} at event ${index}`)
   // The request limit, before any work: `loaded` is the one untrusted input here.
@@ -217,7 +221,10 @@ export function authoritativeLogWithin(
   if (loaded.events.length > MAX_LOG_EVENTS) {
     throw invalid(LOG_TOO_LARGE, -1)
   }
-  const loadedChain = foldLog(did, { chain: loaded.chain, events: [] })
+  const originalSeen = seen
+  loaded = snapshotLog(loaded)
+  seen = seen === undefined ? undefined : snapshotLog(seen)
+  const loadedChain = await foldLog(did, { chain: loaded.chain, events: [] }, { crypto })
   if (!loadedChain.ok) {
     throw invalid(loadedChain.reason, loadedChain.index)
   }
@@ -228,18 +235,18 @@ export function authoritativeLogWithin(
 
   let chain = loaded.chain
   let states = loadedChain.states
-  const memory = recall(did, seen)
+  const memory = await recall(did, seen, { crypto })
   if (memory !== undefined && !states.some((state) => state.digest === memory.head.digest)) {
     // They diverge. Which is authoritative is what branch resolution answers: a higher generation (a
     // reset) wins outright, a chain that only repeats the seen one's prefix loses, and two rotates at
     // one position are a fork.
-    const resolved = resolveBranches(did, [memory.log.chain, loaded.chain])
+    const resolved = await resolveBranches(did, [memory.log.chain, loaded.chain], { crypto })
     if (!resolved.ok) {
       throw new Error(
         `${resolved.failure === 'duplicity' ? LOG_FORKED : LOG_NOT_AUTHORITATIVE}: ${did}`,
       )
     }
-    const winner = foldLog(did, { chain: resolved.winner, events: [] })
+    const winner = await foldLog(did, { chain: resolved.winner, events: [] }, { crypto })
     const winnerHead = winner.ok ? winner.states[winner.states.length - 1] : undefined
     if (!winner.ok || winnerHead === undefined || winnerHead.digest !== loadedHead.digest) {
       throw new Error(`${LOG_NOT_AUTHORITATIVE}: ${did}`)
@@ -248,13 +255,20 @@ export function authoritativeLogWithin(
     states = winner.states
   }
 
-  const held = withEpoch(did, states, loaded.events, limits, memory?.log.events)
+  const held = await withEpoch(did, states, loaded.events, limits, memory?.log.events, { crypto })
   if (!('result' in held)) {
     throw invalid(held.reason, held.index)
   }
   const log = { chain, events: appliedCopies(held, limits) }
   return {
-    log: memory !== undefined && sameLog(log, memory.log) ? memory.log : log,
+    log:
+      memory !== undefined &&
+      sameLog(log, memory.log) &&
+      originalSeen !== undefined &&
+      isControllerLog(originalSeen) &&
+      sameLog(log, originalSeen)
+        ? originalSeen
+        : log,
     result: held.result,
   }
 }

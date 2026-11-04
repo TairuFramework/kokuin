@@ -12,7 +12,7 @@ const decoder = new TextDecoder()
 describe('encrypting to a did:kokuin: profile', () => {
   test('round-trips through a real folded log', async () => {
     const seed = new Uint8Array(32).fill(3)
-    const inception = createInception(seed, 0)
+    const inception = await createInception(seed, 0)
     const did = didFromInception(inception.event)
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [inception], events: [] }),
@@ -34,9 +34,9 @@ describe('encrypting to a did:kokuin: profile', () => {
 
   test('a rotation moves the encryption target', async () => {
     const seed = new Uint8Array(32).fill(3)
-    const inception = createInception(seed, 0)
+    const inception = await createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate({
+    const rotate = await createRotate({
       seed,
       profile: 0,
       did,

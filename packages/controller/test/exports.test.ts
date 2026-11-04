@@ -95,7 +95,9 @@ describe('public surface', () => {
     expectTypeOf(controller.authoritativeLog)
       .parameter(0)
       .toEqualTypeOf<controller.AuthoritativeLogParams>()
-    expectTypeOf(controller.authoritativeLog).returns.toEqualTypeOf<controller.AuthoritativeLog>()
+    expectTypeOf(controller.authoritativeLog).returns.toEqualTypeOf<
+      Promise<controller.AuthoritativeLog>
+    >()
   })
 
   test('does not leak internal helpers', () => {

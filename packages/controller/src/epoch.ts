@@ -1,8 +1,11 @@
+import type { CryptoOptions } from '@kokuin/token'
+
 import { digestOf } from './canonical.js'
 import { type EpochEvent, isEpochEventShape, verifyEpochSignature } from './epoch-events.js'
 import { keyFromTarget, type MemberEntry, type SignedEvent } from './events.js'
 import type { KeyState, MemberState } from './fold.js'
 import { MAX_EPOCH_EVENTS, MAX_FAILED_SIGNATURES } from './limits.js'
+import { snapshotEntries } from './log-snapshot.js'
 import {
   createDenialMatcher,
   type DenialMatcher,
@@ -72,7 +75,7 @@ export type EpochLimits = { MAX_EPOCH_EVENTS: number }
 /** What {@link foldEpoch} uses when a caller lowers nothing: pinned so a test can see it. */
 export const DEFAULT_EPOCH_LIMITS: EpochLimits = { MAX_EPOCH_EVENTS }
 
-export type FoldEpochParams = {
+export type FoldEpochParams = CryptoOptions & {
   did: string
   /** The chain's states, in order; the last is the anchor the epoch grew from. */
   chainStates: Array<KeyState>
@@ -217,11 +220,11 @@ function intrinsicRefusal(event: EpochEvent, did: string, anchor: KeyState): str
  * verifies: repeating a copy costs no extra verification, and neither does any list sorting after a
  * genuine one. Every list that fails is charged to `budget`; the walk stops once it is spent.
  */
-function canonicalCopy(
+async function canonicalCopy(
   copies: Array<SignedEvent<EpochEvent>>,
-  verifies: (copy: SignedEvent<EpochEvent>) => boolean,
+  verifies: (copy: SignedEvent<EpochEvent>) => Promise<boolean>,
   budget: SignatureBudget,
-): SignedEvent<EpochEvent> | undefined {
+): Promise<SignedEvent<EpochEvent> | undefined> {
   const distinct = new Map<string, SignedEvent<EpochEvent>>()
   for (const copy of copies) {
     // JSON, not a join: signatures are untrusted strings and may hold any separator, and a lossy key
@@ -231,7 +234,7 @@ function canonicalCopy(
   }
   for (const key of [...distinct.keys()].sort()) {
     const copy = distinct.get(key) as SignedEvent<EpochEvent>
-    if (verifies(copy)) return copy
+    if (await verifies(copy)) return copy
     budget.failed += copy.sigs.length
     if (exhausted(budget)) return undefined
   }
@@ -242,23 +245,26 @@ function canonicalCopy(
  * Judge `event` against the state its parents established, and say what it adds. `null` reason means
  * it applies; the returned `effect` is then the event's own contribution.
  */
-function evaluate(
+async function evaluate(
   candidate: Candidate,
   causal: EpochState,
   anchor: KeyState,
   roots: RootKeySet,
   matches: DenialMatcher,
   budget: SignatureBudget,
-): { reason: string } | { effect: EpochState } {
+  options: CryptoOptions,
+): Promise<{ reason: string } | { effect: EpochState }> {
   const { event, digest } = candidate
   // A copy of the same body under a different signature is not a different event, so the event is
   // authentic if any presented copy is. Judging only the first would let a forged copy shadow the
   // genuine one depending on arrival order. A trusted copy was judged so when it was kept.
-  const authenticate = (verifies: (copy: SignedEvent<EpochEvent>) => boolean) =>
-    candidate.trusted ?? canonicalCopy(candidate.copies, verifies, budget)
+  const authenticate = async (verifies: (copy: SignedEvent<EpochEvent>) => Promise<boolean>) =>
+    candidate.trusted ?? (await canonicalCopy(candidate.copies, verifies, budget))
   let signer: MemberEntry | null = null
   if (event.by === undefined) {
-    candidate.authentic = authenticate((c) => verifyEpochSignature(c, { rootKeys: anchor.keys }))
+    candidate.authentic = await authenticate(
+      async (c) => await verifyEpochSignature(c, { rootKeys: anchor.keys }, options),
+    )
     if (candidate.authentic === undefined) {
       return { reason: 'invalid root signature' }
     }
@@ -268,7 +274,9 @@ function evaluate(
     if (causal.removed.has(event.by)) return { reason: 'signer was removed in the causal state' }
     if (isDenied(causal.deny, member, matches))
       return { reason: 'signer is denied in the causal state' }
-    candidate.authentic = authenticate((c) => verifyEpochSignature(c, { memberKey: member.key }))
+    candidate.authentic = await authenticate(
+      async (c) => await verifyEpochSignature(c, { memberKey: member.key }, options),
+    )
     if (candidate.authentic === undefined) {
       return { reason: 'invalid member signature' }
     }
@@ -363,13 +371,16 @@ function insertSorted(sorted: Array<string>, digest: string): void {
 }
 
 /**
- * Merge the current epoch into the chain's last state. Total: whatever `events` holds, the result is
- * a head or a refusal, never a throw -- an entry that is not a valid epoch event is counted and
- * dropped. The one refusal is the request limit on failed signatures ({@link TOO_MANY_FAILED_SIGNATURES}),
+ * Merge the current epoch into the chain's last state. Invalid entries are counted and dropped.
+ * Provider failures propagate. The one refusal is the request limit on failed signatures ({@link TOO_MANY_FAILED_SIGNATURES}),
  * which `trusted` copies never count towards.
  */
-export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail | FoldEpochRefusal {
-  const { did, chainStates, events } = params
+export async function foldEpochDetailed(
+  params: FoldEpochParams,
+): Promise<FoldEpochDetail | FoldEpochRefusal> {
+  const { did } = params
+  const chainStates = structuredClone(params.chainStates)
+  const events = snapshotEntries(params.events)
   const maxEvents = params.limits?.MAX_EPOCH_EVENTS ?? DEFAULT_EPOCH_LIMITS.MAX_EPOCH_EVENTS
   const anchor = chainStates[chainStates.length - 1] as KeyState
   const reasons = new Map<string, string>()
@@ -402,7 +413,7 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail | Fo
   // Memory first, so every presented copy of a held body finds its trusted copy already there. Held
   // copies are this verifier's own, so one that is not of this epoch, or not an epoch event at all
   // (a corrupted store), is simply not used: it is no refusal of anything presented.
-  for (const entry of params.trusted ?? []) {
+  for (const entry of snapshotEntries(params.trusted ?? [])) {
     if (!isEpochEventShape(entry) || entry.event.e !== anchor.epoch) continue
     if (intrinsicRefusal(entry.event, did, anchor) !== null) continue
     const digest = digestOf(entry.event)
@@ -519,7 +530,7 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail | Fo
       }
     }
 
-    const outcome = evaluate(candidate, causal, anchor, roots, matches, budget)
+    const outcome = await evaluate(candidate, causal, anchor, roots, matches, budget, params)
     if (exhausted(budget)) {
       return { ok: false, reason: TOO_MANY_FAILED_SIGNATURES }
     }
@@ -577,8 +588,10 @@ export function foldEpochDetailed(params: FoldEpochParams): FoldEpochDetail | Fo
 }
 
 /** {@link foldEpochDetailed} without the per-event reasons and copies. */
-export function foldEpoch(params: FoldEpochParams): FoldEpochResult | FoldEpochRefusal {
-  const detail = foldEpochDetailed(params)
+export async function foldEpoch(
+  params: FoldEpochParams,
+): Promise<FoldEpochResult | FoldEpochRefusal> {
+  const detail = await foldEpochDetailed(params)
   if (!detail.ok) return detail
   const { reasons: _reasons, authentic: _authentic, ...result } = detail
   return result

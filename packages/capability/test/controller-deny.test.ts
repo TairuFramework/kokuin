@@ -46,9 +46,9 @@ const at = <T>(items: ReadonlyArray<T>, i: number): T => {
 // what this file exists to stop.
 
 const seed = new Uint8Array(32).fill(31)
-const inception = createInception(seed, 0)
+const inception = await createInception(seed, 0)
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity({
+const controller = await createControllerIdentity({
   seed,
   profile: 0,
   log: { chain: [inception], events: [] },
@@ -66,8 +66,8 @@ const methods: MethodRegistry = [
 ]
 
 /** A rotate on `prior` whose snapshot is exactly `deny`, signed by the profile. */
-function settle(prior: SignedEvent['event'], deny: Array<string>): SignedEvent {
-  return createRotate({
+async function settle(prior: SignedEvent['event'], deny: Array<string>): Promise<SignedEvent> {
+  return await createRotate({
     seed,
     profile: 0,
     did,
@@ -77,8 +77,8 @@ function settle(prior: SignedEvent['event'], deny: Array<string>): SignedEvent {
 }
 
 /** A rotate denying `target`, chained onto the inception. */
-function revokeOf(target: string): SignedEvent {
-  return settle(inception.event, [target])
+async function revokeOf(target: string): Promise<SignedEvent> {
+  return await settle(inception.event, [target])
 }
 
 async function mintFor(audience: SigningIdentity, signer = controller): Promise<string> {
@@ -115,7 +115,7 @@ describe('a capability whose audience the profile has revoked', () => {
     const cap = await mintFor(delegate)
     await expect(invoke(delegate, cap)).resolves.toBeUndefined()
 
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     await expect(invoke(delegate, cap)).rejects.toThrow(
       `Invalid capability: audience is revoked by the subject: ${delegate.id}`,
     )
@@ -126,7 +126,7 @@ describe('a capability whose audience the profile has revoked', () => {
     // capability the moment a log carries any denial at all.
     const denied = await mintFor(delegate)
     const allowed = await mintFor(bystander)
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
 
     await expect(invoke(delegate, denied)).rejects.toThrow(/audience is revoked/)
     await expect(invoke(bystander, allowed)).resolves.toBeUndefined()
@@ -136,13 +136,13 @@ describe('a capability whose audience the profile has revoked', () => {
     // A rotate's snapshot replaces the state, so routine key hygiene builds it from the fold's own
     // answer (`snapshotOf`) and must not quietly re-admit a revoked device.
     const cap = await mintFor(delegate)
-    const revoke = revokeOf(delegate.id)
-    const folded = foldLog(did, { chain: [inception, revoke], events: [] })
+    const revoke = await revokeOf(delegate.id)
+    const folded = await foldLog(did, { chain: [inception, revoke], events: [] })
     if (!folded.ok) throw new Error('did not fold')
     log = [
       inception,
       revoke,
-      createRotate({
+      await createRotate({
         seed,
         profile: 0,
         did,
@@ -158,22 +158,22 @@ describe('a capability whose audience the profile has revoked', () => {
     // `d` replaces the prior set rather than adding to it — the "cold rotate clearing the deny set"
     // the spec's remedy ladder names. A holder DID, unlike a retired key, may be dropped.
     const cap = await mintFor(delegate)
-    const revoke = revokeOf(delegate.id)
-    log = [inception, revoke, settle(revoke.event, [])]
+    const revoke = await revokeOf(delegate.id)
+    log = [inception, revoke, await settle(revoke.event, [])]
 
     await expect(invoke(delegate, cap)).resolves.toBeUndefined()
   })
 
   test('a reset clears it, and the profile can grant the same device again', async () => {
-    const revoke = revokeOf(delegate.id)
-    const reset = createReset(seed, 0, 1)
+    const revoke = await revokeOf(delegate.id)
+    const reset = await createReset(seed, 0, 1)
     log = [inception, revoke, reset]
 
     // The capability has to be re-minted: a reset discards the prior generation, so one signed
     // under it no longer resolves at all. What this asserts is that the denial itself is gone.
     const regranted = await mintFor(
       delegate,
-      createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
+      await createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
     )
     await expect(invoke(delegate, regranted)).resolves.toBeUndefined()
   })
@@ -194,7 +194,7 @@ describe('a capability whose audience the profile has revoked', () => {
       undefined,
       { methods },
     )
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
 
     await expect(invoke(delegate, stringifyToken(backdated))).rejects.toThrow(/audience is revoked/)
   })
@@ -222,11 +222,11 @@ describe('a capability whose audience the profile has revoked', () => {
     await expect(invoke(holder, cap)).resolves.toBeUndefined()
 
     // Revoked by short form, granted to the long form.
-    log = [inception, revokeOf(peer.id)]
+    log = [inception, await revokeOf(peer.id)]
     await expect(invoke(holder, cap)).rejects.toThrow(/audience is revoked/)
 
     // Revoked by the very string the capability names.
-    log = [inception, revokeOf(peer.longForm)]
+    log = [inception, await revokeOf(peer.longForm)]
     await expect(invoke(holder, cap)).rejects.toThrow(/audience is revoked/)
   })
 })
@@ -238,7 +238,7 @@ describe('a payload whose `sub` or `aud` is not a string', () => {
     // arrives here. A deny set holds strings, so neither member has anything to look up — but
     // without the type guard the lookup runs anyway, and `findMethodResolver` splits `sub` on `:`.
     // That is a `TypeError` out of a function whose only failure mode is supposed to be a denial.
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     const base = { act: 'write', res: 'doc/1' }
 
     for (const payload of [
@@ -284,7 +284,7 @@ describe('a revoked link in a delegation chain', () => {
     // Control: the whole chain verifies while nobody is revoked.
     await expect(invoke(delegate, leafRaw, rootRaw)).resolves.toBeUndefined()
 
-    log = [inception, revokeOf(manager.id)]
+    log = [inception, await revokeOf(manager.id)]
     await expect(invoke(delegate, leafRaw, rootRaw)).rejects.toThrow(
       `Invalid capability: audience is revoked by the subject: ${manager.id}`,
     )
@@ -306,7 +306,7 @@ describe('a capability presented directly, without an invocation', () => {
       checkCapability({ act: 'revoke', res: 'doc/1' }, cap.payload, { methods }),
     ).resolves.toBeUndefined()
 
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     await expect(
       checkCapability({ act: 'revoke', res: 'doc/1' }, cap.payload, { methods }),
     ).rejects.toThrow(/audience is revoked/)
@@ -338,12 +338,12 @@ describe('a capability presented directly, without an invocation', () => {
 
     // Control: revoking the *manager* — the audience the chain walk does reach — is refused, so
     // the deny set is live for this capability whichever link carries the revoked audience.
-    log = [inception, revokeOf(manager.id)]
+    log = [inception, await revokeOf(manager.id)]
     await expect(
       checkCapability({ act: 'revoke', res: 'doc/1' }, leaf.payload, { methods }),
     ).rejects.toThrow(`Invalid capability: audience is revoked by the subject: ${manager.id}`)
 
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     await expect(
       checkCapability({ act: 'revoke', res: 'doc/1' }, leaf.payload, { methods }),
     ).rejects.toThrow(`Invalid capability: audience is revoked by the subject: ${delegate.id}`)
@@ -439,7 +439,7 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
     // calls below use the same revoked delegate and the same capability; only the registry differs.
     // Making the member required would break every implementation of a published interface, so the
     // obligation is documented (`method.ts`, `capability.skill.md`) rather than enforced.
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     const real = createControllerResolver({
       loadLog: async (asked) =>
         asked === did ? { chain: log, events: [] } : { chain: [], events: [] },
@@ -469,7 +469,7 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
     // `sub` to look a deny set up by — this cannot be closed inside `verifyToken` even in
     // principle. A consumer authenticating a device by bare token gets no denial from a revoke.
     const device = randomIdentity()
-    log = [inception, revokeOf(device.id)]
+    log = [inception, await revokeOf(device.id)]
     expect((await at(methods, 0).resolveDenySet?.(did))?.has(device.id)).toBe(true)
 
     const token = await signToken(device, createUnsignedToken({ hello: 'world' }))
@@ -481,8 +481,8 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
 
 describe('the deny set the resolver exposes', () => {
   test('is the head state: the latest snapshot, not an accumulation', async () => {
-    const first = revokeOf(delegate.id)
-    const second = settle(first.event, [bystander.id])
+    const first = await revokeOf(delegate.id)
+    const second = await settle(first.event, [bystander.id])
     log = [inception, first, second]
 
     const denied = await at(methods, 0).resolveDenySet?.(did)
@@ -508,7 +508,7 @@ describe('a deny set nothing could answer for', () => {
   // omitted `methods` here got no enforcement, and nothing said so.
 
   test('a did:kokuin subject with no registry is refused rather than waved through', async () => {
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     const payload = {
       iss: did,
       sub: did,
@@ -574,7 +574,7 @@ describe('canonical peer:4 audience revocation', () => {
       await expect(
         checkCapability({ act: 'write', res: 'doc/1' }, invocation, { methods }),
       ).resolves.toBeUndefined()
-      log = [inception, revokeOf(denied)]
+      log = [inception, await revokeOf(denied)]
       await expect(
         checkCapability({ act: 'write', res: 'doc/1' }, invocation, { methods }),
       ).rejects.toThrow(AUDIENCE_REVOKED)

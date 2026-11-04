@@ -24,11 +24,11 @@ import {
 
 const seed = new Uint8Array(32).fill(1)
 const profile = 0
-const inception = createInception(seed, profile)
+const inception = await createInception(seed, profile)
 const did = didFromInception(inception.event)
 
-function headOf(events: Array<SignedEvent>): KeyState {
-  const result = foldLog(did, { chain: events, events: [] })
+async function headOf(events: Array<SignedEvent>): Promise<KeyState> {
+  const result = await foldLog(did, { chain: events, events: [] })
   if (!result.ok) {
     throw new Error(`fixture log does not fold: ${result.reason}`)
   }
@@ -45,7 +45,7 @@ function memberKeyPair(): { privateKey: Uint8Array; key: string; did: string } {
   return { privateKey, key, did: `did:key:${key}` }
 }
 
-const head = headOf([inception])
+const head = await headOf([inception])
 const m = memberKeyPair()
 const other = memberKeyPair()
 const member = { did: m.did, key: m.key, lease: 1_800_000_000 }
@@ -62,8 +62,8 @@ function withEvent(
 }
 
 describe('builders', () => {
-  test('a root add names the epoch and its parents and verifies under the chain keys', () => {
-    const add = createAdd({ seed, profile, did, head, parents: [head.epoch], member })
+  test('a root add names the epoch and its parents and verifies under the chain keys', async () => {
+    const add = await createAdd({ seed, profile, did, head, parents: [head.epoch], member })
     expect(add.event).toMatchObject({
       v: 1,
       t: 'add',
@@ -79,48 +79,57 @@ describe('builders', () => {
     expect(add.event.by).toBeUndefined()
     expect('by' in add.event).toBe(false)
     expect(isEpochEventShape(add)).toBe(true)
-    expect(verifyEpochSignature(add, { rootKeys: head.keys })).toBe(true)
+    expect(await verifyEpochSignature(add, { rootKeys: head.keys })).toBe(true)
   })
 
-  test('a root signer derives the key at the head`s key position, not the inception`s', () => {
-    const rot = createRotate({
+  test('a root signer derives the key at the head`s key position, not the inception`s', async () => {
+    const rot = await createRotate({
       seed,
       profile,
       did,
       prior: inception.event,
       snapshot: snapshotOf(head),
     })
-    const rotated = headOf([inception, rot])
-    const add = createAdd({ seed, profile, did, head: rotated, parents: [rotated.epoch], member })
-    expect(verifyEpochSignature(add, { rootKeys: rotated.keys })).toBe(true)
-    expect(verifyEpochSignature(add, { rootKeys: head.keys })).toBe(false)
+    const rotated = await headOf([inception, rot])
+    const add = await createAdd({
+      seed,
+      profile,
+      did,
+      head: rotated,
+      parents: [rotated.epoch],
+      member,
+    })
+    expect(await verifyEpochSignature(add, { rootKeys: rotated.keys })).toBe(true)
+    expect(await verifyEpochSignature(add, { rootKeys: head.keys })).toBe(false)
   })
 
-  test('a root signer whose key the head does not publish is refused at build time', () => {
-    const rot = createRotate({
+  test('a root signer whose key the head does not publish is refused at build time', async () => {
+    const rot = await createRotate({
       seed,
       profile,
       did,
       prior: inception.event,
       snapshot: snapshotOf(head),
     })
-    const rotated = headOf([inception, rot])
+    const rotated = await headOf([inception, rot])
     // The inception's position with the rotated head's keys: the derived key is the retired one.
     const stale = { ...rotated, keySeq: 0 }
-    expect(() =>
-      createAdd({ seed, profile, did, head: stale, parents: [stale.epoch], member }),
-    ).toThrow(/not the head's only/)
+    await expect(
+      async () =>
+        await createAdd({ seed, profile, did, head: stale, parents: [stale.epoch], member }),
+    ).rejects.toThrow(/not the head's only/)
   })
 
-  test('a root signer is refused when the head publishes more keys than the one it derives', () => {
+  test('a root signer is refused when the head publishes more keys than the one it derives', async () => {
     const wider = { ...head, keys: [...head.keys, m.key] }
-    expect(() =>
-      createAdd({ seed, profile, did, head: wider, parents: [wider.epoch], member }),
-    ).toThrow(/only published key/)
+    await expect(
+      async () =>
+        await createAdd({ seed, profile, did, head: wider, parents: [wider.epoch], member }),
+    ).rejects.toThrow(/only published key/)
   })
 
-  test('a member revoke names its signer and verifies only under the pinned key', () => {
-    const rev = createRevoke({
+  test('a member revoke names its signer and verifies only under the pinned key', async () => {
+    const rev = await createRevoke({
       signer: memberSigner,
       did,
       head,
@@ -130,38 +139,45 @@ describe('builders', () => {
     expect(rev.event).toMatchObject({ t: 'rev', x: 'did:key:zX', e: head.epoch, crit: true })
     expect(rev.event.by).toBe('A')
     expect(isEpochEventShape(rev)).toBe(true)
-    expect(verifyEpochSignature(rev, { memberKey: m.key })).toBe(true)
-    expect(verifyEpochSignature(rev, { memberKey: other.key })).toBe(false)
+    expect(await verifyEpochSignature(rev, { memberKey: m.key })).toBe(true)
+    expect(await verifyEpochSignature(rev, { memberKey: other.key })).toBe(false)
   })
 
-  test('a root renew, remove and revoke carry no signer reference', () => {
+  test('a root renew, remove and revoke carry no signer reference', async () => {
     const root = { root: { seed, profile } }
     const parents = [head.epoch]
     const built = [
-      createRenew({ signer: root, did, head, parents, add: 'A', lease: DEFAULT_LEASE_SECONDS }),
-      createRemove({ signer: root, did, head, parents, add: 'A' }),
-      createRevoke({ signer: root, did, head, parents, target: 'did:key:zX' }),
+      await createRenew({
+        signer: root,
+        did,
+        head,
+        parents,
+        add: 'A',
+        lease: DEFAULT_LEASE_SECONDS,
+      }),
+      await createRemove({ signer: root, did, head, parents, add: 'A' }),
+      await createRevoke({ signer: root, did, head, parents, target: 'did:key:zX' }),
     ]
     expect(built.map((signed) => signed.event.t)).toEqual(['ren', 'rmv', 'rev'])
     for (const signed of built) {
       expect('by' in signed.event).toBe(false)
       expect(isEpochEventShape(signed)).toBe(true)
-      expect(verifyEpochSignature(signed, { rootKeys: head.keys })).toBe(true)
+      expect(await verifyEpochSignature(signed, { rootKeys: head.keys })).toBe(true)
     }
   })
 
-  test('a member renew and remove name their target incarnation and their signer', () => {
+  test('a member renew and remove name their target incarnation and their signer', async () => {
     const parents = [head.epoch]
-    const ren = createRenew({ signer: memberSigner, did, head, parents, add: 'B', lease: 5 })
-    const rmv = createRemove({ signer: memberSigner, did, head, parents, add: 'B' })
+    const ren = await createRenew({ signer: memberSigner, did, head, parents, add: 'B', lease: 5 })
+    const rmv = await createRemove({ signer: memberSigner, did, head, parents, add: 'B' })
     expect(ren.event).toMatchObject({ t: 'ren', add: 'B', lease: 5, by: 'A' })
     expect(rmv.event).toMatchObject({ t: 'rmv', add: 'B', by: 'A' })
-    expect(verifyEpochSignature(ren, { memberKey: m.key })).toBe(true)
-    expect(verifyEpochSignature(rmv, { memberKey: m.key })).toBe(true)
+    expect(await verifyEpochSignature(ren, { memberKey: m.key })).toBe(true)
+    expect(await verifyEpochSignature(rmv, { memberKey: m.key })).toBe(true)
   })
 
-  test('parents are written sorted and deduplicated', () => {
-    const add = createAdd({
+  test('parents are written sorted and deduplicated', async () => {
+    const add = await createAdd({
       seed,
       profile,
       did,
@@ -172,38 +188,49 @@ describe('builders', () => {
     expect(add.event.p).toEqual(['za', 'zb', 'zc'])
   })
 
-  test('builders refuse parents the shape guard would refuse', () => {
-    expect(() => createAdd({ seed, profile, did, head, parents: [], member })).toThrow(
-      /at least one parent/,
-    )
+  test('builders refuse parents the shape guard would refuse', async () => {
+    await expect(
+      async () => await createAdd({ seed, profile, did, head, parents: [], member }),
+    ).rejects.toThrow(/at least one parent/)
     const many = Array.from({ length: MAX_EVENT_PARENTS + 1 }, (_, i) => `z${i}`)
-    expect(() => createAdd({ seed, profile, did, head, parents: many, member })).toThrow(/parent/)
+    await expect(
+      async () => await createAdd({ seed, profile, did, head, parents: many, member }),
+    ).rejects.toThrow(/parent/)
     // Duplicates collapse before the count, so this many entries naming few parents is fine.
     const repeated = Array.from({ length: MAX_EVENT_PARENTS + 1 }, () => head.epoch)
-    expect(createAdd({ seed, profile, did, head, parents: repeated, member }).event.p).toEqual([
-      head.epoch,
-    ])
+    expect(
+      (await createAdd({ seed, profile, did, head, parents: repeated, member })).event.p,
+    ).toEqual([head.epoch])
   })
 
-  test('builders refuse a non-integer lease rather than emit an unfoldable event', () => {
-    expect(() =>
-      createAdd({
-        seed,
-        profile,
-        did,
-        head,
-        parents: [head.epoch],
-        member: { ...member, lease: 1.5 },
-      }),
-    ).toThrow()
-    expect(() =>
-      createRenew({ signer: memberSigner, did, head, parents: [head.epoch], add: 'B', lease: -1 }),
-    ).toThrow()
+  test('builders refuse a non-integer lease rather than emit an unfoldable event', async () => {
+    await expect(
+      async () =>
+        await createAdd({
+          seed,
+          profile,
+          did,
+          head,
+          parents: [head.epoch],
+          member: { ...member, lease: 1.5 },
+        }),
+    ).rejects.toThrow()
+    await expect(
+      async () =>
+        await createRenew({
+          signer: memberSigner,
+          did,
+          head,
+          parents: [head.epoch],
+          add: 'B',
+          lease: -1,
+        }),
+    ).rejects.toThrow()
   })
 })
 
-describe('isEpochEventShape()', () => {
-  const add = createAdd({ seed, profile, did, head, parents: [head.epoch], member })
+describe('isEpochEventShape()', async () => {
+  const add = await createAdd({ seed, profile, did, head, parents: [head.epoch], member })
 
   test('accepts a valid add', () => {
     expect(isEpochEventShape(add)).toBe(true)
@@ -248,12 +275,12 @@ describe('isEpochEventShape()', () => {
     expect(isEpochEventShape(fill(MAX_EVENT_BYTES - base + 1))).toBe(false)
   })
 
-  test('refuses per-type fields missing from the other types', () => {
+  test('refuses per-type fields missing from the other types', async () => {
     const root = { root: { seed, profile } }
     const parents = [head.epoch]
-    const ren = createRenew({ signer: root, did, head, parents, add: 'A', lease: 5 })
-    const rmv = createRemove({ signer: root, did, head, parents, add: 'A' })
-    const rev = createRevoke({ signer: root, did, head, parents, target: 'did:key:zX' })
+    const ren = await createRenew({ signer: root, did, head, parents, add: 'A', lease: 5 })
+    const rmv = await createRemove({ signer: root, did, head, parents, add: 'A' })
+    const rev = await createRevoke({ signer: root, did, head, parents, target: 'did:key:zX' })
     const strip = (signed: SignedEvent<EpochEvent>, field: string) => {
       const event: Record<string, unknown> = { ...signed.event }
       delete event[field]
@@ -300,9 +327,9 @@ describe('isEpochEventShape()', () => {
   })
 })
 
-describe('verifyEpochSignature()', () => {
-  const add = createAdd({ seed, profile, did, head, parents: [head.epoch], member })
-  const rev = createRevoke({
+describe('verifyEpochSignature()', async () => {
+  const add = await createAdd({ seed, profile, did, head, parents: [head.epoch], member })
+  const rev = await createRevoke({
     signer: memberSigner,
     did,
     head,
@@ -310,42 +337,42 @@ describe('verifyEpochSignature()', () => {
     target: 'did:key:zX',
   })
 
-  test('a root event does not verify under a member key, nor a member event under the root', () => {
-    expect(verifyEpochSignature(add, { memberKey: head.keys[0] ?? '' })).toBe(false)
-    expect(verifyEpochSignature(rev, { rootKeys: [m.key] })).toBe(false)
+  test('a root event does not verify under a member key, nor a member event under the root', async () => {
+    expect(await verifyEpochSignature(add, { memberKey: head.keys[0] ?? '' })).toBe(false)
+    expect(await verifyEpochSignature(rev, { rootKeys: [m.key] })).toBe(false)
   })
 
-  test('a member event must carry exactly one signature', () => {
+  test('a member event must carry exactly one signature', async () => {
     const [sig] = rev.sigs
     expect(sig).toBeDefined()
-    expect(verifyEpochSignature({ ...rev, sigs: [] }, { memberKey: m.key })).toBe(false)
+    expect(await verifyEpochSignature({ ...rev, sigs: [] }, { memberKey: m.key })).toBe(false)
     expect(
-      verifyEpochSignature({ ...rev, sigs: [sig ?? '', sig ?? ''] }, { memberKey: m.key }),
+      await verifyEpochSignature({ ...rev, sigs: [sig ?? '', sig ?? ''] }, { memberKey: m.key }),
     ).toBe(false)
   })
 
-  test('an oversized signature list fails before any is checked', () => {
+  test('an oversized signature list fails before any is checked', async () => {
     const [sig] = add.sigs
     const many = Array.from({ length: MAX_EVENT_SIGNATURES + 1 }, () => sig ?? '')
-    expect(verifyEpochSignature({ ...add, sigs: many }, { rootKeys: head.keys })).toBe(false)
-    expect(verifyEpochSignature({ ...rev, sigs: many }, { memberKey: m.key })).toBe(false)
+    expect(await verifyEpochSignature({ ...add, sigs: many }, { rootKeys: head.keys })).toBe(false)
+    expect(await verifyEpochSignature({ ...rev, sigs: many }, { memberKey: m.key })).toBe(false)
   })
 
-  test('a root event is n-of-n over the root keys', () => {
-    expect(verifyEpochSignature(add, { rootKeys: [...head.keys, m.key] })).toBe(false)
-    expect(verifyEpochSignature(add, { rootKeys: [] })).toBe(false)
+  test('a root event is n-of-n over the root keys', async () => {
+    expect(await verifyEpochSignature(add, { rootKeys: [...head.keys, m.key] })).toBe(false)
+    expect(await verifyEpochSignature(add, { rootKeys: [] })).toBe(false)
   })
 
-  test('a signature does not survive any change to the body', () => {
+  test('a signature does not survive any change to the body', async () => {
     const moved = { ...add, event: { ...add.event, lease: add.event.lease + 1 } }
-    expect(verifyEpochSignature(moved, { rootKeys: head.keys })).toBe(false)
+    expect(await verifyEpochSignature(moved, { rootKeys: head.keys })).toBe(false)
     const reparented = { ...rev, event: { ...rev.event, p: [digestOf('elsewhere')] } }
-    expect(verifyEpochSignature(reparented, { memberKey: m.key })).toBe(false)
+    expect(await verifyEpochSignature(reparented, { memberKey: m.key })).toBe(false)
   })
 
-  test('is total on a body the canonicalizer cannot encode', () => {
+  test('is total on a body the canonicalizer cannot encode', async () => {
     const broken = { ...add, event: { ...add.event, lease: Number.NaN } }
-    expect(verifyEpochSignature(broken, { rootKeys: head.keys })).toBe(false)
-    expect(verifyEpochSignature(broken, { memberKey: m.key })).toBe(false)
+    expect(await verifyEpochSignature(broken, { rootKeys: head.keys })).toBe(false)
+    expect(await verifyEpochSignature(broken, { memberKey: m.key })).toBe(false)
   })
 })

@@ -20,7 +20,7 @@ const seed = new Uint8Array(32).fill(1)
 
 describe('createControllerResolver().resolve() algorithm passthrough', () => {
   test('surfaces whatever algorithm the decoded key carries, not a hardcoded EdDSA', async () => {
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp], events: [] }),

@@ -32,7 +32,7 @@ const folds = vi.mocked(history.authoritativeLogWithin)
 
 const seed = new Uint8Array(32).fill(7)
 const profile = 0
-const icp = createInception(seed, profile)
+const icp = await createInception(seed, profile)
 const did = didFromInception(icp.event)
 
 const memberPrivateKey = new Uint8Array(32).fill(23)
@@ -44,18 +44,18 @@ const member: MemberEntry = {
   lease: 1_900_000_000,
 }
 
-function settle(prior: EventCommon, deny: Array<string> = []): SignedEvent {
-  return createRotate({ seed, profile, did, prior, snapshot: { members: [member], deny } })
+async function settle(prior: EventCommon, deny: Array<string> = []): Promise<SignedEvent> {
+  return await createRotate({ seed, profile, did, prior, snapshot: { members: [member], deny } })
 }
 
-const rot = settle(icp.event)
+const rot = await settle(icp.event)
 const chain = [icp, rot]
-const folded = foldLog(did, { chain, events: [] })
+const folded = await foldLog(did, { chain, events: [] })
 if (!folded.ok) throw new Error(`fixture does not fold: ${folded.reason}`)
 const head: KeyState = folded.head
 
-function revoke(target: string): SignedEvent<EpochEvent> {
-  return createRevoke({
+async function revoke(target: string): Promise<SignedEvent<EpochEvent>> {
+  return await createRevoke({
     signer: { root: { seed, profile } },
     did,
     head,
@@ -64,8 +64,8 @@ function revoke(target: string): SignedEvent<EpochEvent> {
   })
 }
 
-const revA = revoke('did:key:zA')
-const revB = revoke('did:key:zB')
+const revA = await revoke('did:key:zA')
+const revB = await revoke('did:key:zB')
 
 /** A fresh copy each call, as a store hands back: the memo must key on content, not identity. */
 function copy(log: ControllerLog): ControllerLog {
@@ -122,7 +122,7 @@ describe('the fold memo', () => {
   test('a memoized prefix is still refused once a longer log was accepted', async () => {
     const prefix: ControllerLog = { chain, events: [] }
     const longer: ControllerLog = {
-      chain: [icp, rot, settle(rot.event, ['did:key:zLater'])],
+      chain: [icp, rot, await settle(rot.event, ['did:key:zLater'])],
       events: [],
     }
 

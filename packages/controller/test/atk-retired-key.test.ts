@@ -44,16 +44,16 @@ async function mintWithKeyAt(did: string, gen: number, seq: number, keySeed = se
 // the same token, which is what keeps an already-issued capability verifiable across a rotate.
 describe('ATTACK: does a rotate retire a compromised signing key?', () => {
   test('ROW 1 (closed): after two rotations, the ORIGINAL key mints nothing that verifies', async () => {
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate({
+    const rot1 = await createRotate({
       seed,
       profile: 0,
       did,
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const rot2 = createRotate({
+    const rot2 = await createRotate({
       seed,
       profile: 0,
       did,
@@ -80,9 +80,9 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
   })
 
   test('ROW 2 (control): a `kid` the profile NEVER published is refused', async () => {
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate({
+    const rot1 = await createRotate({
       seed,
       profile: 0,
       did,
@@ -99,16 +99,16 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
   })
 
   test('ROW 3 (control): after a RESET the same retired key is refused', async () => {
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate({
+    const rot1 = await createRotate({
       seed,
       profile: 0,
       did,
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const reset = createReset(seed, 0, 1)
+    const reset = await createReset(seed, 0, 1)
     const stolen = await mintWithKeyAt(did, 0, 0)
 
     // Before the reset the retired key still verifies historically (throws if it does not), so the
@@ -131,9 +131,9 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
   test('ROW 4 (closed): a rotate carrying an empty deny snapshot retires the key too', async () => {
     // Retiring a key for *new* issuance needs no denial: `resolve` answers from the head's `k`
     // alone, so a rotate whose snapshot denies nothing retires the key all the same.
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate({
+    const rot1 = await createRotate({
       seed,
       profile: 0,
       did,
@@ -156,16 +156,16 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     // What the split preserves. A capability or revocation record this profile issued before the
     // rotate must not stop verifying because of routine key hygiene — the caller verifying such an
     // artefact says so, and gets the whole current generation.
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot1 = createRotate({
+    const rot1 = await createRotate({
       seed,
       profile: 0,
       did,
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const rot2 = createRotate({
+    const rot2 = await createRotate({
       seed,
       profile: 0,
       did,
@@ -192,10 +192,10 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     // The thief holds the inception key and waits: if any later rotate's snapshot could leave the
     // denial out, historic resolution would accept its fresh tokens again. The checkpointed
     // retirement is the chain's own rule, so the rotate that drops it does not fold at all.
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
     const retired = `#${icp.event.k[0]}`
-    const rot1 = createRotate({
+    const rot1 = await createRotate({
       seed,
       profile: 0,
       did,
@@ -207,7 +207,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
       verifyToken(stolen, { methods: registry([icp, rot1], did), historic: true }),
     ).rejects.toThrow(/kid names a key the controller has revoked/)
 
-    const dropping = createRotate({
+    const dropping = await createRotate({
       seed,
       profile: 0,
       did,
@@ -219,7 +219,7 @@ describe('ATTACK: does a rotate retire a compromised signing key?', () => {
     ).rejects.toThrow(/snapshot drops a retired key denial/)
 
     // Control: the same rotate keeping the denial folds, and the stolen key stays refused.
-    const keeping = createRotate({
+    const keeping = await createRotate({
       seed,
       profile: 0,
       did,

@@ -41,16 +41,16 @@ const seed = new Uint8Array(32).fill(23)
 const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 const other = 'did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
 
-const icp = createInception(seed, 0)
+const icp = await createInception(seed, 0)
 const did = didFromInception(icp.event)
-const rot = createRotate({
+const rot = await createRotate({
   seed,
   profile: 0,
   did,
   prior: icp.event,
   snapshot: { members: [], deny: [] },
 })
-const reset = createReset(seed, 0, 1)
+const reset = await createReset(seed, 0, 1)
 // A chain `rev` as an older log carries one, signed by the inception key. The chain no longer has the
 // type, so it reaches the unknown-type path; it is here as a well-formed envelope around a body the
 // fold does not understand.
@@ -66,14 +66,14 @@ const revokeBody = {
 }
 const revoke = {
   event: revokeBody,
-  sigs: signEvent(revokeBody as unknown as EventCommon, [
+  sigs: await signEvent(revokeBody as unknown as EventCommon, [
     deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA').privateKey,
   ]),
 } as unknown as SignedEvent
 
 /** A rotate off the inception whose snapshot denies `deny`: two with different `deny` are a fork. */
-function settled(deny: Array<string>): SignedEvent {
-  return createRotate({
+async function settled(deny: Array<string>): Promise<SignedEvent> {
+  return await createRotate({
     seed,
     profile: 0,
     did,
@@ -247,40 +247,42 @@ const malformed: Array<[string, Array<unknown>, FoldResult]> = [
 
 describe('foldLog() is total', () => {
   for (const [name, log, expected] of malformed) {
-    test(`answers ${name} with a reason`, () => {
-      expect(foldLog(did, { chain: log as Array<SignedEvent>, events: [] })).toEqual(expected)
+    test(`answers ${name} with a reason`, async () => {
+      expect(await foldLog(did, { chain: log as Array<SignedEvent>, events: [] })).toEqual(expected)
     })
   }
 
-  test('answers a log that is not an array with a reason', () => {
-    expect(foldLog(did, { chain: undefined as unknown as Array<SignedEvent>, events: [] })).toEqual(
-      {
-        ok: false,
-        reason: 'malformed log',
-        index: 0,
-      },
-    )
+  test('answers a log that is not an array with a reason', async () => {
+    expect(
+      await foldLog(did, { chain: undefined as unknown as Array<SignedEvent>, events: [] }),
+    ).toEqual({
+      ok: false,
+      reason: 'malformed log',
+      index: 0,
+    })
   })
 })
 
 describe('the exported verifiers are total', () => {
-  test('verifySignatures answers non-array `sigs` and `keys` with false', () => {
-    expect(verifySignatures(rot.event, undefined as unknown as Array<string>, rot.event.k)).toBe(
+  test('verifySignatures answers non-array `sigs` and `keys` with false', async () => {
+    expect(
+      await verifySignatures(rot.event, undefined as unknown as Array<string>, rot.event.k),
+    ).toBe(false)
+    expect(await verifySignatures(rot.event, rot.sigs, undefined as unknown as Array<string>)).toBe(
       false,
     )
-    expect(verifySignatures(rot.event, rot.sigs, undefined as unknown as Array<string>)).toBe(false)
     // Control: the same call with both arrays present verifies.
-    expect(verifySignatures(rot.event, rot.sigs, rot.event.k)).toBe(true)
+    expect(await verifySignatures(rot.event, rot.sigs, rot.event.k)).toBe(true)
   })
 
-  test('verifyReset answers a non-array `sigs` with false', () => {
+  test('verifyReset answers a non-array `sigs` with false', async () => {
     // The one exported verifier that reads `sigs` before handing it to `verifySignatures`.
-    expect(verifyReset({ event: reset.event } as unknown as never, icp.event)).toBe(false)
+    expect(await verifyReset({ event: reset.event } as unknown as never, icp.event)).toBe(false)
     // Control: the same reset with its signatures present verifies against the same inception.
-    expect(verifyReset(reset, icp.event)).toBe(true)
+    expect(await verifyReset(reset, icp.event)).toBe(true)
   })
 
-  test('verifyRotate answers a malformed `k`, `n` and `d` with false', () => {
+  test('verifyRotate answers a malformed `k`, `n` and `d` with false', async () => {
     const prior = { digest: rot.event.p ?? '', n: icp.event.n }
     for (const [member, value] of [
       ['k', 'zNotAnArray'],
@@ -289,15 +291,15 @@ describe('the exported verifiers are total', () => {
       ['d', 'did:key:zNotAnArray'],
       ['d', 7],
     ] as Array<[string, unknown]>) {
-      expect(verifyRotate(withEventMember(rot, member, value) as never, prior)).toBe(false)
+      expect(await verifyRotate(withEventMember(rot, member, value) as never, prior)).toBe(false)
     }
     // Control: the untouched rotate verifies against the same prior, so each rejection above is the
     // member it names and not the surrounding event.
-    expect(verifyRotate(rot, prior)).toBe(true)
+    expect(await verifyRotate(rot, prior)).toBe(true)
   })
 })
 
-describe('a malformed event its own author signed', () => {
+describe('a malformed event its own author signed', async () => {
   // Every case above is caught by a signature that no longer matches, which is not the guard under
   // test — it is the guard that happens to run first. These are events the key holder published,
   // signed correctly, with a member of the wrong shape. Only the shape guards reject them, and a
@@ -308,17 +310,17 @@ describe('a malformed event its own author signed', () => {
   const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
 
   /** The rotate, mutated and re-signed by the next key it legitimately reveals. */
-  function signedRotate(member: string, value: unknown): SignedEvent<RotateEvent> {
+  async function signedRotate(member: string, value: unknown): Promise<SignedEvent<RotateEvent>> {
     const event = { ...rot.event, [member]: value } as RotateEvent
-    return { event, sigs: signEvent(event, [authority(1).privateKey]) }
+    return { event, sigs: await signEvent(event, [authority(1).privateKey]) }
   }
 
   /** The reset, mutated and re-signed by the recovery key it reveals. */
-  function signedReset(member: string, value: unknown): SignedEvent<RotateEvent> {
+  async function signedReset(member: string, value: unknown): Promise<SignedEvent<RotateEvent>> {
     const event = { ...reset.event, [member]: value } as RotateEvent
     return {
       event,
-      sigs: signEvent(event, [recovery.privateKey]),
+      sigs: await signEvent(event, [recovery.privateKey]),
       recoveryKey: encodeKey(recovery.publicKey, 'EdDSA'),
     }
   }
@@ -327,172 +329,178 @@ describe('a malformed event its own author signed', () => {
    * An inception, mutated and re-signed. Self-certifying works against us here: the DID is the
    * hash of the event, so *any* body is a legitimate inception for the DID it hashes to.
    */
-  function signedInception(member: string, value: unknown): [string, SignedEvent<InceptionEvent>] {
+  async function signedInception(
+    member: string,
+    value: unknown,
+  ): Promise<[string, SignedEvent<InceptionEvent>]> {
     const event = { ...icp.event, [member]: value } as InceptionEvent
-    const signed = { event, sigs: signEvent(event as EventCommon, [authority(0).privateKey]) }
+    const signed = { event, sigs: await signEvent(event as EventCommon, [authority(0).privateKey]) }
     return [didFromInception(event), signed]
   }
 
   const cases: Array<[string, Array<unknown>, FoldResult]> = [
     [
       'a rotate whose deny snapshot is a scalar',
-      [icp, signedRotate('d', 7)],
+      [icp, await signedRotate('d', 7)],
       { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a rotate whose deny snapshot is a string',
-      [icp, signedRotate('d', 'did:key:zAbc')],
+      [icp, await signedRotate('d', 'did:key:zAbc')],
       { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a rotate whose deny snapshot holds a non-string',
-      [icp, signedRotate('d', ['did:key:zAbc', 7])],
+      [icp, await signedRotate('d', ['did:key:zAbc', 7])],
       { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a rotate whose member list is a scalar',
-      [icp, signedRotate('m', 7)],
+      [icp, await signedRotate('m', 7)],
       { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a rotate whose member list is a string',
-      [icp, signedRotate('m', 'did:key:zAbc')],
+      [icp, await signedRotate('m', 'did:key:zAbc')],
       { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a rotate whose member list holds a non-object',
-      [icp, signedRotate('m', [null])],
+      [icp, await signedRotate('m', [null])],
       { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a rotate whose member list is absent',
-      [icp, signedRotate('m', undefined)],
+      [icp, await signedRotate('m', undefined)],
       { ok: false, reason: 'rotate carries no state snapshot', index: 1 },
     ],
     [
       'a rotate whose `n` is null',
-      [icp, signedRotate('n', null)],
+      [icp, await signedRotate('n', null)],
       { ok: false, reason: 'invalid rotate', index: 1 },
     ],
     [
       'a rotate whose recovery commitment is not a string',
       // `KeyState.recovery` is exported and typed `string`. Nothing in this package reads it yet,
       // which is exactly why it would drift: a rotate is the only event that can replace it.
-      [icp, signedRotate('r', 42)],
+      [icp, await signedRotate('r', 42)],
       { ok: false, reason: 'invalid rotate', index: 1 },
     ],
     [
       'a reset whose `k` is a string',
-      [icp, signedReset('k', 'zNotAnArray')],
+      [icp, await signedReset('k', 'zNotAnArray')],
       { ok: false, reason: 'invalid reset', index: 1 },
     ],
     [
       'a reset whose `n` is null',
-      [icp, signedReset('n', null)],
+      [icp, await signedReset('n', null)],
       { ok: false, reason: 'invalid reset', index: 1 },
     ],
     [
       'a reset whose member list is a scalar',
-      [icp, signedReset('m', 7)],
+      [icp, await signedReset('m', 7)],
       { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a reset whose deny snapshot is a scalar',
-      [icp, signedReset('d', 7)],
+      [icp, await signedReset('d', 7)],
       { ok: false, reason: 'invalid reset', index: 1 },
     ],
     [
       'a rotate whose `k` holds a nested array',
-      [icp, signedRotate('k', [[]])],
+      [icp, await signedRotate('k', [[]])],
       { ok: false, reason: 'invalid rotate', index: 1 },
     ],
     [
       'a rotate whose `n` holds a nested array',
-      [icp, signedRotate('n', [[icp.event.n[0]]])],
+      [icp, await signedRotate('n', [[icp.event.n[0]]])],
       { ok: false, reason: 'invalid rotate', index: 1 },
     ],
     [
       'a rotate whose `ka` holds a number',
-      [icp, signedRotate('ka', [7])],
+      [icp, await signedRotate('ka', [7])],
       { ok: false, reason: 'invalid rotate', index: 1 },
     ],
     [
       'a rotate whose `ka` is an empty array',
-      [icp, signedRotate('ka', [])],
+      [icp, await signedRotate('ka', [])],
       { ok: false, reason: 'invalid rotate', index: 1 },
     ],
     [
       'a rotate whose deny snapshot holds a nested array',
-      [icp, signedRotate('d', [[target]])],
+      [icp, await signedRotate('d', [[target]])],
       { ok: false, reason: 'malformed state snapshot', index: 1 },
     ],
     [
       'a rotate whose recovery commitment is an object',
-      [icp, signedRotate('r', { evil: true })],
+      [icp, await signedRotate('r', { evil: true })],
       { ok: false, reason: 'invalid rotate', index: 1 },
     ],
     [
       'a reset whose recovery commitment is an object',
-      [icp, signedReset('r', { evil: true })],
+      [icp, await signedReset('r', { evil: true })],
       { ok: false, reason: 'invalid reset', index: 1 },
     ],
     [
       'a reset whose `ka` holds a nested array',
-      [icp, signedReset('ka', [[]])],
+      [icp, await signedReset('ka', [[]])],
       { ok: false, reason: 'invalid reset', index: 1 },
     ],
     [
       'a reset whose `n` holds a number',
-      [icp, signedReset('n', [7])],
+      [icp, await signedReset('n', [7])],
       { ok: false, reason: 'invalid reset', index: 1 },
     ],
   ]
 
   for (const [name, log, expected] of cases) {
-    test(`${name} is rejected`, () => {
-      expect(foldLog(did, { chain: log as Array<SignedEvent>, events: [] })).toEqual(expected)
+    test(`${name} is rejected`, async () => {
+      expect(await foldLog(did, { chain: log as Array<SignedEvent>, events: [] })).toEqual(expected)
     })
   }
 
-  test('a rotate whose deny snapshot is well formed still folds', () => {
+  test('a rotate whose deny snapshot is well formed still folds', async () => {
     // The control for the snapshot rows above: the same re-signing machinery with a legal `d`.
-    const result = foldLog(did, { chain: [icp, signedRotate('d', [target])], events: [] })
+    const result = await foldLog(did, {
+      chain: [icp, await signedRotate('d', [target])],
+      events: [],
+    })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 1).deny.has(target)).toBe(true)
   })
 
-  test('an inception whose `n` is null is rejected before the next event reads it', () => {
+  test('an inception whose `n` is null is rejected before the next event reads it', async () => {
     // The commitment goes into `KeyState.next`, which the *next* rotate reads — one event away
     // from the log that caused it. Rejecting at publication is what keeps that read safe.
-    const [forgedDid, forged] = signedInception('n', null)
-    const following = createRotate({
+    const [forgedDid, forged] = await signedInception('n', null)
+    const following = await createRotate({
       seed,
       profile: 0,
       did: forgedDid,
       prior: forged.event,
       snapshot: { members: [], deny: [] },
     })
-    expect(foldLog(forgedDid, { chain: [forged, following], events: [] })).toEqual({
+    expect(await foldLog(forgedDid, { chain: [forged, following], events: [] })).toEqual({
       ok: false,
       reason: 'invalid inception',
       index: 0,
     })
   })
 
-  test('an inception whose recovery commitment is not a string is rejected', () => {
-    const [forgedDid, forged] = signedInception('r', 42)
-    expect(foldLog(forgedDid, { chain: [forged], events: [] })).toEqual({
+  test('an inception whose recovery commitment is not a string is rejected', async () => {
+    const [forgedDid, forged] = await signedInception('r', 42)
+    expect(await foldLog(forgedDid, { chain: [forged], events: [] })).toEqual({
       ok: false,
       reason: 'invalid inception',
       index: 0,
     })
   })
 
-  test('an unmutated inception still folds', () => {
+  test('an unmutated inception still folds', async () => {
     // Control for both rows above: the same re-signing path with nothing changed.
-    const [forgedDid, forged] = signedInception('kt', 1)
-    expect(foldLog(forgedDid, { chain: [forged], events: [] }).ok).toBe(true)
+    const [forgedDid, forged] = await signedInception('kt', 1)
+    expect((await foldLog(forgedDid, { chain: [forged], events: [] })).ok).toBe(true)
   })
 })
 
@@ -531,10 +539,10 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
    * unknown member is also the general case — an event may carry anything, and the depth guard
    * exists for whatever that turns out to be.
    */
-  function rotateWithDeepMember(value: unknown): SignedEvent<RotateEvent> {
+  async function rotateWithDeepMember(value: unknown): Promise<SignedEvent<RotateEvent>> {
     const event = { ...rot.event, zz: value } as unknown as RotateEvent
     return JSON.parse(
-      JSON.stringify({ event, sigs: signEvent(event, [authority(1).privateKey]) }),
+      JSON.stringify({ event, sigs: await signEvent(event, [authority(1).privateKey]) }),
     ) as SignedEvent<RotateEvent>
   }
 
@@ -543,11 +551,11 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   const deepestAccepted = MAX_CANONICAL_DEPTH - 2
   const shallowestRejected = MAX_CANONICAL_DEPTH - 1
 
-  test(`a body reaching exactly ${MAX_CANONICAL_DEPTH} levels folds`, () => {
+  test(`a body reaching exactly ${MAX_CANONICAL_DEPTH} levels folds`, async () => {
     // The control, and the reason the bound is a bound rather than a rejection of nesting: a log
     // this deep is canonicalized, hashed and accepted like any other.
-    const result = foldLog(did, {
-      chain: [icp, rotateWithDeepMember(nest(deepestAccepted))],
+    const result = await foldLog(did, {
+      chain: [icp, await rotateWithDeepMember(nest(deepestAccepted))],
       events: [],
     })
     expect(result.ok).toBe(true)
@@ -555,14 +563,14 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
     expect(at(result.states, 1).keys).toEqual(rot.event.k)
   })
 
-  test('one level further is rejected with a reason', () => {
+  test('one level further is rejected with a reason', async () => {
     // Unsigned, because this package cannot sign a body it cannot canonicalize — which is also why
     // the depth guard has to run before the signature check rather than instead of it.
     const log = [
       icp,
       { ...rot, event: { ...rot.event, zz: nest(shallowestRejected) } },
     ] as Array<SignedEvent>
-    expect(foldLog(did, { chain: log, events: [] })).toEqual({
+    expect(await foldLog(did, { chain: log, events: [] })).toEqual({
       ok: false,
       reason: 'malformed event',
       index: 1,
@@ -598,34 +606,38 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   ]
 
   for (const [name, log, expected] of chasms) {
-    test(`${name} is answered with a reason, not a RangeError`, () => {
+    test(`${name} is answered with a reason, not a RangeError`, async () => {
       let result: unknown
-      expect(() => {
-        result = foldLog(did, { chain: log, events: [] })
-      }).not.toThrow()
+      await expect(
+        (async () => {
+          result = await foldLog(did, { chain: log, events: [] })
+        })(),
+      ).resolves.toBeUndefined()
       expect(result).toEqual(expected)
     })
   }
 
-  test('one hostile branch no longer kills duplicity detection for the well-formed ones', () => {
+  test('one hostile branch no longer kills duplicity detection for the well-formed ones', async () => {
     // The denial of service `isSignedEventShape`'s docstring names: a thief who cannot produce a
     // valid event crashing duplicity resolution for every well-formed branch beside it.
-    const forkA = [icp, settled([target])]
-    const forkB = [icp, settled([other])]
+    const forkA = [icp, await settled([target])]
+    const forkB = [icp, await settled([other])]
     const hostile = [
       icp,
       { ...rot, event: { ...rot.event, a: abyss() } },
     ] as unknown as Array<SignedEvent>
 
-    const clean = resolveBranches(did, [forkA, forkB])
+    const clean = await resolveBranches(did, [forkA, forkB])
     expect(clean.ok).toBe(false)
     if (clean.ok) return
     expect(clean.duplicity.seq).toBe(1)
 
     let withHostile: unknown
-    expect(() => {
-      withHostile = resolveBranches(did, [forkA, hostile, forkB])
-    }).not.toThrow()
+    await expect(
+      (async () => {
+        withHostile = await resolveBranches(did, [forkA, hostile, forkB])
+      })(),
+    ).resolves.toBeUndefined()
     // Byte-identical to the clean pair: the hostile branch is filtered, not merged.
     expect(withHostile).toEqual(clean)
   })
@@ -716,35 +728,35 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   })
 })
 
-describe('resolveBranches() survives a hostile branch', () => {
+describe('resolveBranches() survives a hostile branch', async () => {
   // Two well-formed branches that genuinely fork, plus one an attacker fabricated. Before the shape
   // guards the fabricated branch threw a TypeError out of `resolveBranches`, which is a denial of
   // service on the one mechanism that exists to detect a key-takeover fork.
-  const forkA = [icp, settled([target])]
-  const forkB = [icp, settled([other])]
+  const forkA = [icp, await settled([target])]
+  const forkB = [icp, await settled([other])]
   const hostile = [icp, withoutEventMember(rot, 'k')] as Array<SignedEvent>
 
-  test('still reports duplicity among the well-formed branches', () => {
-    const result = resolveBranches(did, [forkA, hostile, forkB])
+  test('still reports duplicity among the well-formed branches', async () => {
+    const result = await resolveBranches(did, [forkA, hostile, forkB])
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.duplicity.gen).toBe(0)
     expect(result.duplicity.seq).toBe(1)
     // Control: the same two branches without the hostile one report the same duplicity, so the
     // hostile branch is filtered rather than participating.
-    expect(resolveBranches(did, [forkA, forkB])).toEqual(result)
+    expect(await resolveBranches(did, [forkA, forkB])).toEqual(result)
   })
 
-  test('still picks the winner when one exists', () => {
+  test('still picks the winner when one exists', async () => {
     // `superseded` is 0, not 1: `[icp]` is a prefix of the winner, so it was extended rather than
     // contradicted and none of its events were discarded. The hostile branch never folded, so
     // nothing of it is counted either.
-    const result = resolveBranches(did, [hostile, [icp, rot], [icp]])
+    const result = await resolveBranches(did, [hostile, [icp, rot], [icp]])
     expect(result).toEqual({ ok: true, winner: [icp, rot], superseded: 0 })
   })
 
-  test('reports no valid history when every branch is hostile', () => {
-    expect(resolveBranches(did, [hostile, [null] as unknown as Array<SignedEvent>])).toEqual({
+  test('reports no valid history when every branch is hostile', async () => {
+    expect(await resolveBranches(did, [hostile, [null] as unknown as Array<SignedEvent>])).toEqual({
       ok: false,
       failure: 'no-valid-branch',
       duplicity: { gen: -1, seq: -1, digests: ['', ''] },
@@ -754,7 +766,7 @@ describe('resolveBranches() survives a hostile branch', () => {
   // One row per shape a branch can arrive in, each asserted equal to the clean pair's answer:
   // filtering a hostile branch has to be indistinguishable from never having been handed it, or a
   // thief can change what duplicity resolution reports by adding branches nobody can verify.
-  const clean = resolveBranches(did, [forkA, forkB])
+  const clean = await resolveBranches(did, [forkA, forkB])
   const hostiles: Array<[string, unknown]> = [
     ['a nested-array entry', [icp, [rot]]],
     ['a rotate whose `g` is an object', [icp, { event: { ...rot.event, g: {} }, sigs: rot.sigs }]],
@@ -765,17 +777,22 @@ describe('resolveBranches() survives a hostile branch', () => {
   ]
 
   for (const [name, branch] of hostiles) {
-    test(`duplicity is still reported alongside ${name}`, () => {
+    test(`duplicity is still reported alongside ${name}`, async () => {
       let result: unknown
-      expect(() => {
-        result = resolveBranches(did, [forkA, branch as Array<SignedEvent>, forkB])
-      }).not.toThrow()
+      await expect(
+        (async () => {
+          result = await resolveBranches(did, [forkA, branch as Array<SignedEvent>, forkB])
+        })(),
+      ).resolves.toBeUndefined()
       expect(result).toEqual(clean)
     })
   }
 
-  test('every branch hostile reports the no-valid-history sentinel', () => {
-    const result = resolveBranches(did, hostiles.map(([, h]) => h) as Array<Array<SignedEvent>>)
+  test('every branch hostile reports the no-valid-history sentinel', async () => {
+    const result = await resolveBranches(
+      did,
+      hostiles.map(([, h]) => h) as Array<Array<SignedEvent>>,
+    )
     expect(result).toEqual({
       ok: false,
       failure: 'no-valid-branch',

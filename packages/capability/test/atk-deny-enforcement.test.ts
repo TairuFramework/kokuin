@@ -20,9 +20,9 @@ import { describe, expect, test } from 'vitest'
 import { checkCapability, createCapability, now } from '../src/index.js'
 
 const seed = new Uint8Array(32).fill(31)
-const inception = createInception(seed, 0)
+const inception = await createInception(seed, 0)
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity({
+const controller = await createControllerIdentity({
   seed,
   profile: 0,
   log: { chain: [inception], events: [] },
@@ -36,8 +36,8 @@ const methods: MethodRegistry = [
 ]
 
 /** A rotate on the inception whose snapshot denies `target`. */
-function revokeOf(target: string): SignedEvent {
-  return createRotate({
+async function revokeOf(target: string): Promise<SignedEvent> {
+  return await createRotate({
     seed,
     profile: 0,
     did,
@@ -79,8 +79,8 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     // revoke and not by anything incidental to the capability.
     expect(before).toBe('accepted')
 
-    log = [inception, revokeOf(delegate.id)]
-    expect(foldLog(did, { chain: log, events: [] }).ok).toBe(true)
+    log = [inception, await revokeOf(delegate.id)]
+    expect((await foldLog(did, { chain: log, events: [] })).ok).toBe(true)
     let after: unknown = 'accepted'
     await invoke(delegate, cap).catch((e) => {
       after = e
@@ -91,7 +91,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
   test('ROW 2 (control: denial is the cause, not the revoke event): a bystander still verifies', async () => {
     log = [inception]
     const capB = await mintFor(bystander.id)
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     // The SAME log, the SAME revoke event — only the audience differs.
     let outcome: unknown = 'accepted'
     await invoke(bystander, capB).catch((e) => {
@@ -109,8 +109,8 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
   test('ROW 3: a forged unsigned non-critical event appended after the revoke does NOT clear it', async () => {
     log = [inception]
     const cap = await mintFor(delegate.id)
-    const revoke = revokeOf(delegate.id)
-    const base = foldLog(did, { chain: [inception, revoke], events: [] })
+    const revoke = await revokeOf(delegate.id)
+    const base = await foldLog(did, { chain: [inception, revoke], events: [] })
     if (!base.ok) throw new Error('fixture')
     const priorState = base.states[1]
     if (priorState === undefined) throw new Error('fixture')
@@ -128,7 +128,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
       sigs: [],
     } as unknown as SignedEvent
     log = [inception, revoke, forged]
-    const folded = foldLog(did, { chain: log, events: [] })
+    const folded = await foldLog(did, { chain: log, events: [] })
     let outcome: unknown = 'accepted'
     await invoke(delegate, cap).catch((e) => {
       outcome = e
@@ -149,7 +149,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
   })
 
   test('ROW 4: an unloadable log fails the check CLOSED rather than answering "nobody is revoked"', async () => {
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     const cap = await mintFor(delegate.id)
     const broken: MethodRegistry = [createControllerResolver({ loadLog: async () => undefined })]
     let outcome: unknown = 'accepted'
@@ -171,7 +171,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     // (a) revoke recorded in the SHORT form, capability audience in the LONG form.
     log = [inception]
     const capLong = await mintFor(long)
-    log = [inception, revokeOf(short)]
+    log = [inception, await revokeOf(short)]
     let a: unknown = 'accepted'
     await invoke(device, capLong).catch((e) => {
       a = e
@@ -180,7 +180,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     // (b) revoke recorded in the LONG form, capability audience in the SHORT form.
     log = [inception]
     const capShort = await mintFor(short)
-    log = [inception, revokeOf(long)]
+    log = [inception, await revokeOf(long)]
     let b: unknown = 'accepted'
     await invoke(device, capShort).catch((e) => {
       b = e

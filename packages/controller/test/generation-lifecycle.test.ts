@@ -47,23 +47,23 @@ const D1 = device
 const D2 = 'did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
 const D3 = 'did:key:z6MkfriQZgZXhtFA6kFHzuvhLHGRDDNzGRxeLnpKmZzHwUXR'
 
-const inception = createInception(seed, 0)
+const inception = await createInception(seed, 0)
 const did = didFromInception(inception.event)
-const rotate = createRotate({
+const rotate = await createRotate({
   seed,
   profile: 0,
   did,
   prior: inception.event,
   snapshot: { members: [], deny: [] },
 })
-const rotateAgain = createRotate({
+const rotateAgain = await createRotate({
   seed,
   profile: 0,
   did,
   prior: rotate.event,
   snapshot: { members: [], deny: [] },
 })
-const reset = createReset(seed, 0, 1)
+const reset = await createReset(seed, 0, 1)
 
 function resolverFor(log: Array<SignedEvent>) {
   return createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
@@ -72,7 +72,7 @@ function resolverFor(log: Array<SignedEvent>) {
 /** A token signed by the identity the given log's head establishes. */
 async function tokenFrom(log: Array<SignedEvent>) {
   return await signToken(
-    createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
+    await createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
     createUnsignedToken({ n: 1 }),
   )
 }
@@ -114,7 +114,7 @@ describe('a rotate keeps everything the profile has issued verifiable — under 
   })
 
   test('a rotate denying a holder DID does not disturb it either', async () => {
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -262,13 +262,13 @@ describe('a kid naming a key this profile never published', () => {
 // accumulate denials, then a reset, then more rotates on the far side of the boundary. The
 // two-rotate logs above only approach this.
 
-const settle = (prior: SignedEvent['event'], deny: Array<string>) =>
-  createRotate({ seed, profile: 0, did, prior, snapshot: { members: [], deny } })
-const rot1 = settle(inception.event, []) //   gen0 s1
-const rot2 = settle(rot1.event, [D1]) //      gen0 s2
-const rot3 = settle(rot2.event, [D1, D2]) //  gen0 s3
-const rot4 = settle(reset.event, []) //       gen1 s1
-const rot5 = settle(rot4.event, [D3]) //      gen1 s2
+const settle = async (prior: SignedEvent['event'], deny: Array<string>) =>
+  await createRotate({ seed, profile: 0, did, prior, snapshot: { members: [], deny } })
+const rot1 = await settle(inception.event, []) //   gen0 s1
+const rot2 = await settle(rot1.event, [D1]) //      gen0 s2
+const rot3 = await settle(rot2.event, [D1, D2]) //  gen0 s3
+const rot4 = await settle(reset.event, []) //       gen1 s1
+const rot5 = await settle(rot4.event, [D3]) //      gen1 s2
 
 const interleaved: Array<SignedEvent> = [inception, rot1, rot2, rot3, reset, rot4, rot5]
 const interleavedResolver = resolverFor(interleaved)
@@ -293,12 +293,12 @@ const keyAt = (gen: number, seq: number) =>
   encodeKey(deriveKeyPair(seed, authorityPath(0, gen, seq), 'EdDSA').publicKey, 'EdDSA')
 
 describe('every event in a rotate/reset interleaving folds', () => {
-  test('the whole log folds', () => {
-    expect(foldLog(did, { chain: interleaved, events: [] }).ok).toBe(true)
+  test('the whole log folds', async () => {
+    expect((await foldLog(did, { chain: interleaved, events: [] })).ok).toBe(true)
   })
 
-  test('each state names the key the log actually committed', () => {
-    const result = foldLog(did, { chain: interleaved, events: [] })
+  test('each state names the key the log actually committed', async () => {
+    const result = await foldLog(did, { chain: interleaved, events: [] })
     if (!result.ok) throw new Error(`did not fold: ${result.reason} at ${result.index}`)
     const seen = result.states.map((state) => ({
       gen: state.gen,
@@ -318,8 +318,8 @@ describe('every event in a rotate/reset interleaving folds', () => {
     ])
   })
 
-  test('the head deny set is exactly the current generation`s', () => {
-    const result = foldLog(did, { chain: interleaved, events: [] })
+  test('the head deny set is exactly the current generation`s', async () => {
+    const result = await foldLog(did, { chain: interleaved, events: [] })
     if (!result.ok) throw new Error('no fold')
     expect([...at(result.states, 6).deny]).toEqual([D3])
     // and the pre-reset positions still deny what they denied

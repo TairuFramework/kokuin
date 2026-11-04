@@ -19,7 +19,7 @@ const seedB = new Uint8Array(32).fill(23)
  * self-certifying, so any body an attacker (or an implementer) writes is a valid log for the DID it
  * hashes to — which is exactly why the published thresholds have to mean something.
  */
-function twoKeyInception(kt: unknown, nt: unknown, signers: 'both' | 'first') {
+async function twoKeyInception(kt: unknown, nt: unknown, signers: 'both' | 'first') {
   const a = deriveKeyPair(seedA, authorityPath(0, 0, 0), 'EdDSA')
   const aNext = deriveKeyPair(seedA, authorityPath(0, 0, 1), 'EdDSA')
   const b = deriveKeyPair(seedB, authorityPath(0, 0, 0), 'EdDSA')
@@ -45,7 +45,7 @@ function twoKeyInception(kt: unknown, nt: unknown, signers: 'both' | 'first') {
   } as unknown as InceptionEvent
 
   const keys = signers === 'both' ? [a.privateKey, b.privateKey] : [a.privateKey]
-  const signed: SignedEvent<InceptionEvent> = { event, sigs: signEvent(event, keys) }
+  const signed: SignedEvent<InceptionEvent> = { event, sigs: await signEvent(event, keys) }
   return { signed, did: didFromInception(event) }
 }
 
@@ -56,21 +56,21 @@ function twoKeyInception(kt: unknown, nt: unknown, signers: 'both' | 'first') {
 // are byte-for-byte what they were; ROW 2 and ROW 3 asserted the old acceptance and now assert the
 // rejection, and ROW 2 gains the control that a *truthful* threshold on the same body still folds.
 describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', () => {
-  test('ROW 1: a 2-key set declaring `kt: 1` still demands BOTH signatures (fail-closed)', () => {
-    const { signed, did } = twoKeyInception(1, 1, 'first')
-    const r = foldLog(did, { chain: [signed], events: [] })
+  test('ROW 1: a 2-key set declaring `kt: 1` still demands BOTH signatures (fail-closed)', async () => {
+    const { signed, did } = await twoKeyInception(1, 1, 'first')
+    const r = await foldLog(did, { chain: [signed], events: [] })
     expect(r.ok).toBe(false)
   })
 
-  test('ROW 2 (closed): both signatures are not enough — `kt: 1` over 2 keys is a lie', () => {
-    const { signed, did } = twoKeyInception(1, 1, 'both')
-    const r = foldLog(did, { chain: [signed], events: [] })
+  test('ROW 2 (closed): both signatures are not enough — `kt: 1` over 2 keys is a lie', async () => {
+    const { signed, did } = await twoKeyInception(1, 1, 'both')
+    const r = await foldLog(did, { chain: [signed], events: [] })
     expect(r).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
 
     // ROW 2 control: the identical body with the truthful thresholds, signed the same way. It
     // folds — so what ROW 1 and ROW 2 reject is the declaration, not the two-key shape.
-    const truthful = twoKeyInception(2, 2, 'both')
-    const ok = foldLog(truthful.did, { chain: [truthful.signed], events: [] })
+    const truthful = await twoKeyInception(2, 2, 'both')
+    const ok = await foldLog(truthful.did, { chain: [truthful.signed], events: [] })
     expect(ok.ok).toBe(true)
     if (!ok.ok) return
     const state = ok.states[0]
@@ -78,7 +78,7 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
     expect(state.keys.length).toBe(2)
   })
 
-  test('ROW 3 (closed): every impossible threshold is now a malformed event', () => {
+  test('ROW 3 (closed): every impossible threshold is now a malformed event', async () => {
     for (const [kt, nt] of [
       [99, 99],
       [0, 0],
@@ -86,28 +86,28 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
       ['banana', 'banana'],
       [null, null],
     ] as Array<[unknown, unknown]>) {
-      const { signed, did } = twoKeyInception(kt, nt, 'both')
-      const r = foldLog(did, { chain: [signed], events: [] })
+      const { signed, did } = await twoKeyInception(kt, nt, 'both')
+      const r = await foldLog(did, { chain: [signed], events: [] })
       expect(r).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
     }
     // ROW 3 control: an absent member is refused too — the check is `===` against the set size, so
     // `undefined` is not quietly coerced, and neither is the string `"2"`.
     for (const kt of [undefined, '2'] as Array<unknown>) {
-      const { signed, did } = twoKeyInception(kt, 2, 'both')
-      const r = foldLog(did, { chain: [signed], events: [] })
+      const { signed, did } = await twoKeyInception(kt, 2, 'both')
+      const r = await foldLog(did, { chain: [signed], events: [] })
       expect(r.ok).toBe(false)
     }
   })
 
-  test('ROW 4 (control: the fold DOES read `k`): a tampered key set is rejected', () => {
-    const { signed, did } = twoKeyInception(1, 1, 'both')
+  test('ROW 4 (control: the fold DOES read `k`): a tampered key set is rejected', async () => {
+    const { signed, did } = await twoKeyInception(1, 1, 'both')
     const firstKey = signed.event.k[0]
     if (firstKey === undefined) throw new Error('expected a signing key')
     const tampered: SignedEvent<InceptionEvent> = {
       ...signed,
       event: { ...signed.event, k: [firstKey] },
     }
-    const r = foldLog(did, { chain: [tampered], events: [] })
+    const r = await foldLog(did, { chain: [tampered], events: [] })
     expect(r.ok).toBe(false)
   })
 })

@@ -55,7 +55,7 @@ import {
 
 const seed = new Uint8Array(32).fill(71)
 const profile = 0
-const icp = createInception(seed, profile)
+const icp = await createInception(seed, profile)
 const did = didFromInception(icp.event)
 const root: EpochSigner = { root: { seed, profile } }
 
@@ -63,15 +63,15 @@ const root: EpochSigner = { root: { seed, profile } }
 const T = 1_800_000_000
 const LEASE = T + 30 * 86_400
 
-function headOf(log: ControllerLog): KeyState {
-  const result = foldLog(did, log)
+async function headOf(log: ControllerLog): Promise<KeyState> {
+  const result = await foldLog(did, log)
   if (!result.ok) {
     throw new Error(`fixture does not fold: ${result.reason}`)
   }
   return result.head
 }
 
-const head = headOf({ chain: [icp], events: [] })
+const head = await headOf({ chain: [icp], events: [] })
 
 type Member = { signer: SigningIdentity; key: string; did: string }
 
@@ -108,8 +108,8 @@ function memberOf(fill: number, form: 'key' | 'peer' = 'key'): Member {
 
 const digest = (signed: SignedEvent<EpochEvent>): string => digestOf(signed.event)
 
-function addOf(member: Member, lease = LEASE): SignedEvent<EpochEvent> {
-  return createAdd({
+async function addOf(member: Member, lease = LEASE): Promise<SignedEvent<EpochEvent>> {
+  return await createAdd({
     seed,
     profile,
     did,
@@ -120,10 +120,10 @@ function addOf(member: Member, lease = LEASE): SignedEvent<EpochEvent> {
 }
 
 const m = memberOf(51)
-const added = addOf(m)
+const added = await addOf(m)
 const add = digest(added)
 const peer = memberOf(52, 'peer')
-const peerAdded = addOf(peer)
+const peerAdded = await addOf(peer)
 const peerAdd = digest(peerAdded)
 const base: ControllerLog = { chain: [icp], events: [added, peerAdded] }
 
@@ -299,7 +299,7 @@ describe('member-issued grants', () => {
       events: [
         added,
         peerAdded,
-        createRenew({ signer: root, did, head, parents: [add], add, lease: LEASE + 3600 }),
+        await createRenew({ signer: root, did, head, parents: [add], add, lease: LEASE + 3600 }),
       ],
     }
     for (const check of await bothPaths(pastLease, () => ({
@@ -362,20 +362,20 @@ describe('member-issued grants', () => {
   })
 
   test('a grant from a removed member, a denied member, or a previous generation is refused', async () => {
-    const removed = createRemove({ signer: root, did, head, parents: [add], add })
-    const revoke = (target: string) =>
-      createRevoke({ signer: root, did, head, parents: [add], target })
+    const removed = await createRemove({ signer: root, did, head, parents: [add], add })
+    const revoke = async (target: string) =>
+      await createRevoke({ signer: root, did, head, parents: [add], target })
     const cases: Array<[string, ControllerLog]> = [
       ['removed', { chain: [icp], events: [added, removed] }],
-      ['denied by DID', { chain: [icp], events: [added, revoke(m.did)] }],
-      ['denied by key', { chain: [icp], events: [added, revoke(keyTarget(m.key))] }],
+      ['denied by DID', { chain: [icp], events: [added, await revoke(m.did)] }],
+      ['denied by key', { chain: [icp], events: [added, await revoke(keyTarget(m.key))] }],
       ['never added', { chain: [icp], events: [peerAdded] }],
       [
         'reset carrying the member',
         {
           chain: [
             icp,
-            createReset(seed, profile, 1, {
+            await createReset(seed, profile, 1, {
               members: [{ did: m.did, key: m.key, add, lease: LEASE }],
               deny: [],
             }),
@@ -520,7 +520,10 @@ describe('member-issued grants', () => {
   test('a grant whose audience the controller denied is refused', async () => {
     const denied: ControllerLog = {
       chain: [icp],
-      events: [added, createRevoke({ signer: root, did, head, parents: [add], target: edge.id })],
+      events: [
+        added,
+        await createRevoke({ signer: root, did, head, parents: [add], target: edge.id }),
+      ],
     }
     for (const check of await bothPaths(await grant(), () => options(denied))) {
       await expect(check).rejects.toThrow(AUDIENCE_REVOKED)
@@ -588,7 +591,7 @@ describe('member-issued grants', () => {
     for (const target of [edge.id, third.id]) {
       const log: ControllerLog = {
         chain: [icp],
-        events: [added, createRevoke({ signer: root, did, head, parents: [add], target })],
+        events: [added, await createRevoke({ signer: root, did, head, parents: [add], target })],
       }
       await expect(
         checkCapability(permission, await invocation([child, parent], third), options(log)),

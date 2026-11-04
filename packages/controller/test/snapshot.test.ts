@@ -37,7 +37,7 @@ const at = <T>(items: ReadonlyArray<T>, i: number): T => {
 
 const seed = new Uint8Array(32).fill(1)
 const profile = 0
-const icp = createInception(seed, profile)
+const icp = await createInception(seed, profile)
 const did = didFromInception(icp.event)
 const empty: StateSnapshot = { members: [], deny: [] }
 
@@ -75,51 +75,56 @@ function peerDID(keys: Array<string>): string {
 
 const member = didKeyMember(edKey(7))
 
-function rotate(prior: SignedEvent['event'], snapshot: StateSnapshot): SignedEvent<RotateEvent> {
-  return createRotate({ seed, profile, did, prior, snapshot })
+async function rotate(
+  prior: SignedEvent['event'],
+  snapshot: StateSnapshot,
+): Promise<SignedEvent<RotateEvent>> {
+  return await createRotate({ seed, profile, did, prior, snapshot })
 }
 
 /**
  * A rotate on the inception whose body `mutate` changes, re-signed with the key it reveals, so the
  * only thing wrong with it is the mutation.
  */
-function resignedRotate(mutate: (event: RotateEvent) => RotateEvent): SignedEvent<RotateEvent> {
-  const valid = rotate(icp.event, { members: [member], deny: [] })
+async function resignedRotate(
+  mutate: (event: RotateEvent) => RotateEvent,
+): Promise<SignedEvent<RotateEvent>> {
+  const valid = await rotate(icp.event, { members: [member], deny: [] })
   const event = mutate({ ...valid.event })
   const key = deriveKeyPair(seed, authorityPath(profile, 0, 1), 'EdDSA')
-  return { event, sigs: signEvent(event, [key.privateKey]) }
+  return { event, sigs: await signEvent(event, [key.privateKey]) }
 }
 
-function foldReason(log: Array<SignedEvent>) {
-  const result = foldLog(did, { chain: log, events: [] })
+async function foldReason(log: Array<SignedEvent>) {
+  const result = await foldLog(did, { chain: log, events: [] })
   return result.ok ? null : { reason: result.reason, index: result.index }
 }
 
 describe('a rotate carries the whole state', () => {
-  test('a rotate without a snapshot does not fold', () => {
-    const bare = resignedRotate(({ m: _m, d: _d, ...rest }) => rest as RotateEvent)
-    expect(foldReason([icp, bare])).toEqual({ reason: ROTATE_NEEDS_SNAPSHOT, index: 1 })
+  test('a rotate without a snapshot does not fold', async () => {
+    const bare = await resignedRotate(({ m: _m, d: _d, ...rest }) => rest as RotateEvent)
+    expect(await foldReason([icp, bare])).toEqual({ reason: ROTATE_NEEDS_SNAPSHOT, index: 1 })
   })
 
-  test('a rotate carrying a deny set but no member list does not fold', () => {
-    const half = resignedRotate(({ m: _m, ...rest }) => rest as RotateEvent)
-    expect(foldReason([icp, half])).toEqual({ reason: ROTATE_NEEDS_SNAPSHOT, index: 1 })
+  test('a rotate carrying a deny set but no member list does not fold', async () => {
+    const half = await resignedRotate(({ m: _m, ...rest }) => rest as RotateEvent)
+    expect(await foldReason([icp, half])).toEqual({ reason: ROTATE_NEEDS_SNAPSHOT, index: 1 })
   })
 
-  test('a rotate carrying a member list but no deny set does not fold', () => {
-    const half = resignedRotate(({ d: _d, ...rest }) => rest as RotateEvent)
-    expect(foldReason([icp, half])).toEqual({ reason: ROTATE_NEEDS_SNAPSHOT, index: 1 })
+  test('a rotate carrying a member list but no deny set does not fold', async () => {
+    const half = await resignedRotate(({ d: _d, ...rest }) => rest as RotateEvent)
+    expect(await foldReason([icp, half])).toEqual({ reason: ROTATE_NEEDS_SNAPSHOT, index: 1 })
   })
 
-  test('the re-signing helper produces a rotate that folds when left unchanged', () => {
-    expect(foldLog(did, { chain: [icp, resignedRotate((event) => event)], events: [] }).ok).toBe(
-      true,
-    )
+  test('the re-signing helper produces a rotate that folds when left unchanged', async () => {
+    expect(
+      (await foldLog(did, { chain: [icp, await resignedRotate((event) => event)], events: [] })).ok,
+    ).toBe(true)
   })
 
-  test('the state after a rotate is its snapshot', () => {
-    const rot = rotate(icp.event, { members: [member], deny: ['did:key:zA'] })
-    const result = foldLog(did, { chain: [icp, rot], events: [] })
+  test('the state after a rotate is its snapshot', async () => {
+    const rot = await rotate(icp.event, { members: [member], deny: ['did:key:zA'] })
+    const result = await foldLog(did, { chain: [icp, rot], events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const head = at(result.states, 1)
@@ -128,30 +133,30 @@ describe('a rotate carries the whole state', () => {
     expect(head.members.size).toBe(1)
   })
 
-  test('nothing before a rotate contributes to its state', () => {
-    const first = rotate(icp.event, { members: [member], deny: ['did:key:zA'] })
-    const second = rotate(first.event, empty)
-    const result = foldLog(did, { chain: [icp, first, second], events: [] })
+  test('nothing before a rotate contributes to its state', async () => {
+    const first = await rotate(icp.event, { members: [member], deny: ['did:key:zA'] })
+    const second = await rotate(first.event, empty)
+    const result = await foldLog(did, { chain: [icp, first, second], events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 2).members.size).toBe(0)
     expect(at(result.states, 2).deny.size).toBe(0)
   })
 
-  test('a member a snapshot also denies is carried but not effective', () => {
-    const byDID = rotate(icp.event, { members: [member], deny: [member.did] })
-    const byKey = rotate(icp.event, { members: [member], deny: [keyTarget(member.key)] })
+  test('a member a snapshot also denies is carried but not effective', async () => {
+    const byDID = await rotate(icp.event, { members: [member], deny: [member.did] })
+    const byKey = await rotate(icp.event, { members: [member], deny: [keyTarget(member.key)] })
     for (const rot of [byDID, byKey]) {
-      const result = foldLog(did, { chain: [icp, rot], events: [] })
+      const result = await foldLog(did, { chain: [icp, rot], events: [] })
       expect(result.ok).toBe(true)
       if (!result.ok) return
       expect(at(result.states, 1).members.get(member.add)?.effective).toBe(false)
     }
   })
 
-  test('every chain state opens its own epoch and none is saturated', () => {
-    const rot = rotate(icp.event, empty)
-    const result = foldLog(did, { chain: [icp, rot], events: [] })
+  test('every chain state opens its own epoch and none is saturated', async () => {
+    const rot = await rotate(icp.event, empty)
+    const result = await foldLog(did, { chain: [icp, rot], events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     for (const state of result.states) {
@@ -161,31 +166,34 @@ describe('a rotate carries the whole state', () => {
     expect(at(result.states, 0).members.size).toBe(0)
   })
 
-  test('createRotate writes the snapshot it is given as `m` and `d`', () => {
-    const rot = rotate(icp.event, { members: [member], deny: ['did:key:zA'] })
+  test('createRotate writes the snapshot it is given as `m` and `d`', async () => {
+    const rot = await rotate(icp.event, { members: [member], deny: ['did:key:zA'] })
     expect(rot.event.m).toEqual([member])
     expect(rot.event.d).toEqual(['did:key:zA'])
   })
 })
 
 describe('snapshot members and root keys are disjoint', () => {
-  test('a snapshot member pinning a root key is refused', () => {
+  test('a snapshot member pinning a root key is refused', async () => {
     // The rotate's own revealed key, then the inception's: both are on the generation's chain.
     for (const key of [rootKeyAt(0, 1), rootKeyAt(0, 0)]) {
-      const rot = rotate(icp.event, { members: [didKeyMember(key)], deny: [] })
+      const rot = await rotate(icp.event, { members: [didKeyMember(key)], deny: [] })
       expect(rot.event.k).toEqual([rootKeyAt(0, 1)])
-      expect(foldReason([icp, rot])).toEqual({ reason: SNAPSHOT_MEMBER_KEY_IS_ROOT, index: 1 })
+      expect(await foldReason([icp, rot])).toEqual({
+        reason: SNAPSHOT_MEMBER_KEY_IS_ROOT,
+        index: 1,
+      })
     }
   })
 
-  test('a snapshot member pinning a committed next key is refused', () => {
+  test('a snapshot member pinning a committed next key is refused', async () => {
     const next = rootKeyAt(0, 2)
-    const rot = rotate(icp.event, { members: [didKeyMember(next)], deny: [] })
+    const rot = await rotate(icp.event, { members: [didKeyMember(next)], deny: [] })
     expect(rot.event.n).toEqual([digestOf(next)])
-    expect(foldReason([icp, rot])).toEqual({ reason: SNAPSHOT_MEMBER_KEY_IS_ROOT, index: 1 })
+    expect(await foldReason([icp, rot])).toEqual({ reason: SNAPSHOT_MEMBER_KEY_IS_ROOT, index: 1 })
   })
 
-  test('a snapshot member pinning the recovery key is refused, on a rotate and on a reset', () => {
+  test('a snapshot member pinning the recovery key is refused, on a rotate and on a reset', async () => {
     // The recovery key is committed once, in the inception, and is a root key for every generation:
     // it is in no `k` or `n`, so only the recovery commitment catches it.
     const recoveryKey = encodeKey(
@@ -194,62 +202,81 @@ describe('snapshot members and root keys are disjoint', () => {
     )
     expect(digestOf(recoveryKey)).toBe(icp.event.r)
     const pinned = didKeyMember(recoveryKey)
-    const rot = rotate(icp.event, { members: [pinned], deny: [] })
-    expect(foldReason([icp, rot])).toEqual({ reason: SNAPSHOT_MEMBER_KEY_IS_ROOT, index: 1 })
-    const reset = createReset(seed, profile, 1, { members: [pinned], deny: [] })
-    expect(foldReason([icp, reset])).toEqual({ reason: SNAPSHOT_MEMBER_KEY_IS_ROOT, index: 1 })
+    const rot = await rotate(icp.event, { members: [pinned], deny: [] })
+    expect(await foldReason([icp, rot])).toEqual({ reason: SNAPSHOT_MEMBER_KEY_IS_ROOT, index: 1 })
+    const reset = await createReset(seed, profile, 1, { members: [pinned], deny: [] })
+    expect(await foldReason([icp, reset])).toEqual({
+      reason: SNAPSHOT_MEMBER_KEY_IS_ROOT,
+      index: 1,
+    })
     // Control: the same snapshot with any other member's key folds.
     expect(
-      foldLog(did, { chain: [icp, rotate(icp.event, { members: [member], deny: [] })], events: [] })
-        .ok,
+      (
+        await foldLog(did, {
+          chain: [icp, await rotate(icp.event, { members: [member], deny: [] })],
+          events: [],
+        })
+      ).ok,
     ).toBe(true)
   })
 
-  test('a reset snapshot is checked against the new generation keys', () => {
+  test('a reset snapshot is checked against the new generation keys', async () => {
     const newKey = rootKeyAt(1, 0)
-    const reset = createReset(seed, profile, 1, { members: [didKeyMember(newKey)], deny: [] })
+    const reset = await createReset(seed, profile, 1, { members: [didKeyMember(newKey)], deny: [] })
     expect(reset.event.k).toEqual([newKey])
-    expect(foldReason([icp, reset])).toEqual({ reason: SNAPSHOT_MEMBER_KEY_IS_ROOT, index: 1 })
+    expect(await foldReason([icp, reset])).toEqual({
+      reason: SNAPSHOT_MEMBER_KEY_IS_ROOT,
+      index: 1,
+    })
 
     const newNext = rootKeyAt(1, 1)
-    const committed = createReset(seed, profile, 1, { members: [didKeyMember(newNext)], deny: [] })
-    expect(foldReason([icp, committed])).toEqual({ reason: SNAPSHOT_MEMBER_KEY_IS_ROOT, index: 1 })
+    const committed = await createReset(seed, profile, 1, {
+      members: [didKeyMember(newNext)],
+      deny: [],
+    })
+    expect(await foldReason([icp, committed])).toEqual({
+      reason: SNAPSHOT_MEMBER_KEY_IS_ROOT,
+      index: 1,
+    })
   })
 
-  test('a reset snapshot may carry a member pinning a key of the generation it closes', () => {
+  test('a reset snapshot may carry a member pinning a key of the generation it closes', async () => {
     const oldKey = rootKeyAt(0, 0)
-    const reset = createReset(seed, profile, 1, { members: [didKeyMember(oldKey)], deny: [] })
-    expect(foldLog(did, { chain: [icp, reset], events: [] }).ok).toBe(true)
+    const reset = await createReset(seed, profile, 1, { members: [didKeyMember(oldKey)], deny: [] })
+    expect((await foldLog(did, { chain: [icp, reset], events: [] })).ok).toBe(true)
   })
 })
 
 describe('a snapshot member DID carries its pinned key', () => {
-  test('a did:peer:4 member carrying exactly its pinned key folds', () => {
+  test('a did:peer:4 member carrying exactly its pinned key folds', async () => {
     const key = edKey(8)
     const peer = { ...didKeyMember(key), did: peerDID([key]) }
-    const result = foldLog(did, {
-      chain: [icp, rotate(icp.event, { members: [peer], deny: [] })],
+    const result = await foldLog(did, {
+      chain: [icp, await rotate(icp.event, { members: [peer], deny: [] })],
       events: [],
     })
     expect(result.ok).toBe(true)
   })
 
-  test('a did:peer:4 member carrying two signing keys is refused', () => {
+  test('a did:peer:4 member carrying two signing keys is refused', async () => {
     const key = edKey(8)
     const peer = { ...didKeyMember(key), did: peerDID([key, edKey(9)]) }
-    const rot = rotate(icp.event, { members: [peer], deny: [] })
-    expect(foldReason([icp, rot])).toEqual({ reason: SNAPSHOT_MEMBER_DID_MISMATCH, index: 1 })
+    const rot = await rotate(icp.event, { members: [peer], deny: [] })
+    expect(await foldReason([icp, rot])).toEqual({ reason: SNAPSHOT_MEMBER_DID_MISMATCH, index: 1 })
   })
 
-  test('a member whose DID names another key, or no key, is refused', () => {
+  test('a member whose DID names another key, or no key, is refused', async () => {
     const key = edKey(8)
     const peer = peerDID([key])
     for (const memberDID of [`did:key:${edKey(9)}`, getPeer4ShortForm(peer), 'did:web:x', did]) {
-      const rot = rotate(icp.event, {
+      const rot = await rotate(icp.event, {
         members: [{ ...didKeyMember(key), did: memberDID }],
         deny: [],
       })
-      expect(foldReason([icp, rot])).toEqual({ reason: SNAPSHOT_MEMBER_DID_MISMATCH, index: 1 })
+      expect(await foldReason([icp, rot])).toEqual({
+        reason: SNAPSHOT_MEMBER_DID_MISMATCH,
+        index: 1,
+      })
     }
   })
 
@@ -302,18 +329,20 @@ describe('a snapshot entry is well formed', () => {
     ['a deny set that is not a key list', { members: [member], deny: [1 as never] }],
   ]
 
-  test('the unbroken snapshot folds', () => {
+  test('the unbroken snapshot folds', async () => {
     expect(
-      foldLog(did, {
-        chain: [icp, rotate(icp.event, { members: [member, second], deny: [] })],
-        events: [],
-      }).ok,
+      (
+        await foldLog(did, {
+          chain: [icp, await rotate(icp.event, { members: [member, second], deny: [] })],
+          events: [],
+        })
+      ).ok,
     ).toBe(true)
   })
 
   for (const [name, snapshot] of cases) {
-    test(`a snapshot with ${name} is refused`, () => {
-      expect(foldReason([icp, rotate(icp.event, snapshot)])).toEqual({
+    test(`a snapshot with ${name} is refused`, async () => {
+      expect(await foldReason([icp, await rotate(icp.event, snapshot)])).toEqual({
         reason: SNAPSHOT_MALFORMED,
         index: 1,
       })
@@ -333,56 +362,65 @@ describe('a snapshot entry is well formed', () => {
 describe('retired-key denials outlive a rotate', () => {
   const retired = keyTarget(rootKeyAt(0, 0))
 
-  test('a later rotate may not drop a checkpointed retired key', () => {
-    const r1 = rotate(icp.event, { members: [], deny: [retired] })
-    const r2 = rotate(r1.event, empty)
-    expect(foldReason([icp, r1, r2])).toEqual({ reason: SNAPSHOT_DROPS_RETIRED_KEY, index: 2 })
+  test('a later rotate may not drop a checkpointed retired key', async () => {
+    const r1 = await rotate(icp.event, { members: [], deny: [retired] })
+    const r2 = await rotate(r1.event, empty)
+    expect(await foldReason([icp, r1, r2])).toEqual({
+      reason: SNAPSHOT_DROPS_RETIRED_KEY,
+      index: 2,
+    })
   })
 
-  test('a later rotate may not drop a checkpointed retired agreement key', () => {
+  test('a later rotate may not drop a checkpointed retired agreement key', async () => {
     const retiredAgreement = keyTarget(at(icp.event.ka, 0))
-    const r1 = rotate(icp.event, { members: [], deny: [retiredAgreement] })
-    expect(foldLog(did, { chain: [icp, r1], events: [] }).ok).toBe(true)
-    const r2 = rotate(r1.event, empty)
-    expect(foldReason([icp, r1, r2])).toEqual({ reason: SNAPSHOT_DROPS_RETIRED_KEY, index: 2 })
-    const kept = rotate(r1.event, { members: [], deny: [retiredAgreement] })
-    expect(foldLog(did, { chain: [icp, r1, kept], events: [] }).ok).toBe(true)
+    const r1 = await rotate(icp.event, { members: [], deny: [retiredAgreement] })
+    expect((await foldLog(did, { chain: [icp, r1], events: [] })).ok).toBe(true)
+    const r2 = await rotate(r1.event, empty)
+    expect(await foldReason([icp, r1, r2])).toEqual({
+      reason: SNAPSHOT_DROPS_RETIRED_KEY,
+      index: 2,
+    })
+    const kept = await rotate(r1.event, { members: [], deny: [retiredAgreement] })
+    expect((await foldLog(did, { chain: [icp, r1, kept], events: [] })).ok).toBe(true)
   })
 
-  test('a later rotate that keeps the retired key folds', () => {
-    const r1 = rotate(icp.event, { members: [], deny: [retired] })
-    const r2 = rotate(r1.event, { members: [], deny: [retired] })
-    expect(foldLog(did, { chain: [icp, r1, r2], events: [] }).ok).toBe(true)
+  test('a later rotate that keeps the retired key folds', async () => {
+    const r1 = await rotate(icp.event, { members: [], deny: [retired] })
+    const r2 = await rotate(r1.event, { members: [], deny: [retired] })
+    expect((await foldLog(did, { chain: [icp, r1, r2], events: [] })).ok).toBe(true)
   })
 
-  test('a holder DID denial may be dropped by a later snapshot', () => {
-    const r1 = rotate(icp.event, { members: [], deny: ['did:key:zA'] })
-    const r2 = rotate(r1.event, empty)
-    const result = foldLog(did, { chain: [icp, r1, r2], events: [] })
+  test('a holder DID denial may be dropped by a later snapshot', async () => {
+    const r1 = await rotate(icp.event, { members: [], deny: ['did:key:zA'] })
+    const r2 = await rotate(r1.event, empty)
+    const result = await foldLog(did, { chain: [icp, r1, r2], events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 2).deny.size).toBe(0)
   })
 
-  test('a denial of a key never on the chain is not a tombstone', () => {
-    const r1 = rotate(icp.event, { members: [], deny: [keyTarget(edKey(9))] })
-    const r2 = rotate(r1.event, empty)
-    expect(foldLog(did, { chain: [icp, r1, r2], events: [] }).ok).toBe(true)
+  test('a denial of a key never on the chain is not a tombstone', async () => {
+    const r1 = await rotate(icp.event, { members: [], deny: [keyTarget(edKey(9))] })
+    const r2 = await rotate(r1.event, empty)
+    expect((await foldLog(did, { chain: [icp, r1, r2], events: [] })).ok).toBe(true)
   })
 
-  test('a reset owes nothing to the prior generation`s denials, even one naming its own key', () => {
+  test('a reset owes nothing to the prior generation`s denials, even one naming its own key', async () => {
     // The prior chain denied the key the reset is about to establish. Read as a tombstone of the
     // new generation, a blind reset — whose deny set is empty — would be refused for dropping it, and
     // the one recovery path that needs no log knowledge would depend on the log.
-    const r1 = rotate(icp.event, { members: [], deny: [keyTarget(rootKeyAt(1, 0))] })
-    const result = foldLog(did, { chain: [icp, r1, createReset(seed, profile, 1)], events: [] })
+    const r1 = await rotate(icp.event, { members: [], deny: [keyTarget(rootKeyAt(1, 0))] })
+    const result = await foldLog(did, {
+      chain: [icp, r1, await createReset(seed, profile, 1)],
+      events: [],
+    })
     expect(result.ok).toBe(true)
   })
 
-  test('a reset clears checkpointed retirements', () => {
-    const r1 = rotate(icp.event, { members: [], deny: [retired] })
-    const reset = createReset(seed, profile, 1)
-    const result = foldLog(did, { chain: [icp, r1, reset], events: [] })
+  test('a reset clears checkpointed retirements', async () => {
+    const r1 = await rotate(icp.event, { members: [], deny: [retired] })
+    const reset = await createReset(seed, profile, 1)
+    const result = await foldLog(did, { chain: [icp, r1, reset], events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 2).deny.size).toBe(0)
@@ -390,18 +428,21 @@ describe('retired-key denials outlive a rotate', () => {
 })
 
 describe('a reset', () => {
-  test('a blind reset is byte-identical per seed, profile and generation', () => {
-    expect(createReset(seed, profile, 1)).toEqual(createReset(seed, profile, 1))
-    expect(createReset(seed, profile, 1).event).not.toHaveProperty('m')
-    expect(createReset(seed, profile, 1).event.d).toEqual([])
+  test('a blind reset is byte-identical per seed, profile and generation', async () => {
+    expect(await createReset(seed, profile, 1)).toEqual(await createReset(seed, profile, 1))
+    expect((await createReset(seed, profile, 1)).event).not.toHaveProperty('m')
+    expect((await createReset(seed, profile, 1)).event.d).toEqual([])
   })
 
-  test('a reset with a snapshot folds to that snapshot and starts a new generation', () => {
+  test('a reset with a snapshot folds to that snapshot and starts a new generation', async () => {
     const snapshot = { members: [member], deny: ['did:key:zA'] }
-    const reset = createReset(seed, profile, 1, snapshot)
+    const reset = await createReset(seed, profile, 1, snapshot)
     expect(reset.event.m).toEqual([member])
-    expect(reset).not.toEqual(createReset(seed, profile, 1))
-    const result = foldLog(did, { chain: [icp, rotate(icp.event, empty), reset], events: [] })
+    expect(reset).not.toEqual(await createReset(seed, profile, 1))
+    const result = await foldLog(did, {
+      chain: [icp, await rotate(icp.event, empty), reset],
+      events: [],
+    })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const head = at(result.states, 2)
@@ -411,58 +452,70 @@ describe('a reset', () => {
     expect(head.epoch).toBe(head.digest)
   })
 
-  test('a reset carrying only half a snapshot does not fold', () => {
+  test('a reset carrying only half a snapshot does not fold', async () => {
     const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
-    const full = createReset(seed, profile, 1, { members: [member], deny: ['did:key:zA'] })
-    const resigned = (event: RotateEvent): SignedEvent<RotateEvent> => ({
+    const full = await createReset(seed, profile, 1, { members: [member], deny: ['did:key:zA'] })
+    const resigned = async (event: RotateEvent): Promise<SignedEvent<RotateEvent>> => ({
       ...full,
       event,
-      sigs: signEvent(event, [recovery.privateKey]),
+      sigs: await signEvent(event, [recovery.privateKey]),
     })
-    expect(foldLog(did, { chain: [icp, resigned(full.event)], events: [] }).ok).toBe(true)
+    expect((await foldLog(did, { chain: [icp, await resigned(full.event)], events: [] })).ok).toBe(
+      true,
+    )
     const { m: _m, ...withoutMembers } = full.event
     const { d: _d, ...withoutDeny } = full.event
     for (const half of [withoutMembers, withoutDeny]) {
-      expect(foldReason([icp, resigned(half as RotateEvent)])).toEqual({
+      expect(await foldReason([icp, await resigned(half as RotateEvent)])).toEqual({
         reason: 'invalid reset',
         index: 1,
       })
     }
   })
 
-  test('a blind reset carries no member list, so it is not mistaken for half a snapshot', () => {
-    expect(foldLog(did, { chain: [icp, createReset(seed, profile, 1)], events: [] }).ok).toBe(true)
+  test('a blind reset carries no member list, so it is not mistaken for half a snapshot', async () => {
+    expect(
+      (await foldLog(did, { chain: [icp, await createReset(seed, profile, 1)], events: [] })).ok,
+    ).toBe(true)
   })
 
-  test('a blind reset has one encoding: neither half, or an empty snapshot, is refused', () => {
+  test('a blind reset has one encoding: neither half, or an empty snapshot, is refused', async () => {
     const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
-    const blind = createReset(seed, profile, 1)
-    const resigned = (event: RotateEvent): SignedEvent<RotateEvent> => ({
+    const blind = await createReset(seed, profile, 1)
+    const resigned = async (event: RotateEvent): Promise<SignedEvent<RotateEvent>> => ({
       ...blind,
       event,
-      sigs: signEvent(event, [recovery.privateKey]),
+      sigs: await signEvent(event, [recovery.privateKey]),
     })
     // Control: the blind bytes themselves, re-signed through the same path, fold.
-    expect(foldLog(did, { chain: [icp, resigned({ ...blind.event })], events: [] }).ok).toBe(true)
+    expect(
+      (await foldLog(did, { chain: [icp, await resigned({ ...blind.event })], events: [] })).ok,
+    ).toBe(true)
     const { d: _d, ...withoutDeny } = blind.event
     const emptySnapshot = { ...blind.event, m: [] }
     for (const variant of [withoutDeny as RotateEvent, emptySnapshot]) {
-      expect(foldReason([icp, resigned(variant)])).toEqual({ reason: 'invalid reset', index: 1 })
+      expect(await foldReason([icp, await resigned(variant)])).toEqual({
+        reason: 'invalid reset',
+        index: 1,
+      })
     }
   })
 
-  test('a reset given an empty snapshot is byte-identical to a blind reset', () => {
-    expect(createReset(seed, profile, 1, { members: [], deny: [] })).toEqual(
-      createReset(seed, profile, 1),
+  test('a reset given an empty snapshot is byte-identical to a blind reset', async () => {
+    expect(await createReset(seed, profile, 1, { members: [], deny: [] })).toEqual(
+      await createReset(seed, profile, 1),
     )
   })
 })
 
 describe('snapshotOf()', () => {
-  test('reads every member and denial back out of a state, minus what is dropped', () => {
+  test('reads every member and denial back out of a state, minus what is dropped', async () => {
     const second = didKeyMember(edKey(8))
-    const rot = rotate(icp.event, { members: [member, second], deny: ['did:key:zA', 'did:key:zB'] })
-    const result = foldLog(did, { chain: [icp, rot], events: [] })
+    const rot = await rotate(icp.event, {
+      members: [member, second],
+      deny: ['did:key:zA', 'did:key:zB'],
+    })
+    const result = await foldLog(did, { chain: [icp, rot], events: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const state = at(result.states, 1)
@@ -476,10 +529,11 @@ describe('snapshotOf()', () => {
     })
   })
 
-  test('leaves out a removed member', () => {
+  test('leaves out a removed member', async () => {
     const state: KeyState = {
-      ...(foldLog(did, { chain: [icp], events: [] }) as { ok: true; states: Array<KeyState> })
-        .states[0],
+      ...(
+        (await foldLog(did, { chain: [icp], events: [] })) as { ok: true; states: Array<KeyState> }
+      ).states[0],
       members: new Map([[member.add, { ...member, removed: true, effective: false }]]),
     } as KeyState
     expect(snapshotOf(state).members).toEqual([])

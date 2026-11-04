@@ -6,20 +6,20 @@ import { foldLog } from '../src/fold.js'
 import { resolveBranches } from '../src/supersede.js'
 
 describe('keyless branch hijack, independent reproduction', () => {
-  test('an unsigned unknown non-critical event with a spoofed position wins branch selection', () => {
+  test('an unsigned unknown non-critical event with a spoofed position wins branch selection', async () => {
     const seed = new Uint8Array(32).fill(11)
-    const inception = createInception(seed, 0)
+    const inception = await createInception(seed, 0)
     const did = didFromInception(inception.event)
 
     // The honest history: rotate, then rotate again denying a device.
-    const rotate = createRotate({
+    const rotate = await createRotate({
       seed,
       profile: 0,
       did,
       prior: inception.event,
       snapshot: { members: [], deny: [] },
     })
-    const denying = createRotate({
+    const denying = await createRotate({
       seed,
       profile: 0,
       did,
@@ -45,14 +45,14 @@ describe('keyless branch hijack, independent reproduction', () => {
     } as unknown as SignedEvent
     const attack = [inception, forged]
 
-    const resolved = resolveBranches(did, [honest, attack])
+    const resolved = await resolveBranches(did, [honest, attack])
     // The honest branch must win, and its winner folds.
     expect(resolved.ok).toBe(true)
     if (resolved.ok) {
       const head = resolved.winner[resolved.winner.length - 1]
       if (head === undefined) throw new Error('expected a winning event')
       expect(head).toBe(denying)
-      expect(foldLog(did, { chain: resolved.winner, events: [] }).ok).toBe(true)
+      expect((await foldLog(did, { chain: resolved.winner, events: [] })).ok).toBe(true)
     }
   })
 })

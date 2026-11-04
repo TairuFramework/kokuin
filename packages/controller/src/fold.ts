@@ -1,3 +1,5 @@
+import type { CryptoOptions } from '@kokuin/token'
+
 import { digestOf, isCanonicalizable } from './canonical.js'
 import { foldEpoch } from './epoch.js'
 import {
@@ -14,6 +16,7 @@ import {
 } from './events.js'
 import { MAX_LOG_EVENTS } from './limits.js'
 import { type ControllerLog, isControllerLog, LOG_TOO_LARGE, MALFORMED_LOG } from './log.js'
+import { snapshotLog } from './log-snapshot.js'
 import { denialTargetsMember, ROTATE_NEEDS_SNAPSHOT, validateSnapshot } from './members.js'
 
 /** A reset opens a generation with no removed incarnations. */
@@ -158,18 +161,19 @@ type StepOutcome =
   | { status: 'fail'; reason: string }
 
 /**
- * Validate one event against the state so far and produce the next state. Pure and total — every
- * rejection is a returned reason, never a throw. Criticality is decided here: an unknown critical
+ * Validate one event against the state so far and produce the next state. Malformed input returns
+ * a reason. Provider failures propagate. Criticality is decided here: an unknown critical
  * event fails closed, an unknown `crit: false` event at the next position is skipped (prior state
  * carried forward unchanged), and anything else fails closed.
  */
-function stepEvent(
+async function stepEvent(
   did: string,
   inception: InceptionEvent,
   signed: SignedEvent,
   prior: KeyState,
   chain: ReadonlyArray<KeyState>,
-): StepOutcome {
+  options: CryptoOptions = {},
+): Promise<StepOutcome> {
   if (!isSignedEventShape(signed)) {
     return { status: 'fail', reason: MALFORMED_EVENT }
   }
@@ -197,7 +201,7 @@ function stepEvent(
       if (rot.event.s !== 0) {
         return { status: 'fail', reason: 'reset must restart the sequence' }
       }
-      if (!verifyReset(rot, inception)) {
+      if (!(await verifyReset(rot, inception, options))) {
         return { status: 'fail', reason: 'invalid reset' }
       }
     } else {
@@ -207,7 +211,7 @@ function stepEvent(
       if (rot.event.g !== prior.gen || rot.event.s !== prior.seq + 1) {
         return { status: 'fail', reason: 'sequence gap' }
       }
-      if (!verifyRotate(rot, { digest: prior.digest, n: prior.next })) {
+      if (!(await verifyRotate(rot, { digest: prior.digest, n: prior.next }, options))) {
         return { status: 'fail', reason: 'invalid rotate' }
       }
     }
@@ -388,7 +392,11 @@ type FoldInit =
 /**
  * Validate the inception and seed the state array the fold starts from.
  */
-function initFold(did: string, events: Array<SignedEvent>): FoldInit {
+async function initFold(
+  did: string,
+  events: Array<SignedEvent>,
+  options: CryptoOptions = {},
+): Promise<FoldInit> {
   if (!Array.isArray(events)) {
     return { ok: false, result: fail(MALFORMED_LOG, 0) }
   }
@@ -406,7 +414,7 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
   if (first.event.t !== 'icp') {
     return { ok: false, result: fail('first event must be an inception', 0) }
   }
-  if (!verifyInception(first, did)) {
+  if (!(await verifyInception(first, did, options))) {
     return { ok: false, result: fail('invalid inception', 0) }
   }
 
@@ -440,11 +448,12 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
 }
 
 /** The chain alone: one state per event, or the first event that does not fold. */
-function foldChain(
+async function foldChain(
   did: string,
   events: Array<SignedEvent>,
-): { ok: true; states: Array<KeyState> } | { ok: false; result: FoldResult } {
-  const init = initFold(did, events)
+  options: CryptoOptions = {},
+): Promise<{ ok: true; states: Array<KeyState> } | { ok: false; result: FoldResult }> {
+  const init = await initFold(did, events, options)
   if (!init.ok) {
     return init
   }
@@ -457,7 +466,14 @@ function foldChain(
       return { ok: false, result: fail(INTERNAL_FOLD_INVARIANT, i) }
     }
     // `events[i]` may be a hole or `undefined`; `stepEvent` reports that as `malformed event`.
-    const outcome = stepEvent(did, inception, events[i] as SignedEvent, prior, states)
+    const outcome = await stepEvent(
+      did,
+      inception,
+      events[i] as SignedEvent,
+      prior,
+      states,
+      options,
+    )
     if (outcome.status === 'fail') {
       return { ok: false, result: fail(outcome.reason, i) }
     }
@@ -486,21 +502,25 @@ function foldChain(
  * the fold -- a bad entry is counted and dropped -- so a relay cannot make a log unfoldable by padding
  * it, only refused by forging past the limit, which no honest relay does.
  *
- * Synchronous, so it stays usable on an offline verifier's apply path.
  */
-export function foldLog(did: string, log: ControllerLog): FoldResult {
-  if (!isControllerLog(log)) {
+export async function foldLog(
+  did: string,
+  input: ControllerLog,
+  options: CryptoOptions = {},
+): Promise<FoldResult> {
+  if (!isControllerLog(input)) {
     return fail(MALFORMED_LOG, 0)
   }
-  if (log.events.length > MAX_LOG_EVENTS) {
+  if (input.events.length > MAX_LOG_EVENTS) {
     return fail(LOG_TOO_LARGE, -1)
   }
-  const chain = foldChain(did, log.chain)
+  const log = snapshotLog(input)
+  const chain = await foldChain(did, log.chain, options)
   if (!chain.ok) {
     return chain.result
   }
   const { states } = chain
-  const merged = foldEpoch({ did, chainStates: states, events: log.events })
+  const merged = await foldEpoch({ ...options, did, chainStates: states, events: log.events })
   if (!merged.ok) {
     return fail(merged.reason, -1)
   }

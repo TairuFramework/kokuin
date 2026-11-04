@@ -13,7 +13,7 @@ import { createControllerResolver } from '../src/resolver.js'
 import { MEMBER_NOT_HISTORIC, resolverOver } from '../src/state-resolver.js'
 
 const seed = new Uint8Array(32).fill(7)
-const icp = createInception(seed, 0)
+const icp = await createInception(seed, 0)
 const did = didFromInception(icp.event)
 const root: EpochSigner = { root: { seed, profile: 0 } }
 function member(fill: number, add: string) {
@@ -23,7 +23,7 @@ function member(fill: number, add: string) {
 }
 const old = member(31, 'old-add')
 const live = member(32, 'live-add')
-const settled = createRotate({
+const settled = await createRotate({
   seed,
   profile: 0,
   did,
@@ -31,28 +31,28 @@ const settled = createRotate({
   snapshot: { members: [live.entry], removed: [old.entry], deny: [] },
 })
 const chain = [icp, settled]
-function folded(log: ControllerLog) {
-  const result = foldLog(did, log)
+async function folded(log: ControllerLog) {
+  const result = await foldLog(did, log)
   if (!result.ok) throw new Error(result.reason)
   return result
 }
-const anchor = folded({ chain, events: [] })
+const anchor = await folded({ chain, events: [] })
 const base = { did, head: anchor.head, parents: [anchor.head.epoch] }
 
 describe('settled tombstones and epoch compatibility', () => {
   test('a live member can deny a tombstoned DID without losing its historic evidence', async () => {
-    const revoke = createRevoke({
+    const revoke = await createRevoke({
       ...base,
       signer: { member: { privateKey: live.privateKey, add: live.entry.add } },
       target: old.entry.did,
     })
     const log = { chain, events: [revoke] }
-    const result = folded(log)
+    const result = await folded(log)
     expect(result.applied).toEqual([digestOf(revoke.event)])
     expect(result.rejected).toBe(0)
     expect([...result.head.deny]).toEqual([old.entry.did])
     expect(result.head.members.has(old.entry.add)).toBe(false)
-    const checkpoint = createRotate({
+    const checkpoint = await createRotate({
       seed,
       profile: 0,
       did,
@@ -75,10 +75,11 @@ describe('settled tombstones and epoch compatibility', () => {
 
   test.each(['ren', 'rmv'] as const)(
     'root %s of a tombstoned add has no causal member target',
-    (type) => {
+    async (type) => {
       const params = { ...base, signer: root, add: old.entry.add }
-      const event = type === 'ren' ? createRenew({ ...params, lease: 101 }) : createRemove(params)
-      const result = foldEpochDetailed({ did, chainStates: anchor.states, events: [event] })
+      const event =
+        type === 'ren' ? await createRenew({ ...params, lease: 101 }) : await createRemove(params)
+      const result = await foldEpochDetailed({ did, chainStates: anchor.states, events: [event] })
       if (!result.ok) throw new Error(result.reason)
       expect(result.applied).toEqual([])
       expect(result.rejected).toBe(1)
@@ -86,27 +87,30 @@ describe('settled tombstones and epoch compatibility', () => {
     },
   )
 
-  test.each(['ren', 'rmv', 'rev'] as const)('a tombstoned signer cannot authorise %s', (type) => {
-    const params = {
-      ...base,
-      signer: { member: { privateKey: old.privateKey, add: old.entry.add } },
-    }
-    const event =
-      type === 'ren'
-        ? createRenew({ ...params, add: live.entry.add, lease: 101 })
-        : type === 'rmv'
-          ? createRemove({ ...params, add: live.entry.add })
-          : createRevoke({ ...params, target: 'did:key:zEdge' })
-    const result = foldEpochDetailed({ did, chainStates: anchor.states, events: [event] })
-    if (!result.ok) throw new Error(result.reason)
-    expect(result.applied).toEqual([])
-    expect(result.rejected).toBe(1)
-    expect(result.reasons.get(digestOf(event.event))).toBe(
-      'signer is not a member of the causal state',
-    )
-    expect([...result.head.members]).toEqual([...anchor.head.members])
-    expect([...result.head.deny]).toEqual([])
-  })
+  test.each(['ren', 'rmv', 'rev'] as const)(
+    'a tombstoned signer cannot authorise %s',
+    async (type) => {
+      const params = {
+        ...base,
+        signer: { member: { privateKey: old.privateKey, add: old.entry.add } },
+      }
+      const event =
+        type === 'ren'
+          ? await createRenew({ ...params, add: live.entry.add, lease: 101 })
+          : type === 'rmv'
+            ? await createRemove({ ...params, add: live.entry.add })
+            : await createRevoke({ ...params, target: 'did:key:zEdge' })
+      const result = await foldEpochDetailed({ did, chainStates: anchor.states, events: [event] })
+      if (!result.ok) throw new Error(result.reason)
+      expect(result.applied).toEqual([])
+      expect(result.rejected).toBe(1)
+      expect(result.reasons.get(digestOf(event.event))).toBe(
+        'signer is not a member of the causal state',
+      )
+      expect([...result.head.members]).toEqual([...anchor.head.members])
+      expect([...result.head.deny]).toEqual([])
+    },
+  )
 })
 
 describe('caller-built states without tombstones', () => {
@@ -118,17 +122,19 @@ describe('caller-built states without tombstones', () => {
     expect(snapshotOf(head)).toEqual({ members: [live.entry], deny: [] })
   })
 
-  test('every epoch builder preserves its event and signature output', () => {
+  test('every epoch builder preserves its event and signature output', async () => {
     const params = { seed, profile: 0, member: member(33, 'new-add').entry }
-    expect(createAdd({ ...callerBase, ...params })).toEqual(createAdd({ ...base, ...params }))
-    expect(createRenew({ ...callerBase, signer: root, add: live.entry.add, lease: 101 })).toEqual(
-      createRenew({ ...base, signer: root, add: live.entry.add, lease: 101 }),
+    expect(await createAdd({ ...callerBase, ...params })).toEqual(
+      await createAdd({ ...base, ...params }),
     )
-    expect(createRemove({ ...callerBase, signer: root, add: live.entry.add })).toEqual(
-      createRemove({ ...base, signer: root, add: live.entry.add }),
+    expect(
+      await createRenew({ ...callerBase, signer: root, add: live.entry.add, lease: 101 }),
+    ).toEqual(await createRenew({ ...base, signer: root, add: live.entry.add, lease: 101 }))
+    expect(await createRemove({ ...callerBase, signer: root, add: live.entry.add })).toEqual(
+      await createRemove({ ...base, signer: root, add: live.entry.add }),
     )
-    expect(createRevoke({ ...callerBase, signer: root, target: old.entry.did })).toEqual(
-      createRevoke({ ...base, signer: root, target: old.entry.did }),
+    expect(await createRevoke({ ...callerBase, signer: root, target: old.entry.did })).toEqual(
+      await createRevoke({ ...base, signer: root, target: old.entry.did }),
     )
   })
 

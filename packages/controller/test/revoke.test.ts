@@ -14,8 +14,8 @@ import { foldLog } from '../src/fold.js'
 const seed = new Uint8Array(32).fill(1)
 const stolen = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
-function setup() {
-  const inception = createInception(seed, 0)
+async function setup() {
+  const inception = await createInception(seed, 0)
   return {
     inception,
     did: didFromInception(inception.event),
@@ -46,12 +46,12 @@ describe('the root chain carries no revoke', () => {
   // A revoke is an epoch event, never a chain event. One on the chain — from an older log, with or
   // without the capability an authorised one carried — is an unknown type, and critical, so the
   // fold fails closed rather than reading it as anything.
-  test('a chain revoke, with or without a capability, does not fold', () => {
-    const { inception, did, priorDigest } = setup()
+  test('a chain revoke, with or without a capability, does not fold', async () => {
+    const { inception, did, priorDigest } = await setup()
     const revoke = { v: 1, t: 'rev', i: did, g: 0, s: 1, p: priorDigest, crit: true, x: stolen }
     for (const event of [revoke, { ...revoke, cap: 'x' }]) {
       const signed = { event, sigs: ['AAAA'] } as unknown as SignedEvent
-      expect(foldLog(did, { chain: [inception, signed], events: [] })).toEqual({
+      expect(await foldLog(did, { chain: [inception, signed], events: [] })).toEqual({
         ok: false,
         reason: 'unknown critical event type: rev',
         index: 1,

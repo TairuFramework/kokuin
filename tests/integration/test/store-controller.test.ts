@@ -28,9 +28,9 @@ describe.each(backendsNamed('postgres'))('$name jsonb log column', (b) => {
   // passing `get` alone would not show the column holds JSON with the chain as a JSON array.
   test('a stored log is a JSON object with a chain array and round-trips', async () => {
     const seed = new Uint8Array(32).fill(7)
-    const icp = createInception(seed, 0)
+    const icp = await createInception(seed, 0)
     const did = didFromInception(icp.event)
-    const rot = createRotate({
+    const rot = await createRotate({
       seed,
       profile: 0,
       did,

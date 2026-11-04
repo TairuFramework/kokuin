@@ -55,9 +55,9 @@ describe('TokenRevokedError', () => {
 
   test('denied-key path: the refusal is branded and carries the resolution failure as cause', async () => {
     const seed = new Uint8Array(32).fill(53)
-    const inception = createInception(seed, 0)
+    const inception = await createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rotate = createRotate({
+    const rotate = await createRotate({
       seed,
       profile: 0,
       did,
@@ -70,7 +70,7 @@ describe('TokenRevokedError', () => {
     const revoked: Array<SignedEvent> = [
       inception,
       rotate,
-      createRotate({
+      await createRotate({
         seed,
         profile: 0,
         did,
@@ -83,12 +83,12 @@ describe('TokenRevokedError', () => {
         loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
       }),
     ]
-    const thief = createControllerIdentity({
+    const thief = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
     })
-    const owner = createControllerIdentity({
+    const owner = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: revoked, events: [] },

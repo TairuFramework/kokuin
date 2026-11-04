@@ -36,7 +36,7 @@ export type TwoKeyLog = {
  * private key the controller does not hold, so any code that silently reaches for `keys[0]` picks
  * a key this controller cannot sign with — which is what makes `kid` selection observable.
  */
-export function buildTwoKeyLog(seed: Uint8Array, profile = 0): TwoKeyLog {
+export async function buildTwoKeyLog(seed: Uint8Array, profile = 0): Promise<TwoKeyLog> {
   const controller = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
   const controllerNext = deriveKeyPair(seed, authorityPath(profile, 0, 1), 'EdDSA')
   const cosigner = deriveKeyPair(COSIGNER_SEED, authorityPath(profile, 0, 0), 'EdDSA')
@@ -65,7 +65,7 @@ export function buildTwoKeyLog(seed: Uint8Array, profile = 0): TwoKeyLog {
   // Positional against `k`, so the co-signer signs first.
   const inception: SignedEvent<InceptionEvent> = {
     event,
-    sigs: signEvent(event, [cosigner.privateKey, controller.privateKey]),
+    sigs: await signEvent(event, [cosigner.privateKey, controller.privateKey]),
   }
 
   return {

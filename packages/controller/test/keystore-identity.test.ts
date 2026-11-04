@@ -37,7 +37,7 @@ describe('provideControllerIdentity', () => {
       logStore,
     })
 
-    const expectedDID = didFromInception(createInception(seed, 0).event)
+    const expectedDID = didFromInception((await createInception(seed, 0)).event)
     expect(identity.id).toBe(expectedDID)
     expect(isFullIdentity(identity)).toBe(true)
     // The generate path persisted the inception.
@@ -72,9 +72,9 @@ describe('provideControllerIdentity', () => {
   test('resolves the current key after a rotate', async () => {
     const seed = new Uint8Array(32).fill(7)
     const logStore = createMemoryLogStore()
-    const inception = createInception(seed, 0)
+    const inception = await createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const rot = createRotate({
+    const rot = await createRotate({
       seed,
       profile: 0,
       did,
@@ -97,11 +97,11 @@ describe('provideControllerIdentity', () => {
   test('restores from a stored log carrying epoch events, and keeps them', async () => {
     const seed = new Uint8Array(32).fill(7)
     const logStore = createMemoryLogStore()
-    const inception = createInception(seed, 0)
+    const inception = await createInception(seed, 0)
     const did = didFromInception(inception.event)
-    const folded = foldLog(did, { chain: [inception], events: [] })
+    const folded = await foldLog(did, { chain: [inception], events: [] })
     if (!folded.ok) throw new Error('did not fold')
-    const revoke = createRevoke({
+    const revoke = await createRevoke({
       signer: { root: { seed, profile: 0 } },
       did,
       head: folded.head,

@@ -31,23 +31,23 @@ function signRaw(
 
 const seed = new Uint8Array(32).fill(9)
 const otherSeed = new Uint8Array(32).fill(19)
-const inception = createInception(seed, 0)
+const inception = await createInception(seed, 0)
 const did = didFromInception(inception.event)
-const otherInception = createInception(otherSeed, 0)
+const otherInception = await createInception(otherSeed, 0)
 const otherDID = didFromInception(otherInception.event)
 
 const k0 = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
 const k1 = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
 const o0 = deriveKeyPair(otherSeed, authorityPath(0, 0, 0), 'EdDSA')
 
-const rotated = createRotate({
+const rotated = await createRotate({
   seed,
   profile: 0,
   did,
   prior: inception.event,
   snapshot: { members: [], deny: [] },
 })
-const reset = createReset(seed, 0, 1)
+const reset = await createReset(seed, 0, 1)
 
 function registryFor(log: Array<SignedEvent>, otherLog: Array<SignedEvent> = [otherInception]) {
   const methods: MethodRegistry = [

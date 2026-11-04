@@ -41,19 +41,19 @@ async function denySet(
   return await resolver.resolveDenySet(did)
 }
 
-function build() {
-  const inception = createInception(seed, 0)
+async function build() {
+  const inception = await createInception(seed, 0)
   return { inception, did: didFromInception(inception.event) }
 }
 
 /** A rotate on `prior` whose snapshot denies `deny` and carries `members`. */
-function settle(
+async function settle(
   did: string,
   prior: SignedEvent['event'],
   deny: Array<string>,
   members: Array<MemberEntry> = [],
-): SignedEvent {
-  return createRotate({ seed, profile: 0, did, prior, snapshot: { members, deny } })
+): Promise<SignedEvent> {
+  return await createRotate({ seed, profile: 0, did, prior, snapshot: { members, deny } })
 }
 
 /** An event of a type no version understands, unsigned, declaring itself skippable. */
@@ -73,17 +73,17 @@ function padding(did: string, prior: SignedEvent, index: number): SignedEvent {
 }
 
 describe('a keyless peer cannot switch duplicity detection off', () => {
-  test('a forged unsigned branch is filtered, not fatal', () => {
-    const { inception, did } = build()
+  test('a forged unsigned branch is filtered, not fatal', async () => {
+    const { inception, did } = await build()
     // Two honest, conflicting settlements at position 1: a genuine fork, and the finding that
     // matters.
     const honest = [
-      [inception, settle(did, inception.event, ['did:key:zA'])],
-      [inception, settle(did, inception.event, ['did:key:zB'])],
+      [inception, await settle(did, inception.event, ['did:key:zA'])],
+      [inception, await settle(did, inception.event, ['did:key:zB'])],
     ]
 
     // CONTROL — the fork alone. This is what must survive the attacker's presence.
-    const control = resolveBranches(did, honest)
+    const control = await resolveBranches(did, honest)
     expect(control.ok).toBe(false)
     if (control.ok) return
     expect(control.failure).toBe('duplicity')
@@ -103,18 +103,18 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
       } as never,
       sigs: [],
     }
-    const attacked = resolveBranches(did, [...honest, [inception, forged]])
+    const attacked = await resolveBranches(did, [...honest, [inception, forged]])
     expect(attacked.ok).toBe(false)
     if (attacked.ok) return
     expect(attacked.failure, 'the fork is still reported').toBe('duplicity')
     expect(attacked.duplicity).toEqual(control.duplicity)
   })
 
-  test('the forged branch cannot become the winner', () => {
-    const { inception, did } = build()
+  test('the forged branch cannot become the winner', async () => {
+    const { inception, did } = await build()
     const honest = [
       inception,
-      createRotate({
+      await createRotate({
         seed,
         profile: 0,
         did,
@@ -135,7 +135,7 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
       } as never,
       sigs: [],
     }
-    const result = resolveBranches(did, [honest, [inception, forged]])
+    const result = await resolveBranches(did, [honest, [inception, forged]])
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.winner).toBe(honest)
@@ -143,8 +143,8 @@ describe('a keyless peer cannot switch duplicity detection off', () => {
 })
 
 describe('unsigned padding cannot grow a log without limit', () => {
-  test('a padded log is refused, and the same log within budget is not', () => {
-    const { inception, did } = build()
+  test('a padded log is refused, and the same log within budget is not', async () => {
+    const { inception, did } = await build()
 
     // CONTROL — padding within the slack folds, which is what keeps a v1 verifier able to read a
     // later version's non-critical events.
@@ -152,7 +152,7 @@ describe('unsigned padding cannot grow a log without limit', () => {
       inception,
       ...Array.from({ length: MAX_SKIPPED_SLACK }, (_, i) => padding(did, inception, i)),
     ]
-    const controlResult = foldLog(did, { chain: within, events: [] })
+    const controlResult = await foldLog(did, { chain: within, events: [] })
     expect(controlResult.ok, 'padding within the slack still folds').toBe(true)
 
     // ATTACK — the same events, past the budget. Before this bound, 500 of them folded clean.
@@ -160,17 +160,17 @@ describe('unsigned padding cannot grow a log without limit', () => {
       inception,
       ...Array.from({ length: MAX_SKIPPED_SLACK + 2 }, (_, i) => padding(did, inception, i)),
     ]
-    const attacked = foldLog(did, { chain: beyond, events: [] })
+    const attacked = await foldLog(did, { chain: beyond, events: [] })
     expect(attacked.ok).toBe(false)
     if (attacked.ok) return
     expect(attacked.reason).toBe(TOO_MANY_UNKNOWN_EVENTS)
   })
 
-  test('the budget grows with the log’s own real length', () => {
+  test('the budget grows with the log’s own real length', async () => {
     // The ceiling is proportional to work the verifier was going to do anyway, so a long honest log
     // is not held to the same absolute count as a two-event one.
-    const { inception, did } = build()
-    const rot = createRotate({
+    const { inception, did } = await build()
+    const rot = await createRotate({
       seed,
       profile: 0,
       did,
@@ -182,13 +182,13 @@ describe('unsigned padding cannot grow a log without limit', () => {
       rot,
       ...Array.from({ length: MAX_SKIPPED_SLACK + 1 }, (_, i) => padding(did, rot, i)),
     ]
-    expect(foldLog(did, { chain: log, events: [] }).ok).toBe(true)
+    expect((await foldLog(did, { chain: log, events: [] })).ok).toBe(true)
   })
 })
 
 describe('carrying a state forward cannot silently drop the rest of it', () => {
-  test('snapshotOf keeps what a hand-written snapshot loses', () => {
-    const { inception, did } = build()
+  test('snapshotOf keeps what a hand-written snapshot loses', async () => {
+    const { inception, did } = await build()
     const device = 'did:key:zDevice'
     const memberKey = encodeKey(
       deriveKeyPair(new Uint8Array(32).fill(12), authorityPath(0, 0, 0), 'EdDSA').publicKey,
@@ -201,8 +201,8 @@ describe('carrying a state forward cannot silently drop the rest of it', () => {
       lease: 1_900_000_000,
     }
     const leaked = keyTarget(at(inception.event.k, 0))
-    const settled = settle(did, inception.event, [device, leaked], [member])
-    const folded = foldLog(did, { chain: [inception, settled], events: [] })
+    const settled = await settle(did, inception.event, [device, leaked], [member])
+    const folded = await foldLog(did, { chain: [inception, settled], events: [] })
     expect(folded.ok).toBe(true)
     if (!folded.ok) return
     const state = at(folded.states, 1)
@@ -212,26 +212,28 @@ describe('carrying a state forward cannot silently drop the rest of it', () => {
     // change. The checkpointed retirement cannot be lost that way (the fold refuses the rotate), but
     // the member and every other denial can: this is a legal event that dismisses the management
     // tier and un-revokes nothing it meant to.
-    const byHand = settle(did, settled.event, [leaked])
-    const lost = foldLog(did, { chain: [inception, settled, byHand], events: [] })
+    const byHand = await settle(did, settled.event, [leaked])
+    const lost = await foldLog(did, { chain: [inception, settled, byHand], events: [] })
     expect(lost.ok).toBe(true)
     if (!lost.ok) return
     expect(at(lost.states, 2).members.size, 'the member is no longer in the set').toBe(0)
-    const forgotten = settle(did, settled.event, [device])
-    expect(foldLog(did, { chain: [inception, settled, forgotten], events: [] })).toMatchObject({
+    const forgotten = await settle(did, settled.event, [device])
+    expect(
+      await foldLog(did, { chain: [inception, settled, forgotten], events: [] }),
+    ).toMatchObject({
       ok: false,
       reason: 'snapshot drops a retired key denial',
     })
 
     // THE FIX — built from the fold's own answer, so only what was named is dropped.
-    const pruned = createRotate({
+    const pruned = await createRotate({
       seed,
       profile: 0,
       did,
       prior: settled.event,
       snapshot: snapshotOf(state, { deny: [device] }),
     })
-    const kept = foldLog(did, { chain: [inception, settled, pruned], events: [] })
+    const kept = await foldLog(did, { chain: [inception, settled, pruned], events: [] })
     expect(kept.ok).toBe(true)
     if (!kept.ok) return
     expect(at(kept.states, 2).deny.has(leaked)).toBe(true)
@@ -246,10 +248,10 @@ describe('carrying a state forward cannot silently drop the rest of it', () => {
 
 describe('signing as the profile without the root seed', () => {
   test('the current authority key alone produces a verifiable token', async () => {
-    const { inception, did } = build()
+    const { inception, did } = await build()
     const log = [
       inception,
-      createRotate({
+      await createRotate({
         seed,
         profile: 0,
         did,
@@ -260,7 +262,7 @@ describe('signing as the profile without the root seed', () => {
     // What a device is given: one private key, no seed, no profile index.
     const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
 
-    const identity = createControllerIdentityWithKey({
+    const identity = await createControllerIdentityWithKey({
       privateKey: current.privateKey,
       log: { chain: log, events: [] },
     })
@@ -272,12 +274,13 @@ describe('signing as the profile without the root seed', () => {
 
     // CONTROL — a key the head does not publish is refused at construction, not at verification.
     const retired = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
-    expect(() =>
-      createControllerIdentityWithKey({
-        privateKey: retired.privateKey,
-        log: { chain: log, events: [] },
-      }),
-    ).toThrow(/not one of the current authority keys/)
+    await expect(
+      async () =>
+        await createControllerIdentityWithKey({
+          privateKey: retired.privateKey,
+          log: { chain: log, events: [] },
+        }),
+    ).rejects.toThrow(/not one of the current authority keys/)
   })
 })
 
@@ -294,9 +297,9 @@ describe('a truncated log is refused when one further along has been seen', () =
   }
 
   test('a prefix served after the full log is refused', async () => {
-    const { inception, did } = build()
+    const { inception, did } = await build()
     const device = 'did:key:zThief'
-    const full = [inception, settle(did, inception.event, [device])]
+    const full = [inception, await settle(did, inception.event, [device])]
     const truncated = [inception]
 
     const resolver = await resolverOver([full, truncated])
@@ -309,17 +312,17 @@ describe('a truncated log is refused when one further along has been seen', () =
   test('CONTROL — the same log served again is not a truncation', async () => {
     // The commonest call there is. Comparing by array identity rather than by folded head would
     // reject this, which is a resolver that stops working after its first answer.
-    const { inception, did } = build()
-    const full = [inception, settle(did, inception.event, ['did:key:zThief'])]
+    const { inception, did } = await build()
+    const full = [inception, await settle(did, inception.event, ['did:key:zThief'])]
     const resolver = await resolverOver([full, [...full]])
     await resolver.resolveDenySet?.(did)
     expect([...(await denySet(resolver, did))]).toEqual(['did:key:zThief'])
   })
 
   test('CONTROL — a log carried further is accepted', async () => {
-    const { inception, did } = build()
+    const { inception, did } = await build()
     const first = [inception]
-    const later = [inception, settle(did, inception.event, ['did:key:zThief'])]
+    const later = [inception, await settle(did, inception.event, ['did:key:zThief'])]
     const resolver = await resolverOver([first, later])
     await resolver.resolveDenySet?.(did)
     expect([...(await denySet(resolver, did))]).toEqual(['did:key:zThief'])

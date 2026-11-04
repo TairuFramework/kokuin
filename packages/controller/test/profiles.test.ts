@@ -21,9 +21,9 @@ describe('enumerateProfiles()', () => {
     expect(enumerateProfiles(seed, 3).map((p) => p.index)).toEqual([0, 1, 2])
   })
 
-  test('DIDs match the inception-derived identifiers', () => {
+  test('DIDs match the inception-derived identifiers', async () => {
     const first = at(enumerateProfiles(seed, 1), 0)
-    expect(first.did).toBe(didFromInception(createInception(seed, 0).event))
+    expect(first.did).toBe(didFromInception((await createInception(seed, 0)).event))
   })
 
   test('is a pure function of the seed — the picker works offline', () => {

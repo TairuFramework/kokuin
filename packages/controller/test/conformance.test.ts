@@ -69,7 +69,7 @@ function memberPeerDID(key: string): string {
 }
 
 /** The one builder the contract names, over the real per-type ones. */
-function createEpochEvent({
+async function createEpochEvent({
   signer,
   did,
   head,
@@ -88,13 +88,13 @@ function createEpochEvent({
       if (!('root' in signer)) {
         throw new Error('an add is root-only')
       }
-      return createAdd({ ...base, ...signer.root, member: body.member })
+      return await createAdd({ ...base, ...signer.root, member: body.member })
     case 'ren':
-      return createRenew({ ...base, signer, add: body.add, lease: body.lease })
+      return await createRenew({ ...base, signer, add: body.add, lease: body.lease })
     case 'rmv':
-      return createRemove({ ...base, signer, add: body.add })
+      return await createRemove({ ...base, signer, add: body.add })
     case 'rev':
-      return createRevoke({ ...base, signer, target: body.target })
+      return await createRevoke({ ...base, signer, target: body.target })
   }
 }
 
@@ -113,13 +113,13 @@ const suite: ConformanceSuite = {
 const implementation = {
   name: '@kokuin/controller',
   createInception,
-  createRotate: (
+  createRotate: async (
     seed: Uint8Array,
     profile: number,
     did: string,
     prior: EventCommon,
     snapshot: StateSnapshot,
-  ) => createRotate({ seed, profile, did, prior, snapshot }),
+  ) => await createRotate({ seed, profile, did, prior, snapshot }),
   createReset,
   didFromInception,
   foldLog,

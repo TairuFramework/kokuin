@@ -35,9 +35,9 @@ import {
 // consequence of the rule, asserted so it cannot go unnoticed.
 
 const seed = new Uint8Array(32).fill(53)
-const inception = createInception(seed, 0)
+const inception = await createInception(seed, 0)
 const did = didFromInception(inception.event)
-const rotate = createRotate({
+const rotate = await createRotate({
   seed,
   profile: 0,
   did,
@@ -53,7 +53,7 @@ const rotated: Array<SignedEvent> = [inception, rotate]
 const revoked: Array<SignedEvent> = [
   inception,
   rotate,
-  createRotate({
+  await createRotate({
     seed,
     profile: 0,
     did,
@@ -71,7 +71,7 @@ function registry(log: Array<SignedEvent>): MethodRegistry {
 }
 
 /** Signs as the profile with the leaked key — what holding a since-rotated key gives you. */
-const thief = createControllerIdentity({
+const thief = await createControllerIdentity({
   seed,
   profile: 0,
   log: { chain: [inception], events: [] },
@@ -81,7 +81,11 @@ const thief = createControllerIdentity({
  * denied, so it differs from `thief` only in which key signed. (The denying rotate establishes a key
  * of its own, which `rotated` has never published.)
  */
-const owner = createControllerIdentity({ seed, profile: 0, log: { chain: rotated, events: [] } })
+const owner = await createControllerIdentity({
+  seed,
+  profile: 0,
+  log: { chain: rotated, events: [] },
+})
 
 const holder = createSigningIdentity(new Uint8Array(32).fill(61))
 

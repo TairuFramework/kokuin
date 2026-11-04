@@ -39,7 +39,7 @@ function thrownBy(promise: Promise<unknown>): Promise<unknown> {
 describe('classification of a kid naming a key the issuer does not have', () => {
   test('matches did:peer:4 rather than reading as an unresolvable issuer', async () => {
     // did:kokuin: — a real folded log, a `kid` naming a well-formed key that is not in `k`.
-    const { did, log } = buildTwoKeyLog(seed)
+    const { did, log } = await buildTwoKeyLog(seed)
     const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
     const kokuin = await thrownBy(
       verifyToken(forgeToken(did, `#${strangerKey()}`), { methods: [resolver] }),
@@ -66,7 +66,7 @@ describe('classification of a kid naming a key the issuer does not have', () => 
   })
 
   test('a non-fragment kid classifies the same way', async () => {
-    const { did, log, controllerKey } = buildTwoKeyLog(seed)
+    const { did, log, controllerKey } = await buildTwoKeyLog(seed)
     const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
 
     // The bare key, no `#`. Also a rejection the forger controls, so it must not be a denial
@@ -79,7 +79,7 @@ describe('classification of a kid naming a key the issuer does not have', () => 
   })
 
   test('the controller keeps its genuinely unresolvable failures unresolvable', async () => {
-    const { did, log } = buildTwoKeyLog(seed)
+    const { did, log } = await buildTwoKeyLog(seed)
 
     // Control for all three assertions above: the classification is per failure, not a blanket
     // "nothing from a method resolver is unresolvable". Unknown DID, a log that does not fold, and
