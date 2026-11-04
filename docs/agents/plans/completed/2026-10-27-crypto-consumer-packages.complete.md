@@ -50,6 +50,6 @@ Packages remain prepared at 0.1.0 without registry publication.
 - [Physical Android probe and raw data](../../../reference/crypto-benchmarks/2026-10-27-android-probe/README.md)
 - [Complete benchmark qualification](../next/2026-10-27-crypto-benchmark-gate.md)
 - [Package release validation](../next/2026-10-27-crypto-package-release.md)
-- [Conditional existing API migration](../backlog/2026-10-27-crypto-provider-integration.md)
+- [Conditional existing API migration](2026-11-04-crypto-provider-integration.complete.md)
 
 These follow-ons replace the earlier end-to-end rollout plan and preserve its unresolved design constraints.

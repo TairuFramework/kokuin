@@ -17,7 +17,9 @@ It does not satisfy the full performance gate.
 5. Record device power policy, charging, thermal conditions and debugger state.
 6. Collect current noble, strict noble and native samples for every retained workload.
 7. Preserve raw samples, build metadata, profiler evidence and the resulting static routing manifest.
-8. Repeat retained workloads against final distributions before the breaking API migration.
+8. Repeat retained workloads against the final distributions of the provider-integrated packages.
+9. Compose one immutable routed provider from the manifest. Unlisted variants stay on strict noble, with no catch-and-fallback.
+10. Verify the manifest against final module behaviour with route counters, and run shared mobile conformance with injected-provider checks.
 
 ## Qualification rules
 
@@ -41,5 +43,5 @@ The reduced-count Android probe remains separate from qualification exports.
 ## Completion
 
 Complete physical-platform evidence produces a reproducible report and an immutable route decision for every promoted variant.
-No existing public API migration starts while the gate remains pending.
+The [provider integration](../completed/2026-11-04-crypto-provider-integration.complete.md) landed with strict noble as the default, under a user waiver for starting migration. The gate now controls native route promotion only.
 See [benchmark instructions](../../../reference/crypto-benchmark-spike.md) for execution and metric definitions.
