@@ -135,4 +135,10 @@ The Ed25519 subgroup checks need curve arithmetic per signature and would restor
   This deliberately differs from the mobile no-fallback rule: Node has a conformant pure-JavaScript route, and an unsupported platform must not fail installation.
 - `@kokuin/crypto-node` exists. It runs Ed25519 signing and ES256 verification on `node:crypto` (OpenSSL), with a JavaScript low-S check,
   and delegates Ed25519 verification and blake3 to strict noble. With key import per call it measured about 8× faster signing and 15× faster ES256 verification than noble.
-- Still open: reuse the benchmark gate on CI hosts, including arm64, before committing to the `@kokuin/crypto-napi` build matrix.
+- `@kokuin/crypto-napi` exists, built from source for the CI host only: Ed25519 and blake3 single calls run natively on the calling thread,
+  ES256 single calls use `nodeCrypto`, and batches run natively on the libuv pool. Measured through the provider:
+  Ed25519 signing about 18× faster than strict noble, Ed25519 verification about 25×, blake3 on 64 KiB about 110×.
+- Still open: prebuilt per-platform binaries (linux x64/arm64 gnu and musl, macOS x64/arm64, Windows x64/arm64) published as
+  `optionalDependencies`, and the benchmark gate on CI hosts, including arm64, before committing to that build matrix.
+  The gate should also settle whether small batches, especially blake3 on short inputs, are cheaper on the calling thread
+  than after the thread-pool hop.

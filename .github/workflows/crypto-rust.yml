@@ -33,6 +33,14 @@ jobs:
       # weakened-provider self-tests, against strict noble.
       - name: Test shared corpus against noble
         run: pnpm --filter @kokuin/crypto-conformance run test
+      - name: Build the Node-API provider
+        run: |
+          pnpm --filter @kokuin/crypto-napi... build
+          node scripts/build-crypto-napi.mjs
+      # Runs the shared corpus and the pinned upstream vectors through the compiled binding. The
+      # suite fails if the binary does not load, instead of testing the nodeCrypto fallback.
+      - name: Test the Node-API provider
+        run: pnpm --filter @kokuin/crypto-napi run test:native
       - name: Check native ownership with sanitizers
         run: node scripts/test-crypto-native.mjs
       - name: Test artifact freshness

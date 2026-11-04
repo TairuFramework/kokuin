@@ -1,0 +1,50 @@
+{
+  "name": "@kokuin/crypto-napi",
+  "version": "0.1.0",
+  "description": "Strict asynchronous crypto provider backed by the Rust core through Node-API, falling back to @kokuin/crypto-node",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TairuFramework/kokuin",
+    "directory": "packages/crypto-napi"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "type": "module",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib/*",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "pnpm run build:clean && pnpm run build:js && pnpm run build:types",
+    "build:clean": "del-cli lib",
+    "build:js": "del-cli 'lib/**/*.js' && swc src -d ./lib --config-file ../../node_modules/@kigu/dev/swc.json --strip-leading-paths",
+    "build:native": "node ../../scripts/build-crypto-napi.mjs",
+    "build:types": "del-cli 'lib/**/*.d.ts' 'lib/**/*.d.ts.map' && tsc --emitDeclarationOnly --skipLibCheck",
+    "prepublishOnly": "pnpm run build",
+    "test": "pnpm run test:types && pnpm run test:unit",
+    "test:native": "vitest run test/native.test.ts",
+    "test:types": "tsc --noEmit --skipLibCheck -p tsconfig.test.json",
+    "test:unit": "vitest run --exclude test/native.test.ts"
+  },
+  "dependencies": {
+    "@kokuin/crypto": "workspace:^",
+    "@kokuin/crypto-node": "workspace:^"
+  },
+  "devDependencies": {
+    "@kokuin/crypto-conformance": "workspace:^",
+    "@noble/curves": "catalog:",
+    "@noble/hashes": "catalog:",
+    "@types/node": "catalog:"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
