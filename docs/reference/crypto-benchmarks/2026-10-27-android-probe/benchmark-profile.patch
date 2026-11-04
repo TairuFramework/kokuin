@@ -1,0 +1,45 @@
+--- benchmark.ts
++++ benchmark.ts
+@@ -110,13 +110,13 @@ export async function runBenchmarkMatrix(options: BenchmarkOptions): Promise<voi
+     native: options.native,
+   }
+   const cells = options.cells ?? benchmarkCells()
+-  const total = cells.length * 5 * 3
++  const total = cells.length * 3 * 3
+   let completed = 0
+   for (const cell of cells) {
+     const calls = new Map(
+       Object.entries(backends).map(([backend, provider]) => [backend, prepare(cell, provider)]),
+     )
+-    for (let run = 0; run < 5; run++) {
++    for (let run = 0; run < 3; run++) {
+       const order: Array<keyof typeof backends> = ['current-noble', 'strict-noble', 'native']
+       // Rotate both run and cell order to distribute warm-up and thermal bias.
+       const rotation = (run + cells.indexOf(cell)) % order.length
+@@ -132,7 +132,7 @@ export async function runBenchmarkMatrix(options: BenchmarkOptions): Promise<voi
+           jsMs: firstReturned - firstStarted,
+         }
+         await pause()
+-        for (let iteration = 0; iteration < 100; iteration++) {
++        for (let iteration = 0; iteration < 20; iteration++) {
+           options.signal.throwIfAborted()
+           await call(iteration)
+           await pause()
+@@ -140,7 +140,7 @@ export async function runBenchmarkMatrix(options: BenchmarkOptions): Promise<voi
+         const wallMs: Array<number> = []
+         const jsMs: Array<number> = []
+         const timerDelayMs: Array<number> = []
+-        for (let iteration = 0; iteration < 200; iteration++) {
++        for (let iteration = 0; iteration < 50; iteration++) {
+           options.signal.throwIfAborted()
+           const started = performance.now()
+           const heartbeat = new Promise<number>((resolve) =>
+@@ -158,7 +158,7 @@ export async function runBenchmarkMatrix(options: BenchmarkOptions): Promise<voi
+             ...options.metadata,
+             backend,
+             run,
+-            warmups: 100,
++            warmups: 20,
+             cell,
+             wallMs,
+             jsMs,

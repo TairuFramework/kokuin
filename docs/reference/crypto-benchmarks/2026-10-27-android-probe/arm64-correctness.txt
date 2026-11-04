@@ -1,0 +1,4 @@
+Running on Samsung Galaxy A35 physical Android
+ > Flow conformance
+Launch app "com.kokuin.cryptoconsumer" with clear state... COMPLETED
+Assert that "Crypto conformance: OK" is visible... COMPLETED

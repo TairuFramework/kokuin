@@ -1,0 +1,241 @@
+{
+  "description": "Shared crypto provider corpus. Read byte-for-byte by @kokuin/crypto-conformance (TypeScript) and crates/kokuin-crypto/tests/corpus.rs (Rust). All byte strings are lowercase hex. `weakenedBy` names the deliberately weakened verifiers, per backend, that ACCEPT a rejected vector: the self-tests on each side assert that removing exactly that guard flips exactly the listed vectors, so no vector is confounded by a second check. An empty list means no single-guard removal flips the vector in that backend; the note explains why.",
+  "ed25519Sign": [
+    {
+      "name": "RFC 8032 test 1",
+      "seed": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+      "message": "",
+      "signature": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+    }
+  ],
+  "ed25519InvalidSeeds": [
+    {
+      "name": "31-byte seed",
+      "seed": "00000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "33-byte seed",
+      "seed": "000000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "verify": [
+    {
+      "name": "Ed25519 RFC 8032 test 1",
+      "alg": "EdDSA",
+      "publicKey": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "message": "",
+      "signature": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+      "valid": true
+    },
+    {
+      "name": "Ed25519 RFC 8032 test 1 over a mutated message",
+      "alg": "EdDSA",
+      "publicKey": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "message": "01",
+      "signature": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+      "valid": false
+    },
+    {
+      "name": "Ed25519 empty signature",
+      "alg": "EdDSA",
+      "publicKey": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "message": "",
+      "signature": "",
+      "valid": false
+    },
+    {
+      "name": "Ed25519 S >= L",
+      "alg": "EdDSA",
+      "publicKey": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "message": "",
+      "signature": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901554c8c7872aa064e049dbb3013fbf29380d25bf5f0595bbe24655141438e7a101b",
+      "valid": false,
+      "note": "RFC 8032 test 1 with S replaced by S + L. A verifier that reduces S mod L accepts it; both backends require canonical S.",
+      "weakenedBy": { "noble": ["s-range"], "rust": ["s-range"] }
+    },
+    {
+      "name": "Ed25519 mixed-order public key, k = 3 mod 4",
+      "alg": "EdDSA",
+      "publicKey": "5252cc0a7f208133b620acbd4537eba2a4123bf0a8c2e4f980c3b31bb69765ea",
+      "message": "6b6f6b75696e207374726963742073756267726f7570",
+      "signature": "5866666666666666666666666666666666666666666666666666666666666666e40b5648f51a424e5f78c79ee627dc7b037e5599acbe1982974fd875780ac50d",
+      "valid": false,
+      "note": "A = B + T (T the order-4 point, encoded as 32 zero bytes), R = B, S = 1 + k mod L, k = SHA-512(R || A || M) mod L = 3 mod 4. Satisfies the cofactored equation only. Noble verifies cofactored, so its subgroup check on A is the sole rejecting guard. Rust (dalek verify_strict) verifies cofactorless and [k]T != 0, so the equation itself rejects it even without the subgroup guard; only a cofactored Rust check accepts it.",
+      "weakenedBy": { "noble": ["subgroup-a"], "rust": ["cofactored"] }
+    },
+    {
+      "name": "Ed25519 mixed-order signature point",
+      "alg": "EdDSA",
+      "publicKey": "5866666666666666666666666666666666666666666666666666666666666666",
+      "message": "6b6f6b75696e207374726963742073756267726f7570",
+      "signature": "5252cc0a7f208133b620acbd4537eba2a4123bf0a8c2e4f980c3b31bb69765ea107269cbc9715cb07137d25ed92e5af805b1a2668b19fef789f2487a3c2eee02",
+      "valid": false,
+      "note": "A = B, R = B + T, S = 1 + k mod L. Satisfies the cofactored equation only. Noble's subgroup check on R is the sole rejecting guard. In Rust a torsion component in R can never satisfy the cofactorless equation when A is torsion-free, so the R guard is not independently reachable there; only a cofactored Rust check accepts it.",
+      "weakenedBy": { "noble": ["subgroup-r"], "rust": ["cofactored"] }
+    },
+    {
+      "name": "Ed25519 mixed-order public key, k = 0 mod 4",
+      "alg": "EdDSA",
+      "publicKey": "5252cc0a7f208133b620acbd4537eba2a4123bf0a8c2e4f980c3b31bb69765ea",
+      "message": "6d30",
+      "signature": "5866666666666666666666666666666666666666666666666666666666666666c10b78e1b73c696dfd028207e50310a0af5fbb1d7647f00157068d3db0bc180f",
+      "valid": false,
+      "note": "A = B + T, R = B, message \"m0\", S = 1 + k mod L with k = 0 mod 4, so [k]T = 0 and the cofactorless equation also holds. dalek verify_strict accepts it (A is not small-order), so this is the vector that certifies the Rust subgroup guard on A. Noble's subgroup check on A is likewise the sole rejecting guard.",
+      "weakenedBy": { "noble": ["subgroup-a"], "rust": ["subgroup", "cofactored"] }
+    },
+    {
+      "name": "Ed25519 identity public key and R with S = 0",
+      "alg": "EdDSA",
+      "publicKey": "0100000000000000000000000000000000000000000000000000000000000000",
+      "message": "",
+      "signature": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "valid": false,
+      "note": "Small-order forgery valid under both equations for every message. Noble rejects it three times over (subgroup checks on A and R, and noble's own small-order check), and Rust twice (strict point guard and verify_strict's weak-key check), so no single guard removal flips it in either backend; an unguarded cofactored Rust check accepts it.",
+      "weakenedBy": { "noble": [], "rust": ["cofactored"] }
+    },
+    {
+      "name": "Ed25519 non-canonical identity encodings",
+      "alg": "EdDSA",
+      "publicKey": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "message": "",
+      "signature": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f0000000000000000000000000000000000000000000000000000000000000000",
+      "valid": false,
+      "note": "A and R encode y = p + 1, a non-canonical identity, with S = 0. Every non-canonical Ed25519 encoding (y in [p, 2^255)) decodes to a point that is small-order or not torsion-free, so the canonical-encoding check is never the sole guard in either backend; a Rust cofactored check with lenient decoding accepts it.",
+      "weakenedBy": { "noble": [], "rust": ["cofactored"] }
+    },
+    {
+      "name": "ES256 compact low-S",
+      "alg": "ES256",
+      "publicKey": "036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+      "message": "6b6f6b75696e2063727970746f207370696b65",
+      "signature": "d8993d42f5ff5aaf214a10145e5f9ad8bd572acd022d87bd4d8bf989319619e1205bca699914f7f3319fd760301ff494ef95a793ed79c534bab8fbdfcdbcbd58",
+      "valid": true,
+      "note": "Raw message hashed once with SHA-256; a double-hashing verifier rejects it."
+    },
+    {
+      "name": "ES256 compact low-S over a mutated message",
+      "alg": "ES256",
+      "publicKey": "036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+      "message": "6d757461746564",
+      "signature": "d8993d42f5ff5aaf214a10145e5f9ad8bd572acd022d87bd4d8bf989319619e1205bca699914f7f3319fd760301ff494ef95a793ed79c534bab8fbdfcdbcbd58",
+      "valid": false
+    },
+    {
+      "name": "ES256 high-S",
+      "alg": "ES256",
+      "publicKey": "036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+      "message": "6b6f6b75696e2063727970746f207370696b65",
+      "signature": "d8993d42f5ff5aaf214a10145e5f9ad8bd572acd022d87bd4d8bf989319619e1dfa4359566eb080dce60289fcfe00b6acd515319b99dd9503900cee32ea667f9",
+      "valid": false,
+      "note": "The valid signature with s replaced by n - s.",
+      "weakenedBy": { "noble": ["low-s"], "rust": ["low-s"] }
+    },
+    {
+      "name": "ES256 small scalars r = 5, s = 1",
+      "alg": "ES256",
+      "publicKey": "02d9d29c1e0880c12768d8538d87176776efd003d010d74fb73718ddcaddbfe3d9",
+      "message": "6b6f6b75696e2063727970746f207370696b65",
+      "signature": "00000000000000000000000000000000000000000000000000000000000000050000000000000000000000000000000000000000000000000000000000000001",
+      "valid": true,
+      "note": "X is the P-256 point with the smallest x (5), Q = r^-1 (s X - h G). Valid; the base for the r >= n and s >= n vectors, which need r and s below 2^256 - n."
+    },
+    {
+      "name": "ES256 r >= n",
+      "alg": "ES256",
+      "publicKey": "02d9d29c1e0880c12768d8538d87176776efd003d010d74fb73718ddcaddbfe3d9",
+      "message": "6b6f6b75696e2063727970746f207370696b65",
+      "signature": "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc6325560000000000000000000000000000000000000000000000000000000000000001",
+      "valid": false,
+      "note": "r = n + 5, s = 1. A verifier that reduces r mod n accepts it.",
+      "weakenedBy": { "noble": ["scalar-range"], "rust": ["scalar-range"] }
+    },
+    {
+      "name": "ES256 s >= n",
+      "alg": "ES256",
+      "publicKey": "02d9d29c1e0880c12768d8538d87176776efd003d010d74fb73718ddcaddbfe3d9",
+      "message": "6b6f6b75696e2063727970746f207370696b65",
+      "signature": "0000000000000000000000000000000000000000000000000000000000000005ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632552",
+      "valid": false,
+      "note": "r = 5, s = n + 1. A verifier that reduces s mod n accepts it.",
+      "weakenedBy": { "noble": ["scalar-range"], "rust": ["scalar-range"] }
+    },
+    {
+      "name": "ES256 r = 0 with valid s",
+      "alg": "ES256",
+      "publicKey": "036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+      "message": "6b6f6b75696e2063727970746f207370696b65",
+      "signature": "0000000000000000000000000000000000000000000000000000000000000000205bca699914f7f3319fd760301ff494ef95a793ed79c534bab8fbdfcdbcbd58",
+      "valid": false,
+      "note": "Rejected by the range check and, without it, by the ECDSA equation (u2 = 0 leaves X = u1 G, whose x is not 0). Pins agreement on rejecting rather than throwing; no single guard removal flips it."
+    },
+    {
+      "name": "ES256 s = 0 with valid r",
+      "alg": "ES256",
+      "publicKey": "036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+      "message": "6b6f6b75696e2063727970746f207370696b65",
+      "signature": "d8993d42f5ff5aaf214a10145e5f9ad8bd572acd022d87bd4d8bf989319619e10000000000000000000000000000000000000000000000000000000000000000",
+      "valid": false,
+      "note": "Rejected by the range check; s has no inverse, and a verifier treating 0^-1 as 0 reaches the point at infinity, whose x (0) differs from r. No single guard removal flips it."
+    },
+    {
+      "name": "ES256 r = s = 0",
+      "alg": "ES256",
+      "publicKey": "036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+      "message": "6b6f6b75696e2063727970746f207370696b65",
+      "signature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "valid": false,
+      "note": "CVE-2022-21449 shape: a verifier without the non-zero check that computes s^-1 as s^(n-2) and reads the point at infinity as x = 0 accepts it for every key and message. Only the noble self-test implements that weakened verifier.",
+      "weakenedBy": { "noble": ["zero-scalars"], "rust": [] }
+    },
+    {
+      "name": "ES256 off-curve uncompressed key",
+      "alg": "ES256",
+      "publicKey": "0404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404",
+      "message": "6b6f6b75696e2063727970746f207370696b65",
+      "signature": "d8993d42f5ff5aaf214a10145e5f9ad8bd572acd022d87bd4d8bf989319619e1205bca699914f7f3319fd760301ff494ef95a793ed79c534bab8fbdfcdbcbd58",
+      "valid": false
+    },
+    {
+      "name": "ES256 empty signature",
+      "alg": "ES256",
+      "publicKey": "036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+      "message": "6b6f6b75696e2063727970746f207370696b65",
+      "signature": "",
+      "valid": false
+    }
+  ],
+  "blake3": [
+    { "name": "empty input, 1 byte", "input": "", "length": 1, "outputPrefix": "af" },
+    {
+      "name": "empty input, 16 bytes",
+      "input": "",
+      "length": 16,
+      "outputPrefix": "af1349b9f5f9a1a6a0404dea36dcc949"
+    },
+    {
+      "name": "empty input, 32 bytes",
+      "input": "",
+      "length": 32,
+      "outputPrefix": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+    },
+    {
+      "name": "empty input, 64 bytes",
+      "input": "",
+      "length": 64,
+      "outputPrefix": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262e00f03e7b69af26b7faaf09fcd333050338ddfe085b8cc869ca98b206c08243a"
+    },
+    {
+      "name": "empty input, 65536 bytes",
+      "input": "",
+      "length": 65536,
+      "outputPrefix": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262e00f03e7b69af26b7faaf09fcd333050338ddfe085b8cc869ca98b206c08243a"
+    },
+    {
+      "name": "abc, 32 bytes",
+      "input": "616263",
+      "length": 32,
+      "outputPrefix": "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+    }
+  ],
+  "blake3InvalidLengths": [0, 65537]
+}

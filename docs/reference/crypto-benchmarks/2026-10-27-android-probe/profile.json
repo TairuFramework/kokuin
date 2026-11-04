@@ -1,0 +1,14 @@
+{
+  "kind": "exploratory",
+  "runs": 3,
+  "warmups": 20,
+  "samplesPerRun": 50,
+  "messageSize": 32,
+  "modes": ["single", "batch8"],
+  "workloads": "valid",
+  "keys": "repeated",
+  "sourceRevision": "06faecb3cbe7ba2b94886bda956131334cdd308a",
+  "device": "Samsung Galaxy A35 SM-A356B Android 16 API 36",
+  "batterySaver": true,
+  "usbCharging": true
+}

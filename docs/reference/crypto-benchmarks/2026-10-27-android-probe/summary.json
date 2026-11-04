@@ -1,0 +1,319 @@
+{
+  "started": "2026-10-27T17:51:43.538Z",
+  "ended": "2026-10-27T18:03:07.289Z",
+  "gate": "pending",
+  "summary": [
+    {
+      "key": "sign:single:1",
+      "cell": {
+        "operation": "sign",
+        "mode": "single",
+        "batchSize": 1,
+        "messageSize": 32,
+        "outputLength": 0,
+        "workload": "valid",
+        "keys": "repeated"
+      },
+      "backends": {
+        "current-noble": {
+          "samples": 150,
+          "medianWallMs": 12.476807832717896,
+          "p95WallMs": 14.735230922698975,
+          "medianJsMs": 12.4633469581604,
+          "p95JsMs": 14.719923973083496,
+          "p95TimerDelayMs": 17.274807929992676
+        },
+        "strict-noble": {
+          "samples": 150,
+          "medianWallMs": 12.386499881744385,
+          "p95WallMs": 12.875614881515503,
+          "medianJsMs": 12.372999906539917,
+          "p95JsMs": 12.860115051269531,
+          "p95TimerDelayMs": 17.250962018966675
+        },
+        "native": {
+          "samples": 150,
+          "medianWallMs": 1.9100379943847656,
+          "p95WallMs": 2.626729965209961,
+          "medianJsMs": 0.3973839282989502,
+          "p95JsMs": 0.5795760154724121,
+          "p95TimerDelayMs": 17.447499990463257
+        }
+      },
+      "nativeSpeedupVsStrict": 6.484949471245544
+    },
+    {
+      "key": "sign:batch:8",
+      "cell": {
+        "operation": "sign",
+        "mode": "batch",
+        "batchSize": 8,
+        "messageSize": 32,
+        "outputLength": 0,
+        "workload": "valid",
+        "keys": "repeated"
+      },
+      "backends": {
+        "strict-noble": {
+          "samples": 150,
+          "medianWallMs": 97.24415397644043,
+          "p95WallMs": 99.4512300491333,
+          "medianJsMs": 97.22965407371521,
+          "p95JsMs": 99.4355001449585,
+          "p95TimerDelayMs": 99.47473001480103
+        },
+        "native": {
+          "samples": 150,
+          "medianWallMs": 3.942038059234619,
+          "p95WallMs": 4.3776538372039795,
+          "medianJsMs": 0.6988458633422852,
+          "p95JsMs": 0.9348080158233643,
+          "p95TimerDelayMs": 17.630653142929077
+        },
+        "current-noble": {
+          "samples": 150,
+          "medianWallMs": 97.10719203948975,
+          "p95WallMs": 97.72069191932678,
+          "medianJsMs": 97.09315299987793,
+          "p95JsMs": 97.7036919593811,
+          "p95TimerDelayMs": 97.74684596061707
+        }
+      },
+      "nativeSpeedupVsStrict": 24.668496984354643
+    },
+    {
+      "key": "verify-ed25519:single:1",
+      "cell": {
+        "operation": "verify-ed25519",
+        "mode": "single",
+        "batchSize": 1,
+        "messageSize": 32,
+        "outputLength": 0,
+        "workload": "valid",
+        "keys": "repeated"
+      },
+      "backends": {
+        "native": {
+          "samples": 150,
+          "medianWallMs": 3.032654047012329,
+          "p95WallMs": 3.6558470726013184,
+          "medianJsMs": 0.4575769901275635,
+          "p95JsMs": 0.6202688217163086,
+          "p95TimerDelayMs": 17.489923000335693
+        },
+        "current-noble": {
+          "samples": 150,
+          "medianWallMs": 40.17792320251465,
+          "p95WallMs": 40.48357701301575,
+          "medianJsMs": 40.16353893280029,
+          "p95JsMs": 40.46369218826294,
+          "p95TimerDelayMs": 40.51146221160889
+        },
+        "strict-noble": {
+          "samples": 150,
+          "medianWallMs": 99.60980796813965,
+          "p95WallMs": 100.00926899909973,
+          "medianJsMs": 99.59130692481995,
+          "p95JsMs": 99.98872995376587,
+          "p95TimerDelayMs": 100.03219199180603
+        }
+      },
+      "nativeSpeedupVsStrict": 32.84575372725813
+    },
+    {
+      "key": "verify-ed25519:batch:8",
+      "cell": {
+        "operation": "verify-ed25519",
+        "mode": "batch",
+        "batchSize": 8,
+        "messageSize": 32,
+        "outputLength": 0,
+        "workload": "valid",
+        "keys": "repeated"
+      },
+      "backends": {
+        "current-noble": {
+          "samples": 150,
+          "medianWallMs": 320.48092317581177,
+          "p95WallMs": 321.5778069496155,
+          "medianJsMs": 320.4630000591278,
+          "p95JsMs": 321.5607690811157,
+          "p95TimerDelayMs": 321.59769201278687
+        },
+        "strict-noble": {
+          "samples": 150,
+          "medianWallMs": 794.9938068389893,
+          "p95WallMs": 796.0755758285522,
+          "medianJsMs": 794.9764988422394,
+          "p95JsMs": 796.0533068180084,
+          "p95TimerDelayMs": 796.0982298851013
+        },
+        "native": {
+          "samples": 150,
+          "medianWallMs": 9.09242296218872,
+          "p95WallMs": 10.378038883209229,
+          "medianJsMs": 0.6844229698181152,
+          "p95JsMs": 0.8494608402252197,
+          "p95TimerDelayMs": 18.25042414665222
+        }
+      },
+      "nativeSpeedupVsStrict": 87.43475860560044
+    },
+    {
+      "key": "verify-es256:single:1",
+      "cell": {
+        "operation": "verify-es256",
+        "mode": "single",
+        "batchSize": 1,
+        "messageSize": 32,
+        "outputLength": 0,
+        "workload": "valid",
+        "keys": "repeated"
+      },
+      "backends": {
+        "strict-noble": {
+          "samples": 150,
+          "medianWallMs": 80.30207705497742,
+          "p95WallMs": 80.7664999961853,
+          "medianJsMs": 80.28780794143677,
+          "p95JsMs": 80.71742296218872,
+          "p95TimerDelayMs": 80.79684591293335
+        },
+        "native": {
+          "samples": 150,
+          "medianWallMs": 5.569231033325195,
+          "p95WallMs": 5.9411540031433105,
+          "medianJsMs": 0.4629998207092285,
+          "p95JsMs": 0.6042690277099609,
+          "p95TimerDelayMs": 17.662615060806274
+        },
+        "current-noble": {
+          "samples": 150,
+          "medianWallMs": 80.25865387916565,
+          "p95WallMs": 80.49430799484253,
+          "medianJsMs": 80.24157691001892,
+          "p95JsMs": 80.47907710075378,
+          "p95TimerDelayMs": 80.51726913452148
+        }
+      },
+      "nativeSpeedupVsStrict": 14.418880555406197
+    },
+    {
+      "key": "verify-es256:batch:8",
+      "cell": {
+        "operation": "verify-es256",
+        "mode": "batch",
+        "batchSize": 8,
+        "messageSize": 32,
+        "outputLength": 0,
+        "workload": "valid",
+        "keys": "repeated"
+      },
+      "backends": {
+        "native": {
+          "samples": 150,
+          "medianWallMs": 11.40734601020813,
+          "p95WallMs": 13.037576913833618,
+          "medianJsMs": 0.2896151542663574,
+          "p95JsMs": 0.39211511611938477,
+          "p95TimerDelayMs": 17.305537939071655
+        },
+        "current-noble": {
+          "samples": 150,
+          "medianWallMs": 642.0816531181335,
+          "p95WallMs": 643.5206909179688,
+          "medianJsMs": 642.0594990253448,
+          "p95JsMs": 643.504921913147,
+          "p95TimerDelayMs": 643.5400378704071
+        },
+        "strict-noble": {
+          "samples": 150,
+          "medianWallMs": 642.269152879715,
+          "p95WallMs": 644.6856918334961,
+          "medianJsMs": 642.2495379447937,
+          "p95JsMs": 644.668154001236,
+          "p95TimerDelayMs": 644.7043838500977
+        }
+      },
+      "nativeSpeedupVsStrict": 56.30311838572841
+    },
+    {
+      "key": "blake3:single:1",
+      "cell": {
+        "operation": "blake3",
+        "mode": "single",
+        "batchSize": 1,
+        "messageSize": 32,
+        "outputLength": 32,
+        "workload": "valid",
+        "keys": "repeated"
+      },
+      "backends": {
+        "current-noble": {
+          "samples": 150,
+          "medianWallMs": 0.4581148624420166,
+          "p95WallMs": 0.6477310657501221,
+          "medianJsMs": 0.42326903343200684,
+          "p95JsMs": 0.609576940536499,
+          "p95TimerDelayMs": 17.643423080444336
+        },
+        "strict-noble": {
+          "samples": 150,
+          "medianWallMs": 0.4688839912414551,
+          "p95WallMs": 0.6731541156768799,
+          "medianJsMs": 0.43457698822021484,
+          "p95JsMs": 0.6318459510803223,
+          "p95TimerDelayMs": 17.534807920455933
+        },
+        "native": {
+          "samples": 150,
+          "medianWallMs": 2.136000156402588,
+          "p95WallMs": 2.375230073928833,
+          "medianJsMs": 0.42461490631103516,
+          "p95JsMs": 0.5874619483947754,
+          "p95TimerDelayMs": 17.67899990081787
+        }
+      },
+      "nativeSpeedupVsStrict": 0.2195149610996007
+    },
+    {
+      "key": "blake3:batch:8",
+      "cell": {
+        "operation": "blake3",
+        "mode": "batch",
+        "batchSize": 8,
+        "messageSize": 32,
+        "outputLength": 32,
+        "workload": "valid",
+        "keys": "repeated"
+      },
+      "backends": {
+        "strict-noble": {
+          "samples": 150,
+          "medianWallMs": 1.4838850498199463,
+          "p95WallMs": 1.8375768661499023,
+          "medianJsMs": 1.457731008529663,
+          "p95JsMs": 1.7620768547058105,
+          "p95TimerDelayMs": 17.401806831359863
+        },
+        "native": {
+          "samples": 150,
+          "medianWallMs": 2.346653938293457,
+          "p95WallMs": 2.654539108276367,
+          "medianJsMs": 0.636422872543335,
+          "p95JsMs": 0.8449230194091797,
+          "p95TimerDelayMs": 17.362499952316284
+        },
+        "current-noble": {
+          "samples": 150,
+          "medianWallMs": 1.6038851737976074,
+          "p95WallMs": 1.8563082218170166,
+          "medianJsMs": 1.5609230995178223,
+          "p95JsMs": 1.8048081398010254,
+          "p95TimerDelayMs": 17.419229984283447
+        }
+      },
+      "nativeSpeedupVsStrict": 0.6323408090155224
+    }
+  ]
+}

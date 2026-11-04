@@ -1,22 +1,24 @@
 import { StatusBar } from 'expo-status-bar'
-import { StyleSheet, View } from 'react-native'
+import { ScrollView, StyleSheet } from 'react-native'
 
+import CryptoBenchmark from './components/CryptoBenchmark'
 import SignVerify from './components/SignVerify'
 import TwoIdentities from './components/TwoIdentities'
 
 export default function App() {
   return (
-    <View style={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <StatusBar style="auto" />
       <SignVerify />
       <TwoIdentities />
-    </View>
+      <CryptoBenchmark />
+    </ScrollView>
   )
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    flexGrow: 1,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',

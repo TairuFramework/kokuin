@@ -1,0 +1,46 @@
+import { nobleCrypto } from '@kokuin/crypto'
+import { cryptoConformance } from '@kokuin/crypto-conformance'
+import { createNativeCrypto } from '@kokuin/crypto-native'
+import { useEffect, useState } from 'react'
+import { Text, View } from 'react-native'
+import { runBenchmarkMatrix } from './crypto/benchmark'
+import { benchmarkCells, evaluateGate, type BenchmarkSample } from './crypto/gate'
+
+export default function App() {
+  const [result, setResult] = useState('Physical probe: starting')
+  useEffect(() => {
+    async function run() {
+      if (__DEV__ || !('HermesInternal' in globalThis)) throw new Error('Release Hermes required')
+      const native = createNativeCrypto()
+      for (const provider of [nobleCrypto, native]) {
+        for (const entry of cryptoConformance(provider)) await entry.run()
+      }
+      const cells = benchmarkCells().filter((cell) => cell.messageSize === 32 && cell.workload === 'valid' && cell.keys === 'repeated' && (cell.mode === 'single' || cell.batchSize === 8) && (cell.operation !== 'blake3' || cell.outputLength === 32))
+      const samples: Array<BenchmarkSample> = []
+      const started = new Date().toISOString()
+      await runBenchmarkMatrix({
+        native, cells, signal: new AbortController().signal,
+        metadata: { platform: 'android', device: 'Samsung Galaxy A35 SM-A356B Android 16 API 36', physical: true, release: !__DEV__, hermes: 'HermesInternal' in globalThis, revision: '06faecb3cbe7ba2b94886bda956131334cdd308a' },
+        async onSample(sample, completed, total) {
+          samples.push(sample)
+          setResult('Physical probe: ' + completed + '/' + total + ' ' + sample.cell.operation + ' ' + sample.cell.mode)
+          console.info('KOKUIN_PROBE_PROGRESS ' + completed + '/' + total)
+        },
+      })
+      const output = JSON.stringify({started,ended:new Date().toISOString(),profile:{kind:'exploratory',runs:3,warmups:20,samplesPerRun:50,messageSize:32,batchSize:8},samples,gate:evaluateGate(samples)})
+      const count = Math.ceil(output.length / 1800)
+      console.info('KOKUIN_PROBE_BEGIN ' + count)
+      for (let index=0;index<count;index++) {
+        console.info('KOKUIN_PROBE_CHUNK ' + index + ' ' + output.slice(index*1800,(index+1)*1800))
+        await new Promise((resolve)=>setTimeout(resolve,5))
+      }
+      console.info('KOKUIN_PROBE_END')
+      setResult('Physical probe: complete')
+    }
+    void run().catch((error: unknown)=>{
+      console.error('KOKUIN_PROBE_ERROR ' + String(error))
+      setResult('Physical probe: FAILED ' + String(error))
+    })
+  }, [])
+  return <View style={{padding:32,paddingTop:100}}><Text>{result}</Text></View>
+}
