@@ -3,7 +3,8 @@
 `@kokuin/crypto` exports the `CryptoProvider` contract and strict `nobleCrypto` implementation.
 `@kokuin/crypto-native` exports `createNativeCrypto()` for explicit Nitro construction.
 `@kokuin/crypto-node` exports `nodeCrypto`, which runs part of the contract on `node:crypto` (see [Node provider](#node-provider)).
-All three packages are prepared at version 0.1.0. Publishing is a separate step.
+`@kokuin/crypto-napi` exports `createNapiCrypto()`, the Rust core through Node-API (see [Node-API provider](#node-api-provider)).
+All four packages are prepared at version 0.1.0. Publishing is a separate step.
 
 Provider injection into existing token, controller and records APIs remains pending.
 Applications can use the standalone methods or accept the structural provider contract in their own code.
@@ -82,6 +83,23 @@ The provider passes the shared conformance suite. Its tests also compare it with
 including high-S, mutated-message and wrong-key cases, and show that OpenSSL alone accepts the high-S corpus vector.
 With key import on every call, Ed25519 signing measured about 8× and ES256 verification about 15× faster than noble
 on one x86_64 container with Node 22. It needs no native addon and runs synchronously on the calling thread.
+
+## Node-API provider
+
+`createNapiCrypto()` from `@kokuin/crypto-napi` loads `crates/kokuin-crypto-napi`, a napi-rs binding over the Rust core.
+Ed25519 signing and verification and blake3 single calls run natively on the calling thread.
+ES256 single calls use `nodeCrypto`, whose OpenSSL verifier measured faster than the Rust P-256 verifier.
+Batches copy their inputs on the calling thread, then compute on the libuv thread pool.
+
+The backend is chosen once, at construction. A missing binary, an ABI mismatch or a load error selects `nodeCrypto`,
+and the returned provider reports `backend: 'node'` with the failure. Unlike the mobile provider, Node falls back,
+because it has a conformant pure-JavaScript route and an unsupported platform must not fail installation.
+A native failure after construction rejects without falling back.
+
+Through the provider on one x86_64 container with Node 22: Ed25519 signing about 18× faster than strict noble,
+Ed25519 verification about 25×, blake3 on 64 KiB about 110×, and a batch of 32 Ed25519 verifications about 113 µs per item.
+The Rust crypto checks workflow builds the binding and runs both conformance suites through it.
+Prebuilt per-platform binaries and a CI benchmark gate on x86_64 and arm64 are follow-up work.
 
 ## Shared corpus and backend agreement
 
