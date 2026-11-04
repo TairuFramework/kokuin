@@ -46,10 +46,31 @@ function assertOutputLength(dkLen: number): void {
 }
 
 /**
- * Routes, measured on x86_64 (see docs/reference/crypto-provider.md):
+ * blake3 batches with at most this much input in total hash on the calling thread. Below it the
+ * thread-pool hop and input copies cost more than the hashing (1 MiB hashes in about 135 µs on
+ * x86_64); above it, the pool keeps a large hash off the event loop.
+ */
+export const BLAKE3_SYNC_BATCH_BYTES = 1024 * 1024
+
+/**
+ * Ed25519 signing batches of at most this many items sign on the calling thread: about 27 µs per
+ * signature at 256 B and 61 µs at 12 KiB on x86_64, against a thread-pool hop that measured
+ * slower for every batch the gate covers. Larger batches go to the pool.
+ */
+export const SIGN_SYNC_BATCH_ITEMS = 32
+
+/**
+ * Routes, set by the Node crypto benchmark gate (scripts/bench-crypto-node.mjs):
  * - Ed25519 sign, Ed25519 verify and blake3 single calls run natively on the calling thread.
- * - ES256 single calls use `nodeCrypto`, whose OpenSSL verifier is faster than the Rust one.
- * - Every batch copies its inputs on the calling thread, then runs natively on the libuv pool.
+ * - ES256 verification, single or batched, uses `nodeCrypto`: OpenSSL is about three times
+ *   faster than the Rust P-256 verifier.
+ * - Ed25519 verify batches of two or more copy their inputs on the calling thread, then run
+ *   natively on the libuv pool, keeping about 100 µs per item off the event loop. A one-item
+ *   batch runs on the calling thread, where it is faster than the pool hop.
+ * - Ed25519 sign batches run natively on the calling thread up to `SIGN_SYNC_BATCH_ITEMS` items
+ *   and on the pool above it.
+ * - blake3 batches run natively on the calling thread up to `BLAKE3_SYNC_BATCH_BYTES` of input
+ *   and on the pool above it.
  *
  * Arguments are validated in JavaScript exactly as `nobleCrypto` validates them, so every
  * backend raises the same error types. Every method consumes its inputs before its Promise
@@ -65,6 +86,11 @@ function napiProvider(binding: NapiBinding): CryptoProvider {
       if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
       for (const item of items) assertSigning(alg, item.privateKey, item.message)
       if (items.length === 0) return []
+      // Signing is cheap enough that the pool hop costs more than it saves for ordinary batches,
+      // and the calling-thread route still takes half nodeCrypto's main-thread time.
+      if (items.length <= SIGN_SYNC_BATCH_ITEMS) {
+        return items.map((item) => binding.sign(item.privateKey, item.message))
+      }
       return await binding.signBatch(
         items.map((item) => item.privateKey),
         items.map((item) => item.message),
@@ -79,12 +105,37 @@ function napiProvider(binding: NapiBinding): CryptoProvider {
       for (const item of items) {
         assertVerifying(item.alg, item.signature, item.message, item.publicKey)
       }
-      if (items.length === 0) return []
-      return await binding.verifyBatch(
-        items.map((item) => item.alg === 'ES256'),
-        items.map((item) => item.signature),
-        items.map((item) => item.message),
-        items.map((item) => item.publicKey),
+      // Capture membership before suspending: the caller may change the array afterwards.
+      const algs = items.map((item) => item.alg)
+      const ed25519 = items.filter((item) => item.alg === 'EdDSA')
+      // Start both halves before awaiting either: nodeCrypto consumes its inputs synchronously
+      // and the native batch copies them, so caller mutations afterwards change nothing.
+      const es256 = items
+        .filter((item) => item.alg === 'ES256')
+        .map((item) => nodeCrypto.verify('ES256', item.signature, item.message, item.publicKey))
+      const native =
+        ed25519.length === 0
+          ? Promise.resolve([])
+          : ed25519.length === 1
+            ? Promise.resolve([
+                binding.verify(
+                  false,
+                  (ed25519[0] as (typeof items)[0]).signature,
+                  (ed25519[0] as (typeof items)[0]).message,
+                  (ed25519[0] as (typeof items)[0]).publicKey,
+                ),
+              ])
+            : binding.verifyBatch(
+                ed25519.map(() => false),
+                ed25519.map((item) => item.signature),
+                ed25519.map((item) => item.message),
+                ed25519.map((item) => item.publicKey),
+              )
+      const [edResults, esResults] = await Promise.all([native, Promise.all(es256)])
+      let ed = 0
+      let es = 0
+      return algs.map((alg) =>
+        alg === 'EdDSA' ? (edResults[ed++] as boolean) : (esResults[es++] as boolean),
       )
     },
     async blake3(input, dkLen) {
@@ -96,6 +147,9 @@ function napiProvider(binding: NapiBinding): CryptoProvider {
       assertOutputLength(dkLen)
       for (const input of inputs) assertBytes(input)
       if (inputs.length === 0) return []
+      const total = inputs.reduce((sum, input) => sum + input.length, 0)
+      if (total <= BLAKE3_SYNC_BATCH_BYTES)
+        return inputs.map((input) => binding.blake3(input, dkLen))
       return await binding.blake3Batch(inputs, dkLen)
     },
   }

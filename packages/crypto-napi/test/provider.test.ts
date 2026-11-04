@@ -5,7 +5,14 @@ import { p256 } from '@noble/curves/nist.js'
 import { blake3 } from '@noble/hashes/blake3.js'
 import { expect, test } from 'vitest'
 
-import { createNapiCrypto, NAPI_ABI_VERSION, type NapiBinding, napiTarget } from '../src/index.js'
+import {
+  BLAKE3_SYNC_BATCH_BYTES,
+  createNapiCrypto,
+  NAPI_ABI_VERSION,
+  type NapiBinding,
+  napiTarget,
+  SIGN_SYNC_BATCH_ITEMS,
+} from '../src/index.js'
 
 // A stand-in binding that records calls and answers with strict noble, so routing and
 // validation can be checked without a compiled binary.
@@ -52,9 +59,18 @@ function recordingBinding() {
 const noble = {
   sign: (seed: Uint8Array, message: Uint8Array) => ed25519.sign(message, seed),
   verify(alg: 'EdDSA' | 'ES256', signature: Uint8Array, message: Uint8Array, key: Uint8Array) {
+    // The same strict checks as nobleCrypto: canonical, prime-order A and R, cofactorless.
+    const strictPoint = (bytes: Uint8Array) => {
+      const point = ed25519.Point.fromBytes(bytes, false)
+      return !point.isSmallOrder() && point.isTorsionFree()
+    }
     try {
       return alg === 'EdDSA'
-        ? ed25519.verify(signature, message, key, { zip215: false })
+        ? key.length === 32 &&
+            signature.length === 64 &&
+            strictPoint(key) &&
+            strictPoint(signature.subarray(0, 32)) &&
+            ed25519.verify(signature, message, key, { zip215: false })
         : p256.verify(signature, message, key, { lowS: true, prehash: true, format: 'compact' })
     } catch {
       return false
@@ -69,6 +85,13 @@ const message = new Uint8Array([1, 2, 3])
 test('without a binding the provider is nodeCrypto and passes the contract', async () => {
   const provider = createNapiCrypto({ binding: null })
   expect(provider.backend).toBe('node')
+  for (const entry of cryptoConformance(provider)) await entry.run()
+})
+
+test('the native routes pass the contract, with a stand-in binding', async () => {
+  const { binding } = recordingBinding()
+  const provider = createNapiCrypto({ binding })
+  expect(provider.backend).toBe('napi')
   for (const entry of cryptoConformance(provider)) await entry.run()
 })
 
@@ -105,7 +128,7 @@ test('single ES256 verification stays on nodeCrypto', async () => {
   expect(calls).toEqual([])
 })
 
-test('batches go to the native batch methods, and empty batches never reach them', async () => {
+test('verify batches of two or more and large sign batches use the pool; smaller ones stay on the calling thread', async () => {
   const { binding, calls } = recordingBinding()
   const provider = createNapiCrypto({ binding })
   const [signature] = await provider.signBatch('EdDSA', [{ privateKey: seed, message }])
@@ -115,11 +138,67 @@ test('batches go to the native batch methods, and empty batches never reach them
       { alg: 'EdDSA', signature: signature as Uint8Array, message, publicKey },
     ]),
   ).toEqual([true])
-  await provider.blake3Batch([message, message], 16)
   expect(await provider.signBatch('EdDSA', [])).toEqual([])
   expect(await provider.verifyBatch([])).toEqual([])
   expect(await provider.blake3Batch([], 16)).toEqual([])
-  expect(calls).toEqual(['signBatch:1', 'verifyBatch:1', 'blake3Batch:2'])
+  expect(calls).toEqual(['sign', 'verify:EdDSA'])
+  calls.length = 0
+  const pair = [
+    { privateKey: seed, message },
+    { privateKey: seed, message },
+  ]
+  const [first, second] = await provider.signBatch('EdDSA', pair)
+  expect(first).toEqual(signature)
+  await provider.verifyBatch([
+    { alg: 'EdDSA', signature: first as Uint8Array, message, publicKey },
+    { alg: 'EdDSA', signature: second as Uint8Array, message, publicKey },
+  ])
+  expect(calls).toEqual(['sign', 'sign', 'verifyBatch:2'])
+  calls.length = 0
+  const many = Array.from({ length: SIGN_SYNC_BATCH_ITEMS + 1 }, () => ({
+    privateKey: seed,
+    message,
+  }))
+  await provider.signBatch('EdDSA', many)
+  expect(calls).toEqual([`signBatch:${SIGN_SYNC_BATCH_ITEMS + 1}`])
+})
+
+test('mixed verification batches send only Ed25519 items to native and keep their order', async () => {
+  const { binding, calls } = recordingBinding()
+  const provider = createNapiCrypto({ binding })
+  const edKey = ed25519.getPublicKey(seed)
+  const edSignature = ed25519.sign(message, seed)
+  const secret = p256.utils.randomSecretKey()
+  const esKey = p256.getPublicKey(secret, true)
+  const esSignature = p256.sign(message, secret, { lowS: true, prehash: true, format: 'compact' })
+  const wrong = Uint8Array.of(9)
+  const results = await provider.verifyBatch([
+    { alg: 'ES256', signature: esSignature, message, publicKey: esKey },
+    { alg: 'EdDSA', signature: edSignature, message: wrong, publicKey: edKey },
+    { alg: 'ES256', signature: esSignature, message: wrong, publicKey: esKey },
+    { alg: 'EdDSA', signature: edSignature, message, publicKey: edKey },
+  ])
+  expect(results).toEqual([true, false, false, true])
+  expect(calls).toEqual(['verifyBatch:2'])
+  calls.length = 0
+  expect(
+    await provider.verifyBatch([
+      { alg: 'ES256', signature: esSignature, message, publicKey: esKey },
+    ]),
+  ).toEqual([true])
+  expect(calls).toEqual([])
+})
+
+test('blake3 batches hash on the calling thread up to the threshold, then on the pool', async () => {
+  const { binding, calls } = recordingBinding()
+  const provider = createNapiCrypto({ binding })
+  const half = new Uint8Array(BLAKE3_SYNC_BATCH_BYTES / 2)
+  const small = provider.blake3Batch([half, half], 16)
+  expect(calls).toEqual(['blake3', 'blake3'])
+  expect((await small).map((hash) => hash.length)).toEqual([16, 16])
+  calls.length = 0
+  await provider.blake3Batch([half, half, Uint8Array.of(1)], 16)
+  expect(calls).toEqual(['blake3Batch:3'])
 })
 
 test('invalid arguments reject like noble without reaching the binding', async () => {
