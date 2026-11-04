@@ -590,6 +590,55 @@ export function storeVaultCases(harness: StoreHarness): void {
       expect([stamp(2), stamp(3)]).toContain(winner?.hlc)
     })
 
+    test('key owner lookup returns exact distinct owners in order for only the requested key', async () => {
+      const other = { ...address, ownerDID: 'did:peer:4short:long' }
+      await store.putKey({ ...other, suite: 1, version: 1, state: 'retired' })
+      await store.putKey({
+        ...other,
+        keyID: 'unrelated-key',
+        suite: 1,
+        version: 1,
+        state: 'active',
+      })
+      await store.putKey({ ...other, suite: 1, version: 2, state: 'retired' })
+      const start = queries.length
+      expect(await store.listKeyOwners(address.keyID)).toEqual([
+        'did:key:owner',
+        'did:peer:4short:long',
+      ])
+      expect(
+        queries.slice(start).every((query) => /^\s*(select|begin|commit)/i.test(query.sql)),
+      ).toBe(true)
+      expect(await store.listKeyOwners('absent-key')).toEqual([])
+    })
+
+    test('key owner lookup excludes deleted local rows without hiding other owners', async () => {
+      const other = { ...address, ownerDID: 'did:key:other' }
+      await store.putKey({ ...other, suite: 1, version: 1, state: 'active' })
+      await store.deleteKey(address)
+      expect(await store.listKeyOwners(address.keyID)).toEqual(['did:key:other'])
+      await store.deleteKey(other)
+      expect(await store.listKeyOwners(address.keyID)).toEqual([])
+    })
+
+    test('key owner lookup sees uncommitted rows in the enclosing host transaction', async () => {
+      await expect(
+        db.withTransaction(async (host) => {
+          const vault = await getVaultStore(host)
+          await vault.putKey({
+            ownerDID: 'did:key:uncommitted',
+            keyID: 'uncommitted-key',
+            suite: 1,
+            version: 1,
+            state: 'active',
+          })
+          expect(await vault.listKeyOwners('uncommitted-key')).toEqual(['did:key:uncommitted'])
+          throw new Error('roll back key')
+        }),
+      ).rejects.toThrow('roll back key')
+      expect(await store.listKeyOwners('uncommitted-key')).toEqual([])
+    })
+
     test('keys are owner-qualified, setters never insert and versions cannot regress', async () => {
       const other = { ...address, ownerDID: 'did:key:other' }
       await store.putKey({ ...other, suite: 1, version: 8, state: 'active' })

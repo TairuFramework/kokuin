@@ -40,6 +40,8 @@ export type VaultStoreAPI = {
   putKey(row: KeyRow): Promise<void>
   getKey(address: KeyAddress): Promise<KeyRow | undefined>
   listKeys(ownerDID: string): Promise<Array<KeyRow>>
+  /** Candidate owners only. Verify owner/key binding and authority before use. */
+  listKeyOwners(keyID: string): Promise<Array<string>>
   setKeyState(row: KeyAddress & Pick<KeyRow, 'state'>): Promise<void>
   setKeyVersion(row: KeyAddress & Pick<KeyRow, 'version'>): Promise<void>
   deleteKey(address: KeyAddress): Promise<void>

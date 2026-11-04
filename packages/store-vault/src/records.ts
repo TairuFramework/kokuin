@@ -20,6 +20,8 @@ import { KEY_BRANCH_COLUMNS, statementChunks, upsertKeyBranches } from './batch.
 import { VaultWriteConflict, vaultDatabases } from './record-context.js'
 import type { VaultKeyBranchTable } from './record-tables.js'
 import { makeAdapter } from './records-adapter.js'
+import type { VaultMethodsFor } from './records-methods.js'
+import { storeMethods } from './records-methods.js'
 import { vaultRecordPortsFor } from './records-ports.js'
 import type { Bound } from './records-rows.js'
 import {
@@ -43,6 +45,8 @@ export type VaultWritePreconditions = {
 
 export type VaultRecordsParams = Omit<VaultRecordTypeParams, 'portsFor'> & {
   store: VaultStoreAPI
+  /** Overrides methods with a registry for the store's provider. */
+  methodsFor?: VaultMethodsFor
   nowMS: () => number
   maxDriftMS: number
   receiveClock?: ApplyRecordChunkParams['receiveClock']
@@ -96,23 +100,56 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
 
   acceptedKinds.set(params.store, params.opKind)
 
-  const bound: Bound = { ...storage, params, opKind: params.opKind, store: params.store }
+  const bound: Bound = {
+    ...storage,
+    params,
+    opKind: params.opKind,
+    store: params.store,
+    methods: storeMethods(params.store, params),
+  }
   const adapter = makeAdapter(bound)
-  const types = vaultRecordTypes({ ...params, portsFor: vaultRecordPortsFor })
   const apply = (
     records: ReadonlyArray<SignedRecord>,
     store: RecordStoreAdapter,
     transportContext?: unknown,
   ) => {
+    const binding = boundAdapters.get(store)
+    if (binding === undefined) throw new Error('Missing records adapter')
+    let current = binding
+    // Apply creates its own transaction after preflight. Keep its verifier and hooks in that scope.
+    const scopedStore: RecordStoreAdapter = {
+      ...store,
+      transaction: (fn) =>
+        store.transaction(async (tx) => {
+          const inner = boundAdapters.get(tx)
+          if (inner === undefined) throw new Error('Missing transaction adapter')
+          const previous = current
+          current = inner
+          try {
+            return await fn(tx)
+          } finally {
+            current = previous
+          }
+        }),
+    }
+    const types = vaultRecordTypes({
+      ...params,
+      get methods() {
+        return current.methods
+      },
+      portsFor: vaultRecordPortsFor,
+    })
     return applyRecordChunk({
       records,
-      store,
+      store: scopedStore,
       types,
       opKind: params.opKind,
       nowMS: params.nowMS(),
       maxDriftMS: params.maxDriftMS,
       receiveClock: params.receiveClock ?? (() => {}),
-      methods: params.methods,
+      get methods() {
+        return current.methods
+      },
       transportContext,
       resolveController: async () => null,
       verifyCapability: async () => false,
@@ -125,7 +162,7 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
   ): Promise<Array<SignedRecord>> => {
     await assertDomain(bound)
 
-    return withStoreTransaction(bound.db, async (tx) => {
+    const rows = await withStoreTransaction(bound.db, async (tx) => {
       let query = tx
         .selectFrom('vault_entry_candidates')
         .selectAll()
@@ -136,18 +173,19 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         ? query.where('key_version', '<', version).where('deleted', '=', 1)
         : query.where('key_version', '=', version)
 
-      const rows = await query.orderBy('id').orderBy('op_hash').execute()
-
-      return settleAll(
-        rows.map(async (row) => {
-          const value = await checked(row, bound)
-
-          if (value === null) throw new VaultRecordRowError(row)
-
-          return value.copy
-        }),
-      )
+      return query.orderBy('id').orderBy('op_hash').execute()
     })
+
+    // Root-bound resolvers need the connection released before verification.
+    return settleAll(
+      rows.map(async (row) => {
+        const value = await checked(row, bound)
+
+        if (value === null) throw new VaultRecordRowError(row)
+
+        return value.copy
+      }),
+    )
   }
   const api: VaultRecords = {
     adapter,
@@ -170,7 +208,7 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         // The address precondition reads nothing, so it runs before any store read, as it did.
         const ops = await settleAll(
           request.records.map(async (record) => {
-            const op = await verifySignedRecord(record, params.opKind, params.methods)
+            const op = await verifySignedRecord(record, params.opKind, inner.methods)
 
             if (
               op !== null &&
@@ -205,7 +243,7 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
 
             const copies = old.get(recordKeyText(record))?.copies ?? []
             const priors = await settleAll(
-              copies.map((copy) => verifySignedRecord(copy, params.opKind, params.methods)),
+              copies.map((copy) => verifySignedRecord(copy, params.opKind, inner.methods)),
             )
 
             for (const [index, prior] of priors.entries()) {
@@ -268,7 +306,7 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         const currentOps = await settleAll(
           request.records.flatMap((record) => {
             return (current.get(recordKeyText(record))?.copies ?? []).map((copy) => {
-              return verifySignedRecord(copy, params.opKind, params.methods)
+              return verifySignedRecord(copy, params.opKind, inner.methods)
             })
           }),
         )
@@ -304,8 +342,8 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
     async listKeyBranches(address) {
       await assertDomain(bound)
 
-      return withStoreTransaction(bound.db, async (tx) => {
-        const rows = await tx
+      const rows = await withStoreTransaction(bound.db, async (tx) => {
+        return tx
           .selectFrom('vault_key_branches')
           .selectAll()
           .where('owner_did', '=', address.ownerDID)
@@ -313,32 +351,33 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
           .where('key_version', '=', address.keyVersion)
           .orderBy('branch_id')
           .execute()
-        const ops = await settleAll(
-          rows.map((row) => verifyRecordOp(row.op_jwt, params.opKind, params.methods)),
-        )
-        const result: Array<VaultKeyBranch> = []
-
-        for (const [index, row] of rows.entries()) {
-          const op = ops[index] ?? null
-
-          if (
-            op === null ||
-            op.claim.owner !== address.ownerDID ||
-            op.claim.id !== address.keyID ||
-            op.claim.meta.version !== address.keyVersion ||
-            row.branch_id !== `${op.claim.hlc}:${op.opHash}`
-          )
-            throw new VaultRecordRowError({
-              type: 'vault.key-branch',
-              owner: row.owner_did,
-              id: row.record_id,
-            })
-
-          result.push({ branchID: row.branch_id, branchRecordID: row.record_id, introducingOp: op })
-        }
-
-        return result
       })
+      // Root-bound resolvers need the connection released before verification.
+      const ops = await settleAll(
+        rows.map((row) => verifyRecordOp(row.op_jwt, params.opKind, bound.methods)),
+      )
+      const result: Array<VaultKeyBranch> = []
+
+      for (const [index, row] of rows.entries()) {
+        const op = ops[index] ?? null
+
+        if (
+          op === null ||
+          op.claim.owner !== address.ownerDID ||
+          op.claim.id !== address.keyID ||
+          op.claim.meta.version !== address.keyVersion ||
+          row.branch_id !== `${op.claim.hlc}:${op.opHash}`
+        )
+          throw new VaultRecordRowError({
+            type: 'vault.key-branch',
+            owner: row.owner_did,
+            id: row.record_id,
+          })
+
+        result.push({ branchID: row.branch_id, branchRecordID: row.record_id, introducingOp: op })
+      }
+
+      return result
     },
     async listWrappingsWithBranch(address) {
       await assertDomain(bound)
@@ -355,7 +394,7 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         return record !== undefined && record.owner === address.ownerDID ? [record] : []
       })
       const ops = await settleAll(
-        candidates.map((record) => verifySignedRecord(record, params.opKind, params.methods)),
+        candidates.map((record) => verifySignedRecord(record, params.opKind, bound.methods)),
       )
       const rows: Array<VaultKeyBranchTable> = []
 

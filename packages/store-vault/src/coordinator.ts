@@ -86,7 +86,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
                 wrappingID,
                 keyID: key.keyID,
                 keyVersion: 1,
-                methods: params.methods,
+                methods: ctx.methodsFor(store),
               })
 
               return { factors, wrappingID, result }
@@ -171,7 +171,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
           wrappingID,
           keyID: key.keyID,
           keyVersion: key.version,
-          methods: params.methods,
+          methods: ctx.methodsFor(store),
         })
         const row = {
           ...existing,
@@ -402,7 +402,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
             wrappingID,
             keyID: key.keyID,
             keyVersion: key.version,
-            methods: params.methods,
+            methods: ctx.methodsFor(store),
           })
           const row = {
             ...key,

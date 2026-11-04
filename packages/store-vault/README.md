@@ -3,6 +3,13 @@
 Local vault persistence for hozon. Register `vaultStoreDefinition`, then call `getVaultStore(provider)`.
 All addresses require an explicit owner DID. Owners and recipients round-trip verbatim.
 
+`listKeyOwners(keyID)` returns distinct owner DIDs verbatim in database owner order, matching `listEntryOwners(entryID)`.
+It reads matching base rows in local and replicated mode. Deleted rows and signed tombstones are excluded.
+The lookup only reads and joins the caller's transaction, including uncommitted rows.
+Results identify candidates without granting authority.
+Callers must verify each candidate, for example `createVaultKeyID(owner, unique) === keyID`, and apply their own authority checks.
+
+
 Keys contain public suite, version and state metadata. Wrappings and entries contain opaque encrypted bytes.
 Entry `kind`, `label` and string attributes remain public. Filters combine exact kind/label equality with conjunctive attribute-subset matching.
 
@@ -137,6 +144,16 @@ The source must open successfully, and retained secret factors require supplied 
 Permanent revocations and explicit exclusions suppress historical recipients. Missing preservation material rolls back the operation.
 A concurrent current-version advance refuses the explicit-source rotation.
 The consumer selects its highest openable source, distinguishing unavailable material from rejected secrets and denied authority.
+
+Retained foreign DID wrappings with secret factors cannot authenticate those secrets without the recipient's private key.
+By default, `rotate` throws `VaultSecretUnverifiable` with `wrappingID`, `recipientDID` and `factorKinds`, without writes.
+For this refusal, `repairFork` returns `{ status: 'pending', reason: 'secret-unverifiable', wrapping: { wrappingID, recipientDID, factorKinds } }`.
+`trustUnverifiableSecrets: true` explicitly permits re-wrapping these foreign wrappings using supplied inputs without verification.
+Every required secret input must still be supplied. Missing foreign inputs refuse rotation or leave repair pending.
+Missing repair inputs can return the existing `{ status: 'pending' }` outcome before wrapping diagnostics are available.
+Own-DID and secret-only wrappings still verify their secrets. Wrong verifiable secrets still refuse the operation.
+The option also applies with `sourceVersion`. Excluded and permanently revoked recipients remain excluded.
+WARNING: a wrong trusted secret locks that recipient out of later versions until it recovers.
 
 `rotate` and `repairFork` require `excludedRecipients` and `reissue` arrays, including explicit empty arrays.
 Replicated rotation carries generic plaintext and public metadata forward, preserving content intent unless an instruction supplies another `contentHLC`.

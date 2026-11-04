@@ -19,6 +19,7 @@ import { PARAMETER_BUDGET } from './batch.js'
 import type { VaultDatabase } from './record-context.js'
 import type { VaultRecordsTables, VaultRecordTable } from './record-tables.js'
 import type { VaultRecordsParams } from './records.js'
+import type { VaultMethods } from './records-methods.js'
 import { settleAll } from './settle.js'
 import type { VaultStoreAPI } from './types.js'
 
@@ -48,6 +49,7 @@ export type HeldLock = { release: () => void; task: Promise<void> }
 
 export type Bound = VaultDatabase & {
   opKind: string
+  methods: VaultMethods | undefined
   params: VaultRecordsParams
   store: VaultStoreAPI
   locks?: Array<HeldLock>
@@ -146,7 +148,7 @@ export async function checked(row: VaultRecordTable, bound: Bound): Promise<Chec
       throw new Error('invalid metadata')
 
     const copy = { ...key, hlc: row.hlc, opJWT: row.op_jwt, opHash: row.op_hash, payload }
-    const op = await verifySignedRecord(copy, bound.opKind, bound.params.methods)
+    const op = await verifySignedRecord(copy, bound.opKind, bound.methods)
 
     if (op === null) return null
 

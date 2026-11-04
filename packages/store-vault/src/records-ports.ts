@@ -23,7 +23,7 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
     async retainEntryCandidate(record) {
       if (!db.isTransaction) throw new Error('Candidate retention requires the apply transaction')
 
-      const op = await verifySignedRecord(record, bound.opKind, bound.params.methods)
+      const op = await verifySignedRecord(record, bound.opKind, bound.methods)
 
       if (
         op === null ||
