@@ -11,6 +11,15 @@ export type {
   CryptoCorpus,
 } from './corpus.js'
 export { corpus } from './corpus.js'
+export type {
+  ExternalConformanceCase,
+  ExternalHashCase,
+  ExternalSignCase,
+  ExternalSource,
+  ExternalVectors,
+  ExternalVerifyCase,
+} from './external.js'
+export { externalConformance, externalVectors } from './external.js'
 
 export type CryptoConformanceCase = { name: string; run(): Promise<void> }
 

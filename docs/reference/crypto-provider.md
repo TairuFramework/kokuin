@@ -2,7 +2,9 @@
 
 `@kokuin/crypto` exports the `CryptoProvider` contract and strict `nobleCrypto` implementation.
 `@kokuin/crypto-native` exports `createNativeCrypto()` for explicit Nitro construction.
-Both packages are prepared at version 0.1.0. Publishing is a separate step.
+`@kokuin/crypto-node` exports `nodeCrypto`, which runs part of the contract on `node:crypto` (see [Node provider](#node-provider)).
+`@kokuin/crypto-napi` exports `createNapiCrypto()`, the Rust core through Node-API (see [Node-API provider](#node-api-provider)).
+All four packages are prepared at version 0.1.0. Publishing is a separate step.
 
 Token identities, token verification, capabilities, revocations and JWE envelope verification accept provider injection.
 Controller, records, vault and software identity stores also accept provider injection.
@@ -69,10 +71,45 @@ It hashes raw messages once with SHA-256 and rejects high-S signatures without n
 Malformed signatures and keys resolve `false`. Unsupported algorithms and invalid signing seeds reject with `TypeError`.
 blake3 output lengths must be integers from 1 through 65536. Invalid lengths reject with `RangeError`.
 
+## Node provider
+
+`nodeCrypto` from `@kokuin/crypto-node` runs Ed25519 signing and ES256 verification through `node:crypto`.
+Ed25519 verification and blake3 delegate to strict noble.
+OpenSSL accepts small-order and mixed-order Ed25519 points that the contract rejects, and `node:crypto` has no blake3.
+Ed25519 signing is deterministic, so OpenSSL and noble produce identical signatures.
+OpenSSL accepts high-S ES256 signatures, so the provider rejects the high half before calling it.
+OpenSSL itself enforces non-zero in-range scalars, curve membership and the ECDSA equation.
+
+The provider passes the shared conformance suite. Its tests also compare it with strict noble on random inputs,
+including high-S, mutated-message and wrong-key cases, and show that OpenSSL alone accepts the high-S corpus vector.
+With key import on every call, Ed25519 signing measured about 8× and ES256 verification about 15× faster than noble
+on one x86_64 container with Node 22. It needs no native addon and runs synchronously on the calling thread.
+
+## Node-API provider
+
+`createNapiCrypto()` from `@kokuin/crypto-napi` loads `crates/kokuin-crypto-napi`, a napi-rs binding over the Rust core.
+The [Node crypto benchmark gate](crypto-node-benchmark.md) set its routes:
+
+- Ed25519 sign and verify and blake3 single calls run natively on the calling thread.
+- ES256 verification, single or batched, uses `nodeCrypto`, whose OpenSSL verifier is about three times faster than the Rust one.
+- Ed25519 verify batches of two or more run natively on the libuv pool, after copying their inputs on the calling thread.
+- One-item verify batches, sign batches of up to 32 items, and blake3 batches of up to 1 MiB run natively on the calling thread.
+  There, the pool hop costs more than it saves.
+
+The backend is chosen once, at construction. A missing binary, an ABI mismatch or a load error selects `nodeCrypto`,
+and the returned provider reports `backend: 'node'` with the failure. Unlike the mobile provider, Node falls back,
+because it has a conformant pure-JavaScript route and an unsupported platform must not fail installation.
+A native failure after construction rejects without falling back.
+
+Through the provider on one x86_64 container with Node 22: Ed25519 signing about 18× faster than strict noble,
+Ed25519 verification about 25×, blake3 on 64 KiB about 110×, and a batch of 32 Ed25519 verifications about 113 µs per item.
+The Rust crypto checks workflow builds the binding and runs both conformance suites through it.
+The benchmark gate runs on x86_64 and arm64 CI runners. Prebuilt per-platform binaries are follow-up work.
+
 ## Identity and token provider selection
 
-All default routes use strict `nobleCrypto`. Native routing awaits a stored, measured route manifest.
-There is no mutable global provider selection or dynamic fallback.
+Omitting `crypto` selects strict `nobleCrypto`. Node and native providers are selected explicitly.
+There is no mutable global provider selection, and a provider never changes behaviour after construction.
 
 ```ts
 import { nobleCrypto } from '@kokuin/crypto'
@@ -150,6 +187,37 @@ Only the k ≡ 0 (mod 4) mixed-order key vector certifies the Rust subgroup guar
 Some guards have no single-guard vector.
 Every non-canonical Ed25519 encoding decodes to a small-order or torsioned point, so the canonical-encoding check is never the sole guard.
 ES256 r = 0 or s = 0 alone also fails the verification equation.
+
+## Pinned upstream vectors
+
+`packages/crypto-conformance/vectors/external.json` adds pinned upstream sets to the hand-written corpus:
+
+| Set | Cases | Expected outcome |
+| --- | --- | --- |
+| Wycheproof Ed25519 | 210 | `valid` accepts. `invalid` and `acceptable` reject, since `acceptable` means a small-order or mixed-order key. |
+| Wycheproof ECDSA P-256 (P1363) | 262, each with uncompressed and compressed keys | `valid` accepts unless s > n / 2. `invalid` rejects. 70 upstream-valid signatures are high-S. |
+| SUPERCOP Ed25519 `sign.input`, including RFC 8032 TEST 1–3 | 94 signatures, each also verified | Exact signature bytes, then acceptance. |
+| Official blake3 | 35 input lengths, 0 to 102,400 bytes | The first 32 and 131 output bytes. |
+
+Expected outcomes come from upstream verdicts and this policy, never from a provider.
+`scripts/import-crypto-vectors.mjs` regenerates the file and checks each upstream file's SHA-256.
+[`NOTICE.md`](../../packages/crypto-conformance/vectors/NOTICE.md) records revisions, licences and every deviation.
+
+`externalConformance(provider)` groups the sets into one case per source, checking single calls and one large batch.
+It is separate from `cryptoConformance` so the on-device checks stay fast.
+`@kokuin/crypto-conformance` runs it against strict noble, `@kokuin/crypto-node` against `nodeCrypto`,
+and `crates/kokuin-crypto/tests/external.rs` against the Rust core. Each of the three agrees on every case.
+
+The weakened noble verifiers show which upstream set catches each guard:
+
+| Guard | Caught by |
+| --- | --- |
+| `subgroup-a` | Wycheproof Ed25519 |
+| `s-range` | Wycheproof Ed25519 |
+| `low-s` | Wycheproof ECDSA P-256 |
+| `scalar-range` | Wycheproof ECDSA P-256 |
+| `zero-scalars` | Wycheproof ECDSA P-256 |
+| `subgroup-r` | None: Wycheproof has no torsioned R with a torsion-free A, so only the hand-written corpus covers it. |
 
 ## Native targets and failures
 

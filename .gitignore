@@ -10,3 +10,4 @@ packages/crypto-native/android/.cxx
 packages/crypto-native/android/build
 tests/e2e-expo/android
 lib
+packages/crypto-napi/native

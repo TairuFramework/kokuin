@@ -196,6 +196,15 @@
       "valid": false
     },
     {
+      "name": "ES256 off-curve compressed key",
+      "alg": "ES256",
+      "publicKey": "020000000000000000000000000000000000000000000000000000000000000001",
+      "message": "6b6f6b75696e2063727970746f207370696b65",
+      "signature": "d8993d42f5ff5aaf214a10145e5f9ad8bd572acd022d87bd4d8bf989319619e1205bca699914f7f3319fd760301ff494ef95a793ed79c534bab8fbdfcdbcbd58",
+      "valid": false,
+      "note": "x = 1 has no point on P-256 (x^3 - 3x + b is not a square), so decompression fails; it is the smallest such x. Paired with the valid compact low-S signature and message, so only the key is wrong. Rejected while decoding the key; no single-guard weakening applies."
+    },
+    {
       "name": "ES256 empty signature",
       "alg": "ES256",
       "publicKey": "036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",

@@ -1,0 +1,48 @@
+name: Node crypto benchmark gate
+# Times @kokuin/crypto-napi against @kokuin/crypto-node, its fallback, on x86_64 and arm64 and
+# decides whether each native route pays off. See scripts/bench-crypto-node.mjs for the rule.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "packages/crypto/**"
+      - "packages/crypto-node/**"
+      - "packages/crypto-napi/**"
+      - "scripts/bench-crypto-node.mjs"
+      - "scripts/build-crypto-napi.mjs"
+      - ".github/workflows/crypto-node-gate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install dependencies and pinned Rust toolchain
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build the providers and the Node-API binding
+        run: |
+          pnpm --filter @kokuin/crypto-napi... build
+          node scripts/build-crypto-napi.mjs
+      - name: Run the benchmark gate
+        run: node scripts/bench-crypto-node.mjs --runs 5 --out crypto-node-benchmark-${{ runner.arch }}.json
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: crypto-node-benchmark-${{ runner.arch }}
+          path: crypto-node-benchmark-*.json
+          if-no-files-found: warn
