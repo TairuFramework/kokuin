@@ -2,6 +2,10 @@ import { expect, test } from 'vitest'
 
 import { type BenchmarkSample, benchmarkCells, evaluateGate } from './gate.js'
 
+// Each evaluation walks 12,000 samples of 600 timings, so full-fixture tests outlast the
+// 5s default on loaded CI runners.
+const FULL_FIXTURE = { timeout: 30_000 }
+
 function completeSamples(nativeWall = 0.5): Array<BenchmarkSample> {
   const times = (value: number) => Array<number>(200).fill(value)
   const baseline = times(1)
@@ -41,23 +45,33 @@ test('requires every planned message size, batch mode and verification workload'
   expect(cells.some((cell) => cell.workload === 'mixed' && cell.keys === 'distinct')).toBe(true)
 })
 
-test('missing platforms, runs and insufficient samples leave the gate pending', () => {
-  expect(evaluateGate([]).status).toBe('pending')
-  const samples = completeSamples()
-  expect(evaluateGate(samples.filter((sample) => sample.platform === 'ios')).status).toBe('pending')
-  expect(evaluateGate(samples.filter((sample) => sample.run !== 4)).status).toBe('pending')
-  samples[0] = { ...(samples[0] as BenchmarkSample), wallMs: [1] }
-  expect(evaluateGate(samples).status).toBe('pending')
-})
+test(
+  'missing platforms, runs and insufficient samples leave the gate pending',
+  FULL_FIXTURE,
+  () => {
+    expect(evaluateGate([]).status).toBe('pending')
+    const samples = completeSamples()
+    expect(evaluateGate(samples.filter((sample) => sample.platform === 'ios')).status).toBe(
+      'pending',
+    )
+    expect(evaluateGate(samples.filter((sample) => sample.run !== 4)).status).toBe('pending')
+    samples[0] = { ...(samples[0] as BenchmarkSample), wallMs: [1] }
+    expect(evaluateGate(samples).status).toBe('pending')
+  },
+)
 
-test('complete measurements proceed only for consistent improvements on both devices', () => {
-  const report = evaluateGate(completeSamples())
-  expect(report.status).toBe('proceed')
-  expect(report.missing).toBe(0)
-  expect(report.routes.every((route) => route.backend === 'native')).toBe(true)
-})
+test(
+  'complete measurements proceed only for consistent improvements on both devices',
+  FULL_FIXTURE,
+  () => {
+    const report = evaluateGate(completeSamples())
+    expect(report.status).toBe('proceed')
+    expect(report.missing).toBe(0)
+    expect(report.routes.every((route) => route.backend === 'native')).toBe(true)
+  },
+)
 
-test('complete failure stops and a noisy final run cannot qualify a route', () => {
+test('complete failure stops and a noisy final run cannot qualify a route', FULL_FIXTURE, () => {
   expect(evaluateGate(completeSamples(1)).status).toBe('stop')
   const noisy = completeSamples().map((sample) =>
     sample.backend === 'native' && sample.run === 4
@@ -67,7 +81,7 @@ test('complete failure stops and a noisy final run cannot qualify a route', () =
   expect(evaluateGate(noisy).status).toBe('stop')
 })
 
-test('batch-only wins retain noble for single calls', () => {
+test('batch-only wins retain noble for single calls', FULL_FIXTURE, () => {
   const samples = completeSamples().map((sample) =>
     sample.backend === 'native' && sample.cell.mode === 'single'
       ? { ...sample, wallMs: Array<number>(200).fill(1) }
@@ -87,17 +101,22 @@ test('batch-only wins retain noble for single calls', () => {
   ).toBe(true)
 })
 
-test('simulators, debug builds, duplicates and invalid timings cannot provide gate evidence', () => {
-  const samples = completeSamples()
-  for (const patch of [
-    { physical: false },
-    { release: false },
-    { hermes: false },
-    { wallMs: Array<number>(200).fill(Number.NaN) },
-  ]) {
-    expect(
-      evaluateGate([{ ...(samples[0] as BenchmarkSample), ...patch }, ...samples.slice(1)]).status,
-    ).toBe('pending')
-  }
-  expect(evaluateGate([...samples, samples[0] as BenchmarkSample]).status).toBe('pending')
-})
+test(
+  'simulators, debug builds, duplicates and invalid timings cannot provide gate evidence',
+  FULL_FIXTURE,
+  () => {
+    const samples = completeSamples()
+    for (const patch of [
+      { physical: false },
+      { release: false },
+      { hermes: false },
+      { wallMs: Array<number>(200).fill(Number.NaN) },
+    ]) {
+      expect(
+        evaluateGate([{ ...(samples[0] as BenchmarkSample), ...patch }, ...samples.slice(1)])
+          .status,
+      ).toBe('pending')
+    }
+    expect(evaluateGate([...samples, samples[0] as BenchmarkSample]).status).toBe('pending')
+  },
+)

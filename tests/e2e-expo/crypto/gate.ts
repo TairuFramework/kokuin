@@ -73,8 +73,14 @@ function cellID(cell: BenchmarkCell): string {
   return `${variant(cell)}:${cell.messageSize}:${cell.workload}:${cell.keys}`
 }
 
+const sortedTimings = new WeakMap<Array<number>, Array<number>>()
+
 function percentile(values: Array<number>, fraction: number): number {
-  const sorted = [...values].sort((a, b) => a - b)
+  let sorted = sortedTimings.get(values)
+  if (sorted === undefined) {
+    sorted = [...values].sort((a, b) => a - b)
+    sortedTimings.set(values, sorted)
+  }
   return sorted[Math.ceil(sorted.length * fraction) - 1] as number
 }
 
@@ -90,11 +96,12 @@ export function evaluateGate(samples: Array<BenchmarkSample>): GateReport {
   const devices = new Map<string, string>()
   const revisions = new Set<string>()
   for (const sample of samples) {
-    const key = `${sample.platform}:${sample.backend}:${sample.run}:${cellID(sample.cell)}`
+    const id = cellID(sample.cell)
+    const key = `${sample.platform}:${sample.backend}:${sample.run}:${id}`
     if (
       !['ios', 'android'].includes(sample.platform) ||
       !['current-noble', 'strict-noble', 'native'].includes(sample.backend) ||
-      !knownCells.has(cellID(sample.cell)) ||
+      !knownCells.has(id) ||
       !Number.isInteger(sample.run) ||
       sample.run < 0 ||
       sample.run >= 5
@@ -132,11 +139,11 @@ export function evaluateGate(samples: Array<BenchmarkSample>): GateReport {
   let missing = 0
   for (const cell of cells) {
     const route = variant(cell)
+    const id = cellID(cell)
     if (!eligible.has(route)) eligible.set(route, true)
     for (const platform of ['ios', 'android']) {
       for (let run = 0; run < 5; run++) {
-        const get = (backend: string) =>
-          evidence.get(`${platform}:${backend}:${run}:${cellID(cell)}`)
+        const get = (backend: string) => evidence.get(`${platform}:${backend}:${run}:${id}`)
         const native = get('native')
         const noble = get('strict-noble')
         for (const backend of ['current-noble', 'strict-noble', 'native'])
