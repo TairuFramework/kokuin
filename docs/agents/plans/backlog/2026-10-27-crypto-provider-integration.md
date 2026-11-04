@@ -138,7 +138,9 @@ The Ed25519 subgroup checks need curve arithmetic per signature and would restor
 - `@kokuin/crypto-napi` exists, built from source for the CI host only: Ed25519 and blake3 single calls run natively on the calling thread,
   ES256 single calls use `nodeCrypto`, and batches run natively on the libuv pool. Measured through the provider:
   Ed25519 signing about 18× faster than strict noble, Ed25519 verification about 25×, blake3 on 64 KiB about 110×.
+- The [Node crypto benchmark gate](../../../reference/crypto-node-benchmark.md) runs on x86_64 and arm64 CI runners.
+  It moved ES256 batches to `nodeCrypto`, and moved one-item verify batches, sign batches up to 32 items and blake3 batches
+  up to 1 MiB onto the calling thread. Its matrix follows call shapes measured on the integration branch.
 - Still open: prebuilt per-platform binaries (linux x64/arm64 gnu and musl, macOS x64/arm64, Windows x64/arm64) published as
-  `optionalDependencies`, and the benchmark gate on CI hosts, including arm64, before committing to that build matrix.
-  The gate should also settle whether small batches, especially blake3 on short inputs, are cheaper on the calling thread
-  than after the thread-pool hop.
+  `optionalDependencies`, once the gate passes on both CI architectures. Record and vault blake3 shapes join the matrix
+  when those packages use the provider.

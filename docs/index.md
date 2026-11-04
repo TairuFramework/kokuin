@@ -10,6 +10,7 @@
 
 - [Authentication & keys](./reference/auth.md) -- identities, tokens, JWE, keystores.
 - [Standalone crypto providers](./reference/crypto-provider.md) -- portable noble, Node and explicit native providers.
+- [Node crypto benchmark gate](./reference/crypto-node-benchmark.md) -- how `@kokuin/crypto-napi` routes are measured and chosen.
 - [Capabilities & delegation](./reference/capability.md) -- scoped grants, chains, revocation.
 - [`did:kokuin:` controllers](./reference/controller.md) -- the profile DID method and its key event log.
 - [Vault](./reference/vault.md) -- content-key crypto, signed vault records, storage and coordinators.

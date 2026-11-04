@@ -14,8 +14,12 @@ const signature = await crypto.sign('EdDSA', seed, message)
 | Call | Route |
 | --- | --- |
 | Ed25519 `sign`, Ed25519 `verify`, `blake3` | Native, on the calling thread |
-| ES256 `verify` | `nodeCrypto` (OpenSSL), which is faster than the Rust P-256 verifier |
-| `signBatch`, `verifyBatch`, `blake3Batch` | Native on the libuv thread pool; inputs are copied before the Promise returns |
+| ES256 `verify` and ES256 items of `verifyBatch` | `nodeCrypto` (OpenSSL), about three times faster than the Rust P-256 verifier |
+| `verifyBatch` with two or more Ed25519 items | Native on the libuv thread pool; inputs are copied before the Promise returns |
+| One-item `verifyBatch`, `signBatch` up to 32 items, `blake3Batch` up to 1 MiB | Native, on the calling thread, where the pool hop costs more than it saves |
+| Larger `signBatch` and `blake3Batch` | Native on the libuv thread pool |
+
+The routes come from the [Node crypto benchmark gate](../../docs/reference/crypto-node-benchmark.md).
 
 Measured through the provider on one x86_64 container with Node 22, against strict noble:
 Ed25519 signing is about 18× faster, Ed25519 verification about 25×, and blake3 on 64 KiB about 110×.

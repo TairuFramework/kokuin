@@ -87,9 +87,13 @@ on one x86_64 container with Node 22. It needs no native addon and runs synchron
 ## Node-API provider
 
 `createNapiCrypto()` from `@kokuin/crypto-napi` loads `crates/kokuin-crypto-napi`, a napi-rs binding over the Rust core.
-Ed25519 signing and verification and blake3 single calls run natively on the calling thread.
-ES256 single calls use `nodeCrypto`, whose OpenSSL verifier measured faster than the Rust P-256 verifier.
-Batches copy their inputs on the calling thread, then compute on the libuv thread pool.
+The [Node crypto benchmark gate](crypto-node-benchmark.md) set its routes:
+
+- Ed25519 sign and verify and blake3 single calls run natively on the calling thread.
+- ES256 verification, single or batched, uses `nodeCrypto`, whose OpenSSL verifier is about three times faster than the Rust one.
+- Ed25519 verify batches of two or more run natively on the libuv pool, after copying their inputs on the calling thread.
+- One-item verify batches, sign batches of up to 32 items, and blake3 batches of up to 1 MiB run natively on the calling thread.
+  There, the pool hop costs more than it saves.
 
 The backend is chosen once, at construction. A missing binary, an ABI mismatch or a load error selects `nodeCrypto`,
 and the returned provider reports `backend: 'node'` with the failure. Unlike the mobile provider, Node falls back,
@@ -99,7 +103,7 @@ A native failure after construction rejects without falling back.
 Through the provider on one x86_64 container with Node 22: Ed25519 signing about 18× faster than strict noble,
 Ed25519 verification about 25×, blake3 on 64 KiB about 110×, and a batch of 32 Ed25519 verifications about 113 µs per item.
 The Rust crypto checks workflow builds the binding and runs both conformance suites through it.
-Prebuilt per-platform binaries and a CI benchmark gate on x86_64 and arm64 are follow-up work.
+The benchmark gate runs on x86_64 and arm64 CI runners. Prebuilt per-platform binaries are follow-up work.
 
 ## Shared corpus and backend agreement
 
