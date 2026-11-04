@@ -41,6 +41,12 @@ export const DEFAULT_MAX_DELEGATION_DEPTH = 4
  */
 const HISTORIC_ISSUANCE = true
 
+function captureOptions<Options extends CreateCapabilityOptions | DelegationChainOptions>(
+  options?: Options,
+): Options | undefined {
+  return options == null ? undefined : { ...options, verifiers: { ...options.verifiers } }
+}
+
 function assertExpiryWithinParent(parent: { exp?: number }, child: { exp?: number }): void {
   if (parent.exp != null && (child.exp == null || child.exp > parent.exp)) {
     throw new Error('Invalid capability: child expiry exceeds parent capability')
@@ -53,8 +59,9 @@ export async function createCapability<
   signer: SigningIdentity,
   payload: Payload,
   header?: Record<string, unknown>,
-  options?: CreateCapabilityOptions,
+  inputOptions?: CreateCapabilityOptions,
 ): Promise<CapabilityToken<Payload & { iss: string }, SignedHeader>> {
+  const options = captureOptions(inputOptions)
   const signerID = signer.id
 
   // Validate act/res patterns
@@ -95,6 +102,7 @@ export async function createCapability<
 
   // Verify and validate the parent capability
   const parent = await verifyToken<CapabilityPayload>(options.parentCapability, {
+    crypto: options.crypto,
     cache: options.cache,
     resolver: options.resolver,
     methods: options.methods,
@@ -172,8 +180,9 @@ function presentedGrant(payload: SignedPayload): Permission | undefined {
 export async function checkDelegationChain(
   payload: CapabilityPayload,
   capabilities: Array<string>,
-  options?: DelegationChainOptions,
+  inputOptions?: DelegationChainOptions,
 ): Promise<void> {
+  const options = captureOptions(inputOptions)
   const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH
   const atTime = options?.atTime ?? now()
 
@@ -216,6 +225,7 @@ export async function checkDelegationChain(
   // request was issued is not rejected by a later wall-clock during verification.
   const next = await verifyToken<CapabilityPayload>(head, {
     atTime,
+    crypto: options?.crypto,
     cache: options?.cache,
     resolver: options?.resolver,
     methods: options?.methods,
@@ -244,8 +254,9 @@ export async function checkDelegationChain(
 export async function checkCapability(
   permission: Permission,
   payload: SignedPayload,
-  options?: DelegationChainOptions,
+  inputOptions?: DelegationChainOptions,
 ): Promise<void> {
+  const options = captureOptions(inputOptions)
   if (payload.sub == null) {
     throw new Error('Invalid payload: no subject')
   }
@@ -328,6 +339,7 @@ export async function checkCapability(
   // (`atTime` when provided, else now()), matching the delegation checks below.
   const capability = await verifyToken<CapabilityPayload>(head, {
     atTime: time,
+    crypto: options?.crypto,
     cache: options?.cache,
     resolver: options?.resolver,
     methods: options?.methods,

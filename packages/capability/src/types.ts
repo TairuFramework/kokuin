@@ -1,3 +1,4 @@
+import type { CryptoProvider } from '@kokuin/crypto'
 import type { DIDCache, DIDResolver, MethodRegistry, SignedToken, Verifiers } from '@kokuin/token'
 
 /** Hook called for each token during verification. Throw to reject. */
@@ -5,6 +6,7 @@ export type VerifyTokenHook = (token: CapabilityToken, raw: string) => void | Pr
 
 /** Options for delegation chain validation */
 export type DelegationChainOptions = {
+  crypto?: CryptoProvider
   /** Time to use for expiration checks (seconds since epoch). Defaults to now(). */
   atTime?: number
   /** Maximum depth of delegation chain. Defaults to {@link DEFAULT_MAX_DELEGATION_DEPTH}. */
@@ -33,6 +35,7 @@ export type DelegationChainOptions = {
 
 /** Options for capability creation */
 export type CreateCapabilityOptions = {
+  crypto?: CryptoProvider
   /**
    * Parent capability token (stringified) that authorizes this delegation.
    * Required when creating a capability where signer is not the subject.

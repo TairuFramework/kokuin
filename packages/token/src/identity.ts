@@ -1,3 +1,4 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { maybeYield } from '@sozai/async'
@@ -12,6 +13,8 @@ import type { DIDString, SignedToken } from './types.js'
 import { concatBytes } from './utils.js'
 
 const tracer = createTracer('token')
+
+export type CryptoOptions = { crypto?: CryptoProvider }
 
 export type Identity = { readonly id: DIDString }
 
@@ -84,8 +87,14 @@ export function isOwnIdentity(identity: Identity): identity is OwnIdentity {
 export function createSigningIdentityForDID(
   id: DIDString,
   privateKey: Uint8Array,
+  options: CryptoOptions = {},
 ): SigningIdentity {
-  return buildSigningIdentity(id, privateKey, ed25519.getPublicKey(privateKey))
+  return buildSigningIdentity(
+    id,
+    privateKey,
+    ed25519.getPublicKey(privateKey),
+    options.crypto ?? nobleCrypto,
+  )
 }
 
 // Shared body. Takes `publicKey` rather than deriving it, so `createSigningIdentity` — which
@@ -94,6 +103,7 @@ function buildSigningIdentity(
   id: DIDString,
   privateKey: Uint8Array,
   publicKey: Uint8Array,
+  crypto: CryptoProvider,
 ): SigningIdentity {
   async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
     payload: Payload,
@@ -121,12 +131,12 @@ function buildSigningIdentity(
         const fullPayload = { ...payload, iss: id }
         const data = `${b64uFromJSON(fullHeader)}.${b64uFromJSON(fullPayload)}`
 
-        // Signing is ~30 ms of synchronous curve math on a phone: let the event loop run first.
+        const signingKey = new Uint8Array(privateKey)
         await maybeYield()
         return {
           header: fullHeader,
           payload: fullPayload,
-          signature: toB64U(ed25519.sign(fromUTF(data), privateKey)),
+          signature: toB64U(await crypto.sign('EdDSA', signingKey, fromUTF(data))),
           data,
         }
       },
@@ -139,9 +149,17 @@ function buildSigningIdentity(
 /**
  * Create a signing identity from an Ed25519 private key.
  */
-export function createSigningIdentity(privateKey: Uint8Array): SigningIdentity {
+export function createSigningIdentity(
+  privateKey: Uint8Array,
+  options: CryptoOptions = {},
+): SigningIdentity {
   const publicKey = ed25519.getPublicKey(privateKey)
-  return buildSigningIdentity(getDID(CODECS.EdDSA, publicKey), privateKey, publicKey)
+  return buildSigningIdentity(
+    getDID(CODECS.EdDSA, publicKey),
+    privateKey,
+    publicKey,
+    options.crypto ?? nobleCrypto,
+  )
 }
 
 /**
@@ -182,8 +200,11 @@ export function createKeyAgreementIdentityForDID(
 /**
  * Create a full identity (signing + key agreement) from an Ed25519 private key.
  */
-export function createFullIdentity(privateKey: Uint8Array): FullIdentity {
-  const signing = createSigningIdentity(privateKey)
+export function createFullIdentity(
+  privateKey: Uint8Array,
+  options: CryptoOptions = {},
+): FullIdentity {
+  const signing = createSigningIdentity(privateKey, options)
   const keyAgreement = createKeyAgreementIdentity(privateKey)
   return { ...signing, ...keyAgreement }
 }
@@ -191,9 +212,9 @@ export function createFullIdentity(privateKey: Uint8Array): FullIdentity {
 /**
  * Generate a random identity with a new Ed25519 private key.
  */
-export function randomIdentity(): OwnIdentity {
+export function randomIdentity(options: CryptoOptions = {}): OwnIdentity {
   const privateKey = ed25519.utils.randomSecretKey()
-  return { ...createFullIdentity(privateKey), privateKey }
+  return { ...createFullIdentity(privateKey, options), privateKey }
 }
 
 // ─── createIdentity builder ────────────────────────────────────────────────
@@ -352,15 +373,6 @@ function pickSigningKey(keys: Array<ResolvedKey>, kid?: string): ResolvedKey {
   return first
 }
 
-function signWith(key: ResolvedKey, data: Uint8Array): Uint8Array {
-  switch (key.alg) {
-    case 'EdDSA':
-      return ed25519.sign(data, key.privateKey)
-    case 'X25519':
-      throw new Error('X25519 cannot sign')
-  }
-}
-
 /**
  * The X25519 private scalar this identity agrees with, for `kid` or by default.
  *
@@ -401,6 +413,7 @@ function buildIdentity(
   longForm: DIDString,
   doc: DIDDoc,
   keys: Array<ResolvedKey>,
+  crypto: CryptoProvider,
 ): MultiKeyIdentity {
   const primarySig = keys.find((k) => k.purpose === 'sig')
   if (primarySig == null) {
@@ -441,12 +454,13 @@ function buildIdentity(
     } as SignedHeader
     const fullPayload = { ...payload, iss }
     const data = `${b64uFromJSON(header)}.${b64uFromJSON(fullPayload)}`
-    // Signing is ~30 ms of synchronous curve math on a phone: let the event loop run first.
+    if (key.alg !== 'EdDSA') throw new Error('X25519 cannot sign')
+    const signingKey = new Uint8Array(key.privateKey)
     await maybeYield()
     return {
       header: header as SignedHeader & Record<string, unknown>,
       payload: fullPayload as Payload & { iss: string },
-      signature: toB64U(signWith(key, fromUTF(data))),
+      signature: toB64U(await crypto.sign('EdDSA', signingKey, fromUTF(data))),
       data,
     } as SignedToken<Payload>
   }
@@ -490,7 +504,9 @@ function buildIdentity(
  * @throws `Error` when `input.keys` is empty or no `sig` key is provided.
  * @throws `IdentityError.InvalidMethod` when `didMethod` cannot satisfy the key set.
  */
-export async function createIdentity(input: CreateIdentityInput): Promise<MultiKeyIdentity> {
+export async function createIdentity(
+  input: CreateIdentityInput & CryptoOptions,
+): Promise<MultiKeyIdentity> {
   if (input.keys.length === 0) {
     throw new Error('createIdentity requires at least one key')
   }
@@ -514,10 +530,10 @@ export async function createIdentity(input: CreateIdentityInput): Promise<MultiK
       ],
       authentication: ['#key-0'],
     }
-    return buildIdentity(id, id, doc, keys)
+    return buildIdentity(id, id, doc, keys, input.crypto ?? nobleCrypto)
   }
 
   const doc = buildDoc(keys)
   const { longForm, shortForm } = encodePeer4(doc)
-  return buildIdentity(shortForm, longForm, doc, keys)
+  return buildIdentity(shortForm, longForm, doc, keys, input.crypto ?? nobleCrypto)
 }

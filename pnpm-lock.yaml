@@ -356,6 +356,9 @@ importers:
 
   packages/capability:
     dependencies:
+      '@kokuin/crypto':
+        specifier: workspace:^
+        version: link:../crypto
       '@kokuin/token':
         specifier: workspace:^
         version: link:../token
@@ -521,6 +524,9 @@ importers:
 
   packages/jwe:
     dependencies:
+      '@kokuin/crypto':
+        specifier: workspace:^
+        version: link:../crypto
       '@kokuin/token':
         specifier: workspace:^
         version: link:../token
@@ -716,6 +722,9 @@ importers:
 
   packages/token:
     dependencies:
+      '@kokuin/crypto':
+        specifier: workspace:^
+        version: link:../crypto
       '@kokuin/otel':
         specifier: workspace:^
         version: link:../otel

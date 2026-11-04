@@ -36,6 +36,7 @@ export {
 } from './did.js'
 export {
   type CreateIdentityInput,
+  type CryptoOptions,
   createFullIdentity,
   createIdentity,
   createKeyAgreementIdentity,
@@ -121,7 +122,9 @@ export {
   isUnsignedToken,
   isVerifiedToken,
   signToken,
+  type VerifySignedPayloadInput,
   type VerifyTokenOptions,
+  verifySignedPayload,
   verifyToken,
 } from './token.js'
 export type * from './types.js'

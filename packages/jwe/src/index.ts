@@ -1,3 +1,4 @@
+import type { CryptoProvider } from '@kokuin/crypto'
 /**
  * JWE encryption for kokuin tokens.
  *
@@ -455,6 +456,7 @@ export type WrapOptions = {
 }
 
 export type UnwrapOptions = {
+  crypto?: CryptoProvider
   decrypter?: KeyAgreementIdentity
   verifiers?: Verifiers
 }
@@ -503,19 +505,22 @@ export async function unwrapEnvelope(
   message: string,
   options: UnwrapOptions,
 ): Promise<UnwrappedEnvelope> {
+  const crypto = options.crypto
+  const verifiers = { ...options.verifiers }
   const parts = message.split('.')
   if (parts.length === 5) {
     // JWE outer → jws-in-jwe mode
     if (options.decrypter == null) throw new Error('Decrypter required for JWE message')
     const decrypted = await decryptToken(options.decrypter, message)
     const jwsString = new TextDecoder().decode(decrypted)
-    const token = await verifyToken(jwsString, { verifiers: options.verifiers })
+    const token = await verifyToken(jwsString, { crypto, verifiers })
     return { payload: token.payload as Record<string, unknown>, mode: 'jws-in-jwe' }
   }
   if (parts.length === 3) {
     // JWT: could be plain, jws, or jwe-in-jws
     const token = await verifyToken(message, {
-      verifiers: options.verifiers,
+      crypto,
+      verifiers,
       allowUnsigned: true,
     })
     if (isUnsignedToken(token)) {

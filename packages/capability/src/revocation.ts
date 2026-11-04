@@ -1,3 +1,4 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import type {
   DIDCache,
   DIDResolver,
@@ -89,6 +90,7 @@ export type RevocationBackend = {
  * independently.
  */
 export type RevocationOptions = {
+  crypto?: CryptoProvider
   /**
    * DID method registry. Required when a record is signed by a method that cannot be resolved
    * from the identifier alone, such as `did:kokuin:`.
@@ -107,8 +109,9 @@ export type RevocationOptions = {
 // generation). See `DIDMethodResolver.resolveHistoric`.
 function verifyOptions(
   options?: RevocationOptions,
-): Pick<VerifyTokenOptions, 'methods' | 'resolver' | 'cache' | 'historic'> {
+): Pick<VerifyTokenOptions, 'methods' | 'resolver' | 'cache' | 'historic' | 'crypto'> {
   return {
+    crypto: options?.crypto,
     methods: options?.methods,
     resolver: options?.resolver,
     cache: options?.cache,
@@ -116,7 +119,32 @@ function verifyOptions(
   }
 }
 
+// Keep operational failures distinct from invalid peer records until the refusal catch.
+class ProviderFailure extends Error {}
+
+const guardedProviders = new WeakMap<CryptoProvider, CryptoProvider>()
+
+function captureOptions(options?: RevocationOptions): RevocationOptions {
+  const crypto = options?.crypto ?? nobleCrypto
+  let guarded = guardedProviders.get(crypto)
+  if (guarded === undefined) {
+    guarded = {
+      ...crypto,
+      async verify(...args) {
+        try {
+          return await crypto.verify(...args)
+        } catch (cause) {
+          throw new ProviderFailure('Crypto provider failed', { cause })
+        }
+      },
+    }
+    guardedProviders.set(crypto, guarded)
+  }
+  return { ...options, methods: options?.methods?.slice(), crypto: guarded }
+}
+
 export function createMemoryRevocationBackend(options?: RevocationOptions): RevocationBackend {
+  const captured = captureOptions(options)
   // issuer (normalized) -> jti -> record. Scoped by issuer so one issuer's record can never
   // displace another's for the same `jti` — see `RevocationBackend.get`.
   const revoked = new Map<string, Map<string, RevocationRecord>>()
@@ -124,7 +152,11 @@ export function createMemoryRevocationBackend(options?: RevocationOptions): Revo
     async add(record: RevocationRecord): Promise<void> {
       // Verify the record's signature before trusting it. Without this, a forged record could
       // be stored and later used to revoke another issuer's token.
-      const verified = await verifyToken<RevocationClaims>(record, verifyOptions(options))
+      const verified = await verifyToken<RevocationClaims>(record, verifyOptions(captured)).catch(
+        (error: unknown) => {
+          throw error instanceof ProviderFailure ? error.cause : error
+        },
+      )
       if (verified.payload.rev !== true || typeof verified.payload.jti !== 'string') {
         throw new Error('Invalid revocation record')
       }
@@ -192,6 +224,7 @@ export function createRevocationChecker(
   backend: RevocationBackend,
   options?: RevocationOptions,
 ): VerifyTokenHook {
+  const captured = captureOptions(options)
   return async (token: CapabilityToken, _raw: string): Promise<void> => {
     const jti = token.payload.jti
     if (jti == null) {
@@ -207,8 +240,9 @@ export function createRevocationChecker(
     // unverified record. A record with an invalid signature does not revoke anything.
     let verified: RevocationRecord
     try {
-      verified = await verifyToken<RevocationClaims>(record, verifyOptions(options))
+      verified = await verifyToken<RevocationClaims>(record, verifyOptions(captured))
     } catch (error) {
+      if (error instanceof ProviderFailure) throw error.cause
       // The two failures are not symmetric; collapsing them fails open. An *invalidly signed* record
       // is evidence of nothing (anyone can mint one), so it is ignored — the `return` below. An
       // *unresolvable issuer* is different: the record may be genuine and we cannot tell, so "could
@@ -239,7 +273,7 @@ export function createRevocationChecker(
       if (
         isIssuerKeyNotFoundError(error) &&
         sameIssuer &&
-        (await namesADeniedKey(record, options))
+        (await namesADeniedKey(record, captured))
       ) {
         // Same error as the verified path below; the resolution failure rides along as `cause`.
         throw new TokenRevokedError(jti, { cause: error })

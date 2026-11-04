@@ -4,7 +4,8 @@
 `@kokuin/crypto-native` exports `createNativeCrypto()` for explicit Nitro construction.
 Both packages are prepared at version 0.1.0. Publishing is a separate step.
 
-Provider injection into existing token, controller and records APIs remains pending.
+Token identities, token verification, capabilities, revocations and JWE envelope verification accept provider injection.
+Controller and records provider migration remains pending.
 Applications can use the standalone methods or accept the structural provider contract in their own code.
 The complete physical-device benchmark gate remains pending.
 An [exploratory physical Android probe](crypto-benchmarks/2026-10-27-android-probe/README.md) records initial results.
@@ -67,6 +68,53 @@ ES256 accepts compact 64-byte signatures and compressed 33-byte or uncompressed 
 It hashes raw messages once with SHA-256 and rejects high-S signatures without normalising them.
 Malformed signatures and keys resolve `false`. Unsupported algorithms and invalid signing seeds reject with `TypeError`.
 blake3 output lengths must be integers from 1 through 65536. Invalid lengths reject with `RangeError`.
+
+## Identity and token provider selection
+
+All default routes use strict `nobleCrypto`. Native routing awaits a stored, measured route manifest.
+There is no mutable global provider selection or dynamic fallback.
+
+```ts
+import { nobleCrypto } from '@kokuin/crypto'
+import { createSigningIdentity, verifyToken } from '@kokuin/token'
+
+const identity = createSigningIdentity(seed, { crypto: nobleCrypto })
+const signed = await identity.signToken({ aud: serviceDID })
+const verified = await verifyToken(signed, { crypto: nobleCrypto, audience: serviceDID })
+```
+
+`CryptoOptions` is exported from token and contains `crypto?: CryptoProvider`.
+`createSigningIdentityForDID`, `createSigningIdentity`, `createFullIdentity` and `randomIdentity` accept appended options.
+`createIdentity` accepts `crypto` in its input object. Identity construction retains its existing return type.
+Each identity captures its provider. `signToken` always uses the supplied identity's signer.
+Public-key derivation, key agreement, randomness, browser WebCrypto signing and Ledger signing retain their existing paths.
+
+`VerifyTokenOptions` and `VerifySignedPayloadInput` accept `crypto`.
+`getVerifier(algorithm, verifiers?, options?)` uses an override first, then the selected provider for any missing algorithm.
+Custom overrides own their verification policy and bypass the signature memo.
+Mutating an override object during verification cannot change the captured policy.
+
+Signature memo entries share aggregate count and byte bounds across providers and algorithms.
+Only successful verification is cached. Provider failures propagate and remain retryable.
+Verified token objects retain provider, verifier and resolution provenance.
+Cross-policy use re-verifies them. Time, audience, historic-key and mutation checks still apply.
+`isVerifiedToken` indicates prior verification, without promising acceptance under another policy.
+
+## Capability and envelope options
+
+Pass `crypto` through `CreateCapabilityOptions` for parent verification and `DelegationChainOptions` for chain checks.
+Capability creation still signs through its supplied identity.
+`RevocationOptions` captures `crypto` in both memory-backend and checker construction.
+Revocation verification always retains `historic: true`. Operational provider errors propagate unchanged through invalid-record refusal paths.
+
+`UnwrapOptions` accepts `crypto` for JWS, JWS-in-JWE and JWE-in-JWS verification.
+`WrapOptions` remains signer-driven. Encryption and key agreement do not use this provider.
+
+This coordinated 0.x minor cutover rejects crafted signatures previously accepted only under ZIP-215 when reverified.
+No historical rescan, compatibility switch or version gate is introduced.
+Canonical signing bytes and ordinary deterministic signatures remain unchanged.
+Strict subgroup checks can increase pure-JavaScript verification cost.
+Expanded conformance and final physical workload retesting remain release qualifications.
 
 ## Shared corpus and backend agreement
 

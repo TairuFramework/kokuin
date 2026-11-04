@@ -57,7 +57,7 @@ export function getAlgorithmAndPublicKey(
 ): [SignatureAlgorithm, Uint8Array] | null {
   for (const [alg, codec] of Object.entries(CODECS)) {
     if (isCodecMatch(codec, bytes)) {
-      return [alg as SignatureAlgorithm, bytes.slice(codec.length)]
+      return [alg as SignatureAlgorithm, new Uint8Array(bytes.subarray(codec.length))]
     }
   }
   return null

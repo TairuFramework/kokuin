@@ -35,6 +35,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
+    "@kokuin/crypto": "workspace:^",
     "@kokuin/token": "workspace:^",
     "@noble/ciphers": "catalog:",
     "@noble/curves": "catalog:",

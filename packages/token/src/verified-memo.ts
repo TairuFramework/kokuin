@@ -22,6 +22,8 @@ export const VERIFIED_MEMO_MAX_TOTAL_BYTES = 8 * 1024 * 1024
 // byte-equal message check covers the whole input of a pure function — see `memoizeVerifier`.
 const verified = new Map<string, Uint8Array>()
 let totalBytes = 0
+let nextScope = 0
+const scopes = new WeakMap<Verifier, number>()
 
 function bytesKey(bytes: Uint8Array): string {
   let out = ''
@@ -80,9 +82,17 @@ function remember(key: string, message: Uint8Array): void {
  * `verifiers` option is called as given, every time.
  */
 export function memoizeVerifier(alg: SignatureAlgorithm, verify: Verifier): Verifier {
-  return (signature, message, publicKey) => {
+  let scope = scopes.get(verify)
+  if (scope === undefined) {
+    scope = nextScope++
+    scopes.set(verify, scope)
+  }
+  return (inputSignature, inputMessage, inputPublicKey) => {
+    const signature = new Uint8Array(inputSignature)
+    const message = new Uint8Array(inputMessage)
+    const publicKey = new Uint8Array(inputPublicKey)
     const cacheable = message.length <= VERIFIED_MEMO_MAX_MESSAGE_BYTES
-    const key = cacheable ? memoKey(alg, signature, publicKey) : undefined
+    const key = cacheable ? `${scope}:${memoKey(alg, signature, publicKey)}` : undefined
     if (key !== undefined) {
       const known = verified.get(key)
       if (known !== undefined && sameBytes(known, message)) {
@@ -96,13 +106,13 @@ export function memoizeVerifier(alg: SignatureAlgorithm, verify: Verifier): Veri
     if (key === undefined) return result
     // Copied now: the caller may mutate `message` before an async verifier settles.
     if (result instanceof Promise) {
-      const copy = message.slice()
+      const copy = new Uint8Array(message)
       return result.then((ok) => {
         if (ok === true) remember(key, copy)
         return ok
       })
     }
-    if (result === true) remember(key, message.slice())
+    if (result === true) remember(key, new Uint8Array(message))
     return result
   }
 }
