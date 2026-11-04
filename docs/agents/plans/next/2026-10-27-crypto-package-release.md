@@ -12,9 +12,14 @@ The expanded adversarial corpus and remaining runtime checks precede production-
 1. Run the new native cross-build/package workflow remotely and retain its artifacts.
 2. Exercise portable imports in a fresh browser runtime.
 3. Exercise supported x86_64 targets at runtime when suitable hosts are available.
-4. Expand the shared corpus with pinned RFC 8032, Wycheproof Ed25519/P-256 and official blake3 vectors.
-5. Record source revisions, licences and explicit outcomes under the stricter project verification policy.
-6. Extend `packages/crypto-conformance/vectors/corpus.json` with off-curve compressed ES256 keys and the item 4 sets.
+4. ~~Expand the shared corpus with pinned RFC 8032, Wycheproof Ed25519/P-256 and official blake3 vectors.~~
+   Done 2026-11-04 in `vectors/external.json`. RFC 8032 TEST 1–3 arrive as the first SUPERCOP `sign.input` entries;
+   rfc-editor.org is unreachable from the cloud sessions, so RFC 8032 TEST 1024 and TEST SHA(abc) remain absent.
+5. ~~Record source revisions, licences and explicit outcomes under the stricter project verification policy.~~
+   Done in `vectors/NOTICE.md` and `scripts/import-crypto-vectors.mjs`.
+6. ~~Extend `packages/crypto-conformance/vectors/corpus.json` with off-curve compressed ES256 keys and the item 4 sets.~~
+   The off-curve compressed key is in `corpus.json`. The item 4 sets live in `external.json` instead:
+   `corpus.json` rejections each name the single-guard weakenings that accept them, which upstream sets cannot record.
    The corpus itself, its Rust and noble CI runs, and per-guard weakened-verifier tests are done (see the crypto provider reference).
 7. Cover batch ordering, snapshots, detached/shared buffers, independent outputs and all hash-length bounds.
 8. Run the shared corpus through packed native consumers in CI; noble and the Rust core already run it on every pull request.

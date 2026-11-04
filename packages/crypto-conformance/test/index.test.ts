@@ -11,7 +11,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { concatBytes, hexToBytes } from '@noble/hashes/utils.js'
 import { describe, expect, test } from 'vitest'
 
-import { corpus, cryptoConformance } from '../src/index.js'
+import { corpus, cryptoConformance, externalConformance, externalVectors } from '../src/index.js'
 
 test('runs the complete provider contract against strict noble', async () => {
   for (const entry of cryptoConformance(nobleCrypto)) await entry.run()
@@ -205,6 +205,73 @@ describe('each guard is certified by its own corpus vectors', () => {
       expect(failures.map((failure) => failure.name).sort()).toEqual(expected.sort())
       // A forgery is accepted, rather than some unrelated assertion tripping.
       for (const failure of failures) expect(failure.message).toContain('verify returned true')
+    })
+  }
+})
+
+// Each test runs about a thousand strict-noble operations: about 2s locally, and CI runners under
+// load have been up to 20 times slower.
+describe('pinned upstream vectors', { timeout: 120_000 }, () => {
+  test('strict noble passes every external vector', async () => {
+    for (const entry of externalConformance(nobleCrypto)) await entry.run()
+  })
+
+  test('every expected outcome follows the upstream verdict and the documented policy', () => {
+    for (const entry of externalVectors.verify) {
+      const highS = entry.flags.includes('HighS')
+      // `acceptable` Wycheproof Ed25519 vectors use small-order or mixed-order keys; the
+      // contract rejects them. High-S ES256 signatures are rejected as malleable.
+      expect(entry.valid, `${entry.source}/${entry.id}`).toBe(entry.upstream === 'valid' && !highS)
+    }
+  })
+
+  test('a signer or hash with wrong output fails its external case', async () => {
+    const wrong = {
+      ...nobleCrypto,
+      sign: async () => new Uint8Array(64),
+      blake3: async (_input: Uint8Array, length: number) => new Uint8Array(length),
+    }
+    const cases = externalConformance(wrong)
+    const outcomes = await Promise.allSettled(cases.map((entry) => entry.run()))
+    const failed = cases.filter((_, index) => outcomes[index]?.status === 'rejected')
+    expect(failed.map((entry) => entry.name).sort()).toEqual([
+      'external blake3: blake3-official',
+      'external sign: supercop-ed25519 (includes RFC 8032 TEST 1-3)',
+    ])
+  })
+
+  // Which upstream set catches each single-guard weakening. Wycheproof has no Ed25519 vector with
+  // a torsioned R and a torsion-free A, so only the hand-written corpus certifies subgroup-r.
+  const caughtBy: Record<string, string | null> = {
+    'subgroup-a': 'wycheproof-ed25519',
+    'subgroup-r': null,
+    's-range': 'wycheproof-ed25519',
+    'low-s': 'wycheproof-ecdsa-p256',
+    'scalar-range': 'wycheproof-ecdsa-p256',
+    'zero-scalars': 'wycheproof-ecdsa-p256',
+  }
+
+  test('the table covers every weakening', () => {
+    expect(Object.keys(caughtBy).sort()).toEqual(Object.keys(weakenings).sort())
+  })
+
+  for (const [name, source] of Object.entries(caughtBy)) {
+    test(`removing ${name} is ${source == null ? 'not caught' : `caught by ${source}`}`, async () => {
+      const cases = externalConformance(weakened(name))
+      const outcomes = await Promise.allSettled(cases.map((entry) => entry.run()))
+      const failures = cases.flatMap((entry, index) => {
+        const outcome = outcomes[index]
+        return outcome?.status === 'rejected'
+          ? [{ name: entry.name, message: String(outcome.reason) }]
+          : []
+      })
+      expect(failures.map((failure) => failure.name)).toEqual(
+        source == null ? [] : [`external verify: ${source}`],
+      )
+      for (const failure of failures) {
+        expect(failure.message).toContain('returned true')
+        expect(failure.message).not.toContain('returned false')
+      }
     })
   }
 })

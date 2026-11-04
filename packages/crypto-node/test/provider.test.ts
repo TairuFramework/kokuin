@@ -1,6 +1,6 @@
 import { createPublicKey, ECDH, verify as opensslVerify, randomBytes } from 'node:crypto'
 import { nobleCrypto } from '@kokuin/crypto'
-import { corpus, cryptoConformance } from '@kokuin/crypto-conformance'
+import { corpus, cryptoConformance, externalConformance } from '@kokuin/crypto-conformance'
 import { p256 } from '@noble/curves/nist.js'
 import { bytesToNumberBE, numberToBytesBE } from '@noble/curves/utils.js'
 import { hexToBytes } from '@noble/hashes/utils.js'
@@ -25,6 +25,11 @@ function vector(name: string) {
 
 test('runs the complete provider contract', async () => {
   for (const entry of cryptoConformance(nodeCrypto)) await entry.run()
+})
+
+// About a thousand operations, half on strict noble: about 1s locally, far slower on a busy runner.
+test('passes every pinned upstream vector', { timeout: 120_000 }, async () => {
+  for (const entry of externalConformance(nodeCrypto)) await entry.run()
 })
 
 test('the low-S guard is load bearing: OpenSSL alone accepts the high-S vector', async () => {

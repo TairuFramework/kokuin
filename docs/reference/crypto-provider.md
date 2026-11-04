@@ -118,6 +118,37 @@ Some guards have no single-guard vector.
 Every non-canonical Ed25519 encoding decodes to a small-order or torsioned point, so the canonical-encoding check is never the sole guard.
 ES256 r = 0 or s = 0 alone also fails the verification equation.
 
+## Pinned upstream vectors
+
+`packages/crypto-conformance/vectors/external.json` adds pinned upstream sets to the hand-written corpus:
+
+| Set | Cases | Expected outcome |
+| --- | --- | --- |
+| Wycheproof Ed25519 | 210 | `valid` accepts. `invalid` and `acceptable` reject, since `acceptable` means a small-order or mixed-order key. |
+| Wycheproof ECDSA P-256 (P1363) | 262, each with uncompressed and compressed keys | `valid` accepts unless s > n / 2. `invalid` rejects. 70 upstream-valid signatures are high-S. |
+| SUPERCOP Ed25519 `sign.input`, including RFC 8032 TEST 1–3 | 94 signatures, each also verified | Exact signature bytes, then acceptance. |
+| Official blake3 | 35 input lengths, 0 to 102,400 bytes | The first 32 and 131 output bytes. |
+
+Expected outcomes come from upstream verdicts and this policy, never from a provider.
+`scripts/import-crypto-vectors.mjs` regenerates the file and checks each upstream file's SHA-256.
+[`NOTICE.md`](../../packages/crypto-conformance/vectors/NOTICE.md) records revisions, licences and every deviation.
+
+`externalConformance(provider)` groups the sets into one case per source, checking single calls and one large batch.
+It is separate from `cryptoConformance` so the on-device checks stay fast.
+`@kokuin/crypto-conformance` runs it against strict noble, `@kokuin/crypto-node` against `nodeCrypto`,
+and `crates/kokuin-crypto/tests/external.rs` against the Rust core. Each of the three agrees on every case.
+
+The weakened noble verifiers show which upstream set catches each guard:
+
+| Guard | Caught by |
+| --- | --- |
+| `subgroup-a` | Wycheproof Ed25519 |
+| `s-range` | Wycheproof Ed25519 |
+| `low-s` | Wycheproof ECDSA P-256 |
+| `scalar-range` | Wycheproof ECDSA P-256 |
+| `zero-scalars` | Wycheproof ECDSA P-256 |
+| `subgroup-r` | None: Wycheproof has no torsioned R with a torsion-free A, so only the hand-written corpus covers it. |
+
 ## Native targets and failures
 
 Supported libraries cover iOS 16.4+, arm64 devices, arm64/x86_64 simulators, and Android API 24+, arm64-v8a and x86_64.
