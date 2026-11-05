@@ -1740,6 +1740,8 @@ describe('checkCapability() - a capability presented directly rather than invoke
     const root = randomIdentity()
     const manager = randomIdentity()
     const device = randomIdentity()
+    // One stamp: reading the clock per token lets a second boundary push the child past its parent.
+    const exp = now() + 3600
     // root → manager: write anything. manager → device: write `doc/1` only.
     const parent = stringifyToken(
       await createCapability({
@@ -1749,7 +1751,7 @@ describe('checkCapability() - a capability presented directly rather than invoke
           aud: manager.id,
           act: 'write',
           res: '*',
-          exp: now() + 3600,
+          exp,
         },
       }),
     )
@@ -1760,7 +1762,7 @@ describe('checkCapability() - a capability presented directly rather than invoke
         aud: device.id,
         act: 'write',
         res: 'doc/1',
-        exp: now() + 3600,
+        exp,
         cap: [parent],
       },
       header: undefined,
