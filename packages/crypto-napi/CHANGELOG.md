@@ -1,5 +1,21 @@
 # @kokuin/crypto-napi
 
+## 0.7.2
+
+### Patch Changes
+
+- Install prebuilt binaries for linux x64 and arm64 (glibc and musl), macOS x64 and arm64, and Windows x64 and arm64 through `optionalDependencies`. `napiBindingPath()` now returns the installed package's binary when no local `native/` binary exists. Other platforms, and installs that omit optional dependencies, still use `nodeCrypto`.
+
+- Updated dependencies:
+  - @kokuin/crypto-napi-darwin-arm64@0.7.2
+  - @kokuin/crypto-napi-darwin-x64@0.7.2
+  - @kokuin/crypto-napi-linux-arm64-gnu@0.7.2
+  - @kokuin/crypto-napi-linux-arm64-musl@0.7.2
+  - @kokuin/crypto-napi-linux-x64-gnu@0.7.2
+  - @kokuin/crypto-napi-linux-x64-musl@0.7.2
+  - @kokuin/crypto-napi-win32-arm64-msvc@0.7.2
+  - @kokuin/crypto-napi-win32-x64-msvc@0.7.2
+
 ## 0.7.1
 
 ### Patch Changes

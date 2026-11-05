@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/crypto-napi",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Strict asynchronous crypto provider backed by the Rust core through Node-API, falling back to @kokuin/crypto-node",
   "repository": {
     "type": "git",
