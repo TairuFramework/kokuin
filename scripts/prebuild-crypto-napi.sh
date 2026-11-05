@@ -7,6 +7,8 @@ if [ -f /etc/alpine-release ]; then
   apk add --no-cache gcc musl-dev
   # musl targets link statically by default, which rules out a cdylib.
   export RUSTFLAGS="-C target-feature=-crt-static"
+  # napi defaults arm64 musl to a cross linker; Alpine builds natively.
+  export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=gcc
 fi
 command -v pnpm >/dev/null || corepack enable
 
