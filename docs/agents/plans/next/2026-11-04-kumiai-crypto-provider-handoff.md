@@ -409,11 +409,11 @@ Verification uses `verify({ alg, signature, message, publicKey })` across all pr
 | Export | Named params type | Fields |
 | --- | --- | --- |
 | `NapiBinding.sign` | `NapiBindingSignParams` | `seed, message` |
-| `NapiBinding.signBatch` | `NapiBindingSignBatchParams` | `seeds, messages` |
+| `NapiBinding.signBatch` | `Array<NapiBindingSignParams>` | `seeds, messages` |
 | `NapiBinding.blake3` | `NapiBindingBlake3Params` | `input, length` |
 | `NapiBinding.blake3Batch` | `NapiBindingBlake3BatchParams` | `inputs, length` |
 | `NapiBinding.verify` | `NapiVerifyParams` | `es256, signature, message, publicKey` |
-| `NapiBinding.verifyBatch` | `NapiVerifyBatchParams` | `es256, signatures, messages, publicKeys` |
+| `NapiBinding.verifyBatch` | `Array<NapiVerifyParams>` | `es256, signatures, messages, publicKeys` |
 
 ### @kokuin/ledger-device
 

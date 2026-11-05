@@ -2,10 +2,8 @@ export type {
   NapiBinding,
   NapiBindingBlake3BatchParams,
   NapiBindingBlake3Params,
-  NapiBindingSignBatchParams,
   NapiBindingSignParams,
   NapiLoadFailure,
-  NapiVerifyBatchParams,
   NapiVerifyParams,
 } from './binding.js'
 export { loadNapiBinding, NAPI_ABI_VERSION, napiBindingPath, napiTarget } from './binding.js'

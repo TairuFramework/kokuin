@@ -13,11 +13,16 @@ const DEFAULT_BASE_PATH = "44'/876'"
 const tracer = createTracer('keystore.hd')
 const logger = getLogger(['kokuin', 'deterministic'])
 
-export type HDKeyStoreParams = {
-  seed: Uint8Array
+export type HDKeyStoreOptions = {
   crypto?: CryptoProvider
   basePath?: string
 }
+
+export type HDKeyStoreParams = { seed: Uint8Array } & HDKeyStoreOptions
+
+export type HDKeyStoreFromMnemonicParams = { mnemonic: string } & HDKeyStoreOptions
+
+export type HDKeyStoreFromSeedParams = HDKeyStoreParams
 
 export class HDKeyStore
   implements KeyStore<Uint8Array, HDKeyEntry>, IdentityProvider<FullIdentity>
@@ -66,14 +71,4 @@ export class HDKeyStore
       },
     )
   }
-}
-
-export type HDKeyStoreFromMnemonicParams = { mnemonic: string } & {
-  basePath?: string
-  crypto?: CryptoProvider
-}
-
-export type HDKeyStoreFromSeedParams = { seed: Uint8Array } & {
-  basePath?: string
-  crypto?: CryptoProvider
 }

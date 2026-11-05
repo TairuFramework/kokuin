@@ -9,12 +9,6 @@ export type NapiVerifyParams = {
   message: Uint8Array
   publicKey: Uint8Array
 }
-export type NapiVerifyBatchParams = {
-  es256: Array<boolean>
-  signatures: Array<Uint8Array>
-  messages: Array<Uint8Array>
-  publicKeys: Array<Uint8Array>
-}
 
 /** The ABI the provider expects from `crates/kokuin-crypto-napi` (its `ABI_VERSION`). */
 export const NAPI_ABI_VERSION = 1
@@ -40,20 +34,30 @@ function adaptBinding(native: NativeNapiBinding): NapiBinding {
   return {
     ABI_VERSION: native.ABI_VERSION,
     sign: ({ seed, message }) => native.sign(seed, message),
-    signBatch: ({ seeds, messages }) => native.signBatch(seeds, messages),
+    // The native ABI takes parallel arrays. Split here so nothing above it can misalign entries.
+    signBatch: (items) => {
+      return native.signBatch(
+        items.map((item) => item.seed),
+        items.map((item) => item.message),
+      )
+    },
     blake3: ({ input, length }) => native.blake3(input, length),
     blake3Batch: ({ inputs, length }) => native.blake3Batch(inputs, length),
     verify: ({ es256, signature, message, publicKey }) => {
       return native.verify(es256, signature, message, publicKey)
     },
-    verifyBatch: ({ es256, signatures, messages, publicKeys }) => {
-      return native.verifyBatch(es256, signatures, messages, publicKeys)
+    verifyBatch: (items) => {
+      return native.verifyBatch(
+        items.map((item) => item.es256),
+        items.map((item) => item.signature),
+        items.map((item) => item.message),
+        items.map((item) => item.publicKey),
+      )
     },
   }
 }
 
 export type NapiBindingSignParams = { seed: Uint8Array; message: Uint8Array }
-export type NapiBindingSignBatchParams = { seeds: Array<Uint8Array>; messages: Array<Uint8Array> }
 export type NapiBindingBlake3Params = { input: Uint8Array; length: number }
 export type NapiBindingBlake3BatchParams = { inputs: Array<Uint8Array>; length: number }
 
@@ -62,8 +66,8 @@ export type NapiBinding = {
   sign(params: NapiBindingSignParams): Uint8Array
   verify(params: NapiVerifyParams): boolean
   blake3(params: NapiBindingBlake3Params): Uint8Array
-  signBatch(params: NapiBindingSignBatchParams): Promise<Array<Uint8Array>>
-  verifyBatch(params: NapiVerifyBatchParams): Promise<Array<boolean>>
+  signBatch(items: Array<NapiBindingSignParams>): Promise<Array<Uint8Array>>
+  verifyBatch(items: Array<NapiVerifyParams>): Promise<Array<boolean>>
   blake3Batch(params: NapiBindingBlake3BatchParams): Promise<Array<Uint8Array>>
 }
 

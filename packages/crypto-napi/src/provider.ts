@@ -61,6 +61,11 @@ export const BLAKE3_SYNC_BATCH_BYTES = 1024 * 1024
  */
 export const SIGN_SYNC_BATCH_ITEMS = 32
 
+function assertResultCount<TResult>(results: Array<TResult>, count: number): Array<TResult> {
+  if (results.length !== count) throw new Error('Invalid native crypto response count')
+  return results
+}
+
 /**
  * Routes, set by the Node crypto benchmark gate (scripts/bench-crypto-node.mjs):
  * - Ed25519 sign, Ed25519 verify and blake3 single calls run natively on the calling thread.
@@ -93,10 +98,12 @@ function napiProvider(binding: NapiBinding): CryptoProvider {
       if (items.length <= SIGN_SYNC_BATCH_ITEMS) {
         return items.map((item) => binding.sign({ seed: item.privateKey, message: item.message }))
       }
-      return await binding.signBatch({
-        seeds: items.map((item) => item.privateKey),
-        messages: items.map((item) => item.message),
-      })
+      // Capture the count before suspending: the caller may change the array afterwards.
+      const count = items.length
+      const results = await binding.signBatch(
+        items.map((item) => ({ seed: item.privateKey, message: item.message })),
+      )
+      return assertResultCount(results, count)
     },
     async verify({ alg, signature, message, publicKey }: VerifyItem) {
       assertVerifying({ alg, signature, message, publicKey })
@@ -150,12 +157,16 @@ function napiProvider(binding: NapiBinding): CryptoProvider {
                   publicKey: (ed25519[0] as VerifyItem).publicKey,
                 }),
               ])
-            : binding.verifyBatch({
-                es256: ed25519.map(() => false),
-                signatures: ed25519.map((item) => item.signature),
-                messages: ed25519.map((item) => item.message),
-                publicKeys: ed25519.map((item) => item.publicKey),
-              })
+            : binding
+                .verifyBatch(
+                  ed25519.map((item) => ({
+                    es256: false,
+                    signature: item.signature,
+                    message: item.message,
+                    publicKey: item.publicKey,
+                  })),
+                )
+                .then((results) => assertResultCount(results, ed25519.length))
       const [edResults, esResults] = await Promise.all([native, Promise.all(es256)])
       let ed = 0
       let es = 0
@@ -175,7 +186,8 @@ function napiProvider(binding: NapiBinding): CryptoProvider {
       const total = inputs.reduce((sum, input) => sum + input.length, 0)
       if (total <= BLAKE3_SYNC_BATCH_BYTES)
         return inputs.map((input) => binding.blake3({ input, length: dkLen }))
-      return await binding.blake3Batch({ inputs, length: dkLen })
+      const count = inputs.length
+      return assertResultCount(await binding.blake3Batch({ inputs, length: dkLen }), count)
     },
   }
 }

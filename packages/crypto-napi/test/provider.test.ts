@@ -20,12 +20,6 @@ type NapiVerifyParams = {
   message: Uint8Array<ArrayBufferLike>
   publicKey: Uint8Array<ArrayBufferLike>
 }
-type NapiVerifyBatchParams = {
-  es256: Array<boolean>
-  signatures: Array<Uint8Array<ArrayBufferLike>>
-  messages: Array<Uint8Array<ArrayBufferLike>>
-  publicKeys: Array<Uint8Array<ArrayBufferLike>>
-}
 type VerifyParams = {
   alg: 'EdDSA' | 'ES256'
   signature: Uint8Array
@@ -56,18 +50,18 @@ function recordingBinding() {
       calls.push('blake3')
       return noble.blake3(input, length)
     },
-    async signBatch({ seeds, messages }) {
-      calls.push(`signBatch:${seeds.length}`)
-      return seeds.map((seed, index) => noble.sign(seed, messages[index] as Uint8Array))
+    async signBatch(items) {
+      calls.push(`signBatch:${items.length}`)
+      return items.map((item) => noble.sign(item.seed, item.message))
     },
-    async verifyBatch({ es256, signatures, messages, publicKeys }: NapiVerifyBatchParams) {
-      calls.push(`verifyBatch:${es256.length}`)
-      return es256.map((flag, index) => {
+    async verifyBatch(items: Array<NapiVerifyParams>) {
+      calls.push(`verifyBatch:${items.length}`)
+      return items.map((item) => {
         return noble.verify({
-          alg: flag ? 'ES256' : 'EdDSA',
-          signature: signatures[index] as Uint8Array,
-          message: messages[index] as Uint8Array,
-          key: publicKeys[index] as Uint8Array,
+          alg: item.es256 ? 'ES256' : 'EdDSA',
+          signature: item.signature,
+          message: item.message,
+          key: item.publicKey,
         })
       })
     },
@@ -323,4 +317,36 @@ test('a native failure after construction rejects instead of falling back', asyn
   await expect(provider.sign({ alg: 'EdDSA', privateKey: seed, message })).rejects.toThrow(
     'native failure',
   )
+})
+
+test('a binding that answers a batch short rejects instead of leaving entries undefined', async () => {
+  const { binding } = recordingBinding()
+  const provider = createNapiCrypto({
+    binding: {
+      ...binding,
+      signBatch: async () => [],
+      verifyBatch: async () => [true],
+      blake3Batch: async () => [],
+    },
+  })
+  const seed = new Uint8Array(32).fill(1)
+  const message = new Uint8Array(1)
+  const publicKey = ed25519.getPublicKey(seed)
+  const signature = ed25519.sign(message, seed)
+  const item = { alg: 'EdDSA' as const, signature, message, publicKey }
+  const count = 'Invalid native crypto response count'
+
+  await expect(
+    provider.signBatch({
+      alg: 'EdDSA',
+      items: Array.from({ length: SIGN_SYNC_BATCH_ITEMS + 1 }, () => ({
+        privateKey: seed,
+        message,
+      })),
+    }),
+  ).rejects.toThrow(count)
+  await expect(provider.verifyBatch([item, item])).rejects.toThrow(count)
+  await expect(
+    provider.blake3Batch({ inputs: [new Uint8Array(BLAKE3_SYNC_BATCH_BYTES + 1)], dkLen: 32 }),
+  ).rejects.toThrow(count)
 })
