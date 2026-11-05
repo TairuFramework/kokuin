@@ -156,7 +156,6 @@ export {
   verifyToken,
 } from './token.js'
 export type * from './types.js'
-export type { ConcatBytesParams } from './utils.js'
 export { concatBytes, decodeSignedToken, stringifyToken } from './utils.js'
 export type { GetVerifierParams, VerifierParams } from './verifier.js'
 export {

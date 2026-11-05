@@ -584,7 +584,6 @@ Single-argument and zero-argument APIs retain their calling convention.
 | `token.createUnsignedToken` | `CreateUnsignedTokenParams` | `createUnsignedToken(payload: Payload, header?: Header)` |
 | `token.signToken` | `SignTokenParams` | `signToken(signer: SigningIdentity, token: Token<Payload, Header>)` |
 | `token.verifyToken` | `VerifyTokenParams` | `verifyToken(token: Token<Payload> \| string, options?: VerifyTokenOptions & { allowUnsigned?: false })` |
-| `token.concatBytes` | `ConcatBytesParams` | `concatBytes(a: Uint8Array, b: Uint8Array)` |
 | `token.getVerifier` | `GetVerifierParams` | `getVerifier(algorithm: SignatureAlgorithm, verifiers: Verifiers = {}, options: CryptoOptions = {})` |
 | `store-delegation.createDelegationStore` | `CreateDelegationStoreParams` | `createDelegationStore(db: Kysely<DelegationStoreTables>, adapter: Adapter, context: StoreContext)` |
 | `store-delegation.createDelegationRevocationChecker` | `CreateDelegationRevocationCheckerParams` | `createDelegationRevocationChecker(api: DelegationStoreAPI, options?: RevocationOptions)` |

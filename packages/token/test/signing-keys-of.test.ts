@@ -13,7 +13,7 @@ import {
 import { concatBytes } from '../src/utils.js'
 
 function multikey(codec: Uint8Array, publicKey: Uint8Array): string {
-  return encodeMultibase(concatBytes({ a: codec, b: publicKey }))
+  return encodeMultibase(concatBytes(codec, publicKey))
 }
 
 const X25519_CODEC = new Uint8Array([0xec, 0x01])

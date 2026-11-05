@@ -49,7 +49,6 @@ Additional APIs use the same flat params convention.
 | `createUnsignedToken` | `CreateUnsignedTokenParams` | `createUnsignedToken(payload: Payload, header?: Header)` |
 | `signToken` | `SignTokenParams` | `signToken(signer: SigningIdentity, token: Token<Payload, Header>)` |
 | `verifyToken` | `VerifyTokenParams` | `verifyToken(params: VerifyTokenParams)` |
-| `concatBytes` | `ConcatBytesParams` | `concatBytes(a: Uint8Array, b: Uint8Array)` |
 | `getVerifier` | `GetVerifierParams` | `getVerifier(algorithm: SignatureAlgorithm, verifiers: Verifiers = {}, options: CryptoOptions = {})` |
 
 | API | Named params type | Previous positional form |

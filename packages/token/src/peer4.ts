@@ -220,7 +220,7 @@ export function encodePeer4(doc: DIDDoc): {
     throw new Error('did:peer:4 doc failed schema validation')
   }
   const canonicalDocBytes = fromUTF(canonicalStringify(doc))
-  const taggedDoc = concatBytes({ a: JSON_MULTICODEC, b: canonicalDocBytes })
+  const taggedDoc = concatBytes(JSON_MULTICODEC, canonicalDocBytes)
   const encodedDoc = encodeMultibase(taggedDoc)
   const hashBytes = multihashSHA256(fromUTF(encodedDoc))
   const hash = encodeMultibase(hashBytes)

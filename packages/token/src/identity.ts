@@ -318,7 +318,7 @@ function codecFor(alg: KeyAlg): Uint8Array {
 }
 
 function publicKeyMultibase(alg: KeyAlg, publicKey: Uint8Array): string {
-  return encodeMultibase(concatBytes({ a: codecFor(alg), b: publicKey }))
+  return encodeMultibase(concatBytes(codecFor(alg), publicKey))
 }
 
 function generateKeyPair(
