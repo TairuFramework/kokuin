@@ -23,7 +23,7 @@
     "build": "pnpm run build:clean && pnpm run build:js && pnpm run build:types",
     "build:clean": "del-cli lib",
     "build:js": "del-cli 'lib/**/*.js' && swc src -d ./lib --config-file ../../node_modules/@kigu/dev/swc.json --strip-leading-paths",
-    "build:native": "node ../../scripts/build-crypto-napi.mjs",
+    "build:native": "napi build --platform --release --no-js --manifest-path ../../crates/kokuin-crypto-napi/Cargo.toml --output-dir native -- --locked --offline",
     "build:types": "del-cli 'lib/**/*.d.ts' 'lib/**/*.d.ts.map' && tsc --emitDeclarationOnly --skipLibCheck",
     "prepublishOnly": "pnpm run build",
     "test": "pnpm run test:types && pnpm run test:unit",
@@ -37,14 +37,38 @@
   },
   "devDependencies": {
     "@kokuin/crypto-conformance": "workspace:^",
+    "@napi-rs/cli": "catalog:",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@types/node": "catalog:"
+  },
+  "optionalDependencies": {
+    "@kokuin/crypto-napi-darwin-arm64": "workspace:*",
+    "@kokuin/crypto-napi-darwin-x64": "workspace:*",
+    "@kokuin/crypto-napi-linux-arm64-gnu": "workspace:*",
+    "@kokuin/crypto-napi-linux-arm64-musl": "workspace:*",
+    "@kokuin/crypto-napi-linux-x64-gnu": "workspace:*",
+    "@kokuin/crypto-napi-linux-x64-musl": "workspace:*",
+    "@kokuin/crypto-napi-win32-arm64-msvc": "workspace:*",
+    "@kokuin/crypto-napi-win32-x64-msvc": "workspace:*"
   },
   "engines": {
     "node": ">=22"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "napi": {
+    "binaryName": "kokuin-crypto-napi",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-musl",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc"
+    ]
   }
 }

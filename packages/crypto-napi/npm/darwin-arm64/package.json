@@ -1,0 +1,27 @@
+{
+  "name": "@kokuin/crypto-napi-darwin-arm64",
+  "version": "0.7.1",
+  "description": "Prebuilt Node-API binary of @kokuin/crypto-napi for darwin-arm64",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TairuFramework/kokuin",
+    "directory": "packages/crypto-napi/npm/darwin-arm64"
+  },
+  "license": "MIT",
+  "main": "kokuin-crypto-napi.darwin-arm64.node",
+  "files": [
+    "kokuin-crypto-napi.darwin-arm64.node"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

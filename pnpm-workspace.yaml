@@ -1,5 +1,6 @@
 packages:
   - packages/*
+  - packages/crypto-napi/npm/*
   - tests/*
 
 blockExoticSubdeps: false
@@ -20,6 +21,17 @@ nodeLinker: hoisted
 versioning:
   changelog:
     storage: repository
+  # crypto-napi pins its binaries exactly, so they must always release together.
+  fixed:
+    - - '@kokuin/crypto-napi'
+      - '@kokuin/crypto-napi-darwin-arm64'
+      - '@kokuin/crypto-napi-darwin-x64'
+      - '@kokuin/crypto-napi-linux-arm64-gnu'
+      - '@kokuin/crypto-napi-linux-arm64-musl'
+      - '@kokuin/crypto-napi-linux-x64-gnu'
+      - '@kokuin/crypto-napi-linux-x64-musl'
+      - '@kokuin/crypto-napi-win32-arm64-msvc'
+      - '@kokuin/crypto-napi-win32-x64-msvc'
   # Private packages are never released. They must be listed by exact name --
   # `versioning.ignore` does not accept globs, and leaving one out makes
   # `pnpm change status` / `pnpm version -r` fail once a bump has to propagate
@@ -54,6 +66,7 @@ catalog:
   '@sozai/runtime': ^0.1.0
   '@sozai/runtime-expo': ^0.3.0
   '@sozai/schema': ^0.1.6
+  '@napi-rs/cli': ^3.10.12
   '@napi-rs/keyring': ^2.1.2
   '@noble/ciphers': ^2.4.0
   '@noble/curves': ^2.4.0

@@ -36,7 +36,7 @@ jobs:
       - name: Build the Node-API provider
         run: |
           pnpm --filter @kokuin/crypto-napi... build
-          node scripts/build-crypto-napi.mjs
+          pnpm --filter @kokuin/crypto-napi run build:native
       # Runs the shared corpus and the pinned upstream vectors through the compiled binding. The
       # suite fails if the binary does not load, instead of testing the nodeCrypto fallback.
       - name: Test the Node-API provider

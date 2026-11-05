@@ -12,7 +12,6 @@ on:
       - "packages/crypto-node/**"
       - "packages/crypto-napi/**"
       - "scripts/bench-crypto-node.mjs"
-      - "scripts/build-crypto-napi.mjs"
       - ".github/workflows/crypto-node-gate.yml"
 
 permissions:
@@ -37,7 +36,7 @@ jobs:
       - name: Build the providers and the Node-API binding
         run: |
           pnpm --filter @kokuin/crypto-napi... build
-          node scripts/build-crypto-napi.mjs
+          pnpm --filter @kokuin/crypto-napi run build:native
       - name: Run the benchmark gate
         run: node scripts/bench-crypto-node.mjs --runs 5 --out crypto-node-benchmark-${{ runner.arch }}.json
       - if: always()

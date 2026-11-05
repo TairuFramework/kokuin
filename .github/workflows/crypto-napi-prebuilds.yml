@@ -1,0 +1,88 @@
+name: Node-API crypto prebuilds
+# Builds and tests each @kokuin/crypto-napi-<target> binary on its own platform. A release downloads
+# the attested binaries of its exact commit: see scripts/ensure-crypto-napi.mjs.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: &paths
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "packages/crypto/**"
+      - "packages/crypto-node/**"
+      - "packages/crypto-napi/**"
+      - "scripts/ensure-crypto-napi*.mjs"
+      - "scripts/prebuild-crypto-napi.sh"
+      - "scripts/smoke-crypto-napi.mjs"
+      - ".github/workflows/crypto-napi-prebuilds.yml"
+  pull_request:
+    paths: *paths
+
+permissions:
+  contents: read
+
+jobs:
+  release-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: node --test scripts/ensure-crypto-napi.test.mjs
+
+  prebuild:
+    name: ${{ matrix.target }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Debian 11 sets the glibc floor. Newer runners would raise it to their own version.
+          - { target: linux-x64-gnu, runner: ubuntu-latest, image: "node:24-bullseye" }
+          - { target: linux-arm64-gnu, runner: ubuntu-24.04-arm, image: "node:24-bullseye" }
+          - { target: linux-x64-musl, runner: ubuntu-latest, image: "node:24-alpine" }
+          - { target: linux-arm64-musl, runner: ubuntu-24.04-arm, image: "node:24-alpine" }
+          - { target: darwin-x64, runner: macos-15-intel }
+          - { target: darwin-arm64, runner: macos-latest }
+          - { target: win32-x64-msvc, runner: windows-latest }
+          - { target: win32-arm64-msvc, runner: windows-11-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - if: matrix.image == ''
+        uses: pnpm/action-setup@v4
+      - if: matrix.image == ''
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Build and test on the host
+        if: matrix.image == ''
+        shell: bash
+        run: scripts/prebuild-crypto-napi.sh
+      - name: Build and test in the container
+        if: matrix.image != ''
+        # Sources are copied in, not bind-mounted: on a mount pnpm moves its store into the project,
+        # and `pnpm exec` then cannot find the Rust toolchain it installed.
+        run: |
+          docker create --name prebuild -i -w /work -e CI=true "${{ matrix.image }}" \
+            sh -c 'tar x && sh scripts/prebuild-crypto-napi.sh'
+          git archive HEAD | docker start -ai prebuild
+          mkdir -p packages/crypto-napi/native
+          docker cp "prebuild:/work/packages/crypto-napi/native/kokuin-crypto-napi.${{ matrix.target }}.node" \
+            packages/crypto-napi/native/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: crypto-napi-${{ matrix.target }}
+          path: packages/crypto-napi/native/*.node
+          if-no-files-found: error
+      - if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: packages/crypto-napi/native/*.node
