@@ -12,3 +12,5 @@ tests/e2e-expo/android
 lib
 packages/crypto-napi/native
 packages/crypto-napi/npm/*/*.node
+# napi artifacts also leaves a copy of every binary here.
+packages/crypto-napi/*.node
