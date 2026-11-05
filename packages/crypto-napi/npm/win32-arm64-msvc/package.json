@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/crypto-napi-win32-arm64-msvc",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Prebuilt Node-API binary of @kokuin/crypto-napi for win32-arm64-msvc",
   "repository": {
     "type": "git",
