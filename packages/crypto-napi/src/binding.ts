@@ -71,8 +71,8 @@ export type NapiBinding = {
   blake3Batch(params: NapiBindingBlake3BatchParams): Promise<Array<Uint8Array>>
 }
 
-/** Why no native binding loaded, or `undefined` when one did. */
-export type NapiLoadFailure = { reason: 'missing' | 'abi' | 'load'; path: string; cause?: unknown }
+/** Why no native binding loaded. `path` is absent when the binary's location did not resolve. */
+export type NapiLoadFailure = { reason: 'missing' | 'abi' | 'load'; path?: string; cause?: unknown }
 
 function libc(): string {
   const header = (process.report?.getReport() as { header?: { glibcVersionRuntime?: string } })
@@ -97,7 +97,14 @@ let cached: { binding: NapiBinding | null; failure?: NapiLoadFailure } | undefin
 /** Load the native binding once per process. Never throws; reports why it could not load. */
 export function loadNapiBinding(): { binding: NapiBinding | null; failure?: NapiLoadFailure } {
   if (cached != null) return cached
-  const path = napiBindingPath()
+  let path: string
+  try {
+    path = napiBindingPath()
+  } catch (cause) {
+    // A CJS bundle leaves `import.meta.url` undefined.
+    cached = { binding: null, failure: { reason: 'load', cause } }
+    return cached
+  }
   if (!existsSync(path)) {
     cached = { binding: null, failure: { reason: 'missing', path } }
     return cached
