@@ -864,6 +864,9 @@ importers:
 
   tests/e2e-electron:
     dependencies:
+      '@kokuin/crypto-napi':
+        specifier: workspace:^
+        version: link:../../packages/crypto-napi
       '@kokuin/electron':
         specifier: workspace:^
         version: link:../../packages/electron
