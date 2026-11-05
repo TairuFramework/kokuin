@@ -1,4 +1,3 @@
-export type { CompareVaultBranchesParams } from './branch.js'
 export * from './branch.js'
 export * from './canonical-token.js'
 export type {

@@ -80,7 +80,7 @@ function compareLWW(incoming: VerifiedRecordOp, stored: VerifiedRecordOp): Merge
   if (storedStamp === null) {
     return { status: 'apply', reason: 'stored-hlc-not-canonical' }
   }
-  const order = compareRecordDecisionHLC({ left: incoming.claim.hlc, right: stored.claim.hlc })
+  const order = compareRecordDecisionHLC(incoming.claim.hlc, stored.claim.hlc)
   if (order !== 0) {
     return { status: order > 0 ? 'apply' : 'noop' }
   }
@@ -150,10 +150,10 @@ function compareMonotonic({
   }
   const order =
     policy.versionOrder === 'hlc'
-      ? compareRecordDecisionHLC({
-          left: incoming.claim.meta.version as string,
-          right: stored.claim.meta.version as string,
-        })
+      ? compareRecordDecisionHLC(
+          incoming.claim.meta.version as string,
+          stored.claim.meta.version as string,
+        )
       : compareTuples(incomingVersion, storedVersion)
   if (order !== 0) {
     return { status: order > 0 ? 'apply' : 'noop' }

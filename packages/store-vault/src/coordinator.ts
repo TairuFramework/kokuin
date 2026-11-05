@@ -548,8 +548,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
         })
         if (decoded.type !== 'vault.wrapping') throw new VaultNotFound()
         const hlc = await params.nextHLC()
-        if (compareRecordDecisionHLC({ left: hlc, right: evidence.record.hlc }) <= 0)
-          throw new VaultWriteConflict()
+        if (compareRecordDecisionHLC(hlc, evidence.record.hlc) <= 0) throw new VaultWriteConflict()
         const record = await ctx.signed({
           type: 'vault.wrapping',
           address: { ownerDID: key.ownerDID, id: row.wrappingID },

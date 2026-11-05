@@ -171,7 +171,7 @@ async function validStructure(
     return (
       entry !== null &&
       parseCanonicalHLC(op.claim.hlc) !== null &&
-      compareRecordDecisionHLC({ left: entry.contentHLC, right: op.claim.hlc }) <= 0
+      compareRecordDecisionHLC(entry.contentHLC, op.claim.hlc) <= 0
     )
   }
 

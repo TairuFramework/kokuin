@@ -37,7 +37,7 @@ export {
   RecordTypeGraphError,
   type VisibilityContext,
 } from './apply.js'
-export type { CompareRecordDecisionHLCParams, ParseBoundedHLCParams } from './clock.js'
+export type { ParseBoundedHLCParams } from './clock.js'
 export { compareRecordDecisionHLC, parseBoundedHLC, parseCanonicalHLC } from './clock.js'
 export type {
   RecordDecisionDigestParams,

@@ -166,7 +166,7 @@ export function createRotateFunctions(
 
   const compare = (a: Selection, b: Selection) => {
     return (
-      compareRecordDecisionHLC({ left: a.contentHLC, right: b.contentHLC }) ||
+      compareRecordDecisionHLC(a.contentHLC, b.contentHLC) ||
       a.keyVersion - b.keyVersion ||
       (a.opHash < b.opHash ? -1 : a.opHash > b.opHash ? 1 : 0)
     )

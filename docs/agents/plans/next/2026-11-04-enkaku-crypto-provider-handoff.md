@@ -397,7 +397,6 @@ Single-argument and zero-argument APIs retain their calling convention.
 | `vault.encodeVaultRecordPayload` | `EncodeVaultRecordPayloadParams` | `encodeVaultRecordPayload(type: Type, payload: VaultRecordPayloads[Type])` |
 | `vault.vaultRecordMeta` | `VaultRecordMetaParams` | `vaultRecordMeta(type: Type, claim: RecordClaim, options?: CryptoOptions)` |
 | `vault.vaultRevocationRecordID` | `VaultRevocationRecordIDParams` | `vaultRevocationRecordID(keyID: string, recipientDID: string)` |
-| `vault.compareVaultBranches` | `CompareVaultBranchesParams` | `compareVaultBranches(left: VerifiedRecordOp, right: VerifiedRecordOp)` |
 | `vault.digestParts` | `DigestPartsParams` | `digestParts(parts: Array<string>, options?: CryptoOptions)` |
 | `vault.vaultKeyDigest` | `VaultKeyDigestParams` | `vaultKeyDigest(key: VaultKeyDigestInput, options?: CryptoOptions)` |
 | `vault.vaultWrappingDigest` | `VaultWrappingDigestParams` | `vaultWrappingDigest(wrapping: VaultWrappingDigestInput, options?: CryptoOptions)` |
@@ -439,7 +438,6 @@ Single-argument and zero-argument APIs retain their calling convention.
 | `capability.assertNonExpired` | `AssertNonExpiredParams` | `assertNonExpired(payload: { exp?: number }, atTime?: number)` |
 | `capability.assertValidIssuedAt` | `AssertValidIssuedAtParams` | `assertValidIssuedAt(payload: { iat?: number }, atTime?: number)` |
 | `capability.assertValidNotBefore` | `AssertValidNotBeforeParams` | `assertValidNotBefore(payload: { nbf?: number }, atTime?: number)` |
-| `records.compareRecordDecisionHLC` | `CompareRecordDecisionHLCParams` | `compareRecordDecisionHLC(left: string, right: string)` |
 | `records.parseBoundedHLC` | `ParseBoundedHLCParams` | `parseBoundedHLC(hlc: string, nowMS: number, maxDriftMS: number)` |
 | `records.recordDecisionFromVerifiedCopies` | `RecordDecisionFromVerifiedCopiesParams` | `recordDecisionFromVerifiedCopies(key: RecordKey, entries: ReadonlyArray<VerifiedRecordCopy>, stampSource: 'hlc' \| 'version')` |
 | `records.createRecordVerifier` | `CreateRecordVerifierParams` | `createRecordVerifier(opKind: string, methods?: MethodRegistry, options?: CryptoOptions)` |

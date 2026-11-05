@@ -135,7 +135,6 @@ Additional APIs use the same flat params convention.
 | `encodeVaultRecordPayload` | `EncodeVaultRecordPayloadParams` | `encodeVaultRecordPayload(type: Type, payload: VaultRecordPayloads[Type])` |
 | `vaultRecordMeta` | `VaultRecordMetaParams` | `vaultRecordMeta(params: VaultRecordMetaParams)` |
 | `vaultRevocationRecordID` | `VaultRevocationRecordIDParams` | `vaultRevocationRecordID(keyID: string, recipientDID: string)` |
-| `compareVaultBranches` | `CompareVaultBranchesParams` | `compareVaultBranches(left: VerifiedRecordOp, right: VerifiedRecordOp)` |
 | `digestParts` | `DigestPartsParams` | `digestParts(params: DigestPartsParams)` |
 | `vaultKeyDigest` | `VaultKeyDigestParams` | `vaultKeyDigest(params: VaultKeyDigestParams)` |
 | `vaultWrappingDigest` | `VaultWrappingDigestParams` | `vaultWrappingDigest(params: VaultWrappingDigestParams)` |

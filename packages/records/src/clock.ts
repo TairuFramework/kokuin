@@ -27,9 +27,7 @@ export function parseCanonicalHLC(hlc: string): HLCTimestamp | null {
 }
 
 /** Order signed decision stamps by the complete HLC, including the node ID. */
-export type CompareRecordDecisionHLCParams = { left: string; right: string }
-
-export function compareRecordDecisionHLC({ right, left }: CompareRecordDecisionHLCParams): number {
+export function compareRecordDecisionHLC(left: string, right: string): number {
   const leftStamp = parseCanonicalHLC(left)
   const rightStamp = parseCanonicalHLC(right)
   if (leftStamp === null || rightStamp === null)

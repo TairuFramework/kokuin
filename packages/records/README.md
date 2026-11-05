@@ -23,7 +23,6 @@ Additional APIs use the same flat params convention.
 
 | Export | Named params type | Previous positional form |
 | --- | --- | --- |
-| `compareRecordDecisionHLC` | `CompareRecordDecisionHLCParams` | `compareRecordDecisionHLC(left: string, right: string)` |
 | `parseBoundedHLC` | `ParseBoundedHLCParams` | `parseBoundedHLC(hlc: string, nowMS: number, maxDriftMS: number)` |
 | `recordDecisionFromVerifiedCopies` | `RecordDecisionFromVerifiedCopiesParams` | `recordDecisionFromVerifiedCopies(key: RecordKey, entries: ReadonlyArray<VerifiedRecordCopy>, stampSource: 'hlc' \| 'version')` |
 | `createRecordVerifier` | `CreateRecordVerifierParams` | `createRecordVerifier(params: CreateRecordVerifierParams)` |

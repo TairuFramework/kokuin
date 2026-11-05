@@ -14,10 +14,13 @@ test('decision comparison refuses a non-canonical HLC instead of ordering its te
   const loose = '2026-09-26T12:00:00.000Z:1:z'
   const canonical = stamp(NOW, 2, 'a')
   expect(HLC.tryParse(loose)).not.toBeNull()
-  expect(() => compareRecordDecisionHLC({ left: loose, right: canonical })).toThrow()
-  expect(compareRecordDecisionHLC({ left: stamp(NOW, 10), right: stamp(NOW, 2) })).toBeGreaterThan(
-    0,
-  )
+  expect(() => compareRecordDecisionHLC(loose, canonical)).toThrow()
+  expect(compareRecordDecisionHLC(stamp(NOW, 10), stamp(NOW, 2))).toBeGreaterThan(0)
+})
+
+test('decision comparison works directly as a sort comparator', () => {
+  const [low, mid, high] = [stamp(NOW, 2), stamp(NOW, 3), stamp(NOW, 10)]
+  expect([high, low, mid].sort(compareRecordDecisionHLC)).toEqual([low, mid, high])
 })
 
 describe('parseBoundedHLC', () => {

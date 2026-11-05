@@ -43,7 +43,7 @@ export function recordDecisionFromVerifiedCopies({
     const contentDigest = op.contentDigest
     if (
       winner === null ||
-      compareRecordDecisionHLC({ left: decisionHLC, right: winner.decisionHLC }) > 0 ||
+      compareRecordDecisionHLC(decisionHLC, winner.decisionHLC) > 0 ||
       (decisionHLC === winner.decisionHLC && contentDigest > winner.contentDigest)
     ) {
       winner = { decisionHLC, contentDigest }
