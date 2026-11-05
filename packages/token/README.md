@@ -31,6 +31,4 @@ See [provider adoption](../../docs/reference/crypto-provider.md) for selection, 
 | `new UnresolvableIssuerError` | `UnresolvableIssuerErrorParams` | `message, options?` |
 | `new IssuerKeyNotFoundError` | `IssuerKeyNotFoundErrorParams` | `message, options?` |
 
-`Identity.id` and `KeyEntry.keyID` no longer use TypeScript `readonly`. Existing runtime getters remain unchanged.
-
 These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.

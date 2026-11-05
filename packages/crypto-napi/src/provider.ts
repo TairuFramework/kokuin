@@ -12,9 +12,9 @@ type AssertVerifyingParams = {
 
 export type NapiCrypto = CryptoProvider & {
   /** `napi` when the Rust binding loaded, `node` when the provider fell back to `nodeCrypto`. */
-  backend: 'napi' | 'node'
+  readonly backend: 'napi' | 'node'
   /** Why the binding did not load, when `backend` is `node`. */
-  failure?: NapiLoadFailure
+  readonly failure?: NapiLoadFailure
 }
 
 export type NapiCryptoOptions = {

@@ -506,7 +506,5 @@ Verification uses `verify({ alg, signature, message, publicKey })` across all pr
 | `KeyCache.set` | `KeyCacheSetParams` | `keyID, contentKey, keyVersion, branchID` |
 
 Constructors now take one named object. Existing zero-argument constructors remain unchanged.
-`Identity.id`, `KeyEntry.keyID`, `NapiCrypto.backend` and `NapiCrypto.failure` omit TypeScript `readonly`.
-Their runtime property behaviour remains unchanged.
 
 `VaultSecretUnverifiableParams` names the existing `UnverifiableWrapping` constructor object without changing its shape.

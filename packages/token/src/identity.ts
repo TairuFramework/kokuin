@@ -30,7 +30,7 @@ const tracer = createTracer('token')
 
 export type CryptoOptions = { crypto?: CryptoProvider }
 
-export type Identity = { id: DIDString }
+export type Identity = { readonly id: DIDString }
 
 export type SignTokenOptions = {
   /** Extra header fields merged into the signed JWS header. */
