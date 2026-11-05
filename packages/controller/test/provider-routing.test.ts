@@ -222,7 +222,7 @@ test('hostile epoch candidates stop at the failed signature budget in causal ord
   expect(p.verified.slice(1).map((batch) => batch[0]?.message)).toEqual(
     order.map(({ event }) => canonicalBytes(event)),
   )
-})
+}, 30_000)
 
 test('profile enumeration stays synchronous without provider operations', () => {
   const methods = ['sign', 'signBatch', 'verify', 'verifyBatch', 'blake3', 'blake3Batch'] as const

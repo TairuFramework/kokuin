@@ -100,7 +100,9 @@ function cells() {
           batch,
           size,
           run: (p) =>
-            mode === 'single' ? p.sign('EdDSA', seed, message) : p.signBatch('EdDSA', signItems),
+            mode === 'single'
+              ? p.sign({ alg: 'EdDSA', privateKey: seed, message })
+              : p.signBatch({ alg: 'EdDSA', items: signItems }),
         },
         {
           op: 'ed25519-verify',
@@ -141,7 +143,8 @@ function cells() {
         mode,
         batch,
         size,
-        run: (p) => (mode === 'single' ? p.blake3(input, dkLen) : p.blake3Batch(inputs, dkLen)),
+        run: (p) =>
+          mode === 'single' ? p.blake3({ input, dkLen }) : p.blake3Batch({ inputs, dkLen }),
       })
     }
   }
