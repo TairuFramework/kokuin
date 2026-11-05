@@ -72,15 +72,15 @@ describe('buildAuthorizationURL()', () => {
   })
 
   test('rejects a non-https authorization endpoint', () => {
-    expect(() =>
-      buildAuthorizationURL({
+    expect(() => {
+      return buildAuthorizationURL({
         definition: { ...definition, authorizationEndpoint: 'http://provider.example/auth' },
         redirectURL: 'https://app/callback',
         scopes: ['openid'],
         state: 'STATE',
         codeChallenge: 'CHALLENGE',
-      }),
-    ).toThrow(/https/i)
+      })
+    }).toThrow(/https/i)
   })
 
   test('allows a loopback http authorization endpoint', () => {

@@ -1,13 +1,14 @@
 import { chunk, withKeyLocks, withStoreTransaction } from '@hozon/db'
 import type { RecordDecision, RecordKey, RecordStoreAdapter } from '@kokuin/records'
 import {
-  recordClaimDigest,
   recordKeyText,
   recordPayloadMatches,
   recordSignerKey,
+  snapshotRecord,
   verifySignedRecord,
 } from '@kokuin/records'
-import { type VAULT_RECORD_TYPES, vaultRecordMeta } from '@kokuin/vault'
+import type { VaultRecordType } from '@kokuin/vault'
+import { decodeVaultRecord, vaultRecordMeta } from '@kokuin/vault'
 
 import { upsertReplicatedDecision } from './batch.js'
 import { getVaultStore } from './definition.js'
@@ -38,7 +39,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
     isTransaction: db.isTransaction,
     async transaction(fn) {
       return bound.context.provider.withTransaction(async (provider) => {
-        const storage = await getVaultRecordsStore(provider)
+        const storage = await getVaultRecordsStore({ provider })
         const innerBound: Bound = {
           ...bound,
           ...storage,
@@ -177,27 +178,38 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
       bound.locks.push({ release: () => released.resolve(), task })
       await Promise.race([entered.promise, task])
     },
-    async putCopy(record) {
+    async putCopy(input) {
+      const record = snapshotRecord(input)
       if (!db.isTransaction) throw new Error('Copy persistence requires the apply transaction')
 
       await assertDomain(bound)
 
-      const op = await verifySignedRecord(record, bound.opKind, bound.methods)
+      const op = await verifySignedRecord({
+        record,
+        opKind: bound.opKind,
+        methods: bound.methods,
+        crypto: bound.params?.crypto,
+      })
 
-      if (op === null || !supported(record.type) || !recordPayloadMatches(record, op.claim))
+      if (
+        op === null ||
+        !supported(record.type) ||
+        !(await recordPayloadMatches({ record, claim: op.claim, ...bound.params }))
+      )
         throw new Error('Invalid vault record copy')
 
-      const type = record.type as (typeof VAULT_RECORD_TYPES)[number]
+      const type = record.type as VaultRecordType
 
-      if (vaultRecordMeta(type, op.claim) === null) throw new Error('Invalid vault record metadata')
+      if ((await vaultRecordMeta({ type, claim: op.claim, ...bound.params })) === null)
+        throw new Error('Invalid vault record metadata')
 
       const previousRows = await whereKey(db, record).orderBy('op_hash').execute()
       const previous = await decision(previousRows, bound)
-      const contentDigest = recordClaimDigest(op.claim)
+      const contentDigest = op.contentDigest
       const decisionHLC =
         typeof op.claim.meta.version === 'string' ? op.claim.meta.version : op.claim.hlc
       const same = previous?.contentDigest === contentDigest && previous.decisionHLC === decisionHLC
-      const incomingSigner = recordSignerKey(op.issuer, record.opJWT)
+      const incomingSigner = recordSignerKey({ issuer: op.issuer, opJWT: record.opJWT })
       // One check per prior row, shared by both passes. The first failure in row order wins.
       const priors = await settleAll(previousRows.map((row) => checked(row, bound)))
       let keepHash = record.opHash
@@ -208,13 +220,22 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         if (
           same &&
           prior !== null &&
-          recordSignerKey(prior.op.issuer, prior.copy.opJWT) === incomingSigner &&
+          recordSignerKey({ issuer: prior.op.issuer, opJWT: prior.copy.opJWT }) ===
+            incomingSigner &&
           row.op_hash < keepHash
         )
           keepHash = row.op_hash
       }
 
       if (!same) {
+        const decoded =
+          record.payload === null
+            ? null
+            : await decodeVaultRecord({
+                record,
+                recordMeta: op.claim.meta,
+                ...bound.params,
+              })
         await db
           .deleteFrom('vault_records')
           .where('type', '=', record.type)
@@ -222,7 +243,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
           .where('id', '=', record.id)
           .execute()
 
-        await projection(record, op, bound)
+        await projection(record, decoded, bound)
       } else {
         const dropped = previousRows
           .filter((row, index) => {
@@ -230,7 +251,8 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
 
             return (
               prior === null ||
-              (recordSignerKey(prior.op.issuer, prior.copy.opJWT) === incomingSigner &&
+              (recordSignerKey({ issuer: prior.op.issuer, opJWT: prior.copy.opJWT }) ===
+                incomingSigner &&
                 row.op_hash !== keepHash)
             )
           })
@@ -258,7 +280,8 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
 
       if (claimed.numInsertedOrUpdatedRows === 0n) throw new VaultModeConflict()
     },
-    async pruneCopy(key, signerDID) {
+    async pruneCopy({ key: input, signerDID }) {
+      const key = { ...input }
       if (!db.isTransaction) throw new Error('Copy pruning requires the apply transaction')
 
       const current = await adapter.get(key)
@@ -269,7 +292,12 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         current.copies.map(async (copy) => {
           return {
             copy,
-            op: await verifySignedRecord(copy, bound.opKind, bound.methods),
+            op: await verifySignedRecord({
+              record: copy,
+              opKind: bound.opKind,
+              methods: bound.methods,
+              crypto: bound.params?.crypto,
+            }),
           }
         }),
       )

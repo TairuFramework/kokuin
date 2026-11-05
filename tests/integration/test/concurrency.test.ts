@@ -64,15 +64,17 @@ describe.each(postgresBackends)('$name', (b) => {
   test('concurrent addDelegationToken on one key keeps the higher hlc', async () => {
     for (let round = 0; round < ROUNDS; round++) {
       const key = { grantor: `did:key:g-${round}`, audience: `did:key:a-${round}` }
-      const token = (counter: number) => ({
-        ...key,
-        jti: `jti-${round}-${counter}`,
-        token: `token-${round}-${counter}`,
-        resource: 'doc:1',
-        act: 'write',
-        exp: 5_000_000_000,
-        hlc: hlc(counter),
-      })
+      const token = (counter: number) => {
+        return {
+          ...key,
+          jti: `jti-${round}-${counter}`,
+          token: `token-${round}-${counter}`,
+          resource: 'doc:1',
+          act: 'write',
+          exp: 5_000_000_000,
+          hlc: hlc(counter),
+        }
+      }
       await race(round, (store, counter) => stores[store].addDelegationToken(token(counter)))
       const rows = await stores[0].getDelegationTokens(key)
       expect(rows.map((row) => [row.jti, row.hlc])).toEqual([[`jti-${round}-2`, hlc(2)]])
@@ -83,17 +85,19 @@ describe.each(postgresBackends)('$name', (b) => {
     for (let round = 0; round < ROUNDS; round++) {
       const jti = `jti-revoked-${round}`
       const revokerDID = `did:key:r-${round}`
-      const revocation = (counter: number) => ({
-        jti,
-        revoker_did: revokerDID,
-        revoked_iat: 1_700_000_000 + counter,
-        revocation_token: `revocation-${round}-${counter}`,
-        verified_at: null,
-        cap_exp: null,
-        hlc: hlc(counter),
-      })
+      const revocation = (counter: number) => {
+        return {
+          jti,
+          revoker_did: revokerDID,
+          revoked_iat: 1_700_000_000 + counter,
+          revocation_token: `revocation-${round}-${counter}`,
+          verified_at: null,
+          cap_exp: null,
+          hlc: hlc(counter),
+        }
+      }
       await race(round, (store, counter) => stores[store].addRevocation(revocation(counter)))
-      const row = await stores[0].getRevocationByIssuer(jti, revokerDID)
+      const row = await stores[0].getRevocationByIssuer({ jti, issuer: revokerDID })
       expect([row?.revocation_token, row?.hlc]).toEqual([`revocation-${round}-2`, hlc(2)])
     }
   })
@@ -120,8 +124,9 @@ describe.each(postgresBackends)('$name controller log merges', (b) => {
   })
 
   // The store checks only the log's shape, so a marker stands in for a signed event.
-  const marker = (name: string) =>
-    ({ event: { name }, sigs: [] }) as unknown as SignedEvent<EpochEvent>
+  const marker = (name: string) => {
+    return { event: { name }, sigs: [] } as unknown as SignedEvent<EpochEvent>
+  }
 
   // Holds the row between reading it and writing, so a merge that does not lock the existing row
   // lets the other connection read the same one and the later write drops the earlier event.
@@ -135,8 +140,10 @@ describe.each(postgresBackends)('$name controller log merges', (b) => {
   test('concurrent merges on an existing row from two connections both land', async () => {
     for (let round = 0; round < ROUNDS; round++) {
       const did = `did:kokuin:merge-race-${round}`
-      await stores[0].merge(did, async () => ({ chain: [], events: [] }))
-      await race(round, (store, counter) => stores[store].merge(did, append(`event-${counter}`)))
+      await stores[0].merge({ did, update: async () => ({ chain: [], events: [] }) })
+      await race(round, (store, counter) =>
+        stores[store].merge({ did, update: append(`event-${counter}`) }),
+      )
       const names = (await stores[0].get(did))?.events.map(
         (signed) => (signed.event as unknown as { name: string }).name,
       )

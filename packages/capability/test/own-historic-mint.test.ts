@@ -27,9 +27,9 @@ import { checkCapability, createCapability, now } from '../src/index.js'
 describe('a rotated-away authority key, at the capability path', () => {
   test('can it mint a fresh capability granting itself everything?', async () => {
     const seed = new Uint8Array(32).fill(31)
-    const inception = createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
-    const rotate = createRotate({
+    const rotate = await createRotate({
       seed,
       profile: 0,
       did,
@@ -47,26 +47,29 @@ describe('a rotated-away authority key, at the capability path', () => {
 
     // The thief signs as the profile using only the PREFIX — i.e. with the rotated-away key,
     // naming it in `kid`. This is what holding a leaked, since-rotated authority key gives you.
-    const stolen = createControllerIdentity({
+    const stolen = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
     })
     const thiefDevice = await randomIdentity()
 
-    const minted = await createCapability(stolen, {
-      sub: did,
-      aud: thiefDevice.id,
-      act: '*',
-      res: '*',
-      exp: now() + 3600,
+    const minted = await createCapability({
+      signer: stolen,
+      payload: {
+        sub: did,
+        aud: thiefDevice.id,
+        act: '*',
+        res: '*',
+        exp: now() + 3600,
+      },
     })
     const raw = stringifyToken(minted)
 
     // Does a fresh capability minted by the retired key verify?
     let tokenVerified = true
     try {
-      await verifyToken(raw, { methods })
+      await verifyToken({ token: raw, methods })
     } catch {
       tokenVerified = false
     }
@@ -74,11 +77,11 @@ describe('a rotated-away authority key, at the capability path', () => {
     // And does it grant authority through the capability path?
     let granted = true
     try {
-      await checkCapability(
-        { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
-        { iss: thiefDevice.id, sub: did, cap: [raw] } as never,
-        { methods },
-      )
+      await checkCapability({
+        permission: { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
+        payload: { iss: thiefDevice.id, sub: did, cap: [raw] } as never,
+        methods,
+      })
     } catch {
       granted = false
     }
@@ -97,7 +100,7 @@ describe('a rotated-away authority key, at the capability path', () => {
     // is not allowed to be what retires.
     const leakedKey = inception.event.k[0]
     if (leakedKey === undefined) throw new Error('expected inception key')
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -115,11 +118,11 @@ describe('a rotated-away authority key, at the capability path', () => {
     let grantedAfterRevoke = true
     let refusal = ''
     try {
-      await checkCapability(
-        { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
-        { iss: thiefDevice.id, sub: did, cap: [raw] } as never,
-        { methods: remedied },
-      )
+      await checkCapability({
+        permission: { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
+        payload: { iss: thiefDevice.id, sub: did, cap: [raw] } as never,
+        methods: remedied,
+      })
     } catch (err) {
       grantedAfterRevoke = false
       refusal = (err as Error).message
@@ -129,28 +132,31 @@ describe('a rotated-away authority key, at the capability path', () => {
     // profile currently holds still grants. Without this row a rejection above could just as well
     // be the third event making the log unfoldable, or historic resolution collapsing outright —
     // both of which would "pass" the assertion while denying every honest holder too.
-    const owner = createControllerIdentity({
+    const owner = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: remediedLog, events: [] },
     })
     const honestDevice = await randomIdentity()
     const honest = stringifyToken(
-      await createCapability(owner, {
-        sub: did,
-        aud: honestDevice.id,
-        act: '*',
-        res: '*',
-        exp: now() + 3600,
+      await createCapability({
+        signer: owner,
+        payload: {
+          sub: did,
+          aud: honestDevice.id,
+          act: '*',
+          res: '*',
+          exp: now() + 3600,
+        },
       }),
     )
     let honestGranted = true
     try {
-      await checkCapability(
-        { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
-        { iss: honestDevice.id, sub: did, cap: [honest] } as never,
-        { methods: remedied },
-      )
+      await checkCapability({
+        permission: { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
+        payload: { iss: honestDevice.id, sub: did, cap: [honest] } as never,
+        methods: remedied,
+      })
     } catch {
       honestGranted = false
     }

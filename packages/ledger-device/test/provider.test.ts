@@ -1,6 +1,7 @@
+import type { CryptoOptions } from '@kokuin/token'
 import { isFullIdentity, verifyToken } from '@kokuin/token'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import { CLA, INS } from '../src/apdu.js'
 import { createLedgerIdentityProvider } from '../src/provider.js'
@@ -51,34 +52,34 @@ function createMockTransport(): LedgerTransport {
 
 describe('createLedgerIdentityProvider()', () => {
   test('provideIdentity() returns FullIdentity', async () => {
-    const provider = createLedgerIdentityProvider(createMockTransport())
+    const provider = createLedgerIdentityProvider({ transport: createMockTransport() })
     const identity = await provider.provideIdentity('0')
     expect(identity.id).toMatch(/^did:key:z/)
     expect(isFullIdentity(identity)).toBe(true)
   })
 
   test('same keyID returns same DID', async () => {
-    const provider = createLedgerIdentityProvider(createMockTransport())
+    const provider = createLedgerIdentityProvider({ transport: createMockTransport() })
     const a = await provider.provideIdentity('0')
     const b = await provider.provideIdentity('0')
     expect(a.id).toBe(b.id)
   })
 
   test('signToken() produces verifiable JWT', async () => {
-    const provider = createLedgerIdentityProvider(createMockTransport())
+    const provider = createLedgerIdentityProvider({ transport: createMockTransport() })
     const identity = await provider.provideIdentity('0')
-    const token = await identity.signToken({ data: 'test' })
+    const token = await identity.signToken({ payload: { data: 'test' } })
     expect(token.payload.iss).toBe(identity.id)
-    const verified = await verifyToken(`${token.data}.${token.signature}`)
+    const verified = await verifyToken({ token: `${token.data}.${token.signature}` })
     expect(verified.payload.data).toBe('test')
   })
 
   test('agreeKey() returns valid shared secret', async () => {
-    const provider = createLedgerIdentityProvider(createMockTransport())
+    const provider = createLedgerIdentityProvider({ transport: createMockTransport() })
     const identity = await provider.provideIdentity('0')
     const ephPriv = x25519.utils.randomSecretKey()
     const ephPub = x25519.getPublicKey(ephPriv)
-    const shared = await identity.agreeKey(ephPub)
+    const shared = await identity.agreeKey({ ephemeralPublicKey: ephPub })
     expect(shared).toBeInstanceOf(Uint8Array)
     expect(shared.length).toBe(32)
   })
@@ -94,8 +95,26 @@ describe('createLedgerIdentityProvider()', () => {
         throw new Error(`Unexpected INS: ${ins}`)
       },
     }
-    const provider = createLedgerIdentityProvider(rejectTransport)
+    const provider = createLedgerIdentityProvider({ transport: rejectTransport })
     const identity = await provider.provideIdentity('0')
-    await expect(identity.signToken({ data: 'test' })).rejects.toThrow(LedgerUserRejectedError)
+    await expect(identity.signToken({ payload: { data: 'test' } })).rejects.toThrow(
+      LedgerUserRejectedError,
+    )
   })
+})
+
+const providerSigning = vi.hoisted(() => ({ sign: vi.fn(), signBatch: vi.fn() }))
+vi.mock('@kokuin/crypto', async (importOriginal) => {
+  const actual = await importOriginal<{ nobleCrypto: NonNullable<CryptoOptions['crypto']> }>()
+  return { ...actual, nobleCrypto: { ...actual.nobleCrypto, ...providerSigning } }
+})
+
+test('Ledger APDU signs without provider signing', async () => {
+  const transport = createMockTransport()
+  const send = vi.spyOn(transport, 'send')
+  const identity = await createLedgerIdentityProvider({ transport }).provideIdentity('0')
+  await verifyToken({ token: await identity.signToken({ payload: { sub: 'retained' } }) })
+  expect(send.mock.calls.some((call) => call[1] === INS.SIGN_MESSAGE)).toBe(true)
+  expect(providerSigning.sign).not.toHaveBeenCalled()
+  expect(providerSigning.signBatch).not.toHaveBeenCalled()
 })

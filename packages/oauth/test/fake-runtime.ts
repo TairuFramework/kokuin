@@ -5,7 +5,7 @@ export function fakeRuntime(overrides: Partial<Runtime> = {}): Runtime {
   return {
     fetch: async () => new Response('{}', { headers: { 'content-type': 'application/json' } }),
     getRandomID: () => `id-${idCounter++}`,
-    getRandomValues: <T extends ArrayBufferView>(array: T): T => {
+    getRandomValues: <TValue extends ArrayBufferView>(array: TValue): TValue => {
       const view = new Uint8Array(array.buffer, array.byteOffset, array.byteLength)
       for (let i = 0; i < view.length; i++) {
         view[i] = (i + 1) & 0xff

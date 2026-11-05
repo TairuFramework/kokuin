@@ -39,7 +39,13 @@ describe('async recipient agreement', () => {
       factors: [{ kind: 'did', recipientDID }],
       methods: [resolver],
     })
-    expect(await suite.unwrap({ ...address, ...wrapped, identity })).toEqual(contentKey)
+    expect(
+      await suite.unwrap({
+        ...address,
+        ...wrapped,
+        identity,
+      }),
+    ).toEqual(contentKey)
   })
 
   test('an unresolvable recipient fails closed', async () => {

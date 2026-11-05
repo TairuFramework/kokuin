@@ -1,7 +1,9 @@
-import { normalizeDID } from '@kokuin/token'
-import { blake3 } from '@noble/hashes/blake3.js'
+import { nobleCrypto } from '@kokuin/crypto'
+import { type CryptoOptions, normalizeDID } from '@kokuin/token'
 import { canonicalStringify, fromB64U, fromUTF, toB64U, toUTF } from '@sozai/codec'
 import { isJSONValue } from '@sozai/json'
+
+export type RecordClaimErrorParams = { message: string }
 
 /**
  * What the author of a record signs.
@@ -43,7 +45,9 @@ export type SignedRecord = {
 export type RecordKey = { type: string; owner: string; id: string }
 
 /** A verified copy's issuer and the key selected by its signed token header. */
-export function recordSignerKey(issuer: string, opJWT: string): string | null {
+export type RecordSignerKeyParams = { issuer: string; opJWT: string }
+
+export function recordSignerKey({ opJWT, issuer }: RecordSignerKeyParams): string | null {
   try {
     const header = JSON.parse(toUTF(fromB64U(opJWT.split('.')[0] as string))) as {
       kid?: unknown
@@ -58,14 +62,20 @@ export function recordSignerKey(issuer: string, opJWT: string): string | null {
   }
 }
 
-export function recordClaimDigest(claim: RecordClaim): string {
+export type RecordClaimDigestParams = { claim: RecordClaim } & CryptoOptions
+
+export async function recordClaimDigest({
+  claim,
+  ...options
+}: RecordClaimDigestParams): Promise<string> {
   const decisionHLC = typeof claim.meta.version === 'string' ? claim.meta.version : claim.hlc
-  return toB64U(blake3(canonicalRecordClaim({ ...claim, hlc: decisionHLC }), { dkLen: 32 }))
+  const bytes = canonicalRecordClaim({ ...claim, hlc: decisionHLC })
+  return toB64U(await (options.crypto ?? nobleCrypto).blake3({ input: bytes, dkLen: 32 }))
 }
 
 /** Thrown when a claim cannot be signed as given. */
 export class RecordClaimError extends Error {
-  constructor(message: string) {
+  constructor({ message }: RecordClaimErrorParams) {
     super(message)
     this.name = 'RecordClaimError'
   }
@@ -157,7 +167,7 @@ export function isRecordClaim(value: unknown): value is RecordClaim {
  */
 export function canonicalRecordClaim(claim: RecordClaim): Uint8Array {
   if (!isRecordClaim(claim)) {
-    throw new RecordClaimError('Record claim is malformed')
+    throw new RecordClaimError({ message: 'Record claim is malformed' })
   }
   return fromUTF(canonicalStringify(claim))
 }
@@ -166,11 +176,38 @@ export function canonicalRecordClaim(claim: RecordClaim): Uint8Array {
  * Digest of the exact payload bytes — never of a parsed form, since the primitive does not
  * know whether the payload is ciphertext or JSON. `null` for a tombstone's absent payload.
  */
-export function recordPayloadDigest(payload: Uint8Array | null): string | null {
-  return payload === null ? null : toB64U(blake3(payload, { dkLen: 32 }))
+export type RecordPayloadDigestParams = { payload: Uint8Array | null } & CryptoOptions
+
+export async function recordPayloadDigest({
+  payload,
+  ...options
+}: RecordPayloadDigestParams): Promise<string | null> {
+  return payload === null
+    ? null
+    : toB64U(
+        await (options.crypto ?? nobleCrypto).blake3({
+          input: new Uint8Array(payload),
+          dkLen: 32,
+        }),
+      )
 }
 
 /** Whether a record's payload is the one its claim signed for. */
-export function recordPayloadMatches(record: SignedRecord, claim: RecordClaim): boolean {
-  return recordPayloadDigest(record.payload) === claim.payloadDigest
+export type RecordPayloadMatchesParams = {
+  record: SignedRecord
+  claim: RecordClaim
+} & CryptoOptions
+
+export async function recordPayloadMatches({
+  claim,
+  record,
+  ...options
+}: RecordPayloadMatchesParams): Promise<boolean> {
+  const expected = claim.payloadDigest
+  return (await recordPayloadDigest({ ...options, payload: record.payload })) === expected
+}
+
+/** Own payload views as well as indexed bindings before verification yields. */
+export function snapshotRecord(record: SignedRecord): SignedRecord {
+  return { ...record, payload: record.payload === null ? null : new Uint8Array(record.payload) }
 }

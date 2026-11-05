@@ -11,7 +11,17 @@ import type { CoordinatorContext } from './coordinator-context.js'
 import { VaultNotFound } from './coordinator-context.js'
 import type { CoordinatorCall } from './coordinator-types.js'
 import { settleAll, settledValue } from './settle.js'
+import { snapshotCall } from './snapshot.js'
 import type { EntryRow, VaultStoreAPI, WrappingRow } from './types.js'
+
+type WrappingParams = { row: WrappingRow; branch: Branch; consumer?: unknown; hlc?: string }
+type EntryParams = {
+  row: EntryRow
+  branch: Branch
+  contentHLC: string
+  consumer?: unknown
+  deleted?: boolean
+}
 
 type Branch = { branchID: string; branchRecordID: string }
 
@@ -22,19 +32,8 @@ export type EntryInfo = {
 
 export type RecordFunctions = {
   /** Signs at `hlc` when given, or at a newly allocated one. */
-  wrapping(
-    row: WrappingRow,
-    branch: Branch,
-    consumer?: unknown,
-    hlc?: string,
-  ): Promise<SignedRecord>
-  entry(
-    row: EntryRow,
-    branch: Branch,
-    contentHLC: string,
-    consumer?: unknown,
-    deleted?: boolean,
-  ): Promise<SignedRecord>
+  wrapping(params: WrappingParams): Promise<SignedRecord>
+  entry(params: EntryParams): Promise<SignedRecord>
   entryInfo(row: EntryRow, store: VaultStoreAPI): Promise<EntryInfo>
   /** Batched {@link entryInfo}: one record read, results and the first failure in row order. */
   entryInfos(rows: ReadonlyArray<EntryRow>, store: VaultStoreAPI): Promise<Array<EntryInfo>>
@@ -48,17 +47,17 @@ export type RecordFunctions = {
 }
 
 export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions {
-  async function wrapping(
-    row: WrappingRow,
-    branch: Branch,
-    consumer: unknown = null,
-    hlc?: string,
-  ): Promise<SignedRecord> {
-    return ctx.signed(
-      'vault.wrapping',
-      { ownerDID: row.ownerDID, id: row.wrappingID },
-      row,
-      {
+  async function wrapping({
+    row,
+    branch,
+    consumer = null,
+    hlc,
+  }: WrappingParams): Promise<SignedRecord> {
+    return ctx.signed({
+      type: 'vault.wrapping',
+      address: { ownerDID: row.ownerDID, id: row.wrappingID },
+      payload: row,
+      meta: {
         keyID: row.keyID,
         keyVersion: row.keyVersion,
         branchID: branch.branchID,
@@ -67,21 +66,21 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
         consumer,
       },
       hlc,
-    )
+    })
   }
 
-  async function entry(
-    row: EntryRow,
-    branch: Branch,
-    contentHLC: string,
-    consumer: unknown = null,
+  async function entry({
+    row,
+    branch,
+    contentHLC,
+    consumer = null,
     deleted = false,
-  ): Promise<SignedRecord> {
-    return ctx.signed(
-      'vault.entry',
-      { ownerDID: row.ownerDID, id: row.entryID },
-      deleted ? null : row,
-      {
+  }: EntryParams): Promise<SignedRecord> {
+    return ctx.signed({
+      type: 'vault.entry',
+      address: { ownerDID: row.ownerDID, id: row.entryID },
+      payload: deleted ? null : row,
+      meta: {
         keyID: row.keyID,
         keyVersion: row.keyVersion,
         branchID: branch.branchID,
@@ -90,11 +89,11 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
         consumer,
         ...(deleted ? {} : { kind: row.kind, label: row.label, attributes: row.attributes }),
       },
-      row.hlc,
-    )
+      hlc: row.hlc,
+    })
   }
 
-  function checkEntry(row: EntryRow, op: VerifiedRecordOp): EntryInfo {
+  async function checkEntry(row: EntryRow, op: VerifiedRecordOp): Promise<EntryInfo> {
     const meta = op.claim.meta
     const attributes = meta.attributes
 
@@ -111,9 +110,12 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
       Array.isArray(attributes) ||
       Object.keys(attributes).length !== Object.keys(row.attributes).length ||
       Object.entries(attributes).some(([name, value]) => row.attributes[name] !== value) ||
-      recordPayloadDigest(encodeVaultRecordPayload('vault.entry', row)) !== op.claim.payloadDigest
+      (await recordPayloadDigest({
+        ...ctx.params,
+        payload: encodeVaultRecordPayload({ type: 'vault.entry', payload: row }),
+      })) !== op.claim.payloadDigest
     )
-      throw new VaultTampered('Entry projection disagrees with authenticated content')
+      throw new VaultTampered({ message: 'Entry projection disagrees with authenticated content' })
 
     const contentHLC = op.claim.meta.contentHLC
 
@@ -130,7 +132,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
       store,
     )
 
-    return checkEntry(row, op)
+    return await checkEntry(row, op)
   }
 
   async function entryInfos(
@@ -145,23 +147,26 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
       store,
     )
 
-    return rows.map((row, index) => {
-      const item = evidence[index]
+    return await Promise.all(
+      rows.map(async (row, index) => {
+        const item = evidence[index]
 
-      if (item === undefined) throw new VaultNotFound()
+        if (item === undefined) throw new VaultNotFound()
 
-      return checkEntry(row, item.op)
-    })
+        return await checkEntry(row, item.op)
+      }),
+    )
   }
 
   async function reendorse(
-    request: {
+    input: {
       ownerDID: string
       keyID: string
       records: ReadonlyArray<SignedRecord>
     } & CoordinatorCall,
   ): Promise<void> {
-    await ctx.authorize('reendorse', 'administer', request)
+    const request = snapshotCall(input)
+    await ctx.authorize({ operation: 'reendorse', verb: 'administer', address: request })
 
     if (ctx.params.mode !== 'replicated')
       throw new TypeError('Re-endorsement requires replicated mode')
@@ -169,7 +174,10 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
     const params = ctx.params
 
     await ctx.locked([request], async (tx) => {
-      const decisionsRead = getRecordDecisions(ctx.recordsFor(tx).adapter, request.records)
+      const decisionsRead = getRecordDecisions({
+        store: ctx.recordsFor(tx).adapter,
+        keys: request.records,
+      })
 
       // A task that fails before reading the decisions must not leave this rejection unhandled.
       decisionsRead.catch(() => {})
@@ -211,24 +219,29 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
         // Re-sign the entire original claim. Consumer evidence and content intent stay authenticated.
         output.push({
           ...record,
-          ...(await signRecordOp(params.signer, op.claim, params.records.opKind)),
+          ...(await signRecordOp({
+            identity: params.signer,
+            claim: op.claim,
+            opKind: params.records.opKind,
+            crypto: params?.crypto,
+          })),
         })
       }
 
       const branches = settledValue(branchesResult)
 
-      await ctx.write(
-        tx,
+      await ctx.write({
+        store: tx,
         output,
-        {
+        preconditions: {
           key: {
             ...request,
             expectedVersion: key?.version ?? null,
             expectedBranches: branches.map((b) => b.branchID),
           },
         },
-        request,
-      )
+        call: request,
+      })
     })
   }
 

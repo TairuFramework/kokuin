@@ -1,9 +1,19 @@
+import type { CryptoOptions } from '@kokuin/token'
+
 import { canonicalBytes, isCanonicalizable } from './canonical.js'
 import { authorityPath, deriveKeyPair } from './derivation.js'
 import { didFor, type SignedEvent, signEvent, verifySignatures } from './events.js'
 import type { KeyState } from './fold.js'
 import { encodeKey } from './keys.js'
 import { MAX_EVENT_BYTES, MAX_EVENT_PARENTS, MAX_EVENT_SIGNATURES } from './limits.js'
+
+export type EpochSignatureSigner = { rootKeys: Array<string> } | { memberKey: string }
+type BuildEventParams<TEvent extends EpochEvent> = {
+  t: TEvent['t']
+  signer: EpochSigner
+  options2: BuildBase
+  fields: Body<TEvent>
+}
 
 // The management tier. An epoch is everything between one root-chain event and the next; its events
 // (root adds, member actions, root and member revokes) form a DAG rooted at the root-chain event that
@@ -88,7 +98,7 @@ export type EpochSigner =
   | { root: { seed: Uint8Array; profile: number } }
   | { member: { privateKey: Uint8Array; add: string } }
 
-type BuildBase = { did: string; head: KeyState; parents: Array<string> }
+type BuildBase = CryptoOptions & { did: string; head: KeyState; parents: Array<string> }
 
 export type CreateAddParams = BuildBase & {
   seed: Uint8Array
@@ -102,7 +112,7 @@ export type CreateRemoveParams = BuildBase & { signer: EpochSigner; add: string 
 
 export type CreateRevokeParams = BuildBase & { signer: EpochSigner; target: string }
 
-type Body<E extends EpochEvent> = Omit<E, keyof EpochEventCommon>
+type Body<TEvent extends EpochEvent> = Omit<TEvent, keyof EpochEventCommon>
 
 /**
  * Sign `fields` as an event of `head`'s epoch.
@@ -114,12 +124,12 @@ type Body<E extends EpochEvent> = Omit<E, keyof EpochEventCommon>
  * a well-formed, signed event no fold accepts. A foreign seed is left alone, as `createRotate` leaves
  * it: a mismatch there says nothing, and the fold is the layer that rejects it.
  */
-function buildEvent<E extends EpochEvent>(
-  t: E['t'],
-  signer: EpochSigner,
-  { did, head, parents }: BuildBase,
-  fields: Body<E>,
-): SignedEvent<E> {
+async function buildEvent<TEvent extends EpochEvent>({
+  t,
+  signer,
+  options2: { did, head, parents, crypto },
+  fields,
+}: BuildEventParams<TEvent>): Promise<SignedEvent<TEvent>> {
   if (parents.length === 0) {
     throw new Error('Epoch event: at least one parent is required -- the epoch digest at minimum')
   }
@@ -129,10 +139,17 @@ function buildEvent<E extends EpochEvent>(
   let privateKey: Uint8Array
   if ('root' in signer) {
     const { seed, profile } = signer.root
-    const pair = deriveKeyPair(seed, authorityPath(profile, head.keyGen, head.keySeq), 'EdDSA')
-    const derived = encodeKey(pair.publicKey, 'EdDSA')
+    const pair = deriveKeyPair({
+      seed,
+      path: authorityPath({ profile, gen: head.keyGen, seq: head.keySeq }),
+      alg: 'EdDSA',
+    })
+    const derived = encodeKey({ publicKey: pair.publicKey, alg: 'EdDSA' })
     // Exactly the one key: the verifier checks n-of-n, and this generator signs with one.
-    if (didFor(seed, profile) === did && !(head.keys.length === 1 && head.keys[0] === derived)) {
+    if (
+      didFor({ seed, profile }) === did &&
+      !(head.keys.length === 1 && head.keys[0] === derived)
+    ) {
       throw new Error(
         `Epoch event: the key at (gen ${head.keyGen}, seq ${head.keySeq}) is not the head's only ` +
           'published key -- pass the folded head, whose keyGen / keySeq name the active authority key',
@@ -157,8 +174,11 @@ function buildEvent<E extends EpochEvent>(
     ...common,
     ...('member' in signer ? { by: signer.member.add } : {}),
     ...fields,
-  } as E
-  const signed: SignedEvent<E> = { event, sigs: signEvent(event, [privateKey]) }
+  } as TEvent
+  const signed: SignedEvent<TEvent> = {
+    event,
+    sigs: await signEvent(event, [privateKey], { crypto }),
+  }
   if (!isEpochEventShape(signed)) {
     throw new Error(
       `Epoch event: the ${t} built is not a well-formed epoch event -- check the parent count ` +
@@ -169,48 +189,68 @@ function buildEvent<E extends EpochEvent>(
 }
 
 /** Admit a member. Root-only by type: there is no member signer for an add. */
-export function createAdd({
+export async function createAdd({
   seed,
   profile,
   member,
   ...base
-}: CreateAddParams): SignedEvent<AddEvent> {
-  return buildEvent<AddEvent>('add', { root: { seed, profile } }, base, {
-    did: member.did,
-    key: member.key,
-    lease: member.lease,
+}: CreateAddParams): Promise<SignedEvent<AddEvent>> {
+  return await buildEvent<AddEvent>({
+    t: 'add',
+    signer: { root: { seed, profile } },
+    options2: base,
+    fields: {
+      did: member.did,
+      key: member.key,
+      lease: member.lease,
+    },
   })
 }
 
 /** Extend an incarnation's lease. A member may renew another member, never itself. */
-export function createRenew({
+export async function createRenew({
   signer,
   add,
   lease,
   ...base
-}: CreateRenewParams): SignedEvent<RenewEvent> {
-  return buildEvent<RenewEvent>('ren', signer, base, { add, lease })
+}: CreateRenewParams): Promise<SignedEvent<RenewEvent>> {
+  return await buildEvent<RenewEvent>({
+    t: 'ren',
+    signer,
+    options2: base,
+    fields: { add, lease },
+  })
 }
 
 /** End an incarnation's log authority. A member may remove another member, never itself. */
-export function createRemove({
+export async function createRemove({
   signer,
   add,
   ...base
-}: CreateRemoveParams): SignedEvent<RemoveEvent> {
-  return buildEvent<RemoveEvent>('rmv', signer, base, { add })
+}: CreateRemoveParams): Promise<SignedEvent<RemoveEvent>> {
+  return await buildEvent<RemoveEvent>({
+    t: 'rmv',
+    signer,
+    options2: base,
+    fields: { add },
+  })
 }
 
 /**
  * Deny an edge holder or a retired key. Root or any single member; a member may not target a member
  * of its causal past, which removal covers instead.
  */
-export function createRevoke({
+export async function createRevoke({
   signer,
   target,
   ...base
-}: CreateRevokeParams): SignedEvent<RevokeEvent> {
-  return buildEvent<RevokeEvent>('rev', signer, base, { x: target })
+}: CreateRevokeParams): Promise<SignedEvent<RevokeEvent>> {
+  return await buildEvent<RevokeEvent>({
+    t: 'rev',
+    signer,
+    options2: base,
+    fields: { x: target },
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -287,7 +327,7 @@ export function isEpochEventShape(value: unknown): value is SignedEvent<EpochEve
     return false
   }
   // Last: the only check whose cost grows with the body, and the one that needs the rest settled.
-  return isCanonicalizable(event) && canonicalBytes(event).length <= MAX_EVENT_BYTES
+  return isCanonicalizable({ value: event }) && canonicalBytes(event).length <= MAX_EVENT_BYTES
 }
 
 /**
@@ -300,21 +340,40 @@ export function isEpochEventShape(value: unknown): value is SignedEvent<EpochEve
  * over `rootKeys` (via `verifySignatures`); a member signs alone, so exactly one signature, under the
  * pinned key. Total: a malformed body or signature is `false`.
  */
-export function verifyEpochSignature(
-  signed: SignedEvent<EpochEvent>,
-  signer: { rootKeys: Array<string> } | { memberKey: string },
-): boolean {
+export type VerifyEpochSignatureParams = {
+  signed: SignedEvent<EpochEvent>
+  signer: EpochSignatureSigner
+} & CryptoOptions
+
+export async function verifyEpochSignature({
+  signer,
+  signed,
+  ...options
+}: VerifyEpochSignatureParams): Promise<boolean> {
   const { event, sigs } = signed
   if (!isRecord(event) || !Array.isArray(sigs) || sigs.length > MAX_EVENT_SIGNATURES) {
     return false
   }
   if ('rootKeys' in signer) {
-    return event.by === undefined && verifySignatures(event, sigs, signer.rootKeys)
+    return (
+      event.by === undefined &&
+      (await verifySignatures({
+        ...options,
+        event,
+        sigs,
+        keys: signer.rootKeys,
+      }))
+    )
   }
   // One key, and `verifySignatures` matches signatures to keys one for one: exactly one signature.
   return (
     sigs.length === 1 &&
     typeof event.by === 'string' &&
-    verifySignatures(event, sigs, [signer.memberKey])
+    (await verifySignatures({
+      ...options,
+      event,
+      sigs,
+      keys: [signer.memberKey],
+    }))
   )
 }

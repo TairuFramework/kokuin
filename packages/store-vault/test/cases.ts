@@ -19,6 +19,20 @@ import {
   vaultStoreDefinition,
 } from '../src/index.js'
 
+export type VaultTestDB = {
+  db: HozonDB
+  store: VaultStoreAPI
+  queries: Array<{ sql: string; parameters: ReadonlyArray<unknown> }>
+  kind: 'sqlite' | 'postgres'
+  raw: Kysely<Record<string, never>>
+}
+type ExpectWriterBlockedParams = {
+  db: HozonDB
+  held: KeyAddress
+  write: (store: VaultStoreAPI) => Promise<unknown>
+  addresses: Array<KeyAddress>
+}
+
 vi.mock('@hozon/db', async (importOriginal) => {
   const actual = await importOriginal<typeof Hozon>()
   return {
@@ -34,7 +48,10 @@ export type StoreHarness = {
   cleanup(): Promise<void>
 }
 
-export async function openVaultTestDB(harness: StoreHarness, replicated = false) {
+export async function openVaultTestDB(
+  harness: StoreHarness,
+  replicated = false,
+): Promise<VaultTestDB> {
   const adapter = await harness.createAdapter()
   const queries: Array<{ sql: string; parameters: ReadonlyArray<unknown> }> = []
   const dialect = adapter.dialect
@@ -72,7 +89,7 @@ export async function openVaultTestDB(harness: StoreHarness, replicated = false)
   } satisfies StoreDefinition<Record<string, never>, Kysely<Record<string, never>>>)
   if (replicated) {
     db.register(vaultRecordsStoreDefinition)
-    await getVaultRecordsStore(db, VAULT_OP_KIND)
+    await getVaultRecordsStore({ provider: db, opKind: VAULT_OP_KIND })
   }
   return {
     db,
@@ -124,12 +141,12 @@ export function storedWrapping(
   }
 }
 
-async function expectWriterBlocked(
-  db: HozonDB,
-  held: KeyAddress,
-  write: (store: VaultStoreAPI) => Promise<unknown>,
-  addresses: Array<KeyAddress>,
-): Promise<void> {
+async function expectWriterBlocked({
+  db,
+  held,
+  write,
+  addresses,
+}: ExpectWriterBlockedParams): Promise<void> {
   const actual = await vi.importActual<typeof Hozon>('@hozon/db')
   await db.withTransaction(async (provider) => {
     const store = await getVaultStore(provider)
@@ -416,31 +433,45 @@ export function storeVaultCases(harness: StoreHarness): void {
       await store.putEntry(entry)
       await store.putWrapping(wrapping)
       const writers = {
-        putKey: (tx: VaultStoreAPI) =>
-          tx.putKey({ ...address, suite: 1, version: 2, state: 'retired' }),
+        putKey: (tx: VaultStoreAPI) => {
+          return tx.putKey({ ...address, suite: 1, version: 2, state: 'retired' })
+        },
         setKeyState: (tx: VaultStoreAPI) => tx.setKeyState({ ...address, state: 'retired' }),
         setKeyVersion: (tx: VaultStoreAPI) => tx.setKeyVersion({ ...address, version: 2 }),
         deleteKey: (tx: VaultStoreAPI) => tx.deleteKey(address),
         putWrapping: (tx: VaultStoreAPI) => tx.putWrapping({ ...wrapping, keyVersion: 2 }),
         putWrappings: (tx: VaultStoreAPI) => tx.putWrappings([{ ...wrapping, keyVersion: 2 }]),
         // Discovery must derive the held key from the row, not from an extra argument field.
-        deleteWrapping: (tx: VaultStoreAPI) =>
-          tx.deleteWrapping({ ownerDID: address.ownerDID, wrappingID: wrapping.wrappingID }),
-        deleteWrappings: (tx: VaultStoreAPI) =>
-          tx.deleteWrappings([{ ownerDID: address.ownerDID, wrappingID: wrapping.wrappingID }]),
-        deleteWrappingsBelowVersion: (tx: VaultStoreAPI) =>
-          tx.deleteWrappingsBelowVersion({ ...address, keyVersion: 2 }),
+        deleteWrapping: (tx: VaultStoreAPI) => {
+          return tx.deleteWrapping({ ownerDID: address.ownerDID, wrappingID: wrapping.wrappingID })
+        },
+        deleteWrappings: (tx: VaultStoreAPI) => {
+          return tx.deleteWrappings([
+            { ownerDID: address.ownerDID, wrappingID: wrapping.wrappingID },
+          ])
+        },
+        deleteWrappingsBelowVersion: (tx: VaultStoreAPI) => {
+          return tx.deleteWrappingsBelowVersion({ ...address, keyVersion: 2 })
+        },
         putEntry: (tx: VaultStoreAPI) => tx.putEntry(next),
         putEntries: (tx: VaultStoreAPI) => tx.putEntries([next]),
         updateEntryIfPresent: (tx: VaultStoreAPI) => tx.updateEntryIfPresent(next),
-        updateEntryIfUnchanged: (tx: VaultStoreAPI) =>
-          tx.updateEntryIfUnchanged({ ...next, expectedHLC: entry.hlc }),
-        deleteEntry: (tx: VaultStoreAPI) =>
-          tx.deleteEntry({ ownerDID: address.ownerDID, entryID: entry.entryID }),
-        deleteEntries: (tx: VaultStoreAPI) =>
-          tx.deleteEntries([{ ownerDID: address.ownerDID, entryID: entry.entryID }]),
+        updateEntryIfUnchanged: (tx: VaultStoreAPI) => {
+          return tx.updateEntryIfUnchanged({ ...next, expectedHLC: entry.hlc })
+        },
+        deleteEntry: (tx: VaultStoreAPI) => {
+          return tx.deleteEntry({ ownerDID: address.ownerDID, entryID: entry.entryID })
+        },
+        deleteEntries: (tx: VaultStoreAPI) => {
+          return tx.deleteEntries([{ ownerDID: address.ownerDID, entryID: entry.entryID }])
+        },
       }
-      await expectWriterBlocked(db, address, writers[method], [address])
+      await expectWriterBlocked({
+        db,
+        held: address,
+        write: writers[method],
+        addresses: [address],
+      })
       switch (method) {
         case 'putKey':
           expect(await store.getKey(address)).toMatchObject({ version: 2, state: 'retired' })
@@ -480,12 +511,12 @@ export function storeVaultCases(harness: StoreHarness): void {
         const moved = { ...entry, ...target, hlc: stamp(2), ciphertext: new Uint8Array([42]) }
         await store.putEntry(entry)
         await store.putKey({ ...target, suite: 1, version: 1, state: 'active' })
-        await expectWriterBlocked(
+        await expectWriterBlocked({
           db,
-          held === 'source' ? address : target,
-          (tx) => tx.moveEntry(moved),
-          [address, target],
-        )
+          held: held === 'source' ? address : target,
+          write: (tx) => tx.moveEntry(moved),
+          addresses: [address, target],
+        })
         expect(await store.getEntry(entry)).toEqual(moved)
         expect(await store.listEntries(address)).toEqual([])
       },
@@ -578,13 +609,12 @@ export function storeVaultCases(harness: StoreHarness): void {
     test('two concurrent HLC CAS attempts have exactly one winner', async () => {
       const original = storedEntry(address)
       await store.putEntry(original)
-      const results = await store.transaction(
-        async (tx) =>
-          await Promise.all([
-            tx.updateEntryIfUnchanged({ ...original, hlc: stamp(2), expectedHLC: original.hlc }),
-            tx.updateEntryIfUnchanged({ ...original, hlc: stamp(3), expectedHLC: original.hlc }),
-          ]),
-      )
+      const results = await store.transaction(async (tx) => {
+        return await Promise.all([
+          tx.updateEntryIfUnchanged({ ...original, hlc: stamp(2), expectedHLC: original.hlc }),
+          tx.updateEntryIfUnchanged({ ...original, hlc: stamp(3), expectedHLC: original.hlc }),
+        ])
+      })
       expect(results.sort()).toEqual(['superseded', 'updated'])
       const winner = await store.getEntry(original)
       expect([stamp(2), stamp(3)]).toContain(winner?.hlc)

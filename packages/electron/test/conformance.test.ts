@@ -1,21 +1,25 @@
 import { mutableKeyStoreConformanceCases } from '@kokuin/keystore-conformance'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
+type MockStoreParams = { name: string }
+
 let encryptionAvailable = true
-vi.mock('electron', () => ({
-  safeStorage: {
-    encryptString: vi.fn((str: string) => Buffer.from(str)),
-    decryptString: vi.fn((buf: Buffer) => buf.toString()),
-    isEncryptionAvailable: vi.fn(() => encryptionAvailable),
-  },
-}))
+vi.mock('electron', () => {
+  return {
+    safeStorage: {
+      encryptString: vi.fn((str: string) => Buffer.from(str)),
+      decryptString: vi.fn((buf: Buffer) => buf.toString()),
+      isEncryptionAvailable: vi.fn(() => encryptionAvailable),
+    },
+  }
+})
 
 let storeData: Record<string, Record<string, string>>
 
 vi.mock('electron-store', () => {
   class MockStore {
     name: string
-    constructor(options: { name: string }) {
+    constructor(options: MockStoreParams) {
       this.name = options.name
     }
     get(key: string, defaultValue: Record<string, string> = {}) {
@@ -34,7 +38,7 @@ vi.mock('electron-store', () => {
 
 const { ElectronKeyStore } = await import('../src/store.js')
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+function sameBytes({ a, b }: { a: Uint8Array; b: Uint8Array }): boolean {
   return a.length === b.length && a.every((byte, i) => byte === b[i])
 }
 
@@ -47,7 +51,7 @@ describe('ElectronKeyStore conformance', () => {
   let counter = 0
   const cases = mutableKeyStoreConformanceCases({
     createStore: () => new ElectronKeyStore({ name: `conformance-${counter++}` }),
-    isSameKey: sameBytes,
+    isSameKey: ({ a, b }) => sameBytes({ a, b }),
     createKey: () => crypto.getRandomValues(new Uint8Array(32)),
   })
 

@@ -162,10 +162,12 @@ export function evaluateGate(samples: Array<BenchmarkSample>): GateReport {
     }
   }
   const pending = missing !== 0 || issues.length !== 0
-  const routes = [...eligible].map(([variant, passes]) => ({
-    variant,
-    backend: !pending && passes ? ('native' as const) : ('noble' as const),
-  }))
+  const routes = [...eligible].map(([variant, passes]) => {
+    return {
+      variant,
+      backend: !pending && passes ? ('native' as const) : ('noble' as const),
+    }
+  })
   return {
     status: pending
       ? 'pending'

@@ -6,7 +6,7 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 ipcMain.handle('sign', async (_event, payload: Record<string, unknown>, keyID?: string) => {
   const store = ElectronKeyStore.open({ name: 'KokuinKeystore' })
   const identity = await store.provideIdentity(keyID ?? 'test')
-  const token = await identity.signToken(payload)
+  const token = await identity.signToken({ payload })
   return stringifyToken(token)
 })
 

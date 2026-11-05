@@ -47,7 +47,7 @@ const NOW = Date.now()
 const registry: MethodRegistry = [
   {
     method: 'key',
-    resolve: async (did, header) => await resolveIssuerWithDoc({ iss: did, header }),
+    resolve: async ({ did, header }) => await resolveIssuerWithDoc({ iss: did, header }),
   },
 ]
 
@@ -62,11 +62,11 @@ async function makeRecord(
     id,
     owner: options.owner ?? normalizeDID(identity.id),
     hlc: HLC.serialize({ wallTime: options.wallTime ?? NOW, counter: 0, nodeID: identity.id }),
-    payloadDigest: recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest({ payload }),
     deleted: false,
     meta: { label: id },
   }
-  const signed = await signRecordOp(identity, claim, TEST_OP_KIND)
+  const signed = await signRecordOp({ identity, claim, opKind: TEST_OP_KIND })
   return { type: claim.type, id, owner: claim.owner, hlc: claim.hlc, payload, ...signed }
 }
 
@@ -103,10 +103,12 @@ describe('record op verification memo', () => {
 
   test('a self-certifying op verifies once across calls, and each call gets its own copy', async () => {
     const record = await makeRecord(randomIdentity(), 'a')
-    const first = await verifyRecordOp(record.opJWT, TEST_OP_KIND)
+    const first = await verifyRecordOp({ opJWT: record.opJWT, opKind: TEST_OP_KIND })
     if (first === null) throw new Error('expected a verified op')
-    first.claim.meta.label = 'changed'
-    const second = await verifyRecordOp(record.opJWT, TEST_OP_KIND)
+    expect(() => {
+      first.claim.meta.label = 'changed'
+    }).toThrow(TypeError)
+    const second = await verifyRecordOp({ opJWT: record.opJWT, opKind: TEST_OP_KIND })
 
     expect(verifications.count).toBe(1)
     expect(second?.claim.meta.label).toBe('a')
@@ -116,17 +118,21 @@ describe('record op verification memo', () => {
   test('another op kind, a refusal and a registry-resolved issuer are never answered from memory', async () => {
     const record = await makeRecord(randomIdentity(), 'a')
 
-    expect(await verifyRecordOp(record.opJWT, TEST_OP_KIND)).not.toBeNull()
-    expect(await verifyRecordOp(record.opJWT, 'test/other-kind')).toBeNull()
-    expect(await verifyRecordOp(record.opJWT, 'test/other-kind')).toBeNull()
-    expect(await verifyRecordOp(record.opJWT, TEST_OP_KIND, registry)).not.toBeNull()
-    expect(await verifyRecordOp(record.opJWT, TEST_OP_KIND, registry)).not.toBeNull()
+    expect(await verifyRecordOp({ opJWT: record.opJWT, opKind: TEST_OP_KIND })).not.toBeNull()
+    expect(await verifyRecordOp({ opJWT: record.opJWT, opKind: 'test/other-kind' })).toBeNull()
+    expect(await verifyRecordOp({ opJWT: record.opJWT, opKind: 'test/other-kind' })).toBeNull()
+    expect(
+      await verifyRecordOp({ opJWT: record.opJWT, opKind: TEST_OP_KIND, methods: registry }),
+    ).not.toBeNull()
+    expect(
+      await verifyRecordOp({ opJWT: record.opJWT, opKind: TEST_OP_KIND, methods: registry }),
+    ).not.toBeNull()
     expect(verifications.count).toBe(5)
   })
 
   test('a scoped verifier checks each token once, whatever the issuer, and binds the record', async () => {
     const record = await makeRecord(randomIdentity(), 'a')
-    const verify = createRecordVerifier(TEST_OP_KIND, registry)
+    const verify = createRecordVerifier({ opKind: TEST_OP_KIND, methods: registry })
 
     expect(await verify(record)).not.toBeNull()
     expect(await verify(record)).not.toBeNull()
@@ -136,7 +142,7 @@ describe('record op verification memo', () => {
 
   test('apply verifies a registry-resolved token once before the locks and once under them', async () => {
     const identity = randomIdentity()
-    const records = await Promise.all(['a', 'b', 'c'].map((id) => makeRecord(identity, id)))
+    const records = await Promise.all(['a', 'b', 'c'].map(async (id) => makeRecord(identity, id)))
     const apply = async () => {
       return await applyRecordChunk({
         opKind: TEST_OP_KIND,
@@ -178,7 +184,7 @@ describe('record op verification memo', () => {
     const rotating: MethodRegistry = [
       {
         method: 'key',
-        resolve: async (did, header) => {
+        resolve: async ({ did, header }) => {
           if (removed.has(did)) throw new Error(`Key removed: ${did}`)
           return await resolveIssuerWithDoc({ iss: did, header })
         },
@@ -207,7 +213,7 @@ describe('record op verification memo', () => {
             dependsOn: [],
             authorize: async () => true,
             dependencies: () => [],
-            lockKeys: (record) => [{ type: record.type, key: record.id }],
+            lockKeys: ({ incoming: record }) => [{ type: record.type, key: record.id }],
           },
         ],
       ]),

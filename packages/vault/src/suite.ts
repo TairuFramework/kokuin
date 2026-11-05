@@ -1,5 +1,5 @@
 import { deriveSharedSecretAsync } from '@kokuin/jwe'
-import type { KeyAgreementIdentity, MethodRegistry } from '@kokuin/token'
+import type { CryptoOptions, KeyAgreementIdentity, MethodRegistry } from '@kokuin/token'
 import { gcm } from '@noble/ciphers/aes.js'
 import { argon2idAsync } from '@noble/hashes/argon2.js'
 import { hkdf } from '@noble/hashes/hkdf.js'
@@ -17,6 +17,15 @@ import {
   VaultTampered,
 } from './errors.js'
 import type { FactorDescriptor } from './factors.js'
+
+type DeriveKEKParams = {
+  secrets: Array<Uint8Array>
+  wrappingID: string
+  suiteID: number
+  keyID: string
+  keyVersion: number
+}
+type EntryAADParams = { suiteID: number; keyID: string; keyVersion: number; entryID: string }
 
 /** X25519 / HKDF-SHA256 / Argon2id / A256GCM. */
 export const SUITE_VAULT_1 = 1
@@ -73,7 +82,7 @@ export type VaultSuite = {
   decryptEntry(params: DecryptEntryParams): Uint8Array
 }
 
-export type WrapParams = {
+export type WrapParams = CryptoOptions & {
   runtime: Runtime
   contentKey: Uint8Array
   factors: Array<FactorInput>
@@ -95,7 +104,7 @@ export type WrapResult = {
   wrappedKey: Uint8Array
 }
 
-export type UnwrapParams = {
+export type UnwrapParams = CryptoOptions & {
   /** Trusted local state or authenticated metadata, independent of presented descriptors. */
   expectedDescriptorDigest?: string
   /** Informational digest from the presented wrapping, never used as a trust anchor. */
@@ -129,13 +138,13 @@ export type DecryptEntryParams = {
 }
 
 // Factor order, wrapping salt, and suite/key/version binding are part of the wire scheme.
-function deriveKEK(
-  secrets: Array<Uint8Array>,
-  wrappingID: string,
-  suiteID: number,
-  keyID: string,
-  keyVersion: number,
-): Uint8Array {
+function deriveKEK({
+  secrets,
+  wrappingID,
+  suiteID,
+  keyID,
+  keyVersion,
+}: DeriveKEKParams): Uint8Array {
   const info = fromUTF(`${WRAP_INFO_PREFIX}:${suiteID}:${keyID}:${keyVersion}`)
 
   return hkdf(sha256, concatBytes(...secrets), fromUTF(wrappingID), info, CONTENT_KEY_LENGTH)
@@ -146,7 +155,7 @@ function wrappingAAD(descriptors: Array<FactorDescriptor>): Uint8Array {
   return fromUTF(canonicalStringify(descriptors))
 }
 
-function entryAAD(suiteID: number, keyID: string, keyVersion: number, entryID: string): Uint8Array {
+function entryAAD({ suiteID, keyID, keyVersion, entryID }: EntryAADParams): Uint8Array {
   return fromUTF(`kokuin/vault/entry/v1:${suiteID}:${keyID}:${keyVersion}:${entryID}`)
 }
 
@@ -157,7 +166,8 @@ async function didFactorSecretForSender(
   secret: Uint8Array
   params: Record<string, unknown>
 }> {
-  const { sharedSecret, ephemeralPublicKey } = await deriveSharedSecretAsync(recipientDID, {
+  const { sharedSecret, ephemeralPublicKey } = await deriveSharedSecretAsync({
+    recipient: recipientDID,
     methods: methods ?? [],
   })
 
@@ -175,7 +185,7 @@ async function secretFactorForSender(
   const invalid = invalidArgon2Cost(cost)
 
   if (invalid != null) {
-    throw new InvalidVaultFactors(`invalid Argon2 cost: ${invalid}`)
+    throw new InvalidVaultFactors({ reason: `invalid Argon2 cost: ${invalid}` })
   }
 
   const salt = runtime.getRandomValues(new Uint8Array(SALT_LENGTH))
@@ -190,7 +200,7 @@ async function secretFactorForRecipient(
   params: Record<string, unknown>,
 ): Promise<Uint8Array> {
   if (input == null) {
-    throw new NoAvailableFactor(kind)
+    throw new NoAvailableFactor({ kind })
   }
 
   const { salt, m, t, p } = params
@@ -201,13 +211,17 @@ async function secretFactorForRecipient(
     typeof t !== 'number' ||
     typeof p !== 'number'
   ) {
-    throw new VaultTampered(`${kind} factor descriptor carries no usable Argon2 parameters`)
+    throw new VaultTampered({
+      message: `${kind} factor descriptor carries no usable Argon2 parameters`,
+    })
   }
 
   const invalid = invalidArgon2Cost({ m, t, p })
 
   if (invalid != null) {
-    throw new VaultTampered(`${kind} factor descriptor has invalid Argon2 cost: ${invalid}`)
+    throw new VaultTampered({
+      message: `${kind} factor descriptor has invalid Argon2 cost: ${invalid}`,
+    })
   }
 
   let decodedSalt: Uint8Array
@@ -215,13 +229,19 @@ async function secretFactorForRecipient(
   try {
     decodedSalt = fromB64(salt)
   } catch (cause) {
-    throw new VaultTampered(`${kind} factor descriptor carries an invalid Argon2 salt`, {
-      cause,
+    // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
+    throw new VaultTampered({
+      message: `${kind} factor descriptor carries an invalid Argon2 salt`,
+      options: {
+        cause,
+      },
     })
   }
 
   if (decodedSalt.length !== SALT_LENGTH) {
-    throw new VaultTampered(`${kind} factor descriptor Argon2 salt must be ${SALT_LENGTH} bytes`)
+    throw new VaultTampered({
+      message: `${kind} factor descriptor Argon2 salt must be ${SALT_LENGTH} bytes`,
+    })
   }
 
   return await argon2idAsync(input, decodedSalt, { m, t, p, dkLen: FACTOR_SECRET_LENGTH })
@@ -230,7 +250,7 @@ async function secretFactorForRecipient(
 // A PIN requires device possession; a passphrase alone does not substitute for it.
 export function validateFactorList(kinds: Array<string>): void {
   if (kinds.length === 0) {
-    throw new InvalidVaultFactors('a wrapping needs at least one factor')
+    throw new InvalidVaultFactors({ reason: 'a wrapping needs at least one factor' })
   }
 
   const seen = new Set<string>()
@@ -241,14 +261,16 @@ export function validateFactorList(kinds: Array<string>): void {
     }
 
     if (seen.has(kind)) {
-      throw new InvalidVaultFactors(`duplicate "${kind}" factor`)
+      throw new InvalidVaultFactors({ reason: `duplicate "${kind}" factor` })
     }
 
     seen.add(kind)
   }
 
   if (seen.has('pin') && !kinds.includes('did')) {
-    throw new InvalidVaultFactors('a "pin" factor requires a "did" factor in the same wrapping')
+    throw new InvalidVaultFactors({
+      reason: 'a "pin" factor requires a "did" factor in the same wrapping',
+    })
   }
 }
 
@@ -257,16 +279,16 @@ async function didFactorSecretForRecipient(
   params: Record<string, unknown>,
 ): Promise<Uint8Array> {
   if (identity == null) {
-    throw new NoAvailableFactor('did')
+    throw new NoAvailableFactor({ kind: 'did' })
   }
 
   const epk = params.epk
 
   if (typeof epk !== 'string') {
-    throw new VaultTampered('did factor descriptor carries no epk')
+    throw new VaultTampered({ message: 'did factor descriptor carries no epk' })
   }
 
-  return await identity.agreeKey(fromB64(epk))
+  return await identity.agreeKey({ ephemeralPublicKey: fromB64(epk) })
 }
 
 const suite1: VaultSuite = {
@@ -277,7 +299,20 @@ const suite1: VaultSuite = {
     return runtime.getRandomValues(new Uint8Array(CONTENT_KEY_LENGTH))
   },
 
-  async wrap(params) {
+  async wrap(input) {
+    const params = {
+      ...input,
+      contentKey: new Uint8Array(input.contentKey),
+      factors: input.factors.map((factor) => {
+        return factor.kind === 'did'
+          ? { ...factor }
+          : {
+              ...factor,
+              input: new Uint8Array(factor.input),
+              ...(factor.cost === undefined ? {} : { cost: { ...factor.cost } }),
+            }
+      }),
+    }
     validateFactorList(params.factors.map((factor) => factor.kind))
 
     const secrets: Array<Uint8Array> = []
@@ -310,26 +345,41 @@ const suite1: VaultSuite = {
       }
     }
 
-    const kek = deriveKEK(
+    const kek = deriveKEK({
       secrets,
-      params.wrappingID,
-      SUITE_VAULT_1,
-      params.keyID,
-      params.keyVersion,
-    )
+      wrappingID: params.wrappingID,
+      suiteID: SUITE_VAULT_1,
+      keyID: params.keyID,
+      keyVersion: params.keyVersion,
+    })
     const iv = params.runtime.getRandomValues(new Uint8Array(IV_LENGTH))
 
     return {
       descriptors,
-      descriptorDigest: descriptorDigest(descriptors),
+      descriptorDigest: await descriptorDigest({ ...params, descriptors }),
       iv,
       wrappedKey: gcm(kek, iv, wrappingAAD(descriptors)).encrypt(params.contentKey),
     }
   },
 
-  async unwrap(params) {
+  async unwrap(input) {
+    const params = {
+      ...input,
+      descriptors: JSON.parse(JSON.stringify(input.descriptors)) as Array<FactorDescriptor>,
+      iv: new Uint8Array(input.iv),
+      wrappedKey: new Uint8Array(input.wrappedKey),
+      inputs:
+        input.inputs === undefined
+          ? undefined
+          : Object.fromEntries(
+              Object.entries(input.inputs).flatMap(([kind, bytes]) => {
+                return bytes === undefined ? [] : [[kind, new Uint8Array(bytes)]]
+              }),
+            ),
+    }
     if (params.expectedDescriptorDigest !== undefined) {
-      checkDescriptorDigest({
+      await checkDescriptorDigest({
+        crypto: params.crypto,
         descriptors: params.descriptors,
         expectedDescriptorDigest: params.expectedDescriptorDigest,
       })
@@ -357,29 +407,38 @@ const suite1: VaultSuite = {
           userSuppliedKinds.push(descriptor.kind)
           break
         default:
-          throw new NoAvailableFactor(descriptor.kind)
+          throw new NoAvailableFactor({ kind: descriptor.kind })
       }
     }
 
-    const kek = deriveKEK(
+    const kek = deriveKEK({
       secrets,
-      params.wrappingID,
-      SUITE_VAULT_1,
-      params.keyID,
-      params.keyVersion,
-    )
+      wrappingID: params.wrappingID,
+      suiteID: SUITE_VAULT_1,
+      keyID: params.keyID,
+      keyVersion: params.keyVersion,
+    })
 
     try {
       return gcm(kek, params.iv, wrappingAAD(params.descriptors)).decrypt(params.wrappedKey)
     } catch (cause) {
       // A tag failure cannot attribute corruption versus a wrong secret, including DID-only wraps.
-      throw new VaultSecretRejected(userSuppliedKinds, { cause, keyID: params.keyID })
+      // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
+      throw new VaultSecretRejected({
+        kinds: userSuppliedKinds,
+        options: { cause, keyID: params.keyID },
+      })
     }
   },
 
   encryptEntry(params) {
     const iv = params.runtime.getRandomValues(new Uint8Array(IV_LENGTH))
-    const aad = entryAAD(SUITE_VAULT_1, params.keyID, params.keyVersion, params.entryID)
+    const aad = entryAAD({
+      suiteID: SUITE_VAULT_1,
+      keyID: params.keyID,
+      keyVersion: params.keyVersion,
+      entryID: params.entryID,
+    })
 
     return {
       iv,
@@ -388,15 +447,22 @@ const suite1: VaultSuite = {
   },
 
   decryptEntry(params) {
-    const aad = entryAAD(SUITE_VAULT_1, params.keyID, params.keyVersion, params.entryID)
+    const aad = entryAAD({
+      suiteID: SUITE_VAULT_1,
+      keyID: params.keyID,
+      keyVersion: params.keyVersion,
+      entryID: params.entryID,
+    })
 
     try {
       return gcm(params.contentKey, params.iv, aad).decrypt(params.ciphertext)
     } catch (cause) {
-      throw new VaultTampered(
-        'vault entry failed authentication: it was altered, or is being read under the wrong key version',
-        { cause },
-      )
+      // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
+      throw new VaultTampered({
+        message:
+          'vault entry failed authentication: it was altered, or is being read under the wrong key version',
+        options: { cause },
+      })
     }
   },
 }
@@ -407,7 +473,7 @@ export function getSuite(id: number): VaultSuite {
   const suite = SUITES.get(id)
 
   if (suite == null) {
-    throw new UnsupportedVaultSuite(id)
+    throw new UnsupportedVaultSuite({ suite: id })
   }
 
   return suite

@@ -1,8 +1,9 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
 import { blake3 } from '@noble/hashes/blake3.js'
+import { bytesToHex } from '@noble/hashes/utils.js'
 
-import type { CryptoAlgorithm, CryptoProvider } from './types.js'
+import type { CryptoProvider, VerifyItem } from './types.js'
 
 function assertBytes(value: Uint8Array): void {
   if (!(value instanceof Uint8Array) || !(value.buffer instanceof ArrayBuffer)) {
@@ -24,12 +25,28 @@ function strictPoint(bytes: Uint8Array): boolean {
   return !point.isSmallOrder() && point.isTorsionFree()
 }
 
-function verify(
-  alg: CryptoAlgorithm,
-  signature: Uint8Array,
-  message: Uint8Array,
-  publicKey: Uint8Array,
-): boolean {
+const PUBLIC_KEY_CACHE_LIMIT = 256
+const publicKeyValidation = new Map<string, boolean>()
+
+function strictPublicKey(bytes: Uint8Array): boolean {
+  const key = bytesToHex(bytes)
+  const cached = publicKeyValidation.get(key)
+  if (cached !== undefined) return cached
+  let valid = false
+  try {
+    valid = strictPoint(bytes)
+  } catch {
+    // Invalid encodings are stable refusals too.
+  }
+  if (publicKeyValidation.size === PUBLIC_KEY_CACHE_LIMIT) {
+    const oldest = publicKeyValidation.keys().next().value
+    if (oldest !== undefined) publicKeyValidation.delete(oldest)
+  }
+  publicKeyValidation.set(key, valid)
+  return valid
+}
+
+function verify({ alg, signature, message, publicKey }: VerifyItem): boolean {
   if (alg !== 'EdDSA' && alg !== 'ES256') throw new TypeError('Unsupported verification algorithm')
   for (const bytes of [signature, message, publicKey]) assertBytes(bytes)
   if (signature.length !== 64) return false
@@ -37,7 +54,7 @@ function verify(
     if (alg === 'EdDSA') {
       return (
         publicKey.length === 32 &&
-        strictPoint(publicKey) &&
+        strictPublicKey(publicKey) &&
         strictPoint(signature.subarray(0, 32)) &&
         ed25519.verify(signature, message, publicKey, { zip215: false })
       )
@@ -72,23 +89,30 @@ function hash(input: Uint8Array, dkLen: number): Uint8Array {
 
 // Inputs are consumed synchronously before the Promise is returned.
 export const nobleCrypto: CryptoProvider = {
-  async sign(alg, seed, message) {
+  async sign({ alg, privateKey: seed, message }) {
     return sign(alg, seed, message)
   },
-  async signBatch(alg, items) {
+  async signBatch({ alg, items }) {
     if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
     return items.map((item) => sign(alg, item.privateKey, item.message))
   },
-  async verify(alg, signature, message, publicKey) {
-    return verify(alg, signature, message, publicKey)
+  async verify({ alg, signature, message, publicKey }: VerifyItem) {
+    return verify({ alg, signature, message, publicKey })
   },
   async verifyBatch(items) {
-    return items.map((item) => verify(item.alg, item.signature, item.message, item.publicKey))
+    return items.map((item) => {
+      return verify({
+        alg: item.alg,
+        signature: item.signature,
+        message: item.message,
+        publicKey: item.publicKey,
+      })
+    })
   },
-  async blake3(input, dkLen) {
+  async blake3({ input, dkLen }) {
     return hash(input, dkLen)
   },
-  async blake3Batch(inputs, dkLen) {
+  async blake3Batch({ inputs, dkLen }) {
     assertOutputLength(dkLen)
     return inputs.map((input) => hash(input, dkLen))
   },

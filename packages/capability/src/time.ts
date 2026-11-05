@@ -12,13 +12,17 @@ export function now(): number {
  */
 export const DEFAULT_MAX_DEVICE_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 
-export function assertNonExpired(payload: { exp?: number }, atTime?: number): void {
+export type AssertNonExpiredParams = { payload: { exp?: number }; atTime?: number }
+
+export function assertNonExpired({ atTime, payload }: AssertNonExpiredParams): void {
   if (payload.exp != null && payload.exp < (atTime ?? now())) {
     throw new Error('Invalid token: expired')
   }
 }
 
-export function assertValidIssuedAt(payload: { iat?: number }, atTime?: number): void {
+export type AssertValidIssuedAtParams = { payload: { iat?: number }; atTime?: number }
+
+export function assertValidIssuedAt({ atTime, payload }: AssertValidIssuedAtParams): void {
   if (payload.iat != null && payload.iat > (atTime ?? now())) {
     throw new Error('Invalid token: issued in the future')
   }
@@ -29,7 +33,9 @@ export function assertValidIssuedAt(payload: { iat?: number }, atTime?: number):
  * on every token it verifies, so a chain link is covered, but a payload handed straight to
  * `checkCapability` never passes through it and was checked only for `exp` and `iat`.
  */
-export function assertValidNotBefore(payload: { nbf?: number }, atTime?: number): void {
+export type AssertValidNotBeforeParams = { payload: { nbf?: number }; atTime?: number }
+
+export function assertValidNotBefore({ atTime, payload }: AssertValidNotBeforeParams): void {
   if (payload.nbf != null && payload.nbf > (atTime ?? now())) {
     throw new Error('Invalid token: not yet valid')
   }
@@ -47,16 +53,20 @@ export type DeviceCapabilityPolicyOptions = {
  * present, so the schema will never require it. Mint and verify paths for device capabilities
  * must call this.
  */
-export function assertDeviceCapabilityPolicy(
-  payload: { exp?: number },
-  options: DeviceCapabilityPolicyOptions = {},
-): void {
+export type AssertDeviceCapabilityPolicyParams = {
+  payload: { exp?: number }
+} & DeviceCapabilityPolicyOptions
+
+export function assertDeviceCapabilityPolicy({
+  payload,
+  ...options
+}: AssertDeviceCapabilityPolicyParams): void {
   const atTime = options.now ?? now()
   const maxLifetime = options.maxLifetimeSeconds ?? DEFAULT_MAX_DEVICE_LIFETIME_SECONDS
   if (payload.exp == null) {
     throw new Error('CapabilityError.PolicyViolation: device capabilities must set exp')
   }
-  assertNonExpired(payload, atTime)
+  assertNonExpired({ payload, atTime })
   if (payload.exp - atTime > maxLifetime) {
     throw new Error(
       `CapabilityError.PolicyViolation: device capability lifetime exceeds ${maxLifetime}s`,

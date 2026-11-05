@@ -3,28 +3,34 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 let secureStore: Record<string, string>
 
-vi.mock('expo-secure-store', () => ({
-  getItem: vi.fn((key: string) => secureStore[key] ?? null),
-  getItemAsync: vi.fn(async (key: string) => secureStore[key] ?? null),
-  setItem: vi.fn((key: string, value: string) => {
-    secureStore[key] = value
-  }),
-  setItemAsync: vi.fn(async (key: string, value: string) => {
-    secureStore[key] = value
-  }),
-  deleteItemAsync: vi.fn(async (key: string) => {
-    delete secureStore[key]
-  }),
-}))
+vi.mock('expo-secure-store', () => {
+  return {
+    getItem: vi.fn((key: string) => secureStore[key] ?? null),
+    getItemAsync: vi.fn(async (key: string) => secureStore[key] ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      secureStore[key] = value
+    }),
+    setItemAsync: vi.fn(async (key: string, value: string) => {
+      secureStore[key] = value
+    }),
+    deleteItemAsync: vi.fn(async (key: string) => {
+      delete secureStore[key]
+    }),
+  }
+})
 
-vi.mock('expo-crypto', () => ({
-  getRandomBytes: vi.fn((size: number) => crypto.getRandomValues(new Uint8Array(size))),
-  getRandomBytesAsync: vi.fn(async (size: number) => crypto.getRandomValues(new Uint8Array(size))),
-}))
+vi.mock('expo-crypto', () => {
+  return {
+    getRandomBytes: vi.fn((size: number) => crypto.getRandomValues(new Uint8Array(size))),
+    getRandomBytesAsync: vi.fn(async (size: number) => {
+      return crypto.getRandomValues(new Uint8Array(size))
+    }),
+  }
+})
 
 const { ExpoKeyStore } = await import('../src/store.js')
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+function sameBytes({ a, b }: { a: Uint8Array; b: Uint8Array }): boolean {
   return a.length === b.length && a.every((byte, i) => byte === b[i])
 }
 
@@ -39,7 +45,7 @@ beforeEach(() => {
 describe('ExpoKeyStore conformance', () => {
   const cases = mutableKeyStoreConformanceCases({
     createStore: () => new ExpoKeyStore(),
-    isSameKey: sameBytes,
+    isSameKey: ({ a, b }) => sameBytes({ a, b }),
     createKey: () => crypto.getRandomValues(new Uint8Array(32)),
   })
 

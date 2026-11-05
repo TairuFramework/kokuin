@@ -7,8 +7,7 @@ All addresses require an explicit owner DID. Owners and recipients round-trip ve
 It reads matching base rows in local and replicated mode. Deleted rows and signed tombstones are excluded.
 The lookup only reads and joins the caller's transaction, including uncommitted rows.
 Results identify candidates without granting authority.
-Callers must verify each candidate, for example `createVaultKeyID(owner, unique) === keyID`, and apply their own authority checks.
-
+Callers must verify each candidate, for example `await createVaultKeyID({ owner, unique }) === keyID`, and apply their own authority checks.
 
 Keys contain public suite, version and state metadata. Wrappings and entries contain opaque encrypted bytes.
 Entry `kind`, `label` and string attributes remain public. Filters combine exact kind/label equality with conjunctive attribute-subset matching.
@@ -34,7 +33,7 @@ The package supplies coordinators. The consumer supplies transport.
 ## Optional records
 
 Register `vaultRecordsStoreDefinition` alongside the base definition, then initialise it with
-`await getVaultRecordsStore(provider, opKind)` before opening caller transactions. It depends on `vault`.
+`await getVaultRecordsStore({ provider, opKind })` before opening caller transactions. It depends on `vault`.
 The base registration alone never creates records, decisions, candidates, branch proofs or revocations.
 
 `createVaultRecords({ store, opKind, authority, validateConsumerMetadata, nowMS, maxDriftMS })`
@@ -184,3 +183,45 @@ Create the coordinator from the host transaction's store when journal/outbox cha
 Propagate errors out of the host transaction so it rolls back. Temporary keys and decrypted plaintext are erased on success and failure.
 `nextHLC` belongs to the host. It must provide canonical, increasing stamps and any required restart floor.
 Crypto-only hosts continue to use `@kokuin/vault` directly.
+
+## Crypto provider migration to 0.7.0
+
+`VaultRecordsParams` and `VaultCoordinatorParams` gain `crypto?: CryptoProvider`.
+`createVaultRecords(params)` and `createVaultCoordinator(params)` remain synchronous and capture provider options.
+Coordinator operations forward one provider through records, adapters, projections, wrapping and factor checks.
+Replicated mode inherits the outer provider into `records`. An explicit unequal nested provider throws `TypeError` before work.
+Omitting the outer provider selects noble, so a custom nested provider still conflicts.
+
+Verified evidence now includes required `VerifiedRecordOp.contentDigest`. Comparisons use that authenticated value synchronously.
+Record payload hashing, vault metadata validation, decoding and key-ID construction now require awaits.
+Projection validation completes before destructive writes. Provider failures propagate and preserve transaction rollback semantics.
+Raw SQL store construction gains no provider option. No schema migration is required.
+
+See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `new VaultNotAuthorized` | `VaultNotAuthorizedParams` | `verb` |
+
+`VaultRecordRowErrorParams` names the existing record-key constructor object, including optional `cause`.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.
+
+`VaultSecretUnverifiableParams` names the existing `UnverifiableWrapping` constructor object without changing its shape.
+
+Additional APIs use the same flat params convention.
+
+| Export | Named params type | Previous positional form |
+| --- | --- | --- |
+| `createVaultStore` | `CreateVaultStoreParams` | `createVaultStore(db: Kysely<VaultStoreTables>, adapter: Adapter, context: StoreContext)` |
+| `getVaultRecordsStore` | `GetVaultRecordsStoreParams` | `getVaultRecordsStore(provider: StoreProvider, opKind?: string)` |
+
+Method and callback contracts follow the same convention.
+
+| API | Named params type | Previous form |
+| --- | --- | --- |
+| `VaultRecords.apply` | `VaultRecordsApplyParams` | `apply(records, transportContext?)` |
+| `VaultCoordinator.lockAll` | `VaultCoordinatorLockAllParams` | `lockAll(ownerDID, call?)` |
+| `VaultCoordinator.listKeys` | `VaultCoordinatorListKeysParams` | `listKeys(ownerDID, call?)` |

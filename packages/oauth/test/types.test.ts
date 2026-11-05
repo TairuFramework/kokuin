@@ -43,7 +43,11 @@ describe('OAuthProviderDefinition', () => {
   })
 
   test('OAuthTokenError carries status, code, description', () => {
-    const error = new OAuthTokenError(400, 'invalid_grant', 'bad code')
+    const error = new OAuthTokenError({
+      status: 400,
+      code: 'invalid_grant',
+      description: 'bad code',
+    })
     expect(error).toBeInstanceOf(Error)
     expect(error.name).toBe('OAuthTokenError')
     expect(error.status).toBe(400)

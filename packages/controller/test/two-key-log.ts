@@ -36,16 +36,36 @@ export type TwoKeyLog = {
  * private key the controller does not hold, so any code that silently reaches for `keys[0]` picks
  * a key this controller cannot sign with — which is what makes `kid` selection observable.
  */
-export function buildTwoKeyLog(seed: Uint8Array, profile = 0): TwoKeyLog {
-  const controller = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
-  const controllerNext = deriveKeyPair(seed, authorityPath(profile, 0, 1), 'EdDSA')
-  const cosigner = deriveKeyPair(COSIGNER_SEED, authorityPath(profile, 0, 0), 'EdDSA')
-  const cosignerNext = deriveKeyPair(COSIGNER_SEED, authorityPath(profile, 0, 1), 'EdDSA')
-  const agreement = deriveKeyPair(seed, agreementPath(profile, 0, 0), 'X25519')
-  const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
+export async function buildTwoKeyLog(seed: Uint8Array, profile = 0): Promise<TwoKeyLog> {
+  const controller = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen: 0, seq: 0 }),
+    alg: 'EdDSA',
+  })
+  const controllerNext = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen: 0, seq: 1 }),
+    alg: 'EdDSA',
+  })
+  const cosigner = deriveKeyPair({
+    seed: COSIGNER_SEED,
+    path: authorityPath({ profile, gen: 0, seq: 0 }),
+    alg: 'EdDSA',
+  })
+  const cosignerNext = deriveKeyPair({
+    seed: COSIGNER_SEED,
+    path: authorityPath({ profile, gen: 0, seq: 1 }),
+    alg: 'EdDSA',
+  })
+  const agreement = deriveKeyPair({
+    seed,
+    path: agreementPath({ profile, gen: 0, seq: 0 }),
+    alg: 'X25519',
+  })
+  const recovery = deriveKeyPair({ seed, path: recoveryPath(profile), alg: 'EdDSA' })
 
-  const cosignerKey = encodeKey(cosigner.publicKey, 'EdDSA')
-  const controllerKey = encodeKey(controller.publicKey, 'EdDSA')
+  const cosignerKey = encodeKey({ publicKey: cosigner.publicKey, alg: 'EdDSA' })
+  const controllerKey = encodeKey({ publicKey: controller.publicKey, alg: 'EdDSA' })
   const event: InceptionEvent = {
     v: 1,
     t: 'icp',
@@ -53,19 +73,19 @@ export function buildTwoKeyLog(seed: Uint8Array, profile = 0): TwoKeyLog {
     s: 0,
     crit: true,
     k: [cosignerKey, controllerKey],
-    ka: [encodeKey(agreement.publicKey, 'X25519')],
+    ka: [encodeKey({ publicKey: agreement.publicKey, alg: 'X25519' })],
     n: [
-      digestOf(encodeKey(cosignerNext.publicKey, 'EdDSA')),
-      digestOf(encodeKey(controllerNext.publicKey, 'EdDSA')),
+      digestOf(encodeKey({ publicKey: cosignerNext.publicKey, alg: 'EdDSA' })),
+      digestOf(encodeKey({ publicKey: controllerNext.publicKey, alg: 'EdDSA' })),
     ],
     kt: 2,
     nt: 2,
-    r: digestOf(encodeKey(recovery.publicKey, 'EdDSA')),
+    r: digestOf(encodeKey({ publicKey: recovery.publicKey, alg: 'EdDSA' })),
   }
   // Positional against `k`, so the co-signer signs first.
   const inception: SignedEvent<InceptionEvent> = {
     event,
-    sigs: signEvent(event, [cosigner.privateKey, controller.privateKey]),
+    sigs: await signEvent(event, [cosigner.privateKey, controller.privateKey]),
   }
 
   return {
@@ -79,8 +99,12 @@ export function buildTwoKeyLog(seed: Uint8Array, profile = 0): TwoKeyLog {
 
 /** A well-formed authority key that no log in this suite publishes. */
 export function strangerKey(): string {
-  return encodeKey(
-    deriveKeyPair(new Uint8Array(32).fill(31), authorityPath(0, 0, 0), 'EdDSA').publicKey,
-    'EdDSA',
-  )
+  return encodeKey({
+    publicKey: deriveKeyPair({
+      seed: new Uint8Array(32).fill(31),
+      path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    }).publicKey,
+    alg: 'EdDSA',
+  })
 }

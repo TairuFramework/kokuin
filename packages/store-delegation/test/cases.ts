@@ -776,7 +776,7 @@ export function delegationStoreCases(
     test('addRevocation + isRevokedBy reflects verification state', async () => {
       // Pending revocation is not yet binding.
       await store.addRevocation(revocation({ jti: 'jti-isrevoked', verified_at: null }))
-      expect(await store.isRevokedBy('jti-isrevoked', REVOKER)).toBe(false)
+      expect(await store.isRevokedBy({ jti: 'jti-isrevoked', issuer: REVOKER })).toBe(false)
 
       // Verified revocation is binding.
       await store.addRevocation(
@@ -787,27 +787,31 @@ export function delegationStoreCases(
           hlc: hlc(2),
         }),
       )
-      expect(await store.isRevokedBy('jti-isrevoked', REVOKER)).toBe(true)
+      expect(await store.isRevokedBy({ jti: 'jti-isrevoked', issuer: REVOKER })).toBe(true)
     })
 
     test('markRevocationVerified promotes a pending revocation', async () => {
       await store.addRevocation(revocation({ jti: 'jti-mark', verified_at: null }))
-      expect(await store.isRevokedBy('jti-mark', REVOKER)).toBe(false)
+      expect(await store.isRevokedBy({ jti: 'jti-mark', issuer: REVOKER })).toBe(false)
 
-      const marked = await store.markRevocationVerified('jti-mark', REVOKER, {
+      const marked = await store.markRevocationVerified({
+        jti: 'jti-mark',
+        issuer: REVOKER,
         cap_exp: 4_000,
         verified_at: 1_700_000_003,
       })
       expect(marked).toBe(true)
-      expect(await store.isRevokedBy('jti-mark', REVOKER)).toBe(true)
+      expect(await store.isRevokedBy({ jti: 'jti-mark', issuer: REVOKER })).toBe(true)
 
-      const row = await store.getRevocationByIssuer('jti-mark', REVOKER)
+      const row = await store.getRevocationByIssuer({ jti: 'jti-mark', issuer: REVOKER })
       expect(row?.verified_at).toBe(1_700_000_003)
       expect(row?.cap_exp).toBe(4_000)
 
       // A second mark is a no-op: the guard only promotes still-pending rows.
       expect(
-        await store.markRevocationVerified('jti-mark', REVOKER, {
+        await store.markRevocationVerified({
+          jti: 'jti-mark',
+          issuer: REVOKER,
           cap_exp: 9_999,
           verified_at: 1_700_000_004,
         }),
@@ -823,14 +827,16 @@ export function delegationStoreCases(
       await store.addRevocation(revocation({ jti, revoker_did: other, verified_at: null }))
 
       expect(
-        await store.markRevocationVerified(jti, REVOKER, {
+        await store.markRevocationVerified({
+          jti,
+          issuer: REVOKER,
           cap_exp: 4_000,
           verified_at: 1_700_000_003,
         }),
       ).toBe(true)
-      expect(await store.isRevokedBy(jti, REVOKER)).toBe(true)
-      expect(await store.isRevokedBy(jti, other)).toBe(false)
-      expect((await store.getRevocationByIssuer(jti, other))?.verified_at).toBeNull()
+      expect(await store.isRevokedBy({ jti, issuer: REVOKER })).toBe(true)
+      expect(await store.isRevokedBy({ jti, issuer: other })).toBe(false)
+      expect((await store.getRevocationByIssuer({ jti, issuer: other }))?.verified_at).toBeNull()
     })
 
     test('getPendingRevocationByIssuer answers for the author it names', async () => {
@@ -843,17 +849,17 @@ export function delegationStoreCases(
         revocation({ jti, revocation_token: 'mine-token', verified_at: null }),
       )
 
-      expect((await store.getPendingRevocationByIssuer(jti, REVOKER))?.revocation_token).toBe(
-        'mine-token',
-      )
-      expect((await store.getPendingRevocationByIssuer(jti, other))?.revocation_token).toBe(
-        'other-token',
-      )
-      expect(await store.getPendingRevocationByIssuer(jti, 'did:key:absent')).toBeNull()
+      expect(
+        (await store.getPendingRevocationByIssuer({ jti, issuer: REVOKER }))?.revocation_token,
+      ).toBe('mine-token')
+      expect(
+        (await store.getPendingRevocationByIssuer({ jti, issuer: other }))?.revocation_token,
+      ).toBe('other-token')
+      expect(await store.getPendingRevocationByIssuer({ jti, issuer: 'did:key:absent' })).toBeNull()
 
       // A verified row is not pending, whoever authored it.
-      await store.markRevocationVerified(jti, REVOKER, { cap_exp: 4_000 })
-      expect(await store.getPendingRevocationByIssuer(jti, REVOKER)).toBeNull()
+      await store.markRevocationVerified({ jti, issuer: REVOKER, cap_exp: 4_000 })
+      expect(await store.getPendingRevocationByIssuer({ jti, issuer: REVOKER })).toBeNull()
     })
 
     test('getHeldRevocations joins verified revocations to locally held caps', async () => {
@@ -924,9 +930,15 @@ export function delegationStoreCases(
 
       const deleted = await store.purgeExpiredRevocations({ graceSeconds: 0 })
       expect(deleted).toBe(1)
-      expect(await store.getRevocationByIssuer('jti-purge-old', REVOKER)).toBeNull()
-      expect(await store.getRevocationByIssuer('jti-purge-keep', REVOKER)).not.toBeNull()
-      expect(await store.getRevocationByIssuer('jti-purge-pending', REVOKER)).not.toBeNull()
+      expect(
+        await store.getRevocationByIssuer({ jti: 'jti-purge-old', issuer: REVOKER }),
+      ).toBeNull()
+      expect(
+        await store.getRevocationByIssuer({ jti: 'jti-purge-keep', issuer: REVOKER }),
+      ).not.toBeNull()
+      expect(
+        await store.getRevocationByIssuer({ jti: 'jti-purge-pending', issuer: REVOKER }),
+      ).not.toBeNull()
     })
 
     test('getHeldTokens excludes tokens addressed to a different audience', async () => {
@@ -1047,16 +1059,19 @@ export function delegationStoreCases(
       // would make the second run read the first run's row as a second held one.
       const audience = `did:key:a-held-peer4-${form}`
       const jti = `jti-held-peer4-${form}`
-      const cap = await createCapability(grantor, {
-        sub: grantor.longForm,
-        aud: audience,
-        act: 'document/write',
-        res: `doc:held-peer4-${form}`,
-        iat: 1_700_000_020,
-        exp: 2_000_000_000,
-        jti,
+      const cap = await createCapability({
+        signer: grantor,
+        payload: {
+          sub: grantor.longForm,
+          aud: audience,
+          act: 'document/write',
+          res: `doc:held-peer4-${form}`,
+          iat: 1_700_000_020,
+          exp: 2_000_000_000,
+          jti,
+        },
       })
-      const record = await createRevocationRecord(grantor, jti)
+      const record = await createRevocationRecord({ signer: grantor, jti })
       const revokerDID = pick(grantor)
       expect(cap.payload.sub).toBe(grantor.longForm)
 
@@ -1113,12 +1128,16 @@ export function delegationStoreCases(
       )
 
       expect(
-        (await store.getPendingRevocationByIssuer(jti, grantor.longForm))?.revocation_token,
+        (await store.getPendingRevocationByIssuer({ jti, issuer: grantor.longForm }))
+          ?.revocation_token,
       ).toBe('genuine')
       // The long form does not answer for anyone else, so the hit above is the
       // fold rather than the predicate having gone missing.
       expect(
-        await store.getPendingRevocationByIssuer(jti, 'did:key:y-peer4-pending-read'),
+        await store.getPendingRevocationByIssuer({
+          jti,
+          issuer: 'did:key:y-peer4-pending-read',
+        }),
       ).toBeNull()
     })
 
@@ -1129,9 +1148,14 @@ export function delegationStoreCases(
       await store.addRevocation(revocation({ jti, revoker_did: other, verified_at: null }))
       await store.addRevocation(revocation({ jti, revoker_did: grantor.id, verified_at: null }))
 
-      expect(await store.deletePendingRevocationsFromOtherIssuers(jti, grantor.longForm)).toBe(1)
-      expect(await store.getRevocationByIssuer(jti, other)).toBeNull()
-      expect(await store.getRevocationByIssuer(jti, grantor.id)).not.toBeNull()
+      expect(
+        await store.deletePendingRevocationsFromOtherIssuers({
+          jti,
+          issuer: grantor.longForm,
+        }),
+      ).toBe(1)
+      expect(await store.getRevocationByIssuer({ jti, issuer: other })).toBeNull()
+      expect(await store.getRevocationByIssuer({ jti, issuer: grantor.id })).not.toBeNull()
     })
 
     test('markRevocationVerified promotes under a long-form issuer', async () => {
@@ -1142,13 +1166,17 @@ export function delegationStoreCases(
       )
 
       expect(
-        await store.markRevocationVerified(jti, grantor.longForm, {
+        await store.markRevocationVerified({
+          jti,
+          issuer: grantor.longForm,
           cap_exp: 2_000_000_000,
           verified_at: 1_700_000_050,
         }),
       ).toBe(true)
-      expect((await store.getRevocationByIssuer(jti, grantor.id))?.verified_at).toBe(1_700_000_050)
-      expect(await store.isRevokedBy(jti, grantor.longForm)).toBe(true)
+      expect((await store.getRevocationByIssuer({ jti, issuer: grantor.id }))?.verified_at).toBe(
+        1_700_000_050,
+      )
+      expect(await store.isRevokedBy({ jti, issuer: grantor.longForm })).toBe(true)
     })
 
     test('deletePendingRevocationsFromOtherIssuers spares a verified row', async () => {
@@ -1158,8 +1186,8 @@ export function delegationStoreCases(
         revocation({ jti, revoker_did: other, verified_at: 1_700_000_020, cap_exp: 2_000_000_000 }),
       )
       // Only pending rows are deletable — a verified (binding) row survives.
-      expect(await store.deletePendingRevocationsFromOtherIssuers(jti, REVOKER)).toBe(0)
-      const row = await store.getRevocationByIssuer(jti, other)
+      expect(await store.deletePendingRevocationsFromOtherIssuers({ jti, issuer: REVOKER })).toBe(0)
+      const row = await store.getRevocationByIssuer({ jti, issuer: other })
       expect(row).not.toBeNull()
       expect(row?.verified_at).toBe(1_700_000_020)
     })
@@ -1172,9 +1200,9 @@ export function delegationStoreCases(
       await store.addRevocation(revocation({ jti, revoker_did: other, verified_at: null }))
       await store.addRevocation(revocation({ jti, verified_at: null }))
 
-      expect(await store.deletePendingRevocationsFromOtherIssuers(jti, REVOKER)).toBe(1)
-      expect(await store.getRevocationByIssuer(jti, other)).toBeNull()
-      expect(await store.getRevocationByIssuer(jti, REVOKER)).not.toBeNull()
+      expect(await store.deletePendingRevocationsFromOtherIssuers({ jti, issuer: REVOKER })).toBe(1)
+      expect(await store.getRevocationByIssuer({ jti, issuer: other })).toBeNull()
+      expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).not.toBeNull()
     })
 
     // All three boundaries under one sweep call, so a predicate that deleted (or
@@ -1203,11 +1231,17 @@ export function delegationStoreCases(
 
       // Past a seven-day age but still inside the window in which a capability
       // revoked at `revoked_iat` can be presented.
-      expect(await store.getRevocationByIssuer('jti-pending-past-7d', REVOKER)).not.toBeNull()
-      expect(await store.getRevocationByIssuer('jti-pending-past-ttl', REVOKER)).not.toBeNull()
+      expect(
+        await store.getRevocationByIssuer({ jti: 'jti-pending-past-7d', issuer: REVOKER }),
+      ).not.toBeNull()
+      expect(
+        await store.getRevocationByIssuer({ jti: 'jti-pending-past-ttl', issuer: REVOKER }),
+      ).not.toBeNull()
       // Past `revoked_iat + MAX_CAP_TTL_SECONDS + grace`: no capability the
       // receiver would accept can still name it.
-      expect(await store.getRevocationByIssuer('jti-pending-past-ttl-grace', REVOKER)).toBeNull()
+      expect(
+        await store.getRevocationByIssuer({ jti: 'jti-pending-past-ttl-grace', issuer: REVOKER }),
+      ).toBeNull()
     })
 
     test('purgeDeadPendingRevocations spares a verified row of the same age', async () => {
@@ -1228,9 +1262,11 @@ export function delegationStoreCases(
       })
 
       // The rows differ in one column. Verified rows prune on `cap_exp` instead.
-      expect(await store.getRevocationByIssuer('jti-purge-pending-twin', REVOKER)).toBeNull()
       expect(
-        await store.getRevocationByIssuer('jti-purge-survivor-verified', REVOKER),
+        await store.getRevocationByIssuer({ jti: 'jti-purge-pending-twin', issuer: REVOKER }),
+      ).toBeNull()
+      expect(
+        await store.getRevocationByIssuer({ jti: 'jti-purge-survivor-verified', issuer: REVOKER }),
       ).not.toBeNull()
     })
 
@@ -1250,7 +1286,7 @@ export function delegationStoreCases(
 
         // Pinned to the bound from both sides: floored to `now` instead would cost
         // a grantor an hour fast its stamp, and is not what bounds retention.
-        const row = await store.getRevocationByIssuer(jti, REVOKER)
+        const row = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
         if (row == null) throw new Error('expected the revocation row')
         expect(row.revoked_iat).toBe(nowSec + MAX_REVOCATION_FUTURE_DRIFT_SECONDS)
 
@@ -1263,7 +1299,7 @@ export function delegationStoreCases(
         expect(again).toBe(false)
         // The re-store won the LWW race, so `false` came from the content compare
         // rather than the HLC arbiter short-circuiting ahead of it.
-        const after = await store.getRevocationByIssuer(jti, REVOKER)
+        const after = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
         expect(after?.hlc).toBe(hlc(2))
         expect(after?.revoked_iat).toBe(row.revoked_iat)
 
@@ -1275,7 +1311,7 @@ export function delegationStoreCases(
         await store.purgeDeadPendingRevocations({
           graceSeconds: REVOCATION_GC_VERIFIED_GRACE_SECONDS,
         })
-        expect(await store.getRevocationByIssuer(jti, REVOKER)).toBeNull()
+        expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).toBeNull()
       } finally {
         vi.useRealTimers()
       }
@@ -1286,16 +1322,16 @@ export function delegationStoreCases(
       await store.addRevocation(
         revocation({ jti, verified_at: 1_700_000_030, cap_exp: 2_000_000_000, hlc: hlc(5) }),
       )
-      expect(await store.isRevokedBy(jti, REVOKER)).toBe(true)
+      expect(await store.isRevokedBy({ jti, issuer: REVOKER })).toBe(true)
 
       // A replayed older-HLC pending broadcast must not clobber the binding row.
       const changed = await store.addRevocation(
         revocation({ jti, verified_at: null, cap_exp: null, hlc: hlc(4) }),
       )
       expect(changed).toBe(false)
-      const row = await store.getRevocationByIssuer(jti, REVOKER)
+      const row = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
       expect(row?.verified_at).toBe(1_700_000_030)
-      expect(await store.isRevokedBy(jti, REVOKER)).toBe(true)
+      expect(await store.isRevokedBy({ jti, issuer: REVOKER })).toBe(true)
     })
 
     test('removeDelegationToken removes a stored token by jti and reports true', async () => {
@@ -1363,14 +1399,22 @@ export function delegationStoreCases(
       const expired = await store.purgeExpiredRevocations()
       expect(typeof expired).toBe('number')
       expect(expired).toBe(1)
-      expect(await store.getRevocationByIssuer('jti-default-verified-dead', REVOKER)).toBeNull()
-      expect(await store.getRevocationByIssuer('jti-default-verified-kept', REVOKER)).not.toBeNull()
+      expect(
+        await store.getRevocationByIssuer({ jti: 'jti-default-verified-dead', issuer: REVOKER }),
+      ).toBeNull()
+      expect(
+        await store.getRevocationByIssuer({ jti: 'jti-default-verified-kept', issuer: REVOKER }),
+      ).not.toBeNull()
 
       const pending = await store.purgeDeadPendingRevocations()
       expect(typeof pending).toBe('number')
       expect(pending).toBe(1)
-      expect(await store.getRevocationByIssuer('jti-default-pending-dead', REVOKER)).toBeNull()
-      expect(await store.getRevocationByIssuer('jti-default-pending-kept', REVOKER)).not.toBeNull()
+      expect(
+        await store.getRevocationByIssuer({ jti: 'jti-default-pending-dead', issuer: REVOKER }),
+      ).toBeNull()
+      expect(
+        await store.getRevocationByIssuer({ jti: 'jti-default-pending-kept', issuer: REVOKER }),
+      ).not.toBeNull()
     })
 
     test('pending purge boundary', async () => {
@@ -1383,11 +1427,11 @@ export function delegationStoreCases(
       try {
         vi.setSystemTime(boundary * 1000)
         await store.purgeDeadPendingRevocations()
-        expect(await store.getRevocationByIssuer(jti, REVOKER)).not.toBeNull()
+        expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).not.toBeNull()
 
         vi.setSystemTime((boundary + 1) * 1000)
         await store.purgeDeadPendingRevocations()
-        expect(await store.getRevocationByIssuer(jti, REVOKER)).toBeNull()
+        expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).toBeNull()
       } finally {
         vi.useRealTimers()
       }
@@ -1402,7 +1446,7 @@ export function delegationStoreCases(
         await store.addRevocation(
           revocation({ jti, revoked_iat: nowSec + 10 * MAX_REVOCATION_FUTURE_DRIFT_SECONDS }),
         )
-        const row = await store.getRevocationByIssuer(jti, REVOKER)
+        const row = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
         if (row == null) throw new Error('expected the revocation row')
         expect(row.revoked_iat).toBeLessThanOrEqual(nowSec + MAX_REVOCATION_FUTURE_DRIFT_SECONDS)
 
@@ -1410,7 +1454,7 @@ export function delegationStoreCases(
           (row.revoked_iat + MAX_CAP_TTL_SECONDS + REVOCATION_GC_VERIFIED_GRACE_SECONDS + 1) * 1000,
         )
         await store.purgeDeadPendingRevocations()
-        expect(await store.getRevocationByIssuer(jti, REVOKER)).toBeNull()
+        expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).toBeNull()
       } finally {
         vi.useRealTimers()
       }
@@ -1452,7 +1496,7 @@ export function delegationStoreCases(
           }),
         )
       }
-      expect(await store.getRevocationByIssuer(jti, REVOKER)).not.toBeNull()
+      expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).not.toBeNull()
     })
 
     test.each(TIE_BREAK_PAIRS)(
@@ -1497,7 +1541,7 @@ export function delegationStoreCases(
             revocation({ jti, revocation_token: 'lower', hlc: stamp(lower) }),
           ),
         ).toBe(false)
-        const rev = await store.getRevocationByIssuer(jti, REVOKER)
+        const rev = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
         expect([rev?.revocation_token, rev?.hlc]).toEqual(['higher', stamp(higher)])
       },
     )
@@ -1526,10 +1570,9 @@ export function delegationStoreCases(
         functions: adapter.functions,
       })
       const prefixed: Record<string, Migration> = Object.fromEntries(
-        Object.entries(migrations).map(([name, migration]) => [
-          name,
-          { up: (kysely) => migration.up(kysely.withPlugin(plugin)) },
-        ]),
+        Object.entries(migrations).map(([name, migration]) => {
+          return [name, { up: (kysely) => migration.up(kysely.withPlugin(plugin)) }]
+        }),
       )
 
       const applied = await new Migrator({
@@ -1615,12 +1658,14 @@ export function delegationStoreCases(
         .orderBy('revoker_did')
         .execute()
       expect(
-        rows.map((row) => ({
-          revoker_did: row.revoker_did,
-          revocation_token: row.revocation_token,
-          verified_at: row.verified_at,
-          hlc: row.hlc,
-        })),
+        rows.map((row) => {
+          return {
+            revoker_did: row.revoker_did,
+            revocation_token: row.revocation_token,
+            verified_at: row.verified_at,
+            hlc: row.hlc,
+          }
+        }),
       ).toEqual([
         {
           revoker_did: grantor,
@@ -1686,12 +1731,14 @@ export function delegationStoreCases(
         second,
         first,
       ])
-      expect((await store.getRevocationByIssuer(jti, first))?.revocation_token).toBe('first-token')
-      expect((await store.getRevocationByIssuer(jti, second))?.revocation_token).toBe(
+      expect((await store.getRevocationByIssuer({ jti, issuer: first }))?.revocation_token).toBe(
+        'first-token',
+      )
+      expect((await store.getRevocationByIssuer({ jti, issuer: second }))?.revocation_token).toBe(
         'second-token',
       )
       // A third party's absence is not answered by either stored row.
-      expect(await store.getRevocationByIssuer(jti, 'did:key:c-ambiguous')).toBeNull()
+      expect(await store.getRevocationByIssuer({ jti, issuer: 'did:key:c-ambiguous' })).toBeNull()
     })
 
     test.each([

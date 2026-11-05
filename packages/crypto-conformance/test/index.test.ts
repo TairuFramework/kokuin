@@ -13,6 +13,13 @@ import { describe, expect, test } from 'vitest'
 
 import { corpus, cryptoConformance, externalConformance, externalVectors } from '../src/index.js'
 
+type CheckParams = {
+  alg: CryptoAlgorithm
+  signature: Uint8Array
+  message: Uint8Array
+  publicKey: Uint8Array
+}
+
 test('runs the complete provider contract against strict noble', async () => {
   for (const entry of cryptoConformance(nobleCrypto)) await entry.run()
 })
@@ -32,7 +39,7 @@ test('rejects a provider which accepts every verification input', async () => {
 test('rejects a provider which returns the wrong hash', async () => {
   const incorrect = {
     ...nobleCrypto,
-    blake3: async (_input: Uint8Array, length: number) => new Uint8Array(length),
+    blake3: async ({ dkLen }: { dkLen: number }) => new Uint8Array(dkLen),
   }
   const outcomes = await Promise.allSettled(
     cryptoConformance(incorrect).map((entry) => entry.run()),
@@ -89,17 +96,23 @@ function strictEs256(signature: Uint8Array, message: Uint8Array, publicKey: Uint
 const weakenings: Record<string, { alg: CryptoAlgorithm; verify: Verify }> = {
   'subgroup-a': {
     alg: 'EdDSA',
-    verify: (signature, message, publicKey) =>
-      publicKey.length === 32 &&
-      strictPoint(signature.subarray(0, 32)) &&
-      ed25519.verify(signature, message, publicKey, { zip215: false }),
+    verify: (signature, message, publicKey) => {
+      return (
+        publicKey.length === 32 &&
+        strictPoint(signature.subarray(0, 32)) &&
+        ed25519.verify(signature, message, publicKey, { zip215: false })
+      )
+    },
   },
   'subgroup-r': {
     alg: 'EdDSA',
-    verify: (signature, message, publicKey) =>
-      publicKey.length === 32 &&
-      strictPoint(publicKey) &&
-      ed25519.verify(signature, message, publicKey, { zip215: false }),
+    verify: (signature, message, publicKey) => {
+      return (
+        publicKey.length === 32 &&
+        strictPoint(publicKey) &&
+        ed25519.verify(signature, message, publicKey, { zip215: false })
+      )
+    },
   },
   's-range': {
     alg: 'EdDSA',
@@ -111,9 +124,16 @@ const weakenings: Record<string, { alg: CryptoAlgorithm; verify: Verify }> = {
   },
   'low-s': {
     alg: 'ES256',
-    verify: (signature, message, publicKey) =>
-      es256Key(publicKey) &&
-      p256.verify(signature, message, publicKey, { lowS: false, prehash: true, format: 'compact' }),
+    verify: (signature, message, publicKey) => {
+      return (
+        es256Key(publicKey) &&
+        p256.verify(signature, message, publicKey, {
+          lowS: false,
+          prehash: true,
+          format: 'compact',
+        })
+      )
+    },
   },
   'scalar-range': {
     alg: 'ES256',
@@ -151,22 +171,31 @@ function weakened(name: string): CryptoProvider {
   const weakening = weakenings[name]
   if (weakening == null) throw new Error(`No weakened verifier ${name}`)
   const verify = guarded(weakening.verify)
-  const check = (
-    alg: CryptoAlgorithm,
-    signature: Uint8Array,
-    message: Uint8Array,
-    publicKey: Uint8Array,
-  ) =>
-    alg === weakening.alg
+  const check = ({ alg, signature, message, publicKey }: CheckParams) => {
+    return alg === weakening.alg
       ? Promise.resolve(verify(signature, message, publicKey))
-      : nobleCrypto.verify(alg, signature, message, publicKey)
+      : nobleCrypto.verify({
+          alg,
+          signature,
+          message,
+          publicKey,
+        })
+  }
   return {
     ...nobleCrypto,
     verify: check,
-    verifyBatch: (items) =>
-      Promise.all(
-        items.map((item) => check(item.alg, item.signature, item.message, item.publicKey)),
-      ),
+    verifyBatch: (items) => {
+      return Promise.all(
+        items.map((item) => {
+          return check({
+            alg: item.alg,
+            signature: item.signature,
+            message: item.message,
+            publicKey: item.publicKey,
+          })
+        }),
+      )
+    },
   }
 }
 
@@ -229,7 +258,7 @@ describe('pinned upstream vectors', { timeout: 120_000 }, () => {
     const wrong = {
       ...nobleCrypto,
       sign: async () => new Uint8Array(64),
-      blake3: async (_input: Uint8Array, length: number) => new Uint8Array(length),
+      blake3: async ({ dkLen }: { dkLen: number }) => new Uint8Array(dkLen),
     }
     const cases = externalConformance(wrong)
     const outcomes = await Promise.allSettled(cases.map((entry) => entry.run()))

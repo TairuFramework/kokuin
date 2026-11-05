@@ -1,4 +1,5 @@
-import type { DIDMethodResolver } from '@kokuin/token'
+import { nobleCrypto } from '@kokuin/crypto'
+import type { CryptoOptions, DIDMethodResolver } from '@kokuin/token'
 
 import type { EpochLimits } from './epoch.js'
 import { DID_PREFIX } from './events.js'
@@ -9,7 +10,7 @@ import { type FoldedView, resolverOver } from './state-resolver.js'
 
 const CONTEXT = 'Controller resolver'
 
-export type ControllerResolverOptions = {
+export type ControllerResolverOptions = CryptoOptions & {
   /**
    * Load a controller's event log. Returns undefined when the DID is unknown.
    *
@@ -87,21 +88,24 @@ export function createControllerResolverWithin(
   // Not a cache of answers: removed as soon as the fold settles, so a later resolution re-reads the
   // log. Re-reading an unchanged log is cheap because the fold of those exact bytes is memoized (see
   // `memoizedAuthoritativeLog`), keyed by content, so a changed log is never answered from memory.
+  const { loadLog, history, crypto = nobleCrypto } = options
   const inFlight = new Map<string, Promise<FoldedView>>()
 
   // Shared by every member: load, fold, throw `Unknown DID` when absent. The chain's states as well
   // as the head, because `resolveHistoric` answers about rotated-away keys.
   async function computeView(did: string): Promise<FoldedView> {
-    const log = await options.loadLog(did)
+    const log = await loadLog(did)
     if (log == null || (isControllerLog(log) && log.chain.length === 0)) {
       throw new Error(`Unknown DID: ${did}`)
     }
     // Without a store, the same fold against no memory: the request limit, the chain, then the
     // epoch — one path, so the two configurations cannot disagree about what a log means.
-    if (options.history == null) {
-      return memoizedAuthoritativeLog(
-        { did, loaded: log, seen: undefined, context: CONTEXT },
-        limits,
+    if (history == null) {
+      return (
+        await memoizedAuthoritativeLog(
+          { did, loaded: log, seen: undefined, context: CONTEXT, crypto },
+          limits,
+        )
       ).result
     }
     // Compared against what this party last accepted, so a truncated log — folding cleanly, missing
@@ -113,10 +117,16 @@ export function createControllerResolverWithin(
     // well as the loaded one, so a prefix memoized before a longer log was accepted is a different
     // entry from that prefix presented against the longer log, and the latter is folded and refused.
     let view: FoldedView | undefined
-    await options.history.merge(did, async (seen) => {
-      const settled = memoizedAuthoritativeLog({ did, loaded: log, seen, context: CONTEXT }, limits)
-      view = settled.result
-      return settled.log
+    await history.merge({
+      did,
+      update: async (seen) => {
+        const settled = await memoizedAuthoritativeLog(
+          { did, loaded: log, seen, context: CONTEXT, crypto },
+          limits,
+        )
+        view = settled.result
+        return settled.log
+      },
     })
     if (view === undefined) {
       throw new Error(`${CONTEXT}: the log store did not run the merge for ${did}`)
@@ -137,7 +147,7 @@ export function createControllerResolverWithin(
     // Deferred by a microtask so the entry is registered *before* `loadLog` runs — otherwise a
     // `loadLog` that re-enters `resolve` before its own first `await` recurses to a stack overflow
     // while the map is still empty.
-    const fold = Promise.resolve().then(() => computeView(did))
+    const fold = Promise.resolve().then(async () => await computeView(did))
     inFlight.set(did, fold)
     try {
       return await fold
@@ -155,7 +165,7 @@ export function createControllerResolverWithin(
       // The promise, not the settled view: concurrent first calls for one DID join one load and
       // fold, rather than each starting its own and answering from whichever settled.
       const views = new Map<string, Promise<FoldedView>>()
-      return resolverOver((did) => {
+      return resolverOver(async (did) => {
         const known = views.get(did)
         if (known !== undefined) {
           return known

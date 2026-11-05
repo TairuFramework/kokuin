@@ -1,9 +1,12 @@
+import type { CryptoOptions } from '@kokuin/token'
+
 import { digestOf } from './canonical.js'
 import type { SignedEvent } from './events.js'
 import { type FoldResult, foldLog, type KeyState } from './fold.js'
+import { snapshotLog, unchangedEntries } from './log-snapshot.js'
 
 /** Index into an array whose element is a branch-resolution invariant, throwing rather than reading undefined. */
-function required<T>(items: ReadonlyArray<T>, index: number, what: string): T {
+function required<TValue>(items: ReadonlyArray<TValue>, index: number, what: string): TValue {
   const item = items[index]
   if (item === undefined) {
     throw new Error(`supersede: ${what}`)
@@ -206,15 +209,36 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
  * Chains that do not fold are filtered out before comparison, so a thief who cannot produce a valid
  * event cannot create a duplicity report.
  */
-export function resolveBranches(did: string, chains: Array<Array<SignedEvent>>): ResolveResult {
+export type ResolveBranchesParams = {
+  did: string
+  chains: Array<Array<SignedEvent>>
+} & CryptoOptions
+
+export async function resolveBranches({
+  chains,
+  did,
+  ...options
+}: ResolveBranchesParams): Promise<ResolveResult> {
+  const originals = chains.slice()
+  const snapshots = chains.map((chain) => snapshotLog({ chain, events: [] }).chain)
   const valid: Array<FoldedBranch> = []
-  for (const branch of chains) {
-    const folded = branchFrom(branch, foldLog(did, { chain: branch, events: [] }))
+  for (const branch of snapshots) {
+    const folded = branchFrom(
+      branch,
+      await foldLog({ ...options, did, input: { chain: branch, events: [] } }),
+    )
     if (folded != null) {
       valid.push(folded)
     }
   }
-  return selectWinner(valid)
+  const result = selectWinner(valid)
+  if (result.ok) {
+    const original = originals[snapshots.indexOf(result.winner)]
+    if (original !== undefined && unchangedEntries(result.winner, original)) {
+      return { ...result, winner: original }
+    }
+  }
+  return result
 }
 
 function selectWinner(valid: Array<FoldedBranch>): ResolveResult {

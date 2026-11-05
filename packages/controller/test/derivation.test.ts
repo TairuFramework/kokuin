@@ -14,12 +14,12 @@ const seed = Uint8Array.from(
 
 describe('paths', () => {
   test('authority sits under the delegable branch', () => {
-    expect(authorityPath(0, 0, 0)).toBe("m/44'/876'/0'/0'/0'/0'/0'")
-    expect(authorityPath(3, 1, 7)).toBe("m/44'/876'/0'/3'/0'/1'/7'")
+    expect(authorityPath({ profile: 0, gen: 0, seq: 0 })).toBe("m/44'/876'/0'/0'/0'/0'/0'")
+    expect(authorityPath({ profile: 3, gen: 1, seq: 7 })).toBe("m/44'/876'/0'/3'/0'/1'/7'")
   })
 
   test('key agreement sits under the delegable branch at role 1', () => {
-    expect(agreementPath(3, 1, 7)).toBe("m/44'/876'/0'/3'/1'/1'/7'")
+    expect(agreementPath({ profile: 3, gen: 1, seq: 7 })).toBe("m/44'/876'/0'/3'/1'/1'/7'")
   })
 
   test('recovery sits on the root-retained branch, outside the profile subtree', () => {
@@ -33,49 +33,88 @@ describe('paths', () => {
   })
 
   test('rejects a negative or non-integer index', () => {
-    expect(() => authorityPath(-1, 0, 0)).toThrow(/non-negative integer/)
-    expect(() => authorityPath(0, 1.5, 0)).toThrow(/non-negative integer/)
+    expect(() => authorityPath({ profile: -1, gen: 0, seq: 0 })).toThrow(/non-negative integer/)
+    expect(() => authorityPath({ profile: 0, gen: 1.5, seq: 0 })).toThrow(/non-negative integer/)
   })
 })
 
 describe('deriveKeyMaterial()', () => {
   test('is deterministic for the same seed, path and algorithm', () => {
-    const a = deriveKeyMaterial(seed, authorityPath(0, 0, 0), 'EdDSA')
-    const b = deriveKeyMaterial(seed, authorityPath(0, 0, 0), 'EdDSA')
+    const a = deriveKeyMaterial({
+      seed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    })
+    const b = deriveKeyMaterial({
+      seed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    })
     expect(a).toEqual(b)
   })
 
   test('separates algorithms at the same path', () => {
-    const path = authorityPath(0, 0, 0)
-    expect(deriveKeyMaterial(seed, path, 'EdDSA')).not.toEqual(
-      deriveKeyMaterial(seed, path, 'ML-DSA-65'),
+    const path = authorityPath({ profile: 0, gen: 0, seq: 0 })
+    expect(deriveKeyMaterial({ seed, path, alg: 'EdDSA' })).not.toEqual(
+      deriveKeyMaterial({ seed, path, alg: 'ML-DSA-65' }),
     )
   })
 
   test('produces the requested length, so 64-byte algorithms need no path tricks', () => {
-    expect(deriveKeyMaterial(seed, authorityPath(0, 0, 0), 'ML-KEM-768', 64).length).toBe(64)
+    expect(
+      deriveKeyMaterial({
+        seed,
+        path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+        alg: 'ML-KEM-768',
+        length: 64,
+      }).length,
+    ).toBe(64)
   })
 
   test('different positions produce different material', () => {
-    expect(deriveKeyMaterial(seed, authorityPath(0, 0, 0), 'EdDSA')).not.toEqual(
-      deriveKeyMaterial(seed, authorityPath(0, 0, 1), 'EdDSA'),
+    expect(
+      deriveKeyMaterial({
+        seed,
+        path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+        alg: 'EdDSA',
+      }),
+    ).not.toEqual(
+      deriveKeyMaterial({
+        seed,
+        path: authorityPath({ profile: 0, gen: 0, seq: 1 }),
+        alg: 'EdDSA',
+      }),
     )
   })
 })
 
 describe('deriveKeyPair()', () => {
   test('derives a 32-byte ed25519 keypair', () => {
-    const { privateKey, publicKey } = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
+    const { privateKey, publicKey } = deriveKeyPair({
+      seed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    })
     expect(privateKey.length).toBe(32)
     expect(publicKey.length).toBe(32)
   })
 
   test('rejects an algorithm it cannot build a keypair for', () => {
-    expect(() => deriveKeyPair(seed, authorityPath(0, 0, 0), 'ML-DSA-65')).toThrow(/Unsupported/)
+    expect(() =>
+      deriveKeyPair({
+        seed,
+        path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+        alg: 'ML-DSA-65',
+      }),
+    ).toThrow(/Unsupported/)
   })
 
   test('derives a 32-byte x25519 keypair', () => {
-    const { privateKey, publicKey } = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
+    const { privateKey, publicKey } = deriveKeyPair({
+      seed,
+      path: agreementPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'X25519',
+    })
     expect(privateKey.length).toBe(32)
     expect(publicKey.length).toBe(32)
   })
@@ -83,8 +122,16 @@ describe('deriveKeyPair()', () => {
   // The HKDF `info` (`did:kokuin/v1|<alg>`) separates the roles at an identical tree position —
   // a regression here would silently reuse one key for both.
   test('the agreement key at a position is unrelated to the authority key at the same position', () => {
-    const authority = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
-    const agreement = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
+    const authority = deriveKeyPair({
+      seed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    })
+    const agreement = deriveKeyPair({
+      seed,
+      path: agreementPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'X25519',
+    })
     expect(agreement.privateKey).not.toEqual(authority.privateKey)
   })
 })

@@ -74,12 +74,12 @@ describe('JWE encrypt and decrypt', () => {
     const privateKey = ed25519.utils.randomSecretKey()
     const x25519Public = edToX25519Public(privateKey)
 
-    const encrypter = createTokenEncrypter(x25519Public, { algorithm: 'X25519' })
+    const encrypter = createTokenEncrypter({ recipient: x25519Public, algorithm: 'X25519' })
     const decrypter = createKeyAgreementIdentity(privateKey)
 
     const plaintext = new TextEncoder().encode('hello world')
-    const jwe = await encryptToken(encrypter, plaintext)
-    const decrypted = await decryptToken(decrypter, jwe)
+    const jwe = await encryptToken({ encrypter, plaintext })
+    const decrypted = await decryptToken({ decrypter, jwe })
 
     expect(new TextDecoder().decode(decrypted)).toBe('hello world')
   })
@@ -88,9 +88,9 @@ describe('JWE encrypt and decrypt', () => {
     const privateKey = ed25519.utils.randomSecretKey()
     const x25519Public = edToX25519Public(privateKey)
 
-    const encrypter = createTokenEncrypter(x25519Public, { algorithm: 'X25519' })
+    const encrypter = createTokenEncrypter({ recipient: x25519Public, algorithm: 'X25519' })
     const plaintext = new TextEncoder().encode('test')
-    const jwe = await encryptToken(encrypter, plaintext)
+    const jwe = await encryptToken({ encrypter, plaintext })
 
     const parts = jwe.split('.')
     expect(parts.length).toBe(5)
@@ -104,25 +104,25 @@ describe('JWE encrypt and decrypt', () => {
 
     const privateKey2 = ed25519.utils.randomSecretKey()
 
-    const encrypter = createTokenEncrypter(x25519Public1, { algorithm: 'X25519' })
+    const encrypter = createTokenEncrypter({ recipient: x25519Public1, algorithm: 'X25519' })
     const decrypter = createKeyAgreementIdentity(privateKey2)
 
     const plaintext = new TextEncoder().encode('secret')
-    const jwe = await encryptToken(encrypter, plaintext)
+    const jwe = await encryptToken({ encrypter, plaintext })
 
-    await expect(decryptToken(decrypter, jwe)).rejects.toThrow()
+    await expect(decryptToken({ decrypter, jwe })).rejects.toThrow()
   })
 })
 
 describe('createTokenEncrypter from DID', () => {
   test('creates encrypter from Ed25519 DID string', async () => {
     const identity = randomIdentity()
-    const encrypter = createTokenEncrypter(identity.id)
+    const encrypter = createTokenEncrypter({ recipient: identity.id })
     expect(encrypter.recipientID).toBe(identity.id)
 
     const plaintext = new TextEncoder().encode('from DID')
-    const jwe = await encryptToken(encrypter, plaintext)
-    const decrypted = await decryptToken(identity, jwe)
+    const jwe = await encryptToken({ encrypter, plaintext })
+    const decrypted = await decryptToken({ decrypter: identity, jwe })
     expect(new TextDecoder().decode(decrypted)).toBe('from DID')
   })
 })
@@ -132,19 +132,19 @@ describe('createTokenEncrypter', () => {
     const privateKey = ed25519.utils.randomSecretKey()
     const x25519Public = edToX25519Public(privateKey)
 
-    const encrypter = createTokenEncrypter(x25519Public, { algorithm: 'X25519' })
+    const encrypter = createTokenEncrypter({ recipient: x25519Public, algorithm: 'X25519' })
     const decrypter = createKeyAgreementIdentity(privateKey)
 
     const plaintext = new TextEncoder().encode('test')
-    const jwe1 = await encryptToken(encrypter, plaintext)
-    const jwe2 = await encryptToken(encrypter, plaintext)
+    const jwe1 = await encryptToken({ encrypter, plaintext })
+    const jwe2 = await encryptToken({ encrypter, plaintext })
 
     // Different JWEs (different ephemeral keys / IVs)
     expect(jwe1).not.toBe(jwe2)
 
     // Both decrypt correctly
-    const d1 = await decryptToken(decrypter, jwe1)
-    const d2 = await decryptToken(decrypter, jwe2)
+    const d1 = await decryptToken({ decrypter, jwe: jwe1 })
+    const d2 = await decryptToken({ decrypter, jwe: jwe2 })
     expect(new TextDecoder().decode(d1)).toBe('test')
     expect(new TextDecoder().decode(d2)).toBe('test')
   })
@@ -153,9 +153,11 @@ describe('createTokenEncrypter', () => {
 describe('decryptToken() error paths', () => {
   test('rejects JWE with wrong number of parts', async () => {
     const decrypter = createKeyAgreementIdentity(ed25519.utils.randomSecretKey())
-    await expect(decryptToken(decrypter, 'a.b.c')).rejects.toThrow('Invalid JWE format')
-    await expect(decryptToken(decrypter, 'a.b.c.d')).rejects.toThrow('Invalid JWE format')
-    await expect(decryptToken(decrypter, 'a.b.c.d.e.f')).rejects.toThrow('Invalid JWE format')
+    await expect(decryptToken({ decrypter, jwe: 'a.b.c' })).rejects.toThrow('Invalid JWE format')
+    await expect(decryptToken({ decrypter, jwe: 'a.b.c.d' })).rejects.toThrow('Invalid JWE format')
+    await expect(decryptToken({ decrypter, jwe: 'a.b.c.d.e.f' })).rejects.toThrow(
+      'Invalid JWE format',
+    )
   })
 
   test('rejects JWE with unsupported algorithm', async () => {
@@ -163,7 +165,7 @@ describe('decryptToken() error paths', () => {
     const header = { alg: 'RSA-OAEP', enc: 'A256GCM', epk: { kty: 'RSA', crv: '', x: '' } }
     const encodedHeader = b64uFromJSON(header as unknown as Record<string, unknown>)
     const jwe = `${encodedHeader}..AAAA.BBBB.CCCC`
-    await expect(decryptToken(decrypter, jwe)).rejects.toThrow('Unsupported JWE algorithm')
+    await expect(decryptToken({ decrypter, jwe })).rejects.toThrow('Unsupported JWE algorithm')
   })
 
   test('rejects JWE with unsupported encryption', async () => {
@@ -171,14 +173,14 @@ describe('decryptToken() error paths', () => {
     const header = { alg: 'ECDH-ES', enc: 'A128GCM', epk: { kty: 'OKP', crv: 'X25519', x: '' } }
     const encodedHeader = b64uFromJSON(header as unknown as Record<string, unknown>)
     const jwe = `${encodedHeader}..AAAA.BBBB.CCCC`
-    await expect(decryptToken(decrypter, jwe)).rejects.toThrow('Unsupported JWE encryption')
+    await expect(decryptToken({ decrypter, jwe })).rejects.toThrow('Unsupported JWE encryption')
   })
 })
 
 describe('createTokenEncrypter() error paths', () => {
   test('rejects Uint8Array recipient with unsupported algorithm', () => {
     const key = new Uint8Array(32)
-    expect(() => createTokenEncrypter(key, { algorithm: 'RSA' as never })).toThrow(
+    expect(() => createTokenEncrypter({ recipient: key, algorithm: 'RSA' as never })).toThrow(
       'Unsupported algorithm',
     )
   })
@@ -186,11 +188,11 @@ describe('createTokenEncrypter() error paths', () => {
 
 describe('decryptToken() with a FullIdentity', () => {
   test('decrypts JWE encrypted to identity DID', async () => {
-    const identity = createFullIdentity(randomPrivateKey())
-    const encrypter = createTokenEncrypter(identity.id)
+    const identity = createFullIdentity({ privateKey: randomPrivateKey() })
+    const encrypter = createTokenEncrypter({ recipient: identity.id })
     const plaintext = new TextEncoder().encode('hello world')
     const jwe = await encrypter.encrypt(plaintext)
-    const decrypted = await decryptToken(identity, jwe)
+    const decrypted = await decryptToken({ decrypter: identity, jwe })
     expect(decrypted).toEqual(plaintext)
   })
 })

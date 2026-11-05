@@ -90,19 +90,21 @@ describe('vault crypto', () => {
     expect(suite.decryptEntry({ ...nextAddress, ...next, contentKey: opened, entryID })).toEqual(
       plaintext,
     )
-    expect(() =>
-      suite.decryptEntry({ ...nextAddress, ...next, contentKey: firstKey, entryID }),
-    ).toThrow(VaultTampered)
-    expect(() =>
-      suite.decryptEntry({ ...nextAddress, ...first, contentKey: firstKey, entryID }),
-    ).toThrow(VaultTampered)
+    expect(() => {
+      return suite.decryptEntry({ ...nextAddress, ...next, contentKey: firstKey, entryID })
+    }).toThrow(VaultTampered)
+    expect(() => {
+      return suite.decryptEntry({ ...nextAddress, ...first, contentKey: firstKey, entryID })
+    }).toThrow(VaultTampered)
     await expect(suite.unwrap({ ...openParams(wrapped), identity })).rejects.toThrow()
   })
 
   test('opens did, passphrase and pin in their authenticated order', async () => {
     const { identity, contentKey, wrapped } = await multifactor()
     expect(wrapped.descriptors.map((factor) => factor.kind)).toEqual(['did', 'passphrase', 'pin'])
-    expect(wrapped.descriptorDigest).toBe(descriptorDigest(wrapped.descriptors))
+    expect(wrapped.descriptorDigest).toBe(
+      await descriptorDigest({ descriptors: wrapped.descriptors }),
+    )
     expect(
       await suite.unwrap({
         ...openParams(wrapped),
@@ -131,12 +133,12 @@ describe('vault crypto', () => {
     const descriptors = [...wrapped.descriptors].reverse()
     const agreeKey = vi.fn(identity.agreeKey)
     vi.mocked(gcm).mockClear()
-    expect(() =>
+    await expect(
       checkDescriptorDigest({
         descriptors,
         expectedDescriptorDigest: wrapped.descriptorDigest,
       }),
-    ).toThrow(VaultTampered)
+    ).rejects.toThrow(VaultTampered)
     await expect(
       suite.unwrap({
         ...openParams(wrapped),
@@ -170,10 +172,12 @@ describe('vault crypto', () => {
     'editing descriptor %s is tampering before agreement or GCM',
     async (field) => {
       const { identity, wrapped } = await multifactor()
-      const descriptors: Array<FactorDescriptor> = wrapped.descriptors.map((descriptor) => ({
-        ...descriptor,
-        params: { ...descriptor.params },
-      }))
+      const descriptors: Array<FactorDescriptor> = wrapped.descriptors.map((descriptor) => {
+        return {
+          ...descriptor,
+          params: { ...descriptor.params },
+        }
+      })
       const target = descriptors.find(
         (descriptor) => descriptor.kind === (field === 'recipient' ? 'did' : 'passphrase'),
       )
@@ -185,7 +189,7 @@ describe('vault crypto', () => {
         suite.unwrap({
           ...openParams(wrapped),
           descriptors,
-          descriptorDigest: descriptorDigest(descriptors),
+          descriptorDigest: await descriptorDigest({ descriptors }),
           identity: { id: identity.id, agreeKey },
           inputs: { passphrase, pin },
         }),
@@ -214,12 +218,19 @@ describe('vault crypto', () => {
       contentKey,
       factors: [{ kind: 'did', recipientDID }],
     })
-    expect(await suite.unwrap({ ...openParams(wrapped), identity })).toEqual(contentKey)
+    expect(
+      await suite.unwrap({
+        ...openParams(wrapped),
+        identity,
+      }),
+    ).toEqual(contentKey)
     const epk = wrapped.descriptors[0]?.params.epk
     if (typeof epk !== 'string') throw new Error('missing ephemeral public key')
-    expect(await identity.agreeKey(fromB64(epk))).toHaveLength(32)
-    const shared = await deriveSharedSecretAsync(recipientDID, { methods: [] })
-    expect(await identity.agreeKey(shared.ephemeralPublicKey)).toEqual(shared.sharedSecret)
+    expect(await identity.agreeKey({ ephemeralPublicKey: fromB64(epk) })).toHaveLength(32)
+    const shared = await deriveSharedSecretAsync({ recipient: recipientDID, methods: [] })
+    expect(await identity.agreeKey({ ephemeralPublicKey: shared.ephemeralPublicKey })).toEqual(
+      shared.sharedSecret,
+    )
     if (didMethod === 'peer:4') {
       expect(identity.longForm).not.toBe(identity.id)
       expect(recipientDID).toBe(identity.longForm)
@@ -267,14 +278,14 @@ describe('vault crypto', () => {
       plaintext: bytes,
     })
     expect(suite.decryptEntry({ ...address, ...encrypted, contentKey, entryID })).toEqual(bytes)
-    expect(() =>
-      suite.decryptEntry({
+    expect(() => {
+      return suite.decryptEntry({
         ...address,
         ...encrypted,
         contentKey,
         entryID: 'another-entry',
-      }),
-    ).toThrow(VaultTampered)
+      })
+    }).toThrow(VaultTampered)
   })
 
   test('a host blob uses only the device agreement key and never prompts', async () => {
@@ -282,7 +293,7 @@ describe('vault crypto', () => {
     const prompt = vi.fn(() => {
       throw new Error('message-path identity attempted to prompt')
     })
-    const agreeKey = vi.fn(async (epk: Uint8Array) => await device.agreeKey(epk))
+    const agreeKey = vi.fn(device.agreeKey)
     const identity = { id: device.id, agreeKey, prompt }
     const contentKey = suite.generateContentKey(runtime)
     const wrapped = await suite.wrap({

@@ -13,18 +13,18 @@ import { resolveBranches } from '../src/supersede.js'
 const seed = new Uint8Array(32).fill(1)
 const deviceX = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
-function build() {
-  const icp = createInception(seed, 0)
+async function build() {
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
   // The honest history: rotate once, then rotate again denying deviceX.
-  const rot = createRotate({
+  const rot = await createRotate({
     seed,
     profile: 0,
     did,
     prior: icp.event,
     snapshot: { members: [], deny: [] },
   })
-  const denying = createRotate({
+  const denying = await createRotate({
     seed,
     profile: 0,
     did,
@@ -56,8 +56,8 @@ function forged(did: string, priorDigest: string, over: Record<string, unknown> 
   } as unknown as SignedEvent
 }
 
-function digestOfPrefix(did: string, events: Array<SignedEvent>): string {
-  const r = foldLog(did, { chain: events, events: [] })
+async function digestOfPrefix(did: string, events: Array<SignedEvent>): Promise<string> {
+  const r = await foldLog({ did, input: { chain: events, events: [] } })
   if (!r.ok) throw new Error(`prefix does not fold: ${r.reason}`)
   const head = r.states[r.states.length - 1]
   if (head === undefined) throw new Error('prefix has no states')
@@ -71,110 +71,127 @@ function digestOfPrefix(did: string, events: Array<SignedEvent>): string {
 // requires a skipped event to sit at the next sequence position, and `resolveBranches` orders
 // branches by their folded position rather than by the raw head event.
 describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an unchecked (g, s)', () => {
-  test('ROW 1 (attack): a truncated log + one unsigned event no longer beats the honest branch', () => {
-    const { icp, did, honest } = build()
+  test('ROW 1 (attack): a truncated log + one unsigned event no longer beats the honest branch', async () => {
+    const { icp, did, honest } = await build()
     // The attacker holds NO key material at all. They take the public inception (or any prefix of
     // the public log), truncate everything after it, and append one forged event.
-    const attackBranch = [icp, forged(did, digestOfPrefix(did, [icp]))]
+    const attackBranch = [icp, forged(did, await digestOfPrefix(did, [icp]))]
 
-    const attackFolds = foldLog(did, { chain: attackBranch, events: [] })
+    const attackFolds = await foldLog({ did, input: { chain: attackBranch, events: [] } })
 
-    const result = resolveBranches(did, [honest, attackBranch])
+    const result = await resolveBranches({ did, chains: [honest, attackBranch] })
 
     // The fabricated position is now a `sequence gap`: a skipped event may only sit at the next
     // sequence position, so the branch does not fold at all and never reaches comparison.
     expect(attackFolds.ok).toBe(false)
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(foldLog(did, { chain: result.winner, events: [] }).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: result.winner, events: [] } })).ok).toBe(true)
     expect(result.winner).toBe(honest)
     expect(result.superseded).toBe(0)
   })
 
-  test('ROW 2 (control: criticality is the lever): the same event with crit:true loses', () => {
-    const { icp, did, honest } = build()
-    const critBranch = [icp, forged(did, digestOfPrefix(did, [icp]), { crit: true })]
-    const folds = foldLog(did, { chain: critBranch, events: [] })
+  test('ROW 2 (control: criticality is the lever): the same event with crit:true loses', async () => {
+    const { icp, did, honest } = await build()
+    const critBranch = [icp, forged(did, await digestOfPrefix(did, [icp]), { crit: true })]
+    const folds = await foldLog({ did, input: { chain: critBranch, events: [] } })
 
-    const result = resolveBranches(did, [honest, critBranch])
+    const result = await resolveBranches({ did, chains: [honest, critBranch] })
     expect(folds.ok).toBe(false)
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.winner).toBe(honest)
   })
 
-  test('ROW 3 (control: the spoofed (g,s) is the lever): honest (g,s) on the same event loses', () => {
-    const { icp, did, honest } = build()
+  test('ROW 3 (control: the spoofed (g,s) is the lever): honest (g,s) on the same event loses', async () => {
+    const { icp, did, honest } = await build()
     // Byte-for-byte the same forged, unsigned, non-critical event — only `g`/`s` are truthful.
-    const tameBranch = [icp, forged(did, digestOfPrefix(did, [icp]), { g: 0, s: 1 })]
-    const folds = foldLog(did, { chain: tameBranch, events: [] })
+    const tameBranch = [icp, forged(did, await digestOfPrefix(did, [icp]), { g: 0, s: 1 })]
+    const folds = await foldLog({ did, input: { chain: tameBranch, events: [] } })
 
-    const result = resolveBranches(did, [honest, tameBranch])
+    const result = await resolveBranches({ did, chains: [honest, tameBranch] })
     expect(folds.ok).toBe(true)
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.winner).toBe(honest)
   })
 
-  test('ROW 4 (control: chaining IS enforced): a wrong `p` is rejected', () => {
-    const { icp, did } = build()
-    const bad = foldLog(did, { chain: [icp, forged(did, 'zNotTheDigest')], events: [] })
-    expect(bad.ok).toBe(false)
-  })
-
-  test('ROW 5 (control: `i` IS enforced): a wrong controller is rejected', () => {
-    const { icp, did } = build()
-    const bad = foldLog(did, {
-      chain: [icp, forged(did, digestOfPrefix(did, [icp]), { i: 'did:kokuin:zSomeoneElse' })],
-      events: [],
+  test('ROW 4 (control: chaining IS enforced): a wrong `p` is rejected', async () => {
+    const { icp, did } = await build()
+    const bad = await foldLog({
+      did,
+      input: { chain: [icp, forged(did, 'zNotTheDigest')], events: [] },
     })
     expect(bad.ok).toBe(false)
   })
 
-  test('ROW 6: no signature is checked at all — an arbitrary `sigs` blob is still accepted', () => {
+  test('ROW 5 (control: `i` IS enforced): a wrong controller is rejected', async () => {
+    const { icp, did } = await build()
+    const bad = await foldLog({
+      did,
+      input: {
+        chain: [
+          icp,
+          forged(did, await digestOfPrefix(did, [icp]), { i: 'did:kokuin:zSomeoneElse' }),
+        ],
+        events: [],
+      },
+    })
+    expect(bad.ok).toBe(false)
+  })
+
+  test('ROW 6: no signature is checked at all — an arbitrary `sigs` blob is still accepted', async () => {
     // Unchanged and deliberately still true: the fold cannot check the signature of a type whose
     // rules it does not know, so a skipped event is accepted with any `sigs` at all. What changed
     // is the reach of that: a skipped event no longer moves state (it never did) and no longer
     // carries a position (it now must sit at the next one), so this buys an attacker a no-op entry
     // in a branch and nothing else.
-    const { icp, did } = build()
+    const { icp, did } = await build()
     const junkSigs = {
-      ...forged(did, digestOfPrefix(did, [icp]), { g: 0, s: 1 }),
+      ...forged(did, await digestOfPrefix(did, [icp]), { g: 0, s: 1 }),
       sigs: ['AAAA', 'not-base64url-at-all', ''],
     } as unknown as SignedEvent
-    const r = foldLog(did, { chain: [icp, junkSigs], events: [] })
+    const r = await foldLog({ did, input: { chain: [icp, junkSigs], events: [] } })
     expect(r.ok).toBe(true)
 
     // At the fabricated position the same blob is rejected — the position check, not a signature.
     const atFabricatedPosition = {
-      ...forged(did, digestOfPrefix(did, [icp])),
+      ...forged(did, await digestOfPrefix(did, [icp])),
       sigs: ['AAAA', 'not-base64url-at-all', ''],
     } as unknown as SignedEvent
-    const spoofed = foldLog(did, { chain: [icp, atFabricatedPosition], events: [] })
+    const spoofed = await foldLog({
+      did,
+      input: { chain: [icp, atFabricatedPosition], events: [] },
+    })
     expect(spoofed.ok).toBe(false)
   })
 
-  test('ROW 7: the forged event is also splice-able into the middle of the honest log', () => {
-    const { icp, did, rot, denying, honest } = build()
+  test('ROW 7: the forged event is also splice-able into the middle of the honest log', async () => {
+    const { icp, did, rot, denying, honest } = await build()
     // A skipped event carries `digest: prior.digest` forward, so the *next* honest event still
     // chains. The log grows, every position after the splice shifts, and the fold is still `ok`.
-    const spliced = [icp, forged(did, digestOfPrefix(did, [icp]), { g: 0, s: 1 }), rot, denying]
-    const a = foldLog(did, { chain: honest, events: [] })
-    const b = foldLog(did, { chain: spliced, events: [] })
+    const spliced = [
+      icp,
+      forged(did, await digestOfPrefix(did, [icp]), { g: 0, s: 1 }),
+      rot,
+      denying,
+    ]
+    const a = await foldLog({ did, input: { chain: honest, events: [] } })
+    const b = await foldLog({ did, input: { chain: spliced, events: [] } })
     if (a.ok && b.ok) {
     }
     expect(b.ok).toBe(true)
   })
 
-  test('ROW 8: a forged event no longer outranks a legitimate reset', () => {
-    const { icp, did, honest } = build()
+  test('ROW 8: a forged event no longer outranks a legitimate reset', async () => {
+    const { icp, did, honest } = await build()
     // `g` is `Number.MAX_SAFE_INTEGER`. A reset must carry `g > prior.gen` to be a reset at all,
     // and `resolveBranches` orders by `(gen, seq)` — so no branch the root can ever author outranks
     // this one.
-    const attackBranch = [icp, forged(did, digestOfPrefix(did, [icp]))]
-    const reset = createReset(seed, 0, 1)
+    const attackBranch = [icp, forged(did, await digestOfPrefix(did, [icp]))]
+    const reset = await createReset({ seed, profile: 0, gen: 1 })
     const recovered = [icp, reset]
-    const result = resolveBranches(did, [recovered, attackBranch, honest])
+    const result = await resolveBranches({ did, chains: [recovered, attackBranch, honest] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.winner).toBe(recovered)

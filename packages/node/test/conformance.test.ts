@@ -44,7 +44,7 @@ vi.mock('@napi-rs/keyring', () => {
 
 const { NodeKeyStore } = await import('../src/store.js')
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+function sameBytes({ a, b }: { a: Uint8Array; b: Uint8Array }): boolean {
   return a.length === b.length && a.every((byte, i) => byte === b[i])
 }
 
@@ -57,7 +57,7 @@ describe('NodeKeyStore conformance', () => {
   const cases = mutableKeyStoreConformanceCases({
     // A fresh service per case, so the module-level store cache cannot leak between them.
     createStore: () => new NodeKeyStore({ service: `conformance-${counter++}` }),
-    isSameKey: sameBytes,
+    isSameKey: ({ a, b }) => sameBytes({ a, b }),
     createKey: () => crypto.getRandomValues(new Uint8Array(32)),
   })
 

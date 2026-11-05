@@ -11,7 +11,7 @@ import {
   parseSignatureResponse,
 } from '../src/apdu.js'
 
-const at = <T>(items: ArrayLike<T>, i: number): T => {
+const at = <TValue>(items: ArrayLike<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -46,7 +46,7 @@ describe('encodeSignMessageChunks()', () => {
   test('returns single chunk for small message', () => {
     const path = encodeDerivationPath("m/44'/876'/0'")
     const message = new Uint8Array(32)
-    const chunks = encodeSignMessageChunks(path, message)
+    const chunks = encodeSignMessageChunks({ pathBytes: path, message })
     expect(chunks.length).toBe(1)
     expect(at(chunks, 0).p1).toBe(0x00)
     expect(at(chunks, 0).p2).toBe(0x00)
@@ -55,7 +55,7 @@ describe('encodeSignMessageChunks()', () => {
   test('returns multiple chunks for large message', () => {
     const path = encodeDerivationPath("m/44'/876'/0'")
     const message = new Uint8Array(512)
-    const chunks = encodeSignMessageChunks(path, message)
+    const chunks = encodeSignMessageChunks({ pathBytes: path, message })
     expect(chunks.length).toBeGreaterThan(1)
     expect(at(chunks, 0).p1).toBe(0x00)
     for (let i = 1; i < chunks.length; i++) {

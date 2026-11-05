@@ -1,3 +1,4 @@
+export type OAuthTokenErrorParams = { status: number; code?: OAuthErrorCode; description?: string }
 export type OAuthClientMode =
   | { mode: 'confidential'; clientID: string; clientSecret: string }
   | { mode: 'native'; clientID: string; clientSecret?: string }
@@ -39,7 +40,7 @@ export class OAuthTokenError extends Error {
   code?: OAuthErrorCode
   description?: string
 
-  constructor(status: number, code?: OAuthErrorCode, description?: string) {
+  constructor({ status, code, description }: OAuthTokenErrorParams) {
     super(description ?? code ?? `OAuth token request failed with status ${status}`)
     this.name = 'OAuthTokenError'
     this.status = status

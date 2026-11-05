@@ -42,16 +42,18 @@ import { encodeKey } from '../src/keys.js'
 import type { ControllerLog } from '../src/log.js'
 import { createDenialMatcher, denialTargetsMember } from '../src/members.js'
 
+type RenewParams = { signer: EpochSigner; target: string; lease: number; parents?: Array<string> }
+
 /** {@link foldEpochDetailed}, which these fixtures never drive into the failed-signature refusal. */
-function detailOf(params: FoldEpochParams): FoldEpochDetail {
-  const detail = foldEpochDetailed(params)
+async function detailOf(params: FoldEpochParams): Promise<FoldEpochDetail> {
+  const detail = await foldEpochDetailed(params)
   if (!detail.ok) throw new Error(`epoch fold refused: ${detail.reason}`)
   return detail
 }
 
 const seed = new Uint8Array(32).fill(1)
 const profile = 0
-const inception = createInception(seed, profile)
+const inception = await createInception({ seed, profile })
 const did = didFromInception(inception.event)
 
 type KeyPair = { privateKey: Uint8Array; key: string; did: string }
@@ -59,7 +61,7 @@ type KeyPair = { privateKey: Uint8Array; key: string; did: string }
 /** A member key pair from a fixed secret, so every run builds the same events and digests. */
 function memberKeyPair(fill: number): KeyPair {
   const privateKey = new Uint8Array(32).fill(fill)
-  const key = encodeKey(ed25519.getPublicKey(privateKey), 'EdDSA')
+  const key = encodeKey({ publicKey: ed25519.getPublicKey(privateKey), alg: 'EdDSA' })
   return { privateKey, key, did: `did:key:${key}` }
 }
 
@@ -75,13 +77,17 @@ function peerDID(key: string): string {
 
 /** The authority key this seed establishes at `(gen, seq)`, in the spelling `k` carries. */
 function rootKeyAt(gen: number, seq: number): string {
-  return encodeKey(
-    deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA').publicKey,
-    'EdDSA',
-  )
+  return encodeKey({
+    publicKey: deriveKeyPair({
+      seed,
+      path: authorityPath({ profile, gen, seq }),
+      alg: 'EdDSA',
+    }).publicKey,
+    alg: 'EdDSA',
+  })
 }
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const value = items[i]
   if (value === undefined) throw new Error(`expected element at ${i}`)
   return value
@@ -101,7 +107,7 @@ const memberA = entryOf(a, digestOf('the add that admitted A'))
 const memberB = entryOf(b, digestOf('the add that admitted B'))
 const memberC = entryOf(c, digestOf('the add that admitted C'))
 
-const rot = createRotate({
+const rot = await createRotate({
   seed,
   profile,
   did,
@@ -110,7 +116,7 @@ const rot = createRotate({
 })
 const chain: Array<SignedEvent> = [inception, rot]
 
-const settled = foldLog(did, { chain, events: [] })
+const settled = await foldLog({ did, input: { chain, events: [] } })
 if (!settled.ok) {
   throw new Error(`fixture chain does not fold: ${settled.reason}`)
 }
@@ -126,11 +132,11 @@ function digest(signed: SignedEvent<EpochEvent>): string {
   return digestOf(signed.event)
 }
 
-function add(
+async function add(
   member: { did: string; key: string; lease?: number },
   parents: Array<string> = [epoch],
-): SignedEvent<EpochEvent> {
-  return createAdd({
+): Promise<SignedEvent<EpochEvent>> {
+  return await createAdd({
     seed,
     profile,
     did,
@@ -140,51 +146,58 @@ function add(
   })
 }
 
-function renew(
-  signer: EpochSigner,
-  target: string,
-  lease: number,
-  parents: Array<string> = [epoch],
-): SignedEvent<EpochEvent> {
-  return createRenew({ signer, did, head, parents, add: target, lease })
+async function renew({
+  signer,
+  target,
+  lease,
+  parents = [epoch],
+}: RenewParams): Promise<SignedEvent<EpochEvent>> {
+  return await createRenew({ signer, did, head, parents, add: target, lease })
 }
 
-function remove(
+async function remove(
   signer: EpochSigner,
   target: string,
   parents: Array<string> = [epoch],
-): SignedEvent<EpochEvent> {
-  return createRemove({ signer, did, head, parents, add: target })
+): Promise<SignedEvent<EpochEvent>> {
+  return await createRemove({ signer, did, head, parents, add: target })
 }
 
-function revoke(
+async function revoke(
   signer: EpochSigner,
   target: string,
   parents: Array<string> = [epoch],
-): SignedEvent<EpochEvent> {
-  return createRevoke({ signer, did, head, parents, target })
+): Promise<SignedEvent<EpochEvent>> {
+  return await createRevoke({ signer, did, head, parents, target })
 }
 
 /** Re-sign `event` with one private key, as whoever holds it would. */
-function signedBy(event: EpochEvent, privateKey: Uint8Array): SignedEvent<EpochEvent> {
-  return { event, sigs: signEvent(event, [privateKey]) }
+async function signedBy(
+  event: EpochEvent,
+  privateKey: Uint8Array,
+): Promise<SignedEvent<EpochEvent>> {
+  return { event, sigs: await signEvent(event, [privateKey]) }
 }
 
 /** Why each event of `log` was refused, by digest: what the head alone cannot say. */
-function rejectionsOf(controller: string, log: ControllerLog): Map<string, string> {
-  const folded = foldLog(controller, { chain: log.chain, events: [] })
+async function rejectionsOf(controller: string, log: ControllerLog): Promise<Map<string, string>> {
+  const folded = await foldLog({ did: controller, input: { chain: log.chain, events: [] } })
   if (!folded.ok) {
     throw new Error(`chain does not fold: ${folded.reason}`)
   }
-  return detailOf({ did: controller, chainStates: folded.states, events: log.events }).reasons
+  return (await detailOf({ did: controller, chainStates: folded.states, events: log.events }))
+    .reasons
 }
 
-function reasonsFor(events: Array<SignedEvent<EpochEvent>>): Map<string, string> {
-  return rejectionsOf(did, { chain, events })
+async function reasonsFor(events: Array<SignedEvent<EpochEvent>>): Promise<Map<string, string>> {
+  return await rejectionsOf(did, { chain, events })
 }
 
-function folded(events: Array<unknown>): Extract<FoldResult, { ok: true }> {
-  const result = foldLog(did, { chain, events: events as ControllerLog['events'] })
+async function folded(events: Array<unknown>): Promise<Extract<FoldResult, { ok: true }>> {
+  const result = await foldLog({
+    did,
+    input: { chain, events: events as ControllerLog['events'] },
+  })
   if (!result.ok) {
     throw new Error(`log does not fold: ${result.reason}`)
   }
@@ -192,8 +205,8 @@ function folded(events: Array<unknown>): Extract<FoldResult, { ok: true }> {
 }
 
 /** Everything order independence promises about a fold, in a form `toEqual` compares exactly. */
-function summary(events: Array<unknown>) {
-  const result = folded(events)
+async function summary(events: Array<unknown>) {
+  const result = await folded(events)
   return {
     deny: [...result.head.deny].sort(),
     members: [...result.head.members.entries()].sort(([x], [y]) => (x < y ? -1 : 1)),
@@ -203,20 +216,22 @@ function summary(events: Array<unknown>) {
   }
 }
 
-function permutations<T>(items: Array<T>): Array<Array<T>> {
+function permutations<TValue>(items: Array<TValue>): Array<Array<TValue>> {
   if (items.length <= 1) {
     return [items]
   }
-  return items.flatMap((item, i) =>
-    permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [item, ...rest]),
-  )
+  return items.flatMap((item, i) => {
+    return permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => {
+      return [item, ...rest]
+    })
+  })
 }
 
 /** Every presentation order folds to `expected`: the merge, not the arrival, decides. */
-function expectEveryOrder(events: Array<SignedEvent<EpochEvent>>) {
-  const expected = summary(events)
+async function expectEveryOrder(events: Array<SignedEvent<EpochEvent>>) {
+  const expected = await summary(events)
   for (const order of permutations(events)) {
-    expect(summary(order)).toEqual(expected)
+    expect(await summary(order)).toEqual(expected)
   }
   return expected
 }
@@ -224,9 +239,9 @@ function expectEveryOrder(events: Array<SignedEvent<EpochEvent>>) {
 const d = memberKeyPair(14)
 
 describe('adding a member', () => {
-  test('a root add makes an effective member with its lease', () => {
-    const added = add({ ...d, lease: 2_000_000_000 })
-    const result = folded([added])
+  test('a root add makes an effective member with its lease', async () => {
+    const added = await add({ ...d, lease: 2_000_000_000 })
+    const result = await folded([added])
     expect(result.rejected).toBe(0)
     expect(result.head.members.get(digest(added))).toEqual({
       did: d.did,
@@ -238,45 +253,45 @@ describe('adding a member', () => {
     })
   })
 
-  test('a long-form did:peer:4 carrying the pin is admitted', () => {
-    const added = add({ did: peerDID(d.key), key: d.key })
-    expect(folded([added]).head.members.get(digest(added))?.effective).toBe(true)
+  test('a long-form did:peer:4 carrying the pin is admitted', async () => {
+    const added = await add({ did: peerDID(d.key), key: d.key })
+    expect((await folded([added])).head.members.get(digest(added))?.effective).toBe(true)
   })
 
-  test('a member cannot add a member', () => {
+  test('a member cannot add a member', async () => {
     // The root add, with only `by` set and the member's signature in place of root's.
-    const rootAdd = add(d)
-    const memberAdd = signedBy({ ...rootAdd.event, by: memberA.add }, a.privateKey)
-    expect(reasonsFor([memberAdd]).get(digest(memberAdd))).toBe(ADD_NOT_ROOT)
-    expect(folded([memberAdd]).head.members.has(digest(memberAdd))).toBe(false)
+    const rootAdd = await add(d)
+    const memberAdd = await signedBy({ ...rootAdd.event, by: memberA.add }, a.privateKey)
+    expect((await reasonsFor([memberAdd])).get(digest(memberAdd))).toBe(ADD_NOT_ROOT)
+    expect((await folded([memberAdd])).head.members.has(digest(memberAdd))).toBe(false)
     // Control: the same body without `by`, under root's signature, applies.
-    expect(reasonsFor([rootAdd]).size).toBe(0)
+    expect((await reasonsFor([rootAdd])).size).toBe(0)
   })
 
-  test('an add whose DID does not carry its pin is refused', () => {
+  test('an add whose DID does not carry its pin is refused', async () => {
     const cases: Array<[string, { did: string; key: string }]> = [
       ['a did:key of another key', { did: a.did, key: d.key }],
       ['a short-form did:peer:4', { did: getPeer4ShortForm(peerDID(d.key)), key: d.key }],
       ['a network DID', { did: 'did:web:example.com', key: d.key }],
     ]
     for (const [label, member] of cases) {
-      const refused = add(member)
-      expect(reasonsFor([refused]).get(digest(refused)), label).toBe(ADD_DID_MISMATCH)
+      const refused = await add(member)
+      expect((await reasonsFor([refused])).get(digest(refused)), label).toBe(ADD_DID_MISMATCH)
     }
   })
 
-  test('an add pinning a non-Ed25519 key is refused', () => {
+  test('an add pinning a non-Ed25519 key is refused', async () => {
     const publicKey = p256.getPublicKey(new Uint8Array(32).fill(7))
     const key = encodeMultibase(new Uint8Array([...CODECS.ES256, ...publicKey]))
-    const refused = add({ did: `did:key:${key}`, key })
-    expect(reasonsFor([refused]).get(digest(refused))).toBe(ADD_DID_MISMATCH)
+    const refused = await add({ did: `did:key:${key}`, key })
+    expect((await reasonsFor([refused])).get(digest(refused))).toBe(ADD_DID_MISMATCH)
   })
 
-  test('an add pinning a root key, a committed next key or the recovery key is refused', () => {
-    const recovery = encodeKey(
-      deriveKeyPair(seed, recoveryPath(profile), 'EdDSA').publicKey,
-      'EdDSA',
-    )
+  test('an add pinning a root key, a committed next key or the recovery key is refused', async () => {
+    const recovery = encodeKey({
+      publicKey: deriveKeyPair({ seed, path: recoveryPath(profile), alg: 'EdDSA' }).publicKey,
+      alg: 'EdDSA',
+    })
     const cases: Array<[string, string]> = [
       ['the head key', rootKeyAt(0, 1)],
       ['a retired key of this generation', rootKeyAt(0, 0)],
@@ -288,203 +303,240 @@ describe('adding a member', () => {
     expect(head.next).toEqual([digestOf(rootKeyAt(0, 2))])
     expect(head.recovery).toBe(digestOf(recovery))
     for (const [label, key] of cases) {
-      const refused = add({ did: `did:key:${key}`, key })
-      expect(reasonsFor([refused]).get(digest(refused)), label).toBe(ADD_KEY_IS_ROOT)
+      const refused = await add({ did: `did:key:${key}`, key })
+      expect((await reasonsFor([refused])).get(digest(refused)), label).toBe(ADD_KEY_IS_ROOT)
     }
   })
 
-  test('an add of a key or DID denied in its causal past is refused', () => {
+  test('an add of a key or DID denied in its causal past is refused', async () => {
     for (const target of [keyTarget(d.key), d.did]) {
-      const denial = revoke(root, target)
-      const refused = add(d, [digest(denial)])
-      expect(reasonsFor([denial, refused]).get(digest(refused)), target).toBe(ADD_KEY_DENIED)
+      const denial = await revoke(root, target)
+      const refused = await add(d, [digest(denial)])
+      expect((await reasonsFor([denial, refused])).get(digest(refused)), target).toBe(
+        ADD_KEY_DENIED,
+      )
     }
     // A long-form peer member is denied through its short form: canonical DID equivalence.
     const peer = peerDID(d.key)
-    const denial = revoke(root, getPeer4ShortForm(peer))
-    const refused = add({ did: peer, key: d.key }, [digest(denial)])
-    expect(reasonsFor([denial, refused]).get(digest(refused))).toBe(ADD_KEY_DENIED)
+    const denial = await revoke(root, getPeer4ShortForm(peer))
+    const refused = await add({ did: peer, key: d.key }, [digest(denial)])
+    expect((await reasonsFor([denial, refused])).get(digest(refused))).toBe(ADD_KEY_DENIED)
     // Control: the same add concurrent with the denial applies.
-    const concurrent = add(d)
-    expect(reasonsFor([revoke(root, d.did), concurrent]).size).toBe(0)
+    const concurrent = await add(d)
+    expect((await reasonsFor([await revoke(root, d.did), concurrent])).size).toBe(0)
   })
 
-  test('an add of a key an effective member of its causal past already pins is refused', () => {
-    const first = add(d)
-    const again = add({ did: peerDID(d.key), key: d.key }, [digest(first)])
-    expect(reasonsFor([first, again]).get(digest(again))).toBe(ADD_KEY_ALREADY_MEMBER)
+  test('an add of a key an effective member of its causal past already pins is refused', async () => {
+    const first = await add(d)
+    const again = await add({ did: peerDID(d.key), key: d.key }, [digest(first)])
+    expect((await reasonsFor([first, again])).get(digest(again))).toBe(ADD_KEY_ALREADY_MEMBER)
     // A settled member counts too.
-    const settledAgain = add({ did: peerDID(a.key), key: a.key })
-    expect(reasonsFor([settledAgain]).get(digest(settledAgain))).toBe(ADD_KEY_ALREADY_MEMBER)
+    const settledAgain = await add({ did: peerDID(a.key), key: a.key })
+    expect((await reasonsFor([settledAgain])).get(digest(settledAgain))).toBe(
+      ADD_KEY_ALREADY_MEMBER,
+    )
     // Once that incarnation is removed in the causal past, the key may be added again.
-    const removal = remove(root, digest(first), [digest(first)])
-    const readd = add({ did: peerDID(d.key), key: d.key }, [digest(removal)])
-    expect(reasonsFor([first, removal, readd]).size).toBe(0)
+    const removal = await remove(root, digest(first), [digest(first)])
+    const readd = await add({ did: peerDID(d.key), key: d.key }, [digest(removal)])
+    expect((await reasonsFor([first, removal, readd])).size).toBe(0)
   })
 
-  test('an add with a lease that is not unix seconds is not an epoch event', () => {
+  test('an add with a lease that is not unix seconds is not an epoch event', async () => {
     for (const lease of [-1, 1.5, '1900000000']) {
-      const event = { ...add(d).event, lease } as unknown as EpochEvent
+      const event = { ...(await add(d)).event, lease } as unknown as EpochEvent
       const malformed = {
         event,
-        sigs: signEvent(event, [
-          deriveKeyPair(seed, authorityPath(profile, 0, 1), 'EdDSA').privateKey,
+        sigs: await signEvent(event, [
+          deriveKeyPair({
+            seed,
+            path: authorityPath({ profile, gen: 0, seq: 1 }),
+            alg: 'EdDSA',
+          }).privateKey,
         ]),
       }
-      expect(summary([malformed])).toMatchObject({ applied: [], rejected: 1 })
+      expect(await summary([malformed])).toMatchObject({ applied: [], rejected: 1 })
     }
   })
 })
 
 describe('renewing a member', () => {
-  test('another member renews: the lease is the maximum', () => {
-    const higher = renew(signerB, memberA.add, 2_000_000_000)
-    const lower = renew(signerC, memberA.add, 1_500_000_000)
-    const expected = expectEveryOrder([higher, lower])
+  test('another member renews: the lease is the maximum', async () => {
+    const higher = await renew({ signer: signerB, target: memberA.add, lease: 2_000_000_000 })
+    const lower = await renew({ signer: signerC, target: memberA.add, lease: 1_500_000_000 })
+    const expected = await expectEveryOrder([higher, lower])
     expect(expected.rejected).toBe(0)
-    expect(folded([higher, lower]).head.members.get(memberA.add)?.lease).toBe(2_000_000_000)
+    expect((await folded([higher, lower])).head.members.get(memberA.add)?.lease).toBe(2_000_000_000)
     // A lower renewal alone never shortens the lease the add set.
-    expect(folded([lower]).head.members.get(memberA.add)?.lease).toBe(LEASE)
+    expect((await folded([lower])).head.members.get(memberA.add)?.lease).toBe(LEASE)
   })
 
-  test('a member cannot renew itself', () => {
-    const self = renew(signerA, memberA.add, 2_000_000_000)
-    expect(reasonsFor([self]).get(digest(self))).toBe(SELF_RENEW)
-    expect(folded([self]).head.members.get(memberA.add)?.lease).toBe(LEASE)
+  test('a member cannot renew itself', async () => {
+    const self = await renew({ signer: signerA, target: memberA.add, lease: 2_000_000_000 })
+    expect((await reasonsFor([self])).get(digest(self))).toBe(SELF_RENEW)
+    expect((await folded([self])).head.members.get(memberA.add)?.lease).toBe(LEASE)
   })
 
-  test('a member cannot renew itself, even through a second add of the same key', () => {
+  test('a member cannot renew itself, even through a second add of the same key', async () => {
     // Root adds K twice, concurrently: once as a did:key, once as the long-form peer carrying K.
-    const addA = add(d)
-    const addB = add({ did: peerDID(d.key), key: d.key })
+    const addA = await add(d)
+    const addB = await add({ did: peerDID(d.key), key: d.key })
     const signerK: EpochSigner = { member: { privateKey: d.privateKey, add: digest(addA) } }
-    const renewal = renew(signerK, digest(addB), 2_000_000_000, [digest(addA), digest(addB)])
+    const renewal = await renew({
+      signer: signerK,
+      target: digest(addB),
+      lease: 2_000_000_000,
+      parents: [digest(addA), digest(addB)],
+    })
     const log = { chain, events: [addA, addB, renewal] }
-    expect(rejectionsOf(did, log).get(digest(renewal))).toBe(SELF_RENEW)
+    expect((await rejectionsOf(did, log)).get(digest(renewal))).toBe(SELF_RENEW)
     // Control: another member renewing the alias, from the same parents, applies.
-    const other = renew(signerB, digest(addB), 2_000_000_000, [digest(addA), digest(addB)])
-    expect(rejectionsOf(did, { chain, events: [addA, addB, other] }).size).toBe(0)
+    const other = await renew({
+      signer: signerB,
+      target: digest(addB),
+      lease: 2_000_000_000,
+      parents: [digest(addA), digest(addB)],
+    })
+    expect((await rejectionsOf(did, { chain, events: [addA, addB, other] })).size).toBe(0)
   })
 
-  test('a renewal of an incarnation unknown to its causal past is refused', () => {
-    const added = add(d)
+  test('a renewal of an incarnation unknown to its causal past is refused', async () => {
+    const added = await add(d)
     for (const signer of [root, signerB]) {
-      const concurrent = renew(signer, digest(added), 2_000_000_000)
-      expect(reasonsFor([added, concurrent]).get(digest(concurrent))).toBe(UNKNOWN_MEMBER)
-      const later = renew(signer, digest(added), 2_000_000_000, [digest(added)])
-      expect(reasonsFor([added, later]).size).toBe(0)
+      const concurrent = await renew({
+        signer,
+        target: digest(added),
+        lease: 2_000_000_000,
+      })
+      expect((await reasonsFor([added, concurrent])).get(digest(concurrent))).toBe(UNKNOWN_MEMBER)
+      const later = await renew({
+        signer,
+        target: digest(added),
+        lease: 2_000_000_000,
+        parents: [digest(added)],
+      })
+      expect((await reasonsFor([added, later])).size).toBe(0)
     }
   })
 })
 
 describe('removing a member', () => {
-  test('a member cannot remove itself', () => {
-    const self = remove(signerA, memberA.add)
-    expect(reasonsFor([self]).get(digest(self))).toBe(SELF_REMOVE)
-    expect(folded([self]).head.members.get(memberA.add)?.removed).toBe(false)
+  test('a member cannot remove itself', async () => {
+    const self = await remove(signerA, memberA.add)
+    expect((await reasonsFor([self])).get(digest(self))).toBe(SELF_REMOVE)
+    expect((await folded([self])).head.members.get(memberA.add)?.removed).toBe(false)
   })
 
-  test('a member cannot remove itself through a second add of the same key', () => {
-    const addA = add(d)
-    const addB = add({ did: peerDID(d.key), key: d.key })
+  test('a member cannot remove itself through a second add of the same key', async () => {
+    const addA = await add(d)
+    const addB = await add({ did: peerDID(d.key), key: d.key })
     const signerK: EpochSigner = { member: { privateKey: d.privateKey, add: digest(addA) } }
-    const removal = remove(signerK, digest(addB), [digest(addA), digest(addB)])
-    expect(reasonsFor([addA, addB, removal]).get(digest(removal))).toBe(SELF_REMOVE)
+    const removal = await remove(signerK, digest(addB), [digest(addA), digest(addB)])
+    expect((await reasonsFor([addA, addB, removal])).get(digest(removal))).toBe(SELF_REMOVE)
   })
 
-  test('a removal of an incarnation unknown to its causal past is refused', () => {
+  test('a removal of an incarnation unknown to its causal past is refused', async () => {
     for (const signer of [root, signerB]) {
-      const stranger = remove(signer, digestOf('no such add'))
-      expect(reasonsFor([stranger]).get(digest(stranger))).toBe(UNKNOWN_MEMBER)
+      const stranger = await remove(signer, digestOf('no such add'))
+      expect((await reasonsFor([stranger])).get(digest(stranger))).toBe(UNKNOWN_MEMBER)
     }
   })
 
-  test('a removal beats a concurrent renewal', () => {
-    const removal = remove(signerB, memberA.add)
-    const renewal = renew(signerC, memberA.add, 2_000_000_000)
-    const expected = expectEveryOrder([removal, renewal])
+  test('a removal beats a concurrent renewal', async () => {
+    const removal = await remove(signerB, memberA.add)
+    const renewal = await renew({ signer: signerC, target: memberA.add, lease: 2_000_000_000 })
+    const expected = await expectEveryOrder([removal, renewal])
     expect(expected.rejected).toBe(0)
-    expect(folded([removal, renewal]).head.members.get(memberA.add)).toMatchObject({
+    expect((await folded([removal, renewal])).head.members.get(memberA.add)).toMatchObject({
       lease: 2_000_000_000,
       removed: true,
       effective: false,
     })
   })
 
-  test('mutual removal removes both members', () => {
-    const aRemovesB = remove(signerA, memberB.add)
-    const bRemovesA = remove(signerB, memberA.add)
-    const expected = expectEveryOrder([aRemovesB, bRemovesA])
+  test('mutual removal removes both members', async () => {
+    const aRemovesB = await remove(signerA, memberB.add)
+    const bRemovesA = await remove(signerB, memberA.add)
+    const expected = await expectEveryOrder([aRemovesB, bRemovesA])
     expect(expected.rejected).toBe(0)
-    const members = folded([aRemovesB, bRemovesA]).head.members
+    const members = (await folded([aRemovesB, bRemovesA])).head.members
     expect(members.get(memberA.add)?.removed).toBe(true)
     expect(members.get(memberB.add)?.removed).toBe(true)
     expect(members.get(memberC.add)?.effective).toBe(true)
   })
 
-  test('a removal cycle of three removes all three', () => {
+  test('a removal cycle of three removes all three', async () => {
     const cycle = [
-      remove(signerA, memberB.add),
-      remove(signerB, memberC.add),
-      remove(signerC, memberA.add),
+      await remove(signerA, memberB.add),
+      await remove(signerB, memberC.add),
+      await remove(signerC, memberA.add),
     ]
-    const expected = expectEveryOrder(cycle)
+    const expected = await expectEveryOrder(cycle)
     expect(expected.rejected).toBe(0)
     for (const [, member] of expected.members) {
       expect(member).toMatchObject({ removed: true, effective: false })
     }
   })
 
-  test('a removed member signs nothing in its causal future', () => {
-    const removal = remove(signerB, memberA.add)
-    const late = renew(signerA, memberC.add, 2_000_000_000, [digest(removal)])
-    expect(reasonsFor([removal, late]).get(digest(late))).toBe(
+  test('a removed member signs nothing in its causal future', async () => {
+    const removal = await remove(signerB, memberA.add)
+    const late = await renew({
+      signer: signerA,
+      target: memberC.add,
+      lease: 2_000_000_000,
+      parents: [digest(removal)],
+    })
+    expect((await reasonsFor([removal, late])).get(digest(late))).toBe(
       'signer was removed in the causal state',
     )
   })
 
-  test('copying an honest event onto a hostile branch changes nothing', () => {
+  test('copying an honest event onto a hostile branch changes nothing', async () => {
     // Honest: A renews C. Hostile: B removes A, then tries to make A's renewal its own descendant.
-    const honest = renew(signerA, memberC.add, 2_000_000_000)
-    const hostile = remove(signerB, memberA.add)
-    const expected = summary([honest, hostile])
+    const honest = await renew({ signer: signerA, target: memberC.add, lease: 2_000_000_000 })
+    const hostile = await remove(signerB, memberA.add)
+    const expected = await summary([honest, hostile])
     expect(expected.rejected).toBe(0)
     // The same body is the same event wherever and however often it is presented: deduplicated.
     const recopied = { event: { ...honest.event }, sigs: [...honest.sigs] }
-    const resigned = signedBy(honest.event, b.privateKey)
+    const resigned = await signedBy(honest.event, b.privateKey)
     for (const order of permutations([honest, hostile, recopied, resigned])) {
-      expect(summary(order)).toEqual(expected)
+      expect(await summary(order)).toEqual(expected)
     }
     // Re-parented under the removal, the body is a different event A never signed: refused alone,
     // and the honest original still stands.
     const rebased = { event: { ...honest.event, p: [digest(hostile)] }, sigs: honest.sigs }
-    expect(summary([honest, hostile, rebased])).toEqual({ ...expected, rejected: 1 })
+    expect(await summary([honest, hostile, rebased])).toEqual({ ...expected, rejected: 1 })
   })
 
-  test('a delayed renew or remove of an old add does not touch a re-add of the same key', () => {
-    const first = add(d)
-    const removal = remove(root, digest(first), [digest(first)])
-    const readd = add({ ...d, lease: LEASE + 1 }, [digest(removal)])
-    const delayedRenew = renew(signerB, digest(first), 2_000_000_000, [digest(first)])
-    const delayedRemove = remove(signerC, digest(first), [digest(first)])
+  test('a delayed renew or remove of an old add does not touch a re-add of the same key', async () => {
+    const first = await add(d)
+    const removal = await remove(root, digest(first), [digest(first)])
+    const readd = await add({ ...d, lease: LEASE + 1 }, [digest(removal)])
+    const delayedRenew = await renew({
+      signer: signerB,
+      target: digest(first),
+      lease: 2_000_000_000,
+      parents: [digest(first)],
+    })
+    const delayedRemove = await remove(signerC, digest(first), [digest(first)])
     const events = [first, removal, readd, delayedRenew, delayedRemove]
-    const expected = expectEveryOrder(events)
+    const expected = await expectEveryOrder(events)
     expect(expected.rejected).toBe(0)
-    const members = folded(events).head.members
+    const members = (await folded(events)).head.members
     expect(members.get(digest(readd))).toMatchObject({
       lease: LEASE + 1,
       removed: false,
       effective: true,
     })
     expect(members.get(digest(first))).toMatchObject({ lease: 2_000_000_000, removed: true })
-    // Five events: 120 presentation orders, each a full signature-checking fold.
+    // Five events: 120 presentation orders, each a full signature-checking fold. CI took over 20 s.
   }, 30_000)
 })
 
 describe('revoking', () => {
-  test('a member revoke of another member is refused, a root revoke of a member disables it', () => {
+  test('a member revoke of another member is refused, a root revoke of a member disables it', async () => {
     const peer = peerDID(d.key)
-    const peerAdd = add({ did: peer, key: d.key })
+    const peerAdd = await add({ did: peer, key: d.key })
     const targets: Array<[string, string, Array<SignedEvent<EpochEvent>>]> = [
       ['its DID', memberB.did, []],
       ['its pinned key', keyTarget(memberB.key), []],
@@ -493,57 +545,57 @@ describe('revoking', () => {
     ]
     for (const [label, target, before] of targets) {
       const parents = before.length === 0 ? [epoch] : before.map(digest)
-      const refused = revoke(signerA, target, parents)
-      expect(reasonsFor([...before, refused]).get(digest(refused)), label).toBe(
+      const refused = await revoke(signerA, target, parents)
+      expect((await reasonsFor([...before, refused])).get(digest(refused)), label).toBe(
         MEMBER_REVOKES_MEMBER,
       )
     }
-    const byRoot = revoke(root, memberB.did)
-    const result = folded([byRoot])
+    const byRoot = await revoke(root, memberB.did)
+    const result = await folded([byRoot])
     expect(result.rejected).toBe(0)
     expect(result.head.members.get(memberB.add)).toMatchObject({ removed: false, effective: false })
   })
 
-  test('a member may not revoke a member of its causal past, even one already removed or denied', () => {
+  test('a member may not revoke a member of its causal past, even one already removed or denied', async () => {
     // Otherwise C removes B, A denies B's key on top, and root's later re-add of that key under
     // another DID is refused as denied: a member would have done what only root may.
-    const removal = remove(signerC, memberB.add)
-    const denial = revoke(root, memberB.did)
+    const removal = await remove(signerC, memberB.add)
+    const denial = await revoke(root, memberB.did)
     for (const [label, before] of [
       ['removed', removal],
       ['denied', denial],
     ] as const) {
       for (const target of [memberB.did, keyTarget(memberB.key)]) {
-        const revocation = revoke(signerA, target, [digest(before)])
-        expect(reasonsFor([before, revocation]).get(digest(revocation)), label).toBe(
+        const revocation = await revoke(signerA, target, [digest(before)])
+        expect((await reasonsFor([before, revocation])).get(digest(revocation)), label).toBe(
           MEMBER_REVOKES_MEMBER,
         )
       }
     }
     // The re-add the attack would have blocked: root admits B's key again, as a peer DID.
-    const readd = add({ did: peerDID(memberB.key), key: memberB.key }, [digest(removal)])
-    expect(reasonsFor([removal, readd]).size).toBe(0)
+    const readd = await add({ did: peerDID(memberB.key), key: memberB.key }, [digest(removal)])
+    expect((await reasonsFor([removal, readd])).size).toBe(0)
   })
 
-  test('no signer may revoke a key the chain head publishes', () => {
+  test('no signer may revoke a key the chain head publishes', async () => {
     for (const signer of [root, signerA]) {
       for (const key of [...head.keys, ...head.agreement]) {
-        const refused = revoke(signer, keyTarget(key))
-        expect(reasonsFor([refused]).get(digest(refused))).toBe(REVOKE_NAMES_ROOT_KEY)
+        const refused = await revoke(signer, keyTarget(key))
+        expect((await reasonsFor([refused])).get(digest(refused))).toBe(REVOKE_NAMES_ROOT_KEY)
       }
     }
   })
 
-  test('a root add merged with a concurrent revoke of the same key yields no effective member', () => {
+  test('a root add merged with a concurrent revoke of the same key yields no effective member', async () => {
     for (const signer of [root, signerA]) {
       for (const target of [keyTarget(d.key), d.did]) {
-        const added = add(d)
-        const revocation = revoke(signer, target)
-        const expected = expectEveryOrder([added, revocation])
+        const added = await add(d)
+        const revocation = await revoke(signer, target)
+        const expected = await expectEveryOrder([added, revocation])
         // Both kept: neither is refused for arriving second.
         expect(expected.rejected).toBe(0)
         expect(expected.applied).toHaveLength(2)
-        expect(folded([added, revocation]).head.members.get(digest(added))).toMatchObject({
+        expect((await folded([added, revocation])).head.members.get(digest(added))).toMatchObject({
           removed: false,
           effective: false,
         })
@@ -551,14 +603,19 @@ describe('revoking', () => {
     }
   })
 
-  test('a denied member issues no further authorised events in its causal future but its concurrent events stand', () => {
-    const denial = revoke(root, keyTarget(memberA.key))
-    const late = renew(signerA, memberB.add, 2_000_000_000, [digest(denial)])
-    const concurrent = renew(signerA, memberC.add, 2_000_000_000)
-    const reasons = reasonsFor([denial, late, concurrent])
+  test('a denied member issues no further authorised events in its causal future but its concurrent events stand', async () => {
+    const denial = await revoke(root, keyTarget(memberA.key))
+    const late = await renew({
+      signer: signerA,
+      target: memberB.add,
+      lease: 2_000_000_000,
+      parents: [digest(denial)],
+    })
+    const concurrent = await renew({ signer: signerA, target: memberC.add, lease: 2_000_000_000 })
+    const reasons = await reasonsFor([denial, late, concurrent])
     expect(reasons.get(digest(late))).toBe('signer is denied in the causal state')
     expect(reasons.has(digest(concurrent))).toBe(false)
-    const members = folded([denial, late, concurrent]).head.members
+    const members = (await folded([denial, late, concurrent])).head.members
     expect(members.get(memberC.add)?.lease).toBe(2_000_000_000)
     expect(members.get(memberB.add)?.lease).toBe(LEASE)
     expect(members.get(memberA.add)?.effective).toBe(false)

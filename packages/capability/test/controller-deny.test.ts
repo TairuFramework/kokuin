@@ -33,7 +33,7 @@ import {
   now,
 } from '../src/index.js'
 
-const at = <T>(items: ReadonlyArray<T>, i: number): T => {
+const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
   const v = items[i]
   if (v === undefined) throw new Error(`expected element at ${i}`)
   return v
@@ -46,16 +46,16 @@ const at = <T>(items: ReadonlyArray<T>, i: number): T => {
 // what this file exists to stop.
 
 const seed = new Uint8Array(32).fill(31)
-const inception = createInception(seed, 0)
+const inception = await createInception({ seed, profile: 0 })
 const did = didFromInception(inception.event)
-const controller = createControllerIdentity({
+const controller = await createControllerIdentity({
   seed,
   profile: 0,
   log: { chain: [inception], events: [] },
 })
 
-const delegate = createSigningIdentity(new Uint8Array(32).fill(41))
-const bystander = createSigningIdentity(new Uint8Array(32).fill(43))
+const delegate = createSigningIdentity({ privateKey: new Uint8Array(32).fill(41) })
+const bystander = createSigningIdentity({ privateKey: new Uint8Array(32).fill(43) })
 
 /** The log the resolver folds, rebuilt per test. */
 let log: Array<SignedEvent> = [inception]
@@ -66,8 +66,8 @@ const methods: MethodRegistry = [
 ]
 
 /** A rotate on `prior` whose snapshot is exactly `deny`, signed by the profile. */
-function settle(prior: SignedEvent['event'], deny: Array<string>): SignedEvent {
-  return createRotate({
+async function settle(prior: SignedEvent['event'], deny: Array<string>): Promise<SignedEvent> {
+  return await createRotate({
     seed,
     profile: 0,
     did,
@@ -77,33 +77,33 @@ function settle(prior: SignedEvent['event'], deny: Array<string>): SignedEvent {
 }
 
 /** A rotate denying `target`, chained onto the inception. */
-function revokeOf(target: string): SignedEvent {
-  return settle(inception.event, [target])
+async function revokeOf(target: string): Promise<SignedEvent> {
+  return await settle(inception.event, [target])
 }
 
 async function mintFor(audience: SigningIdentity, signer = controller): Promise<string> {
-  const capability = await createCapability(
+  const capability = await createCapability({
     signer,
-    {
+    payload: {
       sub: did,
       aud: audience.id,
       act: 'write',
       res: 'doc/1',
       exp: now() + 3600,
     },
-    undefined,
-    { methods },
-  )
+    header: undefined,
+    methods,
+  })
   return stringifyToken(capability)
 }
 
 /** Invoke `chain` as its audience would: the holder presents it as its own `cap` chain. */
 async function invoke(holder: SigningIdentity, ...chain: Array<string>): Promise<void> {
-  await checkCapability(
-    { act: 'write', res: 'doc/1' },
-    { iss: holder.id, sub: did, cap: chain },
-    { methods },
-  )
+  await checkCapability({
+    permission: { act: 'write', res: 'doc/1' },
+    payload: { iss: holder.id, sub: did, cap: chain },
+    methods,
+  })
 }
 
 beforeEach(() => {
@@ -115,7 +115,7 @@ describe('a capability whose audience the profile has revoked', () => {
     const cap = await mintFor(delegate)
     await expect(invoke(delegate, cap)).resolves.toBeUndefined()
 
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     await expect(invoke(delegate, cap)).rejects.toThrow(
       `Invalid capability: audience is revoked by the subject: ${delegate.id}`,
     )
@@ -126,7 +126,7 @@ describe('a capability whose audience the profile has revoked', () => {
     // capability the moment a log carries any denial at all.
     const denied = await mintFor(delegate)
     const allowed = await mintFor(bystander)
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
 
     await expect(invoke(delegate, denied)).rejects.toThrow(/audience is revoked/)
     await expect(invoke(bystander, allowed)).resolves.toBeUndefined()
@@ -136,18 +136,18 @@ describe('a capability whose audience the profile has revoked', () => {
     // A rotate's snapshot replaces the state, so routine key hygiene builds it from the fold's own
     // answer (`snapshotOf`) and must not quietly re-admit a revoked device.
     const cap = await mintFor(delegate)
-    const revoke = revokeOf(delegate.id)
-    const folded = foldLog(did, { chain: [inception, revoke], events: [] })
+    const revoke = await revokeOf(delegate.id)
+    const folded = await foldLog({ did, input: { chain: [inception, revoke], events: [] } })
     if (!folded.ok) throw new Error('did not fold')
     log = [
       inception,
       revoke,
-      createRotate({
+      await createRotate({
         seed,
         profile: 0,
         did,
         prior: revoke.event,
-        snapshot: snapshotOf(at(folded.states, 1)),
+        snapshot: snapshotOf({ state: at(folded.states, 1) }),
       }),
     ]
 
@@ -158,22 +158,22 @@ describe('a capability whose audience the profile has revoked', () => {
     // `d` replaces the prior set rather than adding to it — the "cold rotate clearing the deny set"
     // the spec's remedy ladder names. A holder DID, unlike a retired key, may be dropped.
     const cap = await mintFor(delegate)
-    const revoke = revokeOf(delegate.id)
-    log = [inception, revoke, settle(revoke.event, [])]
+    const revoke = await revokeOf(delegate.id)
+    log = [inception, revoke, await settle(revoke.event, [])]
 
     await expect(invoke(delegate, cap)).resolves.toBeUndefined()
   })
 
   test('a reset clears it, and the profile can grant the same device again', async () => {
-    const revoke = revokeOf(delegate.id)
-    const reset = createReset(seed, 0, 1)
+    const revoke = await revokeOf(delegate.id)
+    const reset = await createReset({ seed, profile: 0, gen: 1 })
     log = [inception, revoke, reset]
 
     // The capability has to be re-minted: a reset discards the prior generation, so one signed
     // under it no longer resolves at all. What this asserts is that the denial itself is gone.
     const regranted = await mintFor(
       delegate,
-      createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
+      await createControllerIdentity({ seed, profile: 0, log: { chain: log, events: [] } }),
     )
     await expect(invoke(delegate, regranted)).resolves.toBeUndefined()
   })
@@ -181,9 +181,9 @@ describe('a capability whose audience the profile has revoked', () => {
   test('the denial applies at the head, not at the position the capability names', async () => {
     // `iat` is author-supplied and backdatable, so anchoring the check to anything the token
     // carries would let the holder choose a position where it was not yet denied.
-    const backdated = await createCapability(
-      controller,
-      {
+    const backdated = await createCapability({
+      signer: controller,
+      payload: {
         sub: did,
         aud: delegate.id,
         act: 'write',
@@ -191,10 +191,10 @@ describe('a capability whose audience the profile has revoked', () => {
         iat: now() - 3600,
         exp: now() + 3600,
       },
-      undefined,
-      { methods },
-    )
-    log = [inception, revokeOf(delegate.id)]
+      header: undefined,
+      methods,
+    })
+    log = [inception, await revokeOf(delegate.id)]
 
     await expect(invoke(delegate, stringifyToken(backdated))).rejects.toThrow(/audience is revoked/)
   })
@@ -209,12 +209,12 @@ describe('a capability whose audience the profile has revoked', () => {
     })
     expect(peer.longForm).not.toBe(peer.id)
 
-    const capability = await createCapability(
-      controller,
-      { sub: did, aud: peer.longForm, act: 'write', res: 'doc/1', exp: now() + 3600 },
-      undefined,
-      { methods },
-    )
+    const capability = await createCapability({
+      signer: controller,
+      payload: { sub: did, aud: peer.longForm, act: 'write', res: 'doc/1', exp: now() + 3600 },
+      header: undefined,
+      methods,
+    })
     const cap = stringifyToken(capability)
     const holder = { id: peer.longForm } as SigningIdentity
 
@@ -222,11 +222,11 @@ describe('a capability whose audience the profile has revoked', () => {
     await expect(invoke(holder, cap)).resolves.toBeUndefined()
 
     // Revoked by short form, granted to the long form.
-    log = [inception, revokeOf(peer.id)]
+    log = [inception, await revokeOf(peer.id)]
     await expect(invoke(holder, cap)).rejects.toThrow(/audience is revoked/)
 
     // Revoked by the very string the capability names.
-    log = [inception, revokeOf(peer.longForm)]
+    log = [inception, await revokeOf(peer.longForm)]
     await expect(invoke(holder, cap)).rejects.toThrow(/audience is revoked/)
   })
 })
@@ -238,7 +238,7 @@ describe('a payload whose `sub` or `aud` is not a string', () => {
     // arrives here. A deny set holds strings, so neither member has anything to look up — but
     // without the type guard the lookup runs anyway, and `findMethodResolver` splits `sub` on `:`.
     // That is a `TypeError` out of a function whose only failure mode is supposed to be a denial.
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     const base = { act: 'write', res: 'doc/1' }
 
     for (const payload of [
@@ -246,7 +246,7 @@ describe('a payload whose `sub` or `aud` is not a string', () => {
       { iss: did, sub: did, aud: 42, ...base },
     ]) {
       await expect(
-        checkCapability(base, payload as never, { methods }),
+        checkCapability({ permission: base, payload: payload as never, methods }),
         JSON.stringify(payload),
       ).resolves.toBeUndefined()
     }
@@ -254,7 +254,9 @@ describe('a payload whose `sub` or `aud` is not a string', () => {
     // Control: the same payload with both members as strings, naming a revoked audience, is denied
     // — so the rows above are the type guard and not a deny set that is never consulted.
     await expect(
-      checkCapability(base, { iss: did, sub: did, aud: delegate.id, ...base } as never, {
+      checkCapability({
+        permission: base,
+        payload: { iss: did, sub: did, aud: delegate.id, ...base } as never,
         methods,
       }),
     ).rejects.toThrow(/audience is revoked/)
@@ -266,25 +268,33 @@ describe('a revoked link in a delegation chain', () => {
     // controller → manager → delegate, with the *manager* revoked. Only a check that walks every
     // link catches this: the leaf's own audience is untouched.
     const manager = randomIdentity()
-    const root = await createCapability(
-      controller,
-      { sub: did, aud: manager.id, act: 'write', res: '*', exp: now() + 3600 },
-      undefined,
-      { methods },
-    )
+    const root = await createCapability({
+      signer: controller,
+      payload: { sub: did, aud: manager.id, act: 'write', res: '*', exp: now() + 3600 },
+      header: undefined,
+      methods,
+    })
     const rootRaw = stringifyToken(root)
-    const leaf = await createCapability(
-      manager,
-      { sub: did, aud: delegate.id, act: 'write', res: 'doc/1', exp: now() + 1800, cap: [rootRaw] },
-      undefined,
-      { parentCapability: rootRaw, methods },
-    )
+    const leaf = await createCapability({
+      signer: manager,
+      payload: {
+        sub: did,
+        aud: delegate.id,
+        act: 'write',
+        res: 'doc/1',
+        exp: now() + 1800,
+        cap: [rootRaw],
+      },
+      header: undefined,
+      parentCapability: rootRaw,
+      methods,
+    })
     const leafRaw = stringifyToken(leaf)
 
     // Control: the whole chain verifies while nobody is revoked.
     await expect(invoke(delegate, leafRaw, rootRaw)).resolves.toBeUndefined()
 
-    log = [inception, revokeOf(manager.id)]
+    log = [inception, await revokeOf(manager.id)]
     await expect(invoke(delegate, leafRaw, rootRaw)).rejects.toThrow(
       `Invalid capability: audience is revoked by the subject: ${manager.id}`,
     )
@@ -295,20 +305,28 @@ describe('a capability presented directly, without an invocation', () => {
   test('is rejected once its audience is revoked', async () => {
     // The self-issued branch of `checkCapability`: the capability's own `iss` is its `sub`, so
     // there is no chain to walk and the audience check has to happen on this path too.
-    const cap = await createCapability(
-      controller,
-      { sub: did, aud: delegate.id, act: 'revoke', res: '*', exp: now() + 3600 },
-      undefined,
-      { methods },
-    )
+    const cap = await createCapability({
+      signer: controller,
+      payload: { sub: did, aud: delegate.id, act: 'revoke', res: '*', exp: now() + 3600 },
+      header: undefined,
+      methods,
+    })
 
     await expect(
-      checkCapability({ act: 'revoke', res: 'doc/1' }, cap.payload, { methods }),
+      checkCapability({
+        permission: { act: 'revoke', res: 'doc/1' },
+        payload: cap.payload,
+        methods,
+      }),
     ).resolves.toBeUndefined()
 
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     await expect(
-      checkCapability({ act: 'revoke', res: 'doc/1' }, cap.payload, { methods }),
+      checkCapability({
+        permission: { act: 'revoke', res: 'doc/1' },
+        payload: cap.payload,
+        methods,
+      }),
     ).rejects.toThrow(/audience is revoked/)
   })
 
@@ -317,35 +335,55 @@ describe('a capability presented directly, without an invocation', () => {
     // capability's own audience check catches this, because `delegate` appears nowhere above it.
     const manager = randomIdentity()
     const rootRaw = stringifyToken(
-      await createCapability(
-        controller,
-        { sub: did, aud: manager.id, act: 'revoke', res: '*', exp: now() + 3600 },
-        undefined,
-        { methods },
-      ),
+      await createCapability({
+        signer: controller,
+        payload: { sub: did, aud: manager.id, act: 'revoke', res: '*', exp: now() + 3600 },
+        header: undefined,
+        methods,
+      }),
     )
-    const leaf = await createCapability(
-      manager,
-      { sub: did, aud: delegate.id, act: 'revoke', res: '*', exp: now() + 1800, cap: [rootRaw] },
-      undefined,
-      { parentCapability: rootRaw, methods },
-    )
+    const leaf = await createCapability({
+      signer: manager,
+      payload: {
+        sub: did,
+        aud: delegate.id,
+        act: 'revoke',
+        res: '*',
+        exp: now() + 1800,
+        cap: [rootRaw],
+      },
+      header: undefined,
+      parentCapability: rootRaw,
+      methods,
+    })
 
     // Control: nobody revoked, and the same presented capability authorises.
     await expect(
-      checkCapability({ act: 'revoke', res: 'doc/1' }, leaf.payload, { methods }),
+      checkCapability({
+        permission: { act: 'revoke', res: 'doc/1' },
+        payload: leaf.payload,
+        methods,
+      }),
     ).resolves.toBeUndefined()
 
     // Control: revoking the *manager* — the audience the chain walk does reach — is refused, so
     // the deny set is live for this capability whichever link carries the revoked audience.
-    log = [inception, revokeOf(manager.id)]
+    log = [inception, await revokeOf(manager.id)]
     await expect(
-      checkCapability({ act: 'revoke', res: 'doc/1' }, leaf.payload, { methods }),
+      checkCapability({
+        permission: { act: 'revoke', res: 'doc/1' },
+        payload: leaf.payload,
+        methods,
+      }),
     ).rejects.toThrow(`Invalid capability: audience is revoked by the subject: ${manager.id}`)
 
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     await expect(
-      checkCapability({ act: 'revoke', res: 'doc/1' }, leaf.payload, { methods }),
+      checkCapability({
+        permission: { act: 'revoke', res: 'doc/1' },
+        payload: leaf.payload,
+        methods,
+      }),
     ).rejects.toThrow(`Invalid capability: audience is revoked by the subject: ${delegate.id}`)
   })
 
@@ -354,16 +392,16 @@ describe('a capability presented directly, without an invocation', () => {
     // else has to fail on the leaf's own `res`, since the parent covers it.
     const manager = randomIdentity()
     const rootRaw = stringifyToken(
-      await createCapability(
-        controller,
-        { sub: did, aud: manager.id, act: 'revoke', res: '*', exp: now() + 3600 },
-        undefined,
-        { methods },
-      ),
+      await createCapability({
+        signer: controller,
+        payload: { sub: did, aud: manager.id, act: 'revoke', res: '*', exp: now() + 3600 },
+        header: undefined,
+        methods,
+      }),
     )
-    const leaf = await createCapability(
-      manager,
-      {
+    const leaf = await createCapability({
+      signer: manager,
+      payload: {
         sub: did,
         aud: delegate.id,
         act: 'revoke',
@@ -371,15 +409,24 @@ describe('a capability presented directly, without an invocation', () => {
         exp: now() + 1800,
         cap: [rootRaw],
       },
-      undefined,
-      { parentCapability: rootRaw, methods },
-    )
+      header: undefined,
+      parentCapability: rootRaw,
+      methods,
+    })
 
     await expect(
-      checkCapability({ act: 'revoke', res: 'doc/1' }, leaf.payload, { methods }),
+      checkCapability({
+        permission: { act: 'revoke', res: 'doc/1' },
+        payload: leaf.payload,
+        methods,
+      }),
     ).resolves.toBeUndefined()
     await expect(
-      checkCapability({ act: 'revoke', res: 'doc/2' }, leaf.payload, { methods }),
+      checkCapability({
+        permission: { act: 'revoke', res: 'doc/2' },
+        payload: leaf.payload,
+        methods,
+      }),
     ).rejects.toThrow('Invalid capability: permission not granted')
   })
 })
@@ -392,16 +439,18 @@ describe('what the deny lookup costs a caller-supplied chain', () => {
     // call, which every looser assertion admits.
     let denyCalls = 0
     const inner = createControllerResolver({
-      loadLog: async (asked) =>
-        asked === did ? { chain: log, events: [] } : { chain: [], events: [] },
+      loadLog: async (asked) => {
+        return asked === did ? { chain: log, events: [] } : { chain: [], events: [] }
+      },
     })
     const counting: DIDMethodResolver = {
       method: 'kokuin',
-      resolve: (asked, header) => inner.resolve(asked, header),
+      resolve: ({ did: asked, header }) => inner.resolve({ did: asked, header }),
       // Forwarded like the rest: a capability is archived material, so `verifyToken` asks this
       // member for it, and a wrapper omitting it makes every capability unverifiable rather than
       // isolating the thing under test.
-      resolveHistoric: (asked, header) => inner.resolveHistoric?.(asked, header) as never,
+      resolveHistoric: ({ did: asked, header }) =>
+        inner.resolveHistoric?.({ did: asked, header }) as never,
       resolveDenySet: async (asked) => {
         denyCalls++
         return (await inner.resolveDenySet?.(asked)) ?? new Set<string>()
@@ -411,22 +460,22 @@ describe('what the deny lookup costs a caller-supplied chain', () => {
     const overlong = Array.from({ length: DEFAULT_MAX_DELEGATION_DEPTH + 40 }, () => 'not.a.token')
 
     await expect(
-      checkCapability(
-        { act: 'write', res: 'doc/1' },
-        { iss: delegate.id, sub: did, cap: [cap, ...overlong] },
-        { methods: [counting] },
-      ),
+      checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: { iss: delegate.id, sub: did, cap: [cap, ...overlong] },
+        methods: [counting],
+      }),
     ).rejects.toThrow(/exceeds maximum depth/)
     expect(denyCalls).toBe(0)
 
     // Control: the same registry does get asked when the chain is within the bound, so the zero
     // above is the ordering and not a resolver that is never consulted.
     await expect(
-      checkCapability(
-        { act: 'write', res: 'doc/1' },
-        { iss: delegate.id, sub: did, cap: [cap] },
-        { methods: [counting] },
-      ),
+      checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: { iss: delegate.id, sub: did, cap: [cap] },
+        methods: [counting],
+      }),
     ).resolves.toBeUndefined()
     expect(denyCalls).toBeGreaterThan(0)
   })
@@ -439,27 +488,37 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
     // calls below use the same revoked delegate and the same capability; only the registry differs.
     // Making the member required would break every implementation of a published interface, so the
     // obligation is documented (`method.ts`, `capability.skill.md`) rather than enforced.
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     const real = createControllerResolver({
-      loadLog: async (asked) =>
-        asked === did ? { chain: log, events: [] } : { chain: [], events: [] },
+      loadLog: async (asked) => {
+        return asked === did ? { chain: log, events: [] } : { chain: [], events: [] }
+      },
     })
     const wrapped: DIDMethodResolver = {
       method: 'kokuin',
-      resolve: (asked, header) => real.resolve(asked, header),
+      resolve: ({ did: asked, header }) => real.resolve({ did: asked, header }),
       // Forwarded, so the *only* member this wrapper drops is `resolveDenySet` — otherwise the
       // capability would be refused for want of a historic answer and the deny rule would never be
       // reached, certifying a check that never ran.
-      resolveHistoric: (asked, header) => real.resolveHistoric?.(asked, header) as never,
+      resolveHistoric: ({ did: asked, header }) =>
+        real.resolveHistoric?.({ did: asked, header }) as never,
     }
     const cap = await mintFor(delegate)
     const invocation = { iss: delegate.id, sub: did, cap: [cap] }
 
     await expect(
-      checkCapability({ act: 'write', res: 'doc/1' }, invocation, { methods: [real] }),
+      checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: invocation,
+        methods: [real],
+      }),
     ).rejects.toThrow(/audience is revoked/)
     await expect(
-      checkCapability({ act: 'write', res: 'doc/1' }, invocation, { methods: [wrapped] }),
+      checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: invocation,
+        methods: [wrapped],
+      }),
     ).resolves.toBeUndefined()
   })
 
@@ -469,11 +528,14 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
     // `sub` to look a deny set up by — this cannot be closed inside `verifyToken` even in
     // principle. A consumer authenticating a device by bare token gets no denial from a revoke.
     const device = randomIdentity()
-    log = [inception, revokeOf(device.id)]
+    log = [inception, await revokeOf(device.id)]
     expect((await at(methods, 0).resolveDenySet?.(did))?.has(device.id)).toBe(true)
 
-    const token = await signToken(device, createUnsignedToken({ hello: 'world' }))
-    await expect(verifyToken(stringifyToken(token), { methods })).resolves.toMatchObject({
+    const token = await signToken({
+      signer: device,
+      token: createUnsignedToken({ payload: { hello: 'world' } }),
+    })
+    await expect(verifyToken({ token: stringifyToken(token), methods })).resolves.toMatchObject({
       payload: { iss: device.id },
     })
   })
@@ -481,8 +543,8 @@ describe('accepted limits, pinned so that changing them has to be deliberate', (
 
 describe('the deny set the resolver exposes', () => {
   test('is the head state: the latest snapshot, not an accumulation', async () => {
-    const first = revokeOf(delegate.id)
-    const second = settle(first.event, [bystander.id])
+    const first = await revokeOf(delegate.id)
+    const second = await settle(first.event, [bystander.id])
     log = [inception, first, second]
 
     const denied = await at(methods, 0).resolveDenySet?.(did)
@@ -508,7 +570,7 @@ describe('a deny set nothing could answer for', () => {
   // omitted `methods` here got no enforcement, and nothing said so.
 
   test('a did:kokuin subject with no registry is refused rather than waved through', async () => {
-    log = [inception, revokeOf(delegate.id)]
+    log = [inception, await revokeOf(delegate.id)]
     const payload = {
       iss: did,
       sub: did,
@@ -520,13 +582,17 @@ describe('a deny set nothing could answer for', () => {
 
     // CONTROL — with the registry, the denial is what decides.
     await expect(
-      checkCapability({ act: 'write', res: 'doc/1' }, payload, { methods }),
+      checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload,
+        methods,
+      }),
     ).rejects.toThrow(/audience is revoked/)
 
     // The same call with the registry omitted. It used to resolve.
-    await expect(checkCapability({ act: 'write', res: 'doc/1' }, payload)).rejects.toThrow(
-      DENY_SET_UNAVAILABLE,
-    )
+    await expect(
+      checkCapability({ permission: { act: 'write', res: 'doc/1' }, payload }),
+    ).rejects.toThrow(DENY_SET_UNAVAILABLE)
   })
 
   test('CONTROL — a subject that carries its own keys needs no registry', async () => {
@@ -534,9 +600,9 @@ describe('a deny set nothing could answer for', () => {
     // false positive on the ordinary case that has nothing to do with controllers.
     const selfIssued = randomIdentity()
     await expect(
-      checkCapability(
-        { act: 'write', res: 'doc/1' },
-        {
+      checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: {
           iss: selfIssued.id,
           sub: selfIssued.id,
           aud: delegate.id,
@@ -544,7 +610,7 @@ describe('a deny set nothing could answer for', () => {
           res: 'doc/1',
           exp: now() + 3600,
         },
-      ),
+      }),
     ).resolves.toBeUndefined()
   })
 })
@@ -564,19 +630,27 @@ describe('canonical peer:4 audience revocation', () => {
   ])(
     'refuses a $spelling-form denial with the other audience spelling',
     async ({ denied, aud }) => {
-      const capability = await createCapability(
-        controller,
-        { sub: did, aud, act: 'write', res: 'doc/1', exp: now() + 3600 },
-        undefined,
-        { methods },
-      )
+      const capability = await createCapability({
+        signer: controller,
+        payload: { sub: did, aud, act: 'write', res: 'doc/1', exp: now() + 3600 },
+        header: undefined,
+        methods,
+      })
       const invocation = { iss: aud, sub: did, cap: [stringifyToken(capability)] }
       await expect(
-        checkCapability({ act: 'write', res: 'doc/1' }, invocation, { methods }),
+        checkCapability({
+          permission: { act: 'write', res: 'doc/1' },
+          payload: invocation,
+          methods,
+        }),
       ).resolves.toBeUndefined()
-      log = [inception, revokeOf(denied)]
+      log = [inception, await revokeOf(denied)]
       await expect(
-        checkCapability({ act: 'write', res: 'doc/1' }, invocation, { methods }),
+        checkCapability({
+          permission: { act: 'write', res: 'doc/1' },
+          payload: invocation,
+          methods,
+        }),
       ).rejects.toThrow(AUDIENCE_REVOKED)
     },
   )
@@ -591,11 +665,11 @@ describe('canonical peer:4 audience revocation', () => {
       resolveDenySet: async () => new Set([denied]),
     }
     await expect(
-      checkCapability(
-        { act: 'write', res: 'doc/1' },
-        { iss: did, sub: did, aud, act: 'write', res: 'doc/1' },
-        { methods: [rawResolver] },
-      ),
+      checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: { iss: did, sub: did, aud, act: 'write', res: 'doc/1' },
+        methods: [rawResolver],
+      }),
     ).rejects.toThrow(AUDIENCE_REVOKED)
   })
 })

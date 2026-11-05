@@ -15,7 +15,7 @@ export type ControllerStoreAPI = LogStore & {
   /** Shares merge's DID lock until host commit/rollback, or until this standalone call returns. */
   getForUpdate(did: string): Promise<ControllerLog | undefined>
   /** Updates only observation time. Unknown DIDs are a no-op. */
-  markObserved(did: string, at?: Date): Promise<void>
+  markObserved(params: ControllerStoreAPIMarkObservedParams): Promise<void>
   /** Last explicit store write, including a locally seeded controller log. */
   getObservedAt(did: string): Promise<Date | undefined>
 }
@@ -45,11 +45,17 @@ function decodeLog(value: unknown): ControllerLog | undefined {
   return isControllerLog(parsed) ? parsed : undefined
 }
 
-export function createControllerStore(
-  db: Kysely<ControllerStoreTables>,
-  adapter: Adapter,
-  context: StoreContext,
-): ControllerStoreAPI {
+export type CreateControllerStoreParams = {
+  db: Kysely<ControllerStoreTables>
+  adapter: Adapter
+  context: StoreContext
+}
+
+export function createControllerStore({
+  context,
+  adapter,
+  db,
+}: CreateControllerStoreParams): ControllerStoreAPI {
   async function withLockedDatabase<Result>(
     did: string,
     fn: (trx: Kysely<ControllerStoreTables>) => Promise<Result>,
@@ -82,7 +88,7 @@ export function createControllerStore(
       })
     },
 
-    async markObserved(did: string, at = new Date()): Promise<void> {
+    async markObserved({ did, at = new Date() }): Promise<void> {
       await withLockedDatabase(did, async (trx) => {
         await trx
           .updateTable('controller_logs')
@@ -114,27 +120,28 @@ export function createControllerStore(
     // The key lock serialises merges even within one transaction, including a
     // DID with no row. Postgres also locks the row on read and re-reads after a
     // lost insert race against a writer that does not hold the key lock.
-    async merge(
-      did: string,
-      update: (current: ControllerLog | undefined) => Promise<ControllerLog>,
-    ): Promise<ControllerLog> {
+    async merge({ did, update }): Promise<ControllerLog> {
       return await withLockedDatabase(did, async (trx) => {
         const lock = adapter.kind === 'postgres'
-        const values = (next: ControllerLog) => ({
-          did,
-          log: adapter.encodeJSON(next) as ControllerLog,
-          updated_at: adapter.encodeTimestamp(new Date()) as number,
-        })
+        const values = (next: ControllerLog) => {
+          return {
+            did,
+            log: adapter.encodeJSON(next) as ControllerLog,
+            updated_at: adapter.encodeTimestamp(new Date()) as number,
+          }
+        }
         const write = async (next: ControllerLog): Promise<void> => {
           await trx
             .insertInto('controller_logs')
             .values(values(next))
-            .onConflict((oc) =>
-              oc.column('did').doUpdateSet((eb) => ({
-                log: eb.ref('excluded.log'),
-                updated_at: eb.ref('excluded.updated_at'),
-              })),
-            )
+            .onConflict((oc) => {
+              return oc.column('did').doUpdateSet((eb) => {
+                return {
+                  log: eb.ref('excluded.log'),
+                  updated_at: eb.ref('excluded.updated_at'),
+                }
+              })
+            })
             .execute()
         }
 
@@ -168,3 +175,5 @@ export function createControllerStore(
   storeDatabases.set(api, db)
   return api
 }
+
+export type ControllerStoreAPIMarkObservedParams = { did: string; at?: Date }

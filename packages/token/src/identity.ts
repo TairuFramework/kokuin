@@ -1,3 +1,4 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { maybeYield } from '@sozai/async'
@@ -11,7 +12,23 @@ import type { SignedHeader } from './schemas.js'
 import type { DIDString, SignedToken } from './types.js'
 import { concatBytes } from './utils.js'
 
+type BuildSigningIdentityParams = {
+  id: DIDString
+  privateKey: Uint8Array
+  publicKey: Uint8Array
+  crypto: CryptoProvider
+}
+type BuildIdentityParams = {
+  id: DIDString
+  longForm: DIDString
+  doc: DIDDoc
+  keys: Array<ResolvedKey>
+  crypto: CryptoProvider
+}
+
 const tracer = createTracer('token')
+
+export type CryptoOptions = { crypto?: CryptoProvider }
 
 export type Identity = { readonly id: DIDString }
 
@@ -32,24 +49,32 @@ export type SignTokenOptions = {
   embedLongForm?: boolean
 }
 
+export type SigningIdentitySignTokenParams<
+  Payload extends Record<string, unknown> = Record<string, unknown>,
+> = { payload: Payload } & SignTokenOptions
+export type MultiKeyIdentitySignTokenParams<
+  Payload extends Record<string, unknown> = Record<string, unknown>,
+> = SigningIdentitySignTokenParams<Payload>
+export type KeyAgreementIdentityAgreeKeyParams = { ephemeralPublicKey: Uint8Array }
+export type MultiKeyIdentityAgreeKeyParams = KeyAgreementIdentityAgreeKeyParams & { kid?: string }
+
 export type SigningIdentity = Identity & {
   publicKey: Uint8Array
   signToken: <Payload extends Record<string, unknown> = Record<string, unknown>>(
-    payload: Payload,
-    options?: SignTokenOptions,
+    params: SigningIdentitySignTokenParams<Payload>,
   ) => Promise<SignedToken<Payload>>
 }
 
 export type KeyAgreementIdentity = Identity & {
-  agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array>
+  agreeKey({ ephemeralPublicKey }: KeyAgreementIdentityAgreeKeyParams): Promise<Uint8Array>
 }
 
 export type FullIdentity = SigningIdentity & KeyAgreementIdentity
 
 export type OwnIdentity = FullIdentity & { privateKey: Uint8Array }
 
-export type IdentityProvider<T extends SigningIdentity = SigningIdentity> = {
-  provideIdentity(keyID: string): Promise<T>
+export type IdentityProvider<TValue extends SigningIdentity = SigningIdentity> = {
+  provideIdentity(keyID: string): Promise<TValue>
 }
 
 export function isSigningIdentity(identity: Identity): identity is SigningIdentity {
@@ -81,24 +106,36 @@ export function isOwnIdentity(identity: Identity): identity is OwnIdentity {
  * `did:key`. The caller owns the pairing: nothing here checks `id` resolves to `privateKey`'s public
  * key, and a mismatch produces tokens that verify nowhere.
  */
-export function createSigningIdentityForDID(
-  id: DIDString,
-  privateKey: Uint8Array,
-): SigningIdentity {
-  return buildSigningIdentity(id, privateKey, ed25519.getPublicKey(privateKey))
+export type CreateSigningIdentityForDIDParams = {
+  id: DIDString
+  privateKey: Uint8Array
+} & CryptoOptions
+
+export function createSigningIdentityForDID({
+  privateKey,
+  id,
+  ...options
+}: CreateSigningIdentityForDIDParams): SigningIdentity {
+  return buildSigningIdentity({
+    id,
+    privateKey,
+    publicKey: ed25519.getPublicKey(privateKey),
+    crypto: options.crypto ?? nobleCrypto,
+  })
 }
 
 // Shared body. Takes `publicKey` rather than deriving it, so `createSigningIdentity` — which
 // needs the public key anyway to build the `did:key` — derives it once instead of twice.
-function buildSigningIdentity(
-  id: DIDString,
-  privateKey: Uint8Array,
-  publicKey: Uint8Array,
-): SigningIdentity {
-  async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
-    payload: Payload,
-    options: SignTokenOptions = {},
-  ): Promise<SignedToken<Payload>> {
+function buildSigningIdentity({
+  id,
+  privateKey,
+  publicKey,
+  crypto,
+}: BuildSigningIdentityParams): SigningIdentity {
+  async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>({
+    payload,
+    ...options
+  }: SigningIdentitySignTokenParams<Payload>): Promise<SignedToken<Payload>> {
     return withSpan(
       tracer,
       KokuinSpanNames.TOKEN_SIGN,
@@ -121,12 +158,14 @@ function buildSigningIdentity(
         const fullPayload = { ...payload, iss: id }
         const data = `${b64uFromJSON(fullHeader)}.${b64uFromJSON(fullPayload)}`
 
-        // Signing is ~30 ms of synchronous curve math on a phone: let the event loop run first.
+        const signingKey = new Uint8Array(privateKey)
         await maybeYield()
         return {
           header: fullHeader,
           payload: fullPayload,
-          signature: toB64U(ed25519.sign(fromUTF(data), privateKey)),
+          signature: toB64U(
+            await crypto.sign({ alg: 'EdDSA', privateKey: signingKey, message: fromUTF(data) }),
+          ),
           data,
         }
       },
@@ -139,9 +178,19 @@ function buildSigningIdentity(
 /**
  * Create a signing identity from an Ed25519 private key.
  */
-export function createSigningIdentity(privateKey: Uint8Array): SigningIdentity {
+export type CreateSigningIdentityParams = { privateKey: Uint8Array } & CryptoOptions
+
+export function createSigningIdentity({
+  privateKey,
+  ...options
+}: CreateSigningIdentityParams): SigningIdentity {
   const publicKey = ed25519.getPublicKey(privateKey)
-  return buildSigningIdentity(getDID(CODECS.EdDSA, publicKey), privateKey, publicKey)
+  return buildSigningIdentity({
+    id: getDID({ codec: CODECS.EdDSA, publicKey }),
+    privateKey,
+    publicKey,
+    crypto: options.crypto ?? nobleCrypto,
+  })
 }
 
 /**
@@ -150,10 +199,12 @@ export function createSigningIdentity(privateKey: Uint8Array): SigningIdentity {
  */
 export function createKeyAgreementIdentity(privateKey: Uint8Array): KeyAgreementIdentity {
   const publicKey = ed25519.getPublicKey(privateKey)
-  const id = getDID(CODECS.EdDSA, publicKey)
+  const id = getDID({ codec: CODECS.EdDSA, publicKey })
   const x25519Private = ed25519.utils.toMontgomerySecret(privateKey)
 
-  async function agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array> {
+  async function agreeKey({
+    ephemeralPublicKey,
+  }: KeyAgreementIdentityAgreeKeyParams): Promise<Uint8Array> {
     return x25519.getSharedSecret(x25519Private, ephemeralPublicKey)
   }
 
@@ -169,11 +220,15 @@ export function createKeyAgreementIdentity(privateKey: Uint8Array): KeyAgreement
  * itself rather than an Ed25519 key to Montgomery-convert — a controller derives an independent
  * agreement keypair, not the Montgomery form of its signing key.
  */
-export function createKeyAgreementIdentityForDID(
-  id: DIDString,
-  x25519PrivateKey: Uint8Array,
-): KeyAgreementIdentity {
-  async function agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array> {
+export type CreateKeyAgreementIdentityForDIDParams = { id: DIDString; x25519PrivateKey: Uint8Array }
+
+export function createKeyAgreementIdentityForDID({
+  x25519PrivateKey,
+  id,
+}: CreateKeyAgreementIdentityForDIDParams): KeyAgreementIdentity {
+  async function agreeKey({
+    ephemeralPublicKey,
+  }: KeyAgreementIdentityAgreeKeyParams): Promise<Uint8Array> {
     return x25519.getSharedSecret(x25519PrivateKey, ephemeralPublicKey)
   }
   return { id, agreeKey }
@@ -182,8 +237,13 @@ export function createKeyAgreementIdentityForDID(
 /**
  * Create a full identity (signing + key agreement) from an Ed25519 private key.
  */
-export function createFullIdentity(privateKey: Uint8Array): FullIdentity {
-  const signing = createSigningIdentity(privateKey)
+export type CreateFullIdentityParams = { privateKey: Uint8Array } & CryptoOptions
+
+export function createFullIdentity({
+  privateKey,
+  ...options
+}: CreateFullIdentityParams): FullIdentity {
+  const signing = createSigningIdentity({ ...options, privateKey })
   const keyAgreement = createKeyAgreementIdentity(privateKey)
   return { ...signing, ...keyAgreement }
 }
@@ -191,9 +251,9 @@ export function createFullIdentity(privateKey: Uint8Array): FullIdentity {
 /**
  * Generate a random identity with a new Ed25519 private key.
  */
-export function randomIdentity(): OwnIdentity {
+export function randomIdentity(options: CryptoOptions = {}): OwnIdentity {
   const privateKey = ed25519.utils.randomSecretKey()
-  return { ...createFullIdentity(privateKey), privateKey }
+  return { ...createFullIdentity({ ...options, privateKey }), privateKey }
 }
 
 // ─── createIdentity builder ────────────────────────────────────────────────
@@ -240,10 +300,9 @@ export type MultiKeyIdentity = {
   publicKey: Uint8Array
   privateKey: Uint8Array
   signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
-    payload: Payload,
-    options?: SignTokenOptions,
+    params: MultiKeyIdentitySignTokenParams<Payload>,
   ): Promise<SignedToken<Payload>>
-  agreeKey(ephemeralPublicKey: Uint8Array, kid?: string): Promise<Uint8Array>
+  agreeKey({ ephemeralPublicKey, kid }: MultiKeyIdentityAgreeKeyParams): Promise<Uint8Array>
 }
 
 const CODEC_ED25519_PUB = new Uint8Array([0xed, 0x01])
@@ -324,11 +383,13 @@ function resolveKeys(input: CreateIdentityInput): Array<ResolvedKey> {
 }
 
 function buildDoc(keys: Array<ResolvedKey>): DIDDoc {
-  const verificationMethod = keys.map((k) => ({
-    id: k.fragment,
-    type: 'Multikey',
-    publicKeyMultibase: publicKeyMultibase(k.alg, k.publicKey),
-  }))
+  const verificationMethod = keys.map((k) => {
+    return {
+      id: k.fragment,
+      type: 'Multikey',
+      publicKeyMultibase: publicKeyMultibase(k.alg, k.publicKey),
+    }
+  })
   const authentication = keys.filter((k) => k.purpose === 'sig').map((k) => k.fragment)
   const keyAgreement = keys.filter((k) => k.purpose === 'kem').map((k) => k.fragment)
   const doc: DIDDoc = {
@@ -352,15 +413,6 @@ function pickSigningKey(keys: Array<ResolvedKey>, kid?: string): ResolvedKey {
   return first
 }
 
-function signWith(key: ResolvedKey, data: Uint8Array): Uint8Array {
-  switch (key.alg) {
-    case 'EdDSA':
-      return ed25519.sign(data, key.privateKey)
-    case 'X25519':
-      throw new Error('X25519 cannot sign')
-  }
-}
-
 /**
  * The X25519 private scalar this identity agrees with, for `kid` or by default.
  *
@@ -372,10 +424,10 @@ function pickAgreementSecret(keys: Array<ResolvedKey>, isPeer: boolean, kid?: st
   if (kid != null) {
     // No birational fallback here, unlike the no-kid branch below: a kid names one specific
     // key, so falling back to a *different*, derived key would silently agree with the wrong
-    // secret. This means a did:key identity's agreeKey(epk, '#key-0') throws where
-    // agreeKey(epk) succeeds — a known asymmetry, currently unreachable: decryptToken
-    // (@kokuin/jwe) never passes a kid, and KeyAgreementIdentity#agreeKey has no kid parameter
-    // at all.
+    // secret. For did:key, agreeKey({ ephemeralPublicKey, kid: '#key-0' }) throws while
+    // agreeKey({ ephemeralPublicKey }) succeeds. This asymmetry is unreachable through
+    // decryptToken (@kokuin/jwe): it never supplies kid, and KeyAgreementIdentity's params
+    // do not include it.
     const found = keys.find((key) => key.fragment === kid)
     if (found == null) throw new Error(`KidNotFound: ${kid}`)
     if (found.purpose !== 'kem' || found.alg !== 'X25519') {
@@ -396,12 +448,7 @@ function pickAgreementSecret(keys: Array<ResolvedKey>, isPeer: boolean, kid?: st
   throw new Error('No KEM key in identity')
 }
 
-function buildIdentity(
-  id: DIDString,
-  longForm: DIDString,
-  doc: DIDDoc,
-  keys: Array<ResolvedKey>,
-): MultiKeyIdentity {
+function buildIdentity({ id, longForm, doc, keys, crypto }: BuildIdentityParams): MultiKeyIdentity {
   const primarySig = keys.find((k) => k.purpose === 'sig')
   if (primarySig == null) {
     throw new Error('createIdentity requires at least one signing key')
@@ -427,10 +474,10 @@ function buildIdentity(
     return longForm
   }
 
-  async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
-    payload: Payload,
-    options: SignTokenOptions = {},
-  ): Promise<SignedToken<Payload>> {
+  async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>({
+    payload,
+    ...options
+  }: SigningIdentitySignTokenParams<Payload>): Promise<SignedToken<Payload>> {
     const key = pickSigningKey(keys, options.kid)
     const iss = pickIss(payload as Record<string, unknown>, options.embedLongForm)
     const header = {
@@ -441,17 +488,23 @@ function buildIdentity(
     } as SignedHeader
     const fullPayload = { ...payload, iss }
     const data = `${b64uFromJSON(header)}.${b64uFromJSON(fullPayload)}`
-    // Signing is ~30 ms of synchronous curve math on a phone: let the event loop run first.
+    if (key.alg !== 'EdDSA') throw new Error('X25519 cannot sign')
+    const signingKey = new Uint8Array(key.privateKey)
     await maybeYield()
     return {
       header: header as SignedHeader & Record<string, unknown>,
       payload: fullPayload as Payload & { iss: string },
-      signature: toB64U(signWith(key, fromUTF(data))),
+      signature: toB64U(
+        await crypto.sign({ alg: 'EdDSA', privateKey: signingKey, message: fromUTF(data) }),
+      ),
       data,
     } as SignedToken<Payload>
   }
 
-  async function agreeKey(ephemeralPublicKey: Uint8Array, kid?: string): Promise<Uint8Array> {
+  async function agreeKey({
+    ephemeralPublicKey,
+    kid,
+  }: MultiKeyIdentityAgreeKeyParams): Promise<Uint8Array> {
     return x25519.getSharedSecret(pickAgreementSecret(keys, isPeer, kid), ephemeralPublicKey)
   }
 
@@ -490,7 +543,9 @@ function buildIdentity(
  * @throws `Error` when `input.keys` is empty or no `sig` key is provided.
  * @throws `IdentityError.InvalidMethod` when `didMethod` cannot satisfy the key set.
  */
-export async function createIdentity(input: CreateIdentityInput): Promise<MultiKeyIdentity> {
+export async function createIdentity(
+  input: CreateIdentityInput & CryptoOptions,
+): Promise<MultiKeyIdentity> {
   if (input.keys.length === 0) {
     throw new Error('createIdentity requires at least one key')
   }
@@ -502,7 +557,7 @@ export async function createIdentity(input: CreateIdentityInput): Promise<MultiK
     if (k === undefined) {
       throw new Error('createIdentity requires at least one key')
     }
-    const id = getDID(CODECS.EdDSA, k.publicKey)
+    const id = getDID({ codec: CODECS.EdDSA, publicKey: k.publicKey })
     const doc: DIDDoc = {
       '@context': ['https://www.w3.org/ns/did/v1'],
       verificationMethod: [
@@ -514,10 +569,22 @@ export async function createIdentity(input: CreateIdentityInput): Promise<MultiK
       ],
       authentication: ['#key-0'],
     }
-    return buildIdentity(id, id, doc, keys)
+    return buildIdentity({
+      id,
+      longForm: id,
+      doc,
+      keys,
+      crypto: input.crypto ?? nobleCrypto,
+    })
   }
 
   const doc = buildDoc(keys)
   const { longForm, shortForm } = encodePeer4(doc)
-  return buildIdentity(shortForm, longForm, doc, keys)
+  return buildIdentity({
+    id: shortForm,
+    longForm,
+    doc,
+    keys,
+    crypto: input.crypto ?? nobleCrypto,
+  })
 }

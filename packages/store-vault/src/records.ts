@@ -1,4 +1,5 @@
 import { withStoreTransaction } from '@hozon/db'
+import { nobleCrypto } from '@kokuin/crypto'
 import type {
   ApplyRecordChunkParams,
   ApplyResult,
@@ -10,6 +11,7 @@ import {
   applyRecordChunk,
   getRecordDecisions,
   recordKeyText,
+  snapshotRecord,
   verifyRecordOp,
   verifySignedRecord,
 } from '@kokuin/records'
@@ -21,7 +23,7 @@ import { VaultWriteConflict, vaultDatabases } from './record-context.js'
 import type { VaultKeyBranchTable } from './record-tables.js'
 import { makeAdapter } from './records-adapter.js'
 import type { VaultMethodsFor } from './records-methods.js'
-import { storeMethods } from './records-methods.js'
+import { snapshotMethods, storeMethods } from './records-methods.js'
 import { vaultRecordPortsFor } from './records-ports.js'
 import type { Bound } from './records-rows.js'
 import {
@@ -32,6 +34,7 @@ import {
   VaultRecordRowError,
 } from './records-rows.js'
 import { settleAll, settledValue } from './settle.js'
+import { snapshotData } from './snapshot.js'
 import type { EntryAddress, KeyAddress, VaultStoreAPI, WrappingRow } from './types.js'
 
 export { vaultRecordPortsFor } from './records-ports.js'
@@ -62,7 +65,7 @@ export type VaultKeyBranch = {
 
 export type VaultRecords = {
   adapter: RecordStoreAdapter
-  apply(records: ReadonlyArray<SignedRecord>, transportContext?: unknown): Promise<ApplyResult>
+  apply(params: VaultRecordsApplyParams): Promise<ApplyResult>
   write(params: {
     records: ReadonlyArray<SignedRecord>
     preconditions: VaultWritePreconditions
@@ -84,7 +87,12 @@ export type VaultRecords = {
   listRevocations(address: KeyAddress): Promise<Array<string>>
 }
 
-export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
+export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
+  const params = {
+    ...input,
+    methods: snapshotMethods(input.methods),
+    crypto: input.crypto ?? nobleCrypto,
+  }
   if (typeof params.opKind !== 'string' || params.opKind.length === 0)
     throw new TypeError('An explicit operation kind is required')
 
@@ -119,8 +127,8 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
     // Apply creates its own transaction after preflight. Keep its verifier and hooks in that scope.
     const scopedStore: RecordStoreAdapter = {
       ...store,
-      transaction: (fn) =>
-        store.transaction(async (tx) => {
+      transaction: (fn) => {
+        return store.transaction(async (tx) => {
           const inner = boundAdapters.get(tx)
           if (inner === undefined) throw new Error('Missing transaction adapter')
           const previous = current
@@ -130,7 +138,8 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
           } finally {
             current = previous
           }
-        }),
+        })
+      },
     }
     const types = vaultRecordTypes({
       ...params,
@@ -144,6 +153,7 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
       store: scopedStore,
       types,
       opKind: params.opKind,
+      crypto: params.crypto,
       nowMS: params.nowMS(),
       maxDriftMS: params.maxDriftMS,
       receiveClock: params.receiveClock ?? (() => {}),
@@ -189,8 +199,13 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
   }
   const api: VaultRecords = {
     adapter,
-    apply: (records, transportContext) => apply(records, adapter, transportContext),
-    async write(request) {
+    apply: ({ records, transportContext }) => apply(records, adapter, transportContext),
+    async write(input) {
+      const request = {
+        ...input,
+        records: input.records.map(snapshotRecord),
+        preconditions: snapshotData(input.preconditions),
+      }
       if (request.preconditions === undefined)
         throw new TypeError('Signed writes require explicit preconditions')
 
@@ -208,7 +223,12 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         // The address precondition reads nothing, so it runs before any store read, as it did.
         const ops = await settleAll(
           request.records.map(async (record) => {
-            const op = await verifySignedRecord(record, params.opKind, inner.methods)
+            const op = await verifySignedRecord({
+              record,
+              opKind: params.opKind,
+              methods: inner.methods,
+              crypto: params?.crypto,
+            })
 
             if (
               op !== null &&
@@ -228,7 +248,7 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
           }),
         )
         const [old, observedEntry] = await settleAll([
-          getRecordDecisions(tx, request.records),
+          getRecordDecisions({ store: tx, keys: request.records }),
           expectedEntry === undefined
             ? Promise.resolve(undefined)
             : inner.store.getEntry(expectedEntry),
@@ -243,7 +263,14 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
 
             const copies = old.get(recordKeyText(record))?.copies ?? []
             const priors = await settleAll(
-              copies.map((copy) => verifySignedRecord(copy, params.opKind, inner.methods)),
+              copies.map((copy) => {
+                return verifySignedRecord({
+                  record: copy,
+                  opKind: params.opKind,
+                  methods: inner.methods,
+                  crypto: params?.crypto,
+                })
+              }),
             )
 
             for (const [index, prior] of priors.entries()) {
@@ -296,7 +323,7 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         // All three run together. Results are checked in the old order: held copies, entry key,
         // key version and branches, entry HLC.
         const [currentRead, entryRead, keyRead] = await Promise.allSettled([
-          getRecordDecisions(tx, request.records),
+          getRecordDecisions({ store: tx, keys: request.records }),
           expectedEntry === undefined
             ? Promise.resolve(undefined)
             : inner.store.getEntry(expectedEntry),
@@ -306,7 +333,12 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         const currentOps = await settleAll(
           request.records.flatMap((record) => {
             return (current.get(recordKeyText(record))?.copies ?? []).map((copy) => {
-              return verifySignedRecord(copy, params.opKind, inner.methods)
+              return verifySignedRecord({
+                record: copy,
+                opKind: params.opKind,
+                methods: inner.methods,
+                crypto: params?.crypto,
+              })
             })
           }),
         )
@@ -354,7 +386,14 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
       })
       // Root-bound resolvers need the connection released before verification.
       const ops = await settleAll(
-        rows.map((row) => verifyRecordOp(row.op_jwt, params.opKind, bound.methods)),
+        rows.map((row) => {
+          return verifyRecordOp({
+            opJWT: row.op_jwt,
+            opKind: params.opKind,
+            methods: bound.methods,
+            crypto: params?.crypto,
+          })
+        }),
       )
       const result: Array<VaultKeyBranch> = []
 
@@ -384,7 +423,8 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
 
       return params.store.listWrappings(address)
     },
-    async rebuildKeyBranches(address) {
+    async rebuildKeyBranches(input) {
+      const address = { ...input }
       await assertDomain(bound)
 
       const decisions = await adapter.list(['vault.key-branch'])
@@ -394,7 +434,14 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
         return record !== undefined && record.owner === address.ownerDID ? [record] : []
       })
       const ops = await settleAll(
-        candidates.map((record) => verifySignedRecord(record, params.opKind, bound.methods)),
+        candidates.map((record) => {
+          return verifySignedRecord({
+            record,
+            opKind: params.opKind,
+            methods: bound.methods,
+            crypto: params?.crypto,
+          })
+        }),
       )
       const rows: Array<VaultKeyBranchTable> = []
 
@@ -403,7 +450,11 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
 
         if (op === null || op.claim.meta.keyID !== address.keyID) continue
 
-        const decoded = decodeVaultRecord(record, op.claim.meta)
+        const decoded = await decodeVaultRecord({
+          ...params,
+          record,
+          recordMeta: op.claim.meta,
+        })
 
         if (decoded.type !== 'vault.key-branch') continue
 
@@ -457,4 +508,9 @@ export function createVaultRecords(params: VaultRecordsParams): VaultRecords {
   }
 
   return api
+}
+
+export type VaultRecordsApplyParams = {
+  records: ReadonlyArray<SignedRecord>
+  transportContext?: unknown
 }

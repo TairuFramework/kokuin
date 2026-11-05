@@ -33,7 +33,9 @@ describe('signingKeysOf', () => {
   const { publicKey } = ed25519.keygen()
 
   test('a did:key carries exactly its key', () => {
-    expect(signingKeysOf(getDID(CODECS.EdDSA, publicKey))).toEqual([{ alg: 'EdDSA', publicKey }])
+    expect(signingKeysOf(getDID({ codec: CODECS.EdDSA, publicKey }))).toEqual([
+      { alg: 'EdDSA', publicKey },
+    ])
   })
 
   test('a short-form did:peer:4 and a did:kokuin carry none', () => {

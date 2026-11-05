@@ -1,3 +1,5 @@
+type MemberIncarnation = { add: string; g: number }
+
 import { recordDecisionDigest } from '@kokuin/records'
 import { randomIdentity } from '@kokuin/token'
 import { fromB64U, fromUTF, toB64U } from '@sozai/codec'
@@ -18,7 +20,9 @@ test('removed own copies refuse new receipt and effective members re-endorse ide
   let removed = false
   const authority: CredentialAuthority = {
     async authorize(request) {
-      const consumer = request.op.claim.meta.consumer as { incarnations: typeof incarnations }
+      const consumer = request.op.claim.meta.consumer as {
+        incarnations: Record<string, MemberIncarnation>
+      }
       const member = consumer.incarnations[request.issuer]
       const historic =
         member && member.add === incarnations[request.issuer]?.add && member.g === 0
@@ -55,11 +59,11 @@ test('removed own copies refuse new receipt and effective members re-endorse ide
     ['unauthorized'],
   )
   expect(await receiver.store.get(source.key)).toBeNull()
-  const copy = await resign(survivor, source.key)
+  const copy = await resign({ signer: survivor, record: source.key })
   expect(copy.opHash).not.toBe(source.key.opHash)
   expect(copy.payload).toEqual(source.key.payload)
-  expect(await recordDecisionDigest(copy, OP_KIND)).toBe(
-    await recordDecisionDigest(source.key, OP_KIND),
+  expect(await recordDecisionDigest({ record: copy, opKind: OP_KIND })).toBe(
+    await recordDecisionDigest({ record: source.key, opKind: OP_KIND }),
   )
   expect((await sender.apply([copy], { authority })).applied).toBe(1)
   const copies = (await sender.store.list(['vault.key'])).flatMap((d) => d.copies)

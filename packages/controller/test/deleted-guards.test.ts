@@ -17,35 +17,43 @@ import { type FoldResult, foldLog } from '../src/fold.js'
 // it rejects do arrive.
 
 const seed = new Uint8Array(32).fill(77)
-const icp = createInception(seed, 0)
-const authority = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
+const icp = await createInception({ seed, profile: 0 })
+const authority = deriveKeyPair({
+  seed,
+  path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+  alg: 'EdDSA',
+})
 
 describe('kept: `isKeyList(event.k)` in verifyInception', () => {
   // Unkillable — `verifySignatures` rejects every shape below with the same `invalid inception` —
   // and reachable, which is what decides it. An inception is self-certifying, so each of these is
   // re-signed by the key that legitimately authors it and folded against the DID it hashes to:
   // no signature check can reject them, and only a shape guard says what `k` must be.
-  function signedInception(value: unknown): [string, SignedEvent<InceptionEvent>] {
+  async function signedInception(value: unknown): Promise<[string, SignedEvent<InceptionEvent>]> {
     const event = { ...icp.event, k: value } as unknown as InceptionEvent
     return [
       didFromInception(event),
-      { event, sigs: signEvent(event as EventCommon, [authority.privateKey]) },
+      { event, sigs: await signEvent(event as EventCommon, [authority.privateKey]) },
     ]
   }
 
   for (const value of [42, 'zNotAnArray', {}, null, [42], [[]], [icp.event.k[0], 42]]) {
-    test(`k = ${JSON.stringify(value)} never folds and never throws`, () => {
-      const [forgedDid, forged] = signedInception(value)
+    test(`k = ${JSON.stringify(value)} never folds and never throws`, async () => {
+      const [forgedDID, forged] = await signedInception(value)
       let result: FoldResult | undefined
-      expect(() => {
-        result = foldLog(forgedDid, { chain: [forged], events: [] })
-      }).not.toThrow()
+      await expect(
+        (async () => {
+          result = await foldLog({ did: forgedDID, input: { chain: [forged], events: [] } })
+        })(),
+      ).resolves.toBeUndefined()
       expect(result).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
     })
   }
 
-  test('control: an unmutated re-signed inception folds', () => {
-    const [forgedDid, forged] = signedInception(icp.event.k)
-    expect(foldLog(forgedDid, { chain: [forged], events: [] }).ok).toBe(true)
+  test('control: an unmutated re-signed inception folds', async () => {
+    const [forgedDID, forged] = await signedInception(icp.event.k)
+    expect((await foldLog({ did: forgedDID, input: { chain: [forged], events: [] } })).ok).toBe(
+      true,
+    )
   })
 })

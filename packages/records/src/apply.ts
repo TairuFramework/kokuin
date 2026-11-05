@@ -1,4 +1,5 @@
-import type { MethodRegistry } from '@kokuin/token'
+import { nobleCrypto } from '@kokuin/crypto'
+import type { CryptoOptions, MethodRegistry } from '@kokuin/token'
 import type { HLCTimestamp } from '@sozai/hlc'
 
 import { parseBoundedHLC } from './clock.js'
@@ -8,10 +9,10 @@ import { createRecordVerifier, type VerifiedRecordOp, verifySignedRecord } from 
 import { compareRecordOps, type EqualVersionDecision, type MergePolicy } from './policy.js'
 import {
   type RecordKey,
-  recordClaimDigest,
   recordPayloadMatches,
   recordSignerKey,
   type SignedRecord,
+  snapshotRecord,
 } from './record.js'
 import {
   getRecordDecisions,
@@ -20,6 +21,28 @@ import {
   type RecordStoreAdapter,
   recordKeyText,
 } from './store.js'
+
+export type RecordTypeGraphErrorParams = { message: string }
+export type RecordContentRefusalErrorParams = { message: string }
+type RefusedCandidateParams = { candidate: Candidate; options: ErrorOptions }
+type PrefetchSnapshotsParams = {
+  keys: ReadonlyArray<RecordKey>
+  ctx: ChunkContext
+  known: RecordDecisionMap
+  knownKeys: ReadonlySet<string>
+}
+type IsDependencyUnsatisfiedParams = {
+  dependency: RecordDependency
+  tx: RecordStoreAdapter
+  opKind: string
+  methods?: MethodRegistry
+} & CryptoOptions
+type IsDependencyUnsatisfiedByParams = {
+  dependency: RecordDependency
+  stored: RecordDecision | null
+  opKind: string
+  methods?: MethodRegistry
+} & CryptoOptions
 
 /** The authenticated peer asking for records, and the controller it acts for, if any. */
 export type RecordRequester = { peerDID: string; controllerDID: string | null }
@@ -41,16 +64,16 @@ export type RecordRequester = { peerDID: string; controllerDID: string | null }
  *   never a holding, whatever its `meta` says, so a revocation naming a key and a recipient
  *   cannot pass for a wrapping. Empty, no one is a key holder.
  */
-export type VisibilityContext = {
+export type VisibilityContext = CryptoOptions & {
   requester: RecordRequester
   opKind: string
   /** Caller-owned transport state, passed unchanged and never signed. */
   transportContext?: unknown
   proofs: ReadonlyArray<SignedRecord>
   store: RecordStoreAdapter
-  authorizeProof: (record: SignedRecord, stored: SignedRecord | null) => Promise<boolean>
-  currentKeyVersion: (owner: string, keyID: string) => Promise<number | null>
-  isGroupMember: (groupID: string, did: string) => Promise<boolean>
+  authorizeProof: (params: VisibilityContextAuthorizeProofParams) => Promise<boolean>
+  currentKeyVersion: (params: VisibilityContextCurrentKeyVersionParams) => Promise<number | null>
+  isGroupMember: (params: VisibilityContextIsGroupMemberParams) => Promise<boolean>
   holderTypes: ReadonlyMap<string, RecordTypeDefinition>
   methods?: MethodRegistry
 }
@@ -66,7 +89,7 @@ export type VisibilityContext = {
  *   responder's store for a holder proof. An authorizer reads other records through it,
  *   never through a store bound outside the transaction.
  */
-export type RecordReceiveContext = {
+export type RecordReceiveContext = CryptoOptions & {
   /** Caller-owned transport state, passed unchanged and never signed. */
   transportContext?: unknown
 }
@@ -82,11 +105,7 @@ export type RecordAuthorizeContext = RecordReceiveContext & {
    */
   decision?: (key: RecordKey) => Promise<RecordDecision | null>
   resolveController: (did: string) => Promise<string | null>
-  verifyCapability: (
-    tokens: ReadonlyArray<string>,
-    owner: string,
-    issuer: string,
-  ) => Promise<boolean>
+  verifyCapability: (params: RecordAuthorizeContextVerifyCapabilityParams) => Promise<boolean>
 }
 
 /**
@@ -128,18 +147,17 @@ export type RecordTypeDefinition = {
    * the owner-continuity check, so this must bind `op.claim.owner` to the owner of the
    * record it depends on.
    */
-  authorize(op: VerifiedRecordOp, ctx: RecordAuthorizeContext): Promise<boolean>
-  precheck?: (op: VerifiedRecordOp, record: SignedRecord) => Promise<boolean>
-  visibleTo?: (record: SignedRecord, ctx: VisibilityContext) => Promise<boolean>
-  dependencies(record: SignedRecord, op: VerifiedRecordOp): ReadonlyArray<RecordDependency>
-  onEqual?: (incoming: VerifiedRecordOp, stored: VerifiedRecordOp) => EqualVersionDecision
-  afterApply?: (record: SignedRecord, store: RecordStoreAdapter) => Promise<void>
+  authorize(params: RecordTypeDefinitionAuthorizeParams): Promise<boolean>
+  precheck?: (params: RecordTypeDefinitionPrecheckParams) => Promise<boolean>
+  visibleTo?: (params: RecordTypeDefinitionVisibleToParams) => Promise<boolean>
+  dependencies(params: RecordTypeDefinitionDependenciesParams): ReadonlyArray<RecordDependency>
+  onEqual?: (params: RecordTypeDefinitionOnEqualParams) => EqualVersionDecision
+  afterApply?: (params: RecordTypeDefinitionAfterApplyParams) => Promise<void>
   /** Retain authenticated branch evidence even when the merge keeps another current op. */
-  afterAuthorize?: (record: SignedRecord, store: RecordStoreAdapter) => Promise<void>
+  afterAuthorize?: (params: RecordTypeDefinitionAfterAuthorizeParams) => Promise<void>
   /** Keys this write can affect; `stored` is a speculative read before the chunk locks. */
   lockKeys?: (
-    incoming: SignedRecord,
-    stored: RecordDecision | null,
+    params: RecordTypeDefinitionLockKeysParams,
   ) => ReadonlyArray<RecordLockKey> | Promise<ReadonlyArray<RecordLockKey>>
 }
 
@@ -186,16 +204,12 @@ export type ApplyRecordChunkParams = RecordReceiveContext & {
   methods?: MethodRegistry
   /** Called for several DIDs at once before the chunk locks; must accept concurrent calls. */
   resolveController: (did: string) => Promise<string | null>
-  verifyCapability: (
-    tokens: ReadonlyArray<string>,
-    owner: string,
-    issuer: string,
-  ) => Promise<boolean>
+  verifyCapability: (params: ApplyRecordChunkParamsVerifyCapabilityParams) => Promise<boolean>
 }
 
 /** Thrown when the registered types' `dependsOn` is cyclic or names an unregistered type. */
 export class RecordTypeGraphError extends Error {
-  constructor(message: string) {
+  constructor({ message }: RecordTypeGraphErrorParams) {
     super(message)
     this.name = 'RecordTypeGraphError'
   }
@@ -211,7 +225,7 @@ export class RecordSourceChangedError extends Error {
 
 /** A type hook refused one signed record's content permanently. */
 export class RecordContentRefusalError extends Error {
-  constructor(message: string) {
+  constructor({ message }: RecordContentRefusalErrorParams) {
     super(message)
     this.name = 'RecordContentRefusalError'
   }
@@ -227,10 +241,10 @@ function rankTypes(types: ReadonlyMap<string, RecordTypeDefinition>): Map<string
     }
     const definition = types.get(type)
     if (definition === undefined) {
-      throw new RecordTypeGraphError(`Record type ${type} is not registered`)
+      throw new RecordTypeGraphError({ message: `Record type ${type} is not registered` })
     }
     if (visiting.has(type)) {
-      throw new RecordTypeGraphError(`Record type ${type} depends on itself`)
+      throw new RecordTypeGraphError({ message: `Record type ${type} depends on itself` })
     }
     visiting.add(type)
     for (const dependency of definition.dependsOn) {
@@ -293,10 +307,12 @@ async function snapshotOf(
   ctx: ChunkContext,
 ): Promise<DecisionSnapshot> {
   const verified = await Promise.all(
-    (decision?.copies ?? []).map(async (copy) => ({
-      copy,
-      op: await ctx.verify(copy),
-    })),
+    (decision?.copies ?? []).map(async (copy) => {
+      return {
+        copy,
+        op: await ctx.verify(copy),
+      }
+    }),
   )
   return { decision, verified, checkedPrior: false }
 }
@@ -323,12 +339,12 @@ async function decisionSnapshot(key: RecordKey, ctx: ChunkContext): Promise<Deci
  * decisions already read in this transaction. A failed batch seeds nothing: each key is then
  * read on first use, and a failing read there reports the batch's error.
  */
-async function prefetchSnapshots(
-  keys: ReadonlyArray<RecordKey>,
-  ctx: ChunkContext,
-  known: RecordDecisionMap,
-  knownKeys: ReadonlySet<string>,
-): Promise<void> {
+async function prefetchSnapshots({
+  keys,
+  ctx,
+  known,
+  knownKeys,
+}: PrefetchSnapshotsParams): Promise<void> {
   const missing = new Map<string, RecordKey>()
   for (const key of keys) {
     const id = recordKeyText(key)
@@ -336,7 +352,7 @@ async function prefetchSnapshots(
   }
   let loaded: RecordDecisionMap = new Map()
   try {
-    loaded = await getRecordDecisions(ctx.tx, [...missing.values()])
+    loaded = await getRecordDecisions({ store: ctx.tx, keys: [...missing.values()] })
   } catch (error) {
     // Kept, not dropped: a later single read that fails reports this original error.
     ctx.prefetchError = error
@@ -364,66 +380,93 @@ function rememberCopy(
   op: VerifiedRecordOp,
 ): void {
   const decision = snapshot.decision
-  const signer = recordSignerKey(op.issuer, record.opJWT)
+  const signer = recordSignerKey({ issuer: op.issuer, opJWT: record.opJWT })
   const retained = snapshot.verified.filter(({ copy, op: previous }) => {
     if (previous === null || signer === null) return true
-    return recordSignerKey(previous.issuer, copy.opJWT) !== signer || copy.opHash < record.opHash
+    return (
+      recordSignerKey({ issuer: previous.issuer, opJWT: copy.opJWT }) !== signer ||
+      copy.opHash < record.opHash
+    )
   })
   if (
     signer !== null &&
-    retained.some(
-      ({ copy, op: previous }) =>
+    retained.some(({ copy, op: previous }) => {
+      return (
         previous !== null &&
-        recordSignerKey(previous.issuer, copy.opJWT) === signer &&
-        copy.opHash <= record.opHash,
-    )
+        recordSignerKey({ issuer: previous.issuer, opJWT: copy.opJWT }) === signer &&
+        copy.opHash <= record.opHash
+      )
+    })
   )
     return
   snapshot.verified = [...retained, { copy: record, op }]
   snapshot.decision = {
     key: { type: record.type, owner: record.owner, id: record.id },
     decisionHLC: typeof op.claim.meta.version === 'string' ? op.claim.meta.version : op.claim.hlc,
-    contentDigest: recordClaimDigest(op.claim),
+    contentDigest: op.contentDigest,
     copies: snapshot.verified.map(({ copy }) => copy),
   }
   if (decision === null) snapshot.checkedPrior = true
 }
 
 /** Whether the store lacks a dependency, or holds an op for it that does not satisfy it. */
-export async function isDependencyUnsatisfied(
-  dependency: RecordDependency,
-  tx: RecordStoreAdapter,
-  opKind: string,
-  methods?: MethodRegistry,
-): Promise<boolean> {
-  return await isDependencyUnsatisfiedBy(dependency, await tx.get(dependency), opKind, methods)
+export async function isDependencyUnsatisfied({
+  dependency,
+  tx,
+  opKind,
+  methods,
+  ...options
+}: IsDependencyUnsatisfiedParams): Promise<boolean> {
+  return await isDependencyUnsatisfiedBy({
+    ...options,
+    dependency,
+    stored: await tx.get(dependency),
+    opKind,
+    methods,
+  })
 }
 
 /** As {@link isDependencyUnsatisfied}, against a decision already read. */
-export async function isDependencyUnsatisfiedBy(
-  dependency: RecordDependency,
-  stored: RecordDecision | null,
-  opKind: string,
-  methods?: MethodRegistry,
-): Promise<boolean> {
+export async function isDependencyUnsatisfiedBy({
+  dependency,
+  stored,
+  opKind,
+  methods,
+  ...options
+}: IsDependencyUnsatisfiedByParams): Promise<boolean> {
   if (stored === null || stored.key.owner !== dependency.owner) return true
-  // Verification never throws, so every copy is checked together, then matched in order.
-  const ops = await Promise.all(
-    stored.copies.map((copy) => verifySignedRecord(copy, opKind, methods)),
+  // Settle every check before matching or propagating the first failure.
+  const results = await Promise.allSettled(
+    stored.copies.map((copy) => {
+      return verifySignedRecord({
+        ...options,
+        record: copy,
+        opKind,
+        methods,
+      })
+    }),
   )
-  return !ops.some(
-    (op) =>
+  const ops = results.map((result) => {
+    if (result.status === 'rejected') throw result.reason
+    return result.value
+  })
+  return !ops.some((op) => {
+    return (
       op?.claim.type === dependency.type &&
       op.claim.owner === dependency.owner &&
       op.claim.id === dependency.id &&
-      (dependency.satisfiedBy?.(op) ?? true),
-  )
+      (dependency.satisfiedBy?.(op) ?? true)
+    )
+  })
 }
 
 async function isParked(candidate: Candidate, ctx: ChunkContext): Promise<boolean> {
   const dependencies =
     ctx.dependencies.get(candidate) ??
-    candidate.definition.dependencies(candidate.record, candidate.op)
+    candidate.definition.dependencies({
+      record: snapshotRecord(candidate.record),
+      op: candidate.op,
+    })
   for (const dependency of dependencies) {
     // The chunk's view, as `isDependencyUnsatisfied` would read it from the store now.
     const snapshot = await decisionSnapshot(dependency, ctx)
@@ -431,13 +474,14 @@ async function isParked(candidate: Candidate, ctx: ChunkContext): Promise<boolea
     const satisfied =
       stored !== null &&
       stored.key.owner === dependency.owner &&
-      snapshot.verified.some(
-        ({ op }) =>
+      snapshot.verified.some(({ op }) => {
+        return (
           op?.claim.type === dependency.type &&
           op.claim.owner === dependency.owner &&
           op.claim.id === dependency.id &&
-          (dependency.satisfiedBy?.(op) ?? true),
-      )
+          (dependency.satisfiedBy?.(op) ?? true)
+        )
+      })
     if (!satisfied) {
       return true
     }
@@ -449,6 +493,9 @@ async function isParked(candidate: Candidate, ctx: ChunkContext): Promise<boolea
 async function applyCandidate(candidate: Candidate, ctx: ChunkContext): Promise<Outcome> {
   const { record, op, definition } = candidate
   const { tx } = ctx
+  let payloadCheck: Promise<boolean> | undefined
+  const payloadMatches = () =>
+    (payloadCheck ??= recordPayloadMatches({ ...ctx, record, claim: op.claim }))
   const key: RecordKey = { type: op.claim.type, owner: op.claim.owner, id: op.claim.id }
   const snapshot = await decisionSnapshot(key, ctx)
   const storedDecision = snapshot.decision
@@ -474,53 +521,64 @@ async function applyCandidate(candidate: Candidate, ctx: ChunkContext): Promise<
     return { status: 'rejected', reason: 'owner' }
   }
   const decision = async (dependency: RecordKey) => {
-    return currentDecision(await decisionSnapshot(dependency, ctx))
+    const held = currentDecision(await decisionSnapshot(dependency, ctx))
+    return held === null
+      ? null
+      : { ...held, key: { ...held.key }, copies: held.copies.map(snapshotRecord) }
   }
-  const authorized = await definition.authorize(op, {
-    record,
-    stored,
-    store: tx,
-    decision,
-    transportContext: ctx.transportContext,
-    resolveController: ctx.resolveController,
-    verifyCapability: ctx.verifyCapability,
+  const authorized = await definition.authorize({
+    op,
+    ctx: {
+      record: snapshotRecord(record),
+      stored: stored === null ? null : snapshotRecord(stored),
+      store: tx,
+      decision,
+      crypto: ctx.crypto,
+      transportContext: ctx.transportContext,
+      resolveController: ctx.resolveController,
+      verifyCapability: ctx.verifyCapability,
+    },
   })
   if (!authorized) {
     return { status: 'rejected', reason: 'unauthorized' }
   }
 
   if (definition.afterAuthorize !== undefined) {
-    if (!recordPayloadMatches(record, op.claim)) {
+    if (!(await payloadMatches())) {
       return { status: 'rejected', reason: 'digest' }
     }
-    await definition.afterAuthorize(record, tx)
+    await definition.afterAuthorize({ record: snapshotRecord(record), store: tx })
   }
 
   if (
     storedDecision !== null &&
     storedDecision !== undefined &&
-    storedDecision.contentDigest === recordClaimDigest(op.claim) &&
+    storedDecision.contentDigest === op.contentDigest &&
     storedDecision.decisionHLC ===
       (typeof op.claim.meta.version === 'string' ? op.claim.meta.version : op.claim.hlc)
   ) {
-    if (!recordPayloadMatches(record, op.claim)) return { status: 'rejected', reason: 'digest' }
+    if (!(await payloadMatches())) return { status: 'rejected', reason: 'digest' }
     await tx.putCopy(record)
     if (!snapshot.checkedPrior)
       for (const { copy, op: previous } of snapshot.verified) {
         if (
           previous !== null &&
           previous.issuer !== op.issuer &&
-          !(await definition.authorize(previous, {
-            record: copy,
-            stored: record,
-            store: tx,
-            decision,
-            transportContext: ctx.transportContext,
-            resolveController: ctx.resolveController,
-            verifyCapability: ctx.verifyCapability,
+          !(await definition.authorize({
+            op: previous,
+            ctx: {
+              record: snapshotRecord(copy),
+              stored: snapshotRecord(record),
+              store: tx,
+              decision,
+              crypto: ctx.crypto,
+              transportContext: ctx.transportContext,
+              resolveController: ctx.resolveController,
+              verifyCapability: ctx.verifyCapability,
+            },
           }))
         ) {
-          await tx.pruneCopy(key, previous.issuer)
+          await tx.pruneCopy({ key, signerDID: previous.issuer })
           snapshot.verified = snapshot.verified.filter(
             ({ op: held }) => held?.issuer !== previous.issuer,
           )
@@ -531,7 +589,12 @@ async function applyCandidate(candidate: Candidate, ctx: ChunkContext): Promise<
     return { status: 'applied' }
   }
 
-  const merge = compareRecordOps(op, storedOp, definition.policy, definition.onEqual)
+  const merge = compareRecordOps({
+    incoming: op,
+    stored: storedOp,
+    policy: definition.policy,
+    onEqual: definition.onEqual,
+  })
   if (merge.status === 'reject') {
     return { status: 'rejected', reason: merge.reason ?? 'policy' }
   }
@@ -542,28 +605,26 @@ async function applyCandidate(candidate: Candidate, ctx: ChunkContext): Promise<
   // A fork still needs one op in the store, and the same one on every peer.
   const wins =
     merge.status === 'apply' ||
-    (merge.status === 'fork' &&
-      storedOp !== null &&
-      recordClaimDigest(op.claim) > recordClaimDigest(storedOp.claim))
+    (merge.status === 'fork' && storedOp !== null && op.contentDigest > storedOp.contentDigest)
   if (!wins) {
     return { status: 'noop', conflict }
   }
 
-  if (!recordPayloadMatches(record, op.claim)) {
+  if (!(await payloadMatches())) {
     return { status: 'rejected', reason: 'digest' }
   }
   await tx.putCopy(record)
   snapshot.decision = null
   snapshot.verified = []
   rememberCopy(snapshot, record, op)
-  await definition.afterApply?.(record, tx)
+  await definition.afterApply?.({ record: snapshotRecord(record), store: tx })
   return { status: 'applied', conflict }
 }
 
 class RefusedCandidate extends Error {
   #candidate: Candidate
 
-  constructor(candidate: Candidate, options: ErrorOptions) {
+  constructor({ candidate, options }: RefusedCandidateParams) {
     super('Record content refused', options)
     this.name = 'RefusedCandidate'
     this.#candidate = candidate
@@ -603,18 +664,35 @@ class RefusedCandidate extends Error {
  * @throws RecordSourceChangedError when a changed lock set requires an ambient transaction
  * to roll back, or five owned transaction attempts all observe a changed lock set.
  */
-export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<ApplyResult> {
-  const { records, store, types, nowMS, maxDriftMS, receiveClock } = params
+export async function applyRecordChunk(input: ApplyRecordChunkParams): Promise<ApplyResult> {
+  const params = {
+    ...input,
+    crypto: input.crypto ?? nobleCrypto,
+    methods: input.methods?.map((method) => {
+      return {
+        ...method,
+        method: method.method,
+        resolve: method.resolve.bind(method),
+        resolveHistoric: method.resolveHistoric?.bind(method),
+      }
+    }),
+  }
+  const { store, types, nowMS, maxDriftMS, receiveClock } = params
+  const records = params.records.map(snapshotRecord)
   const ranks = rankTypes(types)
-  const verify = createRecordVerifier(params.opKind, params.methods)
+  const verify = createRecordVerifier({
+    opKind: params.opKind,
+    methods: params.methods,
+    crypto: params?.crypto,
+  })
   const rejected: ApplyResult['rejected'] = []
   const candidates: Array<Candidate> = []
   // Refused records await one batched read of the store, which may show them as replays.
   const refusedReplays: Array<SignedRecord> = []
   // The clock and type checks run first for every record. Signatures of the records that pass
-  // them are verified together, since verification never throws; the rest runs in record order.
+  // them settle together before the remaining checks run in record order.
   const screened = records.map((record) => {
-    const stamp = parseBoundedHLC(record.hlc, nowMS, maxDriftMS)
+    const stamp = parseBoundedHLC({ hlc: record.hlc, nowMS, maxDriftMS })
     const definition = stamp === null ? undefined : types.get(record.type)
     return {
       record,
@@ -623,7 +701,8 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
       verifying: definition === undefined ? null : verify(record),
     }
   })
-  for (const { record, stamp, definition, verifying } of screened) {
+  const verified = await Promise.allSettled(screened.map(({ verifying }) => verifying))
+  for (const [index, { record, stamp, definition, verifying }] of screened.entries()) {
     if (stamp === null) {
       rejected.push({ record, reason: 'clock' })
       continue
@@ -632,14 +711,19 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
       rejected.push({ record, reason: 'unknown-type' })
       continue
     }
-    const op = await verifying
+    const result = verified[index]
+    if (result?.status === 'rejected') throw result.reason
+    const op = result?.value ?? null
     if (op === null) {
       rejected.push({ record, reason: 'signature' })
       continue
     }
     // Stateless refusal must precede authority reads, locks and dependencies.
     try {
-      if (definition.precheck !== undefined && !(await definition.precheck(op, record))) {
+      if (
+        definition.precheck !== undefined &&
+        !(await definition.precheck({ op, record: snapshotRecord(record) }))
+      ) {
         refusedReplays.push(record)
         rejected.push({ record, reason: 'unauthorized' })
         continue
@@ -653,11 +737,13 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
   }
   if (refusedReplays.length > 0) {
     // A replay stays a no-op even if its issuer or content is no longer admissible.
-    const stored = await getRecordDecisions(store, refusedReplays)
+    const stored = await getRecordDecisions({ store, keys: refusedReplays })
     const replays = new Set(
-      refusedReplays.filter((record) =>
-        stored.get(recordKeyText(record))?.copies.some((copy) => copy.opHash === record.opHash),
-      ),
+      refusedReplays.filter((record) => {
+        return stored
+          .get(recordKeyText(record))
+          ?.copies.some((copy) => copy.opHash === record.opHash)
+      }),
     )
     if (replays.size > 0) {
       const kept = rejected.filter((entry) => !replays.has(entry.record))
@@ -665,20 +751,19 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
     }
   }
   // Stable, so records of one type keep their arrival order.
-  candidates.sort(
-    (left, right) =>
-      (ranks.get(left.record.type) as number) - (ranks.get(right.record.type) as number),
-  )
+  candidates.sort((left, right) => {
+    return (ranks.get(left.record.type) as number) - (ranks.get(right.record.type) as number)
+  })
 
   let outcome: ProcessedChunk | undefined
   async function processChunk(active: ReadonlyArray<Candidate>): Promise<ProcessedChunk> {
     const expected = new Map<Candidate, Array<RecordLockKey>>()
     const allKeys = new Map<string, RecordLockKey>()
     const controllers = new Map<string, Promise<string | null>>()
-    const prefetched = await getRecordDecisions(
+    const prefetched = await getRecordDecisions({
       store,
-      active.map((candidate) => candidate.record),
-    )
+      keys: active.map((candidate) => candidate.record),
+    })
     const verifiedStored = new Map<string, Promise<void>>()
     const prefetchController = async (did: string): Promise<void> => {
       let resolving = controllers.get(did)
@@ -720,10 +805,19 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
       const stored = prefetched.get(recordKeyText(candidate.record)) ?? null
       const keys = [
         ...new Map(
-          (await hook(candidate.record, stored)).map((key) => [
-            JSON.stringify([key.type, key.key]),
-            key,
-          ]),
+          (
+            await hook({
+              incoming: snapshotRecord(candidate.record),
+              stored:
+                stored === null
+                  ? null
+                  : {
+                      ...stored,
+                      key: { ...stored.key },
+                      copies: stored.copies.map(snapshotRecord),
+                    },
+            })
+          ).map((key) => [JSON.stringify([key.type, key.key]), key]),
         ).values(),
       ].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
       expected.set(candidate, keys)
@@ -738,18 +832,27 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
           [...allKeys.values()].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
         )
       // Re-read under the locks: the prefetch above ran before them.
-      const checked = await getRecordDecisions(
-        tx,
-        [...expected.keys()].map((candidate) => candidate.record),
-      )
+      const checked = await getRecordDecisions({
+        store: tx,
+        keys: [...expected.keys()].map((candidate) => candidate.record),
+      })
       for (const [candidate, keys] of expected) {
         const stored = checked.get(recordKeyText(candidate.record)) ?? null
         const current = [
           ...new Map(
-            ((await candidate.definition.lockKeys?.(candidate.record, stored)) ?? []).map((key) => [
-              JSON.stringify([key.type, key.key]),
-              key,
-            ]),
+            (
+              (await candidate.definition.lockKeys?.({
+                incoming: snapshotRecord(candidate.record),
+                stored:
+                  stored === null
+                    ? null
+                    : {
+                        ...stored,
+                        key: { ...stored.key },
+                        copies: stored.copies.map(snapshotRecord),
+                      },
+              })) ?? []
+            ).map((key) => [JSON.stringify([key.type, key.key]), key]),
           ).keys(),
         ].sort()
         const original = keys.map((key) => JSON.stringify([key.type, key.key])).sort()
@@ -763,34 +866,46 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
       const ctx: ChunkContext = {
         tx,
         opKind: params.opKind,
+        crypto: params.crypto,
         transportContext: params.transportContext,
-        resolveController: async (did) =>
-          await (controllers.get(did) ?? params.resolveController(did)),
+        resolveController: async (did) => {
+          return await (controllers.get(did) ?? params.resolveController(did))
+        },
         verifyCapability: params.verifyCapability,
         methods: params.methods,
         decisions: new Map(),
         dependencies: new Map(
-          active.map((candidate) => [
-            candidate,
-            candidate.definition.dependencies(candidate.record, candidate.op),
-          ]),
+          active.map((candidate) => {
+            return [
+              candidate,
+              candidate.definition.dependencies({
+                record: snapshotRecord(candidate.record),
+                op: candidate.op,
+              }),
+            ]
+          }),
         ),
         // A fresh scope per transaction: a resolved issuer's key removed before the locks must
         // not pass on a verification made before them. Self-certifying issuers still hit the
         // process-wide memo.
-        verify: createRecordVerifier(params.opKind, params.methods),
+        verify: createRecordVerifier({
+          opKind: params.opKind,
+          methods: params.methods,
+          crypto: params?.crypto,
+        }),
       }
       // One batched read for every decision the chunk will consult: each record's own and its
       // dependencies'. Writes made by this chunk update these snapshots in place.
-      await prefetchSnapshots(
-        active.flatMap((candidate) => [
-          candidate.record,
-          ...(ctx.dependencies.get(candidate) ?? []),
-        ]),
+      await prefetchSnapshots({
+        keys: active.flatMap((candidate) => {
+          return [candidate.record, ...(ctx.dependencies.get(candidate) ?? [])]
+        }),
         ctx,
-        checked,
-        new Set([...expected.keys()].map((candidate) => recordKeyText(candidate.record))),
-      )
+        known: checked,
+        knownKeys: new Set(
+          [...expected.keys()].map((candidate) => recordKeyText(candidate.record)),
+        ),
+      })
       const applied: Array<Candidate> = []
       const conflicts: Array<RecordConflict> = []
       const refused: ApplyResult['rejected'] = []
@@ -804,7 +919,8 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
             result = await applyCandidate(candidate, ctx)
           } catch (error) {
             if (error instanceof RecordContentRefusalError)
-              throw new RefusedCandidate(candidate, { cause: error })
+              // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
+              throw new RefusedCandidate({ candidate, options: { cause: error } })
             throw error
           }
           if (result.status === 'rejected') {
@@ -861,3 +977,55 @@ export async function applyRecordChunk(params: ApplyRecordChunkParams): Promise<
     conflicts: outcome.conflicts,
   }
 }
+
+export type ApplyRecordChunkParamsVerifyCapabilityParams = {
+  tokens: ReadonlyArray<string>
+  owner: string
+  issuer: string
+}
+
+export type RecordAuthorizeContextVerifyCapabilityParams = {
+  tokens: ReadonlyArray<string>
+  owner: string
+  issuer: string
+}
+
+export type RecordTypeDefinitionAuthorizeParams = {
+  op: VerifiedRecordOp
+  ctx: RecordAuthorizeContext
+}
+
+export type RecordTypeDefinitionPrecheckParams = { op: VerifiedRecordOp; record: SignedRecord }
+
+export type RecordTypeDefinitionVisibleToParams = { record: SignedRecord; ctx: VisibilityContext }
+
+export type RecordTypeDefinitionDependenciesParams = { record: SignedRecord; op: VerifiedRecordOp }
+
+export type RecordTypeDefinitionOnEqualParams = {
+  incoming: VerifiedRecordOp
+  stored: VerifiedRecordOp
+}
+
+export type RecordTypeDefinitionAfterApplyParams = {
+  record: SignedRecord
+  store: RecordStoreAdapter
+}
+
+export type RecordTypeDefinitionAfterAuthorizeParams = {
+  record: SignedRecord
+  store: RecordStoreAdapter
+}
+
+export type RecordTypeDefinitionLockKeysParams = {
+  incoming: SignedRecord
+  stored: RecordDecision | null
+}
+
+export type VisibilityContextAuthorizeProofParams = {
+  record: SignedRecord
+  stored: SignedRecord | null
+}
+
+export type VisibilityContextCurrentKeyVersionParams = { owner: string; keyID: string }
+
+export type VisibilityContextIsGroupMemberParams = { groupID: string; did: string }

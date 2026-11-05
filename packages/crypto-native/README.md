@@ -22,7 +22,7 @@ import { createNativeCrypto } from '@kokuin/crypto-native'
 const crypto = createNativeCrypto()
 
 export async function signMessage(seed: Uint8Array, message: Uint8Array) {
-  return crypto.sign('EdDSA', seed, message)
+  return crypto.sign({ alg: 'EdDSA', privateKey: seed, message })
 }
 ```
 
@@ -47,8 +47,30 @@ Seed-bearing native copies are erased on success, failure and rejected dispatch.
 JavaScript seed buffers remain caller-owned. Returned output buffers retain their Rust allocation until released.
 
 The portable package documents the shared verification, encoding, batch and argument-validation contract.
-Existing kokuin identity, token, controller and records APIs have not yet migrated to provider injection.
+Identity, token, controller, records and vault APIs accept explicit provider injection.
 
 Repository maintainers must build both platform libraries before packing.
 The prepack check rejects missing or stale binaries and includes dependency licence notices.
 Publishing remains a separate action from building or packing this branch.
+
+## Integrated provider adoption
+
+Default integration routes remain noble. Standalone Rust execution does not qualify native routes for integrated consumers.
+Stored measurements, route counters, expanded mobile conformance and final physical workloads remain release qualifications.
+Native registration, ABI and execution failures propagate without dynamic fallback.
+See [provider adoption](../../docs/reference/crypto-provider.md) for immutable options and asynchronous API migration.
+
+## Named params migration
+
+`CryptoProvider.verify` now accepts one `VerifyItem`: `{ alg, signature, message, publicKey }`.
+`sign`, `signBatch`, `blake3` and `blake3Batch` take flat params objects.
+`verifyBatch` retains its single array argument.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.
+
+| API | Named params type | Previous positional form |
+| --- | --- | --- |
+| `CryptoProvider.sign` | `CryptoProviderSignParams` | `sign(alg, privateKey, message)` |
+| `CryptoProvider.signBatch` | `CryptoProviderSignBatchParams` | `signBatch(alg, items)` |
+| `CryptoProvider.blake3` | `CryptoProviderBlake3Params` | `blake3(input, dkLen)` |
+| `CryptoProvider.blake3Batch` | `CryptoProviderBlake3BatchParams` | `blake3Batch(inputs, dkLen)` |

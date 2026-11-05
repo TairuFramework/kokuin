@@ -1,3 +1,4 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import type {
   DIDCache,
   DIDResolver,
@@ -15,7 +16,9 @@ import {
 } from '@kokuin/token'
 
 import { now } from './time.js'
-import type { CapabilityToken, VerifyTokenHook } from './types.js'
+import type { VerifyTokenHook } from './types.js'
+
+export type TokenRevokedErrorParams = { jti: string; options?: ErrorOptions }
 
 const TOKEN_REVOKED_BRAND = '@kokuin/capability/TokenRevokedError'
 
@@ -36,7 +39,7 @@ export class TokenRevokedError extends Error {
     return TOKEN_REVOKED_BRAND
   }
 
-  constructor(jti: string, options?: ErrorOptions) {
+  constructor({ jti, options }: TokenRevokedErrorParams) {
     super(`Token revoked: ${jti}`, options)
     this.name = 'TokenRevokedError'
   }
@@ -76,7 +79,7 @@ export type RevocationBackend = {
    * overwrite it (last write wins) or pre-empt it (first write wins) — and the checker, which only
    * honours the token's own issuer, then lets the revoked token through.
    */
-  get(jti: string, issuer: string): Promise<RevocationRecord | undefined>
+  get(params: RevocationBackendGetParams): Promise<RevocationRecord | undefined>
 }
 
 /**
@@ -89,6 +92,7 @@ export type RevocationBackend = {
  * independently.
  */
 export type RevocationOptions = {
+  crypto?: CryptoProvider
   /**
    * DID method registry. Required when a record is signed by a method that cannot be resolved
    * from the identifier alone, such as `did:kokuin:`.
@@ -107,8 +111,9 @@ export type RevocationOptions = {
 // generation). See `DIDMethodResolver.resolveHistoric`.
 function verifyOptions(
   options?: RevocationOptions,
-): Pick<VerifyTokenOptions, 'methods' | 'resolver' | 'cache' | 'historic'> {
+): Pick<VerifyTokenOptions, 'methods' | 'resolver' | 'cache' | 'historic' | 'crypto'> {
   return {
+    crypto: options?.crypto,
     methods: options?.methods,
     resolver: options?.resolver,
     cache: options?.cache,
@@ -116,7 +121,39 @@ function verifyOptions(
   }
 }
 
+// Keep operational failures distinct from invalid peer records until the refusal catch.
+class ProviderFailure extends Error {}
+
+const guardedProviders = new WeakMap<CryptoProvider, CryptoProvider>()
+
+function captureOptions(options?: RevocationOptions): RevocationOptions {
+  const crypto = options?.crypto ?? nobleCrypto
+  let guarded = guardedProviders.get(crypto)
+  if (guarded === undefined) {
+    guarded = {
+      ...crypto,
+      async verify(...args) {
+        try {
+          return await crypto.verify(...args)
+        } catch (cause) {
+          throw new ProviderFailure('Crypto provider failed', { cause })
+        }
+      },
+      async verifyBatch(items) {
+        try {
+          return await crypto.verifyBatch(items)
+        } catch (cause) {
+          throw new ProviderFailure('Crypto provider failed', { cause })
+        }
+      },
+    }
+    guardedProviders.set(crypto, guarded)
+  }
+  return { ...options, methods: options?.methods?.slice(), crypto: guarded }
+}
+
 export function createMemoryRevocationBackend(options?: RevocationOptions): RevocationBackend {
+  const captured = captureOptions(options)
   // issuer (normalized) -> jti -> record. Scoped by issuer so one issuer's record can never
   // displace another's for the same `jti` — see `RevocationBackend.get`.
   const revoked = new Map<string, Map<string, RevocationRecord>>()
@@ -124,7 +161,12 @@ export function createMemoryRevocationBackend(options?: RevocationOptions): Revo
     async add(record: RevocationRecord): Promise<void> {
       // Verify the record's signature before trusting it. Without this, a forged record could
       // be stored and later used to revoke another issuer's token.
-      const verified = await verifyToken<RevocationClaims>(record, verifyOptions(options))
+      const verified = await verifyToken<RevocationClaims>({
+        ...verifyOptions(captured),
+        token: record,
+      }).catch((error: unknown) => {
+        throw error instanceof ProviderFailure ? error.cause : error
+      })
       if (verified.payload.rev !== true || typeof verified.payload.jti !== 'string') {
         throw new Error('Invalid revocation record')
       }
@@ -136,7 +178,7 @@ export function createMemoryRevocationBackend(options?: RevocationOptions): Revo
       }
       records.set(verified.payload.jti, record)
     },
-    async get(jti: string, issuer: string): Promise<RevocationRecord | undefined> {
+    async get({ jti, issuer }): Promise<RevocationRecord | undefined> {
       return revoked.get(issuer)?.get(jti)
     },
   }
@@ -168,7 +210,7 @@ async function namesADeniedKey(
   if (typeof kid !== 'string' || typeof iss !== 'string' || options?.methods == null) {
     return false
   }
-  const resolveDenySet = findMethodResolver(options.methods, iss)?.resolveDenySet
+  const resolveDenySet = findMethodResolver({ registry: options.methods, did: iss })?.resolveDenySet
   if (resolveDenySet == null) {
     return false
   }
@@ -188,18 +230,21 @@ function revokesJTI(payload: unknown, jti: string): boolean {
   return claims?.rev === true && claims.jti === jti
 }
 
-export function createRevocationChecker(
-  backend: RevocationBackend,
-  options?: RevocationOptions,
-): VerifyTokenHook {
-  return async (token: CapabilityToken, _raw: string): Promise<void> => {
+export type CreateRevocationCheckerParams = { backend: RevocationBackend } & RevocationOptions
+
+export function createRevocationChecker({
+  backend,
+  ...options
+}: CreateRevocationCheckerParams): VerifyTokenHook {
+  const captured = captureOptions(options)
+  return async ({ token, raw: _raw }): Promise<void> => {
     const jti = token.payload.jti
     if (jti == null) {
       return
     }
     // Ask for this token's issuer only: a record any other identity signed could not revoke it, and
     // a store keyed by `jti` alone would let such a record hide the real one.
-    const record = await backend.get(jti, normalizeDID(token.payload.iss))
+    const record = await backend.get({ jti, issuer: normalizeDID(token.payload.iss) })
     if (record == null) {
       return
     }
@@ -207,8 +252,9 @@ export function createRevocationChecker(
     // unverified record. A record with an invalid signature does not revoke anything.
     let verified: RevocationRecord
     try {
-      verified = await verifyToken<RevocationClaims>(record, verifyOptions(options))
+      verified = await verifyToken<RevocationClaims>({ ...verifyOptions(captured), token: record })
     } catch (error) {
+      if (error instanceof ProviderFailure) throw error.cause
       // The two failures are not symmetric; collapsing them fails open. An *invalidly signed* record
       // is evidence of nothing (anyone can mint one), so it is ignored — the `return` below. An
       // *unresolvable issuer* is different: the record may be genuine and we cannot tell, so "could
@@ -239,10 +285,11 @@ export function createRevocationChecker(
       if (
         isIssuerKeyNotFoundError(error) &&
         sameIssuer &&
-        (await namesADeniedKey(record, options))
+        (await namesADeniedKey(record, captured))
       ) {
         // Same error as the verified path below; the resolution failure rides along as `cause`.
-        throw new TokenRevokedError(jti, { cause: error })
+        // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
+        throw new TokenRevokedError({ jti, options: { cause: error } })
       }
       return
     }
@@ -253,17 +300,21 @@ export function createRevocationChecker(
       revokesJTI(verified.payload, jti) &&
       normalizeDID(verified.payload.iss) === normalizeDID(token.payload.iss)
     ) {
-      throw new TokenRevokedError(jti)
+      throw new TokenRevokedError({ jti })
     }
   }
 }
 
-export async function createRevocationRecord(
-  signer: SigningIdentity,
-  jti: string,
-): Promise<RevocationRecord> {
+export type CreateRevocationRecordParams = { signer: SigningIdentity; jti: string }
+
+export async function createRevocationRecord({
+  jti,
+  signer,
+}: CreateRevocationRecordParams): Promise<RevocationRecord> {
   // `signToken` injects the signer's own DID as `iss`, so a caller cannot mint a record for
   // another issuer. The record names no audience, so a `did:peer:4` signer embeds its long form
   // there — the checker above normalizes both sides before comparing, so either form matches.
-  return (await signer.signToken({ jti, rev: true, iat: now() })) as RevocationRecord
+  return (await signer.signToken({ payload: { jti, rev: true, iat: now() } })) as RevocationRecord
 }
+
+export type RevocationBackendGetParams = { jti: string; issuer: string }

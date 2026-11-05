@@ -22,3 +22,14 @@ throws on timeout rather than proceeding unlocked.
 The synchronous `entry.provide()` cannot hold a cross-process lock (a file lock can't be
 acquired synchronously), so it throws when the store was opened with a `lockPath`; use
 `provideAsync()` instead.
+
+## Crypto provider migration to 0.7.0
+
+`NodeKeyStoreParams` gains `crypto?: CryptoProvider` for construction and `NodeKeyStore.open(params)`.
+Software identities capture that provider for asynchronous signing. Omission selects strict `nobleCrypto`.
+Reopening a cached service with a different resolved provider throws.
+Omitting the provider after custom selection conflicts. Explicit noble and omission agree for a default store.
+Reopening with the same provider reference succeeds. Replacing constructor option fields cannot change captured policy.
+`provideIdentitySync` remains synchronous. Key derivation and agreement retain their existing implementations.
+
+See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.

@@ -1,3 +1,5 @@
+import type { CryptoOptions } from '@kokuin/token'
+
 import { digestOf, isCanonicalizable } from './canonical.js'
 import { foldEpoch } from './epoch.js'
 import {
@@ -14,7 +16,16 @@ import {
 } from './events.js'
 import { MAX_LOG_EVENTS } from './limits.js'
 import { type ControllerLog, isControllerLog, LOG_TOO_LARGE, MALFORMED_LOG } from './log.js'
+import { snapshotLog } from './log-snapshot.js'
 import { denialTargetsMember, ROTATE_NEEDS_SNAPSHOT, validateSnapshot } from './members.js'
+
+type StepEventParams = {
+  did: string
+  inception: InceptionEvent
+  signed: SignedEvent
+  prior: KeyState
+  chain: ReadonlyArray<KeyState>
+} & CryptoOptions
 
 /** A reset opens a generation with no removed incarnations. */
 export const RESET_HAS_TOMBSTONES = 'reset must not carry removed incarnations'
@@ -150,7 +161,7 @@ function isSignedEventShape(value: unknown): value is SignedEvent {
     return false
   }
   // The body is canonicalized as the top-level value, so this is exactly what the canonicalizer sees.
-  return isCanonicalizable(signed.event)
+  return isCanonicalizable({ value: signed.event })
 }
 
 type StepOutcome =
@@ -158,18 +169,19 @@ type StepOutcome =
   | { status: 'fail'; reason: string }
 
 /**
- * Validate one event against the state so far and produce the next state. Pure and total — every
- * rejection is a returned reason, never a throw. Criticality is decided here: an unknown critical
+ * Validate one event against the state so far and produce the next state. Malformed input returns
+ * a reason. Provider failures propagate. Criticality is decided here: an unknown critical
  * event fails closed, an unknown `crit: false` event at the next position is skipped (prior state
  * carried forward unchanged), and anything else fails closed.
  */
-function stepEvent(
-  did: string,
-  inception: InceptionEvent,
-  signed: SignedEvent,
-  prior: KeyState,
-  chain: ReadonlyArray<KeyState>,
-): StepOutcome {
+async function stepEvent({
+  did,
+  inception,
+  signed,
+  prior,
+  chain,
+  ...options
+}: StepEventParams): Promise<StepOutcome> {
   if (!isSignedEventShape(signed)) {
     return { status: 'fail', reason: MALFORMED_EVENT }
   }
@@ -197,7 +209,7 @@ function stepEvent(
       if (rot.event.s !== 0) {
         return { status: 'fail', reason: 'reset must restart the sequence' }
       }
-      if (!verifyReset(rot, inception)) {
+      if (!(await verifyReset({ ...options, signed: rot, inception }))) {
         return { status: 'fail', reason: 'invalid reset' }
       }
     } else {
@@ -207,7 +219,13 @@ function stepEvent(
       if (rot.event.g !== prior.gen || rot.event.s !== prior.seq + 1) {
         return { status: 'fail', reason: 'sequence gap' }
       }
-      if (!verifyRotate(rot, { digest: prior.digest, n: prior.next })) {
+      if (
+        !(await verifyRotate({
+          ...options,
+          signed: rot,
+          prior: { digest: prior.digest, n: prior.next },
+        }))
+      ) {
         return { status: 'fail', reason: 'invalid rotate' }
       }
     }
@@ -264,9 +282,9 @@ function stepEvent(
     // so without this a single rotate could publish a key and deny it in one breath, and the
     // `KeyState.deny` invariant would hold only by good manners. Failing the fold is the only answer:
     // applying it leaves a head whose `k` resolves to nothing.
-    const establishedButDenied = [...rot.event.k, ...rot.event.ka].find((key) =>
-      denyAfter.has(keyTarget(key)),
-    )
+    const establishedButDenied = [...rot.event.k, ...rot.event.ka].find((key) => {
+      return denyAfter.has(keyTarget(key))
+    })
     if (establishedButDenied != null) {
       return { status: 'fail', reason: `rotate establishes a denied key: ${establishedButDenied}` }
     }
@@ -388,7 +406,11 @@ type FoldInit =
 /**
  * Validate the inception and seed the state array the fold starts from.
  */
-function initFold(did: string, events: Array<SignedEvent>): FoldInit {
+async function initFold(
+  did: string,
+  events: Array<SignedEvent>,
+  options: CryptoOptions = {},
+): Promise<FoldInit> {
   if (!Array.isArray(events)) {
     return { ok: false, result: fail(MALFORMED_LOG, 0) }
   }
@@ -406,7 +428,7 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
   if (first.event.t !== 'icp') {
     return { ok: false, result: fail('first event must be an inception', 0) }
   }
-  if (!verifyInception(first, did)) {
+  if (!(await verifyInception({ ...options, signed: first, did }))) {
     return { ok: false, result: fail('invalid inception', 0) }
   }
 
@@ -440,11 +462,12 @@ function initFold(did: string, events: Array<SignedEvent>): FoldInit {
 }
 
 /** The chain alone: one state per event, or the first event that does not fold. */
-function foldChain(
+async function foldChain(
   did: string,
   events: Array<SignedEvent>,
-): { ok: true; states: Array<KeyState> } | { ok: false; result: FoldResult } {
-  const init = initFold(did, events)
+  options: CryptoOptions = {},
+): Promise<{ ok: true; states: Array<KeyState> } | { ok: false; result: FoldResult }> {
+  const init = await initFold(did, events, options)
   if (!init.ok) {
     return init
   }
@@ -457,7 +480,14 @@ function foldChain(
       return { ok: false, result: fail(INTERNAL_FOLD_INVARIANT, i) }
     }
     // `events[i]` may be a hole or `undefined`; `stepEvent` reports that as `malformed event`.
-    const outcome = stepEvent(did, inception, events[i] as SignedEvent, prior, states)
+    const outcome = await stepEvent({
+      ...options,
+      did,
+      inception,
+      signed: events[i] as SignedEvent,
+      prior,
+      chain: states,
+    })
     if (outcome.status === 'fail') {
       return { ok: false, result: fail(outcome.reason, i) }
     }
@@ -486,21 +516,23 @@ function foldChain(
  * the fold -- a bad entry is counted and dropped -- so a relay cannot make a log unfoldable by padding
  * it, only refused by forging past the limit, which no honest relay does.
  *
- * Synchronous, so it stays usable on an offline verifier's apply path.
  */
-export function foldLog(did: string, log: ControllerLog): FoldResult {
-  if (!isControllerLog(log)) {
+export type FoldLogParams = { did: string; input: ControllerLog } & CryptoOptions
+
+export async function foldLog({ input, did, ...options }: FoldLogParams): Promise<FoldResult> {
+  if (!isControllerLog(input)) {
     return fail(MALFORMED_LOG, 0)
   }
-  if (log.events.length > MAX_LOG_EVENTS) {
+  if (input.events.length > MAX_LOG_EVENTS) {
     return fail(LOG_TOO_LARGE, -1)
   }
-  const chain = foldChain(did, log.chain)
+  const log = snapshotLog(input)
+  const chain = await foldChain(did, log.chain, options)
   if (!chain.ok) {
     return chain.result
   }
   const { states } = chain
-  const merged = foldEpoch({ did, chainStates: states, events: log.events })
+  const merged = await foldEpoch({ ...options, did, chainStates: states, events: log.events })
   if (!merged.ok) {
     return fail(merged.reason, -1)
   }
@@ -514,7 +546,9 @@ export function foldLog(did: string, log: ControllerLog): FoldResult {
   }
 }
 
-export function keyStateAt(result: FoldResult, position: number): KeyState | undefined {
+export type KeyStateAtParams = { result: FoldResult; position: number }
+
+export function keyStateAt({ position, result }: KeyStateAtParams): KeyState | undefined {
   return result.ok ? result.states[position] : undefined
 }
 
@@ -523,20 +557,23 @@ export function keyStateAt(result: FoldResult, position: number): KeyState | und
  * state forward, pruning a few entries rather than replacing it. A rotate's snapshot replaces the
  * state outright, so writing one by hand means writing out everything that stays; miss one and the
  * profile silently un-revokes a device, un-retires a leaked key or dismisses a management member.
- * This builds it from the fold's own answer instead: every live or removed member (`drop.members` names
- * members by `add` digest) and every deny entry (`drop.deny`). Entries in `drop` the state does not
+ * This builds it from the fold's own answer instead: every live or removed member (`members` names
+ * members by `add` digest) and every deny entry (`deny`). Dropped entries the state does not
  * carry are ignored. Dropping removed members discards historic membership evidence.
  *
  * Root's tooling owes its user the warnings the fold cannot give: dropping a holder DID denial
  * re-authorises it, safe only once every authority that could have minted it a grant has ended; and
  * a retired root key the chain shows but this deny set lacks is one to add, not to leave out.
  */
-export function snapshotOf(
-  state: KeyState,
-  drop: { deny?: Iterable<string>; members?: Iterable<string> } = {},
-): StateSnapshot {
-  const droppedDeny = new Set(drop.deny ?? [])
-  const droppedMembers = new Set(drop.members ?? [])
+export type SnapshotOfParams = {
+  state: KeyState
+  deny?: Iterable<string>
+  members?: Iterable<string>
+}
+
+export function snapshotOf({ state, deny, members: dropMembers }: SnapshotOfParams): StateSnapshot {
+  const droppedDeny = new Set(deny ?? [])
+  const droppedMembers = new Set(dropMembers ?? [])
   const members: Array<MemberEntry> = []
   const removed: Array<MemberEntry> = []
   for (const member of state.members.values()) {

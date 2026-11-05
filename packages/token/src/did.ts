@@ -14,12 +14,10 @@ import {
 import type { SignatureAlgorithm } from './schemas.js'
 import type { DIDString } from './types.js'
 
-/**
- * Multicodec prefixes per signature algorithm, following the `did:key` convention. Supported, not
- * internal: `@kokuin/capability` builds the `cnf.kid` confirmation claim from this and
- * {@link getAlgorithmAndPublicKey}, and `cnf.kid` is a published wire format third parties produce
- * and read.
- */
+export type UnresolvableIssuerErrorParams = { message: string; options?: ErrorOptions }
+export type IssuerKeyNotFoundErrorParams = { message: string; options?: ErrorOptions }
+
+/** Multicodec prefixes form part of the published `did:key` wire format. */
 export const CODECS: Record<SignatureAlgorithm, Uint8Array> = {
   ES256: new Uint8Array([128, 36]),
   EdDSA: new Uint8Array([0xed, 0x01]),
@@ -57,14 +55,16 @@ export function getAlgorithmAndPublicKey(
 ): [SignatureAlgorithm, Uint8Array] | null {
   for (const [alg, codec] of Object.entries(CODECS)) {
     if (isCodecMatch(codec, bytes)) {
-      return [alg as SignatureAlgorithm, bytes.slice(codec.length)]
+      return [alg as SignatureAlgorithm, new Uint8Array(bytes.subarray(codec.length))]
     }
   }
   return null
 }
 
 /** @internal */
-export function getDID(codec: Uint8Array, publicKey: Uint8Array): DIDString {
+export type GetDIDParams = { codec: Uint8Array; publicKey: Uint8Array }
+
+export function getDID({ publicKey, codec }: GetDIDParams): DIDString {
   const bytes = new Uint8Array(codec.length + publicKey.length)
   codec.forEach((v, i) => {
     bytes[i] = v
@@ -78,10 +78,7 @@ export function getDID(codec: Uint8Array, publicKey: Uint8Array): DIDString {
  * is not a `did:key`, its encoded form is implausibly long, or the codec names no supported
  * algorithm.
  *
- * Supported, not internal: `@kumiai/mls` checks an MLS credential's key against the key its DID
- * names, a comparison only this function makes correctly — the alternative is a second decoder in
- * another repo whose failure mode is accepting a credential for the wrong key. Any other method
- * resolves through a `DIDMethodResolver`; this is the self-contained case.
+ * Resolved signing keys support credential key checks.
  */
 export function getSignatureInfo(did: string): [SignatureAlgorithm, Uint8Array] {
   if (!did.startsWith(PREFIX)) {
@@ -135,7 +132,7 @@ export class UnresolvableIssuerError extends Error {
     return UNRESOLVABLE_ISSUER_BRAND
   }
 
-  constructor(message: string, options?: ErrorOptions) {
+  constructor({ message, options }: UnresolvableIssuerErrorParams) {
     super(message, options)
     this.name = 'UnresolvableIssuerError'
   }
@@ -174,7 +171,7 @@ export class IssuerKeyNotFoundError extends Error {
     return ISSUER_KEY_NOT_FOUND_BRAND
   }
 
-  constructor(message: string, options?: ErrorOptions) {
+  constructor({ message, options }: IssuerKeyNotFoundErrorParams) {
     super(message, options)
     this.name = 'IssuerKeyNotFoundError'
   }
@@ -238,15 +235,15 @@ export async function resolveIssuerWithDoc({
   historic = false,
 }: ResolveIssuerParams): Promise<ResolveIssuerWithDocResult> {
   if (methods != null) {
-    const methodResolver = findMethodResolver(methods, iss)
+    const methodResolver = findMethodResolver({ registry: methods, did: iss })
     if (methodResolver != null) {
       // The historic question is answered only by `resolveHistoric`; a resolver without one is not
       // asked `resolve` instead, which would substitute a different question. `UnresolvableIssuerError`
       // is right — nothing was learned either way, which a fail-closed caller treats as a denial.
       if (historic && methodResolver.resolveHistoric == null) {
-        throw new UnresolvableIssuerError(
-          `DID method ${methodResolver.method} cannot resolve historic keys: ${iss}`,
-        )
+        throw new UnresolvableIssuerError({
+          message: `DID method ${methodResolver.method} cannot resolve historic keys: ${iss}`,
+        })
       }
       // A method resolver throws its own error strings; re-type them so a method-backed resolution
       // failure is indistinguishable from the built-in ones below. Message preserved, original kept
@@ -257,8 +254,8 @@ export async function resolveIssuerWithDoc({
         // private state.
         resolved =
           historic && methodResolver.resolveHistoric != null
-            ? await methodResolver.resolveHistoric(iss, header)
-            : await methodResolver.resolve(iss, header)
+            ? await methodResolver.resolveHistoric({ did: iss, header })
+            : await methodResolver.resolve({ did: iss, header })
       } catch (cause) {
         // Except the one failure that is not a failure to resolve: "I have this issuer, it has no such
         // key" is what the `kid` branches below report for `did:peer:4` (ordinary errors — see
@@ -267,10 +264,11 @@ export async function resolveIssuerWithDoc({
         if (isIssuerKeyNotFoundError(cause)) {
           throw cause
         }
-        throw new UnresolvableIssuerError(
-          cause instanceof Error ? cause.message : `Unknown DID: ${iss}`,
-          { cause },
-        )
+        // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
+        throw new UnresolvableIssuerError({
+          message: cause instanceof Error ? cause.message : `Unknown DID: ${iss}`,
+          options: { cause },
+        })
       }
       return { alg: resolved.alg, publicKey: resolved.publicKey }
     }
@@ -280,13 +278,13 @@ export async function resolveIssuerWithDoc({
     const shortForm = getPeer4ShortForm(iss)
 
     if (iss !== shortForm) {
-      const { doc } = decodePeer4(iss)
+      const { doc } = decodePeer4({ longForm: iss })
       const [alg, publicKey] = resolveKidOrAuth(doc, header.kid)
       return { alg, publicKey, peer4Doc: { shortForm, doc } }
     }
 
     if (resolver == null) {
-      throw new UnresolvableIssuerError(`Unknown DID: ${shortForm}`)
+      throw new UnresolvableIssuerError({ message: `Unknown DID: ${shortForm}` })
     }
     // Throwing is the normal style for a network-backed resolver, so one that throws must be
     // indistinguishable from one that returns nothing — else the fail-closed guarantee holds only for
@@ -295,10 +293,14 @@ export async function resolveIssuerWithDoc({
     try {
       doc = await resolver(shortForm)
     } catch (cause) {
-      throw new UnresolvableIssuerError(`Unknown DID: ${shortForm}`, { cause })
+      // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
+      throw new UnresolvableIssuerError({
+        message: `Unknown DID: ${shortForm}`,
+        options: { cause },
+      })
     }
     if (doc == null) {
-      throw new UnresolvableIssuerError(`Unknown DID: ${shortForm}`)
+      throw new UnresolvableIssuerError({ message: `Unknown DID: ${shortForm}` })
     }
     // An unusable answer — oversized, or not hashing to the DID asked for — counts as unresolvable,
     // not an ordinary fault: else a caller failing closed solely on `UnresolvableIssuerError` takes a
@@ -307,14 +309,15 @@ export async function resolveIssuerWithDoc({
     try {
       assertDocWithinMaxSize(doc)
     } catch (cause) {
-      throw new UnresolvableIssuerError(
-        cause instanceof Error ? cause.message : `Unknown DID: ${shortForm}`,
-        { cause },
-      )
+      // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
+      throw new UnresolvableIssuerError({
+        message: cause instanceof Error ? cause.message : `Unknown DID: ${shortForm}`,
+        options: { cause },
+      })
     }
     const expected = encodePeer4(doc).shortForm
     if (expected !== shortForm) {
-      throw new UnresolvableIssuerError('DIDResolver: short form/doc hash mismatch')
+      throw new UnresolvableIssuerError({ message: 'DIDResolver: short form/doc hash mismatch' })
     }
     const [alg, publicKey] = resolveKidOrAuth(doc, header.kid)
     return { alg, publicKey, peer4Doc: { shortForm, doc } }
@@ -323,7 +326,7 @@ export async function resolveIssuerWithDoc({
   // `iss` narrows to `never` here (isPeer4's `value is string` collapses the false case), so route
   // the prefix check through a helper taking an unnarrowed `string`.
   if (!hasKeyPrefix(iss)) {
-    throw new UnresolvableIssuerError(`Unknown DID: ${iss}`)
+    throw new UnresolvableIssuerError({ message: `Unknown DID: ${iss}` })
   }
   const [alg, publicKey] = getSignatureInfo(iss)
   return { alg, publicKey }
@@ -471,7 +474,7 @@ export function signingKeysOf(did: string): Array<ResolvedSigningKey> | null {
   if (!isPeer4(did) || did === getPeer4ShortForm(did)) {
     return null
   }
-  const { doc } = decodePeer4(did)
+  const { doc } = decodePeer4({ longForm: did })
   const keys: Array<ResolvedSigningKey> = []
   for (const id of doc.authentication ?? []) {
     const method = doc.verificationMethod.find((entry) => entry.id === id)

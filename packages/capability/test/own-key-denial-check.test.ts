@@ -29,9 +29,9 @@ import {
 // the revocation records that key had already signed?
 
 const seed = new Uint8Array(32).fill(41)
-const inception = createInception(seed, 0)
+const inception = await createInception({ seed, profile: 0 })
 const did = didFromInception(inception.event)
-const rotate = createRotate({
+const rotate = await createRotate({
   seed,
   profile: 0,
   did,
@@ -43,7 +43,7 @@ if (leakedKey === undefined) throw new Error('expected inception key')
 
 describe('key revocation, independently', () => {
   test('the denial stops the leaked key and leaves the live key working', async () => {
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -52,62 +52,69 @@ describe('key revocation, independently', () => {
     })
     const denied: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined
+        },
       }),
     ]
 
     // Minted by the leaked key, before the denial existed.
     const thief = await randomIdentity()
-    const stolenIdentity = createControllerIdentity({
+    const stolenIdentity = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
     })
     const stolen = stringifyToken(
-      await createCapability(stolenIdentity, {
-        sub: did,
-        aud: thief.id,
-        act: '*',
-        res: '*',
-        exp: now() + 3600,
+      await createCapability({
+        signer: stolenIdentity,
+        payload: {
+          sub: did,
+          aud: thief.id,
+          act: '*',
+          res: '*',
+          exp: now() + 3600,
+        },
       }),
     )
 
     let stolenRefusal = 'ACCEPTED'
     try {
-      await checkCapability(
-        { act: 'revoke', res: 'did:kokuin:zAnyone' },
-        { iss: thief.id, sub: did, cap: [stolen] } as never,
-        { methods: denied },
-      )
+      await checkCapability({
+        permission: { act: 'revoke', res: 'did:kokuin:zAnyone' },
+        payload: { iss: thief.id, sub: did, cap: [stolen] } as never,
+        methods: denied,
+      })
     } catch (err) {
       stolenRefusal = (err as Error).message
     }
 
     // CONTROL — the live key, same log, same shape. If this also fails the denial proves nothing.
-    const owner = createControllerIdentity({
+    const owner = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception, rotate, revoke], events: [] },
     })
     const good = await randomIdentity()
     const honest = stringifyToken(
-      await createCapability(owner, {
-        sub: did,
-        aud: good.id,
-        act: '*',
-        res: '*',
-        exp: now() + 3600,
+      await createCapability({
+        signer: owner,
+        payload: {
+          sub: did,
+          aud: good.id,
+          act: '*',
+          res: '*',
+          exp: now() + 3600,
+        },
       }),
     )
     let honestRefusal = 'ACCEPTED'
     try {
-      await checkCapability(
-        { act: 'revoke', res: 'did:kokuin:zAnyone' },
-        { iss: good.id, sub: did, cap: [honest] } as never,
-        { methods: denied },
-      )
+      await checkCapability({
+        permission: { act: 'revoke', res: 'did:kokuin:zAnyone' },
+        payload: { iss: good.id, sub: did, cap: [honest] } as never,
+        methods: denied,
+      })
     } catch (err) {
       honestRefusal = (err as Error).message
     }
@@ -122,38 +129,43 @@ describe('key revocation, independently', () => {
     // the ordinary way — a revocation record, signed by the key that is about to be denied.
     const before: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate], events: [] } : undefined
+        },
       }),
     ]
-    const issuer = createControllerIdentity({
+    const issuer = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
     })
     const holder = await randomIdentity()
     const grant = stringifyToken(
-      await createCapability(issuer, {
-        sub: did,
-        aud: holder.id,
-        act: 'read',
-        res: 'doc:A',
-        exp: now() + 3600,
-        jti: 'grant-1',
-      } as never),
+      await createCapability({
+        signer: issuer,
+        payload: {
+          sub: did,
+          aud: holder.id,
+          act: 'read',
+          res: 'doc:A',
+          exp: now() + 3600,
+          jti: 'grant-1',
+        } as never,
+      }),
     )
 
     const backend = createMemoryRevocationBackend({ methods: before })
-    await backend.add(await createRevocationRecord(issuer, 'grant-1'))
-    const checker = createRevocationChecker(backend, { methods: before })
+    await backend.add(await createRevocationRecord({ signer: issuer, jti: 'grant-1' }))
+    const checker = createRevocationChecker({ backend, methods: before })
 
     const invoke = async (methods: MethodRegistry) => {
       try {
-        await checkCapability(
-          { act: 'read', res: 'doc:A' },
-          { iss: holder.id, sub: did, cap: [grant] } as never,
-          { methods, verifyToken: checker },
-        )
+        await checkCapability({
+          permission: { act: 'read', res: 'doc:A' },
+          payload: { iss: holder.id, sub: did, cap: [grant] } as never,
+          methods,
+          verifyToken: checker,
+        })
         return 'ACCEPTED'
       } catch (err) {
         return (err as Error).message
@@ -162,7 +174,7 @@ describe('key revocation, independently', () => {
 
     const beforeDenial = await invoke(before)
 
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -171,8 +183,9 @@ describe('key revocation, independently', () => {
     })
     const after: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined
+        },
       }),
     ]
     const afterDenial = await invoke(after)
@@ -189,46 +202,51 @@ describe('key revocation, independently', () => {
     // holder and the grant is a revocation record signed by the key about to be denied.
     const before: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate], events: [] } : undefined
+        },
       }),
     ]
-    const live = createControllerIdentity({
+    const live = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception, rotate], events: [] },
     })
-    const leaked = createControllerIdentity({
+    const leaked = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
     })
     const holder = await randomIdentity()
     const grant = stringifyToken(
-      await createCapability(live, {
-        sub: did,
-        aud: holder.id,
-        act: 'read',
-        res: 'doc:B',
-        exp: now() + 3600,
-        jti: 'grant-2',
-      } as never),
+      await createCapability({
+        signer: live,
+        payload: {
+          sub: did,
+          aud: holder.id,
+          act: 'read',
+          res: 'doc:B',
+          exp: now() + 3600,
+          jti: 'grant-2',
+        } as never,
+      }),
     )
 
     const backend = createMemoryRevocationBackend({ methods: before })
     // Signed by the key that is about to be denied. Same issuer DID either way.
-    await backend.add(await createRevocationRecord(leaked, 'grant-2'))
+    await backend.add(await createRevocationRecord({ signer: leaked, jti: 'grant-2' }))
 
     // The checker resolves through the SAME registry as the verification. A deployment whose
     // checker is pinned to a stale log would not see the denial at all, which is a different
     // question from the one being asked here.
     const invoke = async (methods: MethodRegistry) => {
       try {
-        await checkCapability(
-          { act: 'read', res: 'doc:B' },
-          { iss: holder.id, sub: did, cap: [grant] } as never,
-          { methods, verifyToken: createRevocationChecker(backend, { methods }) },
-        )
+        await checkCapability({
+          permission: { act: 'read', res: 'doc:B' },
+          payload: { iss: holder.id, sub: did, cap: [grant] } as never,
+          methods,
+          verifyToken: createRevocationChecker({ backend, methods }),
+        })
         return 'ACCEPTED'
       } catch (err) {
         return (err as Error).message
@@ -237,7 +255,7 @@ describe('key revocation, independently', () => {
 
     const beforeDenial = await invoke(before)
 
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -246,8 +264,9 @@ describe('key revocation, independently', () => {
     })
     const after: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined
+        },
       }),
     ]
     const afterDenial = await invoke(after)
@@ -260,7 +279,7 @@ describe('key revocation, independently', () => {
     // The plant-a-record denial of service the swallow exists to stop. An untrusted backend hands
     // back a record signed by a key this DID never had, claiming to revoke a live grant. If
     // honouring denied-key records had widened into honouring unverifiable ones, this would deny.
-    const revoke = createRotate({
+    const revoke = await createRotate({
       seed,
       profile: 0,
       did,
@@ -269,44 +288,49 @@ describe('key revocation, independently', () => {
     })
     const methods: MethodRegistry = [
       createControllerResolver({
-        loadLog: async (asked) =>
-          asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined,
+        loadLog: async (asked) => {
+          return asked === did ? { chain: [inception, rotate, revoke], events: [] } : undefined
+        },
       }),
     ]
 
-    const live = createControllerIdentity({
+    const live = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception, rotate, revoke], events: [] },
     })
     const holder = await randomIdentity()
     const grant = stringifyToken(
-      await createCapability(live, {
-        sub: did,
-        aud: holder.id,
-        act: 'read',
-        res: 'doc:C',
-        exp: now() + 3600,
-        jti: 'grant-3',
-      } as never),
+      await createCapability({
+        signer: live,
+        payload: {
+          sub: did,
+          aud: holder.id,
+          act: 'read',
+          res: 'doc:C',
+          exp: now() + 3600,
+          jti: 'grant-3',
+        } as never,
+      }),
     )
 
     // Signed as the profile DID with a key the profile never published. A verifying backend would
     // refuse this on the way in, which is exactly why the checker cannot rely on one.
-    const impostor = createSigningIdentityForDID(did, randomPrivateKey())
-    const planted = await createRevocationRecord(impostor, 'grant-3')
+    const impostor = createSigningIdentityForDID({ id: did, privateKey: randomPrivateKey() })
+    const planted = await createRevocationRecord({ signer: impostor, jti: 'grant-3' })
     const untrusted = {
       add: async () => {},
-      get: async (jti: string) => (jti === 'grant-3' ? planted : undefined),
+      get: async ({ jti }: { jti: string }) => (jti === 'grant-3' ? planted : undefined),
     }
 
     let outcome = 'ACCEPTED'
     try {
-      await checkCapability(
-        { act: 'read', res: 'doc:C' },
-        { iss: holder.id, sub: did, cap: [grant] } as never,
-        { methods, verifyToken: createRevocationChecker(untrusted, { methods }) },
-      )
+      await checkCapability({
+        permission: { act: 'read', res: 'doc:C' },
+        payload: { iss: holder.id, sub: did, cap: [grant] } as never,
+        methods,
+        verifyToken: createRevocationChecker({ backend: untrusted, methods }),
+      })
     } catch (err) {
       outcome = (err as Error).message
     }

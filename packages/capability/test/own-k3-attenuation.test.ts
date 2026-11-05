@@ -10,26 +10,32 @@ describe('attenuation at the last hop (independent reproduction)', () => {
     const device = await randomIdentity()
 
     // The profile grants the manager everything.
-    const parent = await createCapability(profile, {
-      sub: profile.id,
-      aud: manager.id,
-      act: '*',
-      res: '*',
+    const parent = await createCapability({
+      signer: profile,
+      payload: {
+        sub: profile.id,
+        aud: manager.id,
+        act: '*',
+        res: '*',
+      },
     })
     const parentRaw = stringifyToken(parent)
 
     // The manager delegates a DELIBERATELY NARROW capability to the device: read one document.
-    const narrow = await createCapability(
-      manager,
-      { sub: profile.id, aud: device.id, act: 'read', res: 'doc:A', cap: parentRaw },
-      undefined,
-      { parentCapability: parentRaw },
-    )
+    const narrow = await createCapability({
+      signer: manager,
+      payload: { sub: profile.id, aud: device.id, act: 'read', res: 'doc:A', cap: parentRaw },
+      header: undefined,
+      parentCapability: parentRaw,
+    })
 
     // The device presents its narrow capability and asks to revoke someone.
     let refused: string | undefined
     try {
-      await checkCapability({ act: 'revoke', res: 'did:kokuin:zVictim' }, narrow.payload as never)
+      await checkCapability({
+        permission: { act: 'revoke', res: 'did:kokuin:zVictim' },
+        payload: narrow.payload as never,
+      })
     } catch (err) {
       refused = (err as Error).message
     }
@@ -37,7 +43,10 @@ describe('attenuation at the last hop (independent reproduction)', () => {
     // Control: the same capability used for what it actually grants must still work.
     let allowed = true
     try {
-      await checkCapability({ act: 'read', res: 'doc:A' }, narrow.payload as never)
+      await checkCapability({
+        permission: { act: 'read', res: 'doc:A' },
+        payload: narrow.payload as never,
+      })
     } catch {
       allowed = false
     }

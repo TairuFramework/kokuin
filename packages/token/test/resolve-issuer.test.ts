@@ -20,7 +20,7 @@ describe('resolveIssuer', () => {
   it('resolves a did:key issuer to alg + pubkey without a resolver', async () => {
     const priv = ed25519.utils.randomSecretKey()
     const pub = ed25519.getPublicKey(priv)
-    const did = getDID(CODECS.EdDSA, pub)
+    const did = getDID({ codec: CODECS.EdDSA, publicKey: pub })
     const [alg, key] = await resolveIssuer({ iss: did })
     expect(alg).toBe('EdDSA')
     expect(key).toEqual(pub)
@@ -40,7 +40,7 @@ describe('resolveIssuer', () => {
       authentication: ['#key-0'],
     })
     const cache = createInMemoryDIDCache()
-    await cache.set(shortForm, doc)
+    await cache.set({ shortForm, doc })
     const resolver = (did: string) => cache.get(did)
     const [alg, key] = await resolveIssuer({ iss: shortForm, header: { kid: '#key-0' }, resolver })
     expect(alg).toBe('EdDSA')
@@ -219,11 +219,13 @@ describe('resolveIssuerWithDoc', () => {
     taggedPub.set(pub, ed25519Codec.length)
     const publicKeyMultibase = encodeMultibase(taggedPub)
     const fakeShortForm = 'did:peer:4zAAAAAAAAAAAAAAAAAAAAAA'
-    const resolver = () => ({
-      '@context': ['https://www.w3.org/ns/did/v1'],
-      verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase }],
-      authentication: ['#key-0'],
-    })
+    const resolver = () => {
+      return {
+        '@context': ['https://www.w3.org/ns/did/v1'],
+        verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase }],
+        authentication: ['#key-0'],
+      }
+    }
     await expect(
       resolveIssuerWithDoc({ iss: fakeShortForm, header: { kid: '#key-0' }, resolver }),
     ).rejects.toThrow(/hash mismatch/i)
@@ -262,13 +264,15 @@ describe('resolveIssuerWithDoc', () => {
     const taggedPub = new Uint8Array(ed25519Codec.length + pub.length)
     taggedPub.set(ed25519Codec, 0)
     taggedPub.set(pub, ed25519Codec.length)
-    const resolver = () => ({
-      '@context': ['https://www.w3.org/ns/did/v1'],
-      verificationMethod: [
-        { id: '#key-0', type: 'Multikey', publicKeyMultibase: encodeMultibase(taggedPub) },
-      ],
-      authentication: ['#key-0'],
-    })
+    const resolver = () => {
+      return {
+        '@context': ['https://www.w3.org/ns/did/v1'],
+        verificationMethod: [
+          { id: '#key-0', type: 'Multikey', publicKeyMultibase: encodeMultibase(taggedPub) },
+        ],
+        authentication: ['#key-0'],
+      }
+    }
     const thrown = await resolveIssuerWithDoc({
       iss: 'did:peer:4zAAAAAAAAAAAAAAAAAAAAAA',
       header: { kid: '#key-0' },
@@ -296,15 +300,19 @@ describe('resolveIssuerWithDoc', () => {
       authentication: ['#key-0'],
     })
     // Resolves the *correct* short form, so the hash check is not what rejects this.
-    const resolver = () => ({
-      '@context': ['https://www.w3.org/ns/did/v1'],
-      verificationMethod: Array.from({ length: 500 }, (_, i) => ({
-        id: `#key-${i}`,
-        type: 'Multikey',
-        publicKeyMultibase,
-      })),
-      authentication: ['#key-0'],
-    })
+    const resolver = () => {
+      return {
+        '@context': ['https://www.w3.org/ns/did/v1'],
+        verificationMethod: Array.from({ length: 500 }, (_, i) => {
+          return {
+            id: `#key-${i}`,
+            type: 'Multikey',
+            publicKeyMultibase,
+          }
+        }),
+        authentication: ['#key-0'],
+      }
+    }
     const thrown = await resolveIssuerWithDoc({
       iss: shortForm,
       header: { kid: '#key-0' },
@@ -323,9 +331,9 @@ describe('resolveIssuerWithDoc', () => {
     const methods: Array<DIDMethodResolver> = [
       {
         method: 'kokuin',
-        resolve: async (_did: string, header: { kid?: string }) => {
+        resolve: async ({ did: _did, header }) => {
           if (header.kid != null) {
-            throw new IssuerKeyNotFoundError(`no such key: ${header.kid}`)
+            throw new IssuerKeyNotFoundError({ message: `no such key: ${header.kid}` })
           }
           throw new Error(`Unknown DID: ${did}`)
         },
@@ -356,11 +364,11 @@ describe('resolveIssuerWithDoc', () => {
   })
 
   it('brands the key-not-found error too, and keeps the two guards disjoint', async () => {
-    expect(new IssuerKeyNotFoundError('x').brand).toBe(IssuerKeyNotFoundError.brand)
+    expect(new IssuerKeyNotFoundError({ message: 'x' }).brand).toBe(IssuerKeyNotFoundError.brand)
     expect(isIssuerKeyNotFoundError(new Error('Invalid signature'))).toBe(false)
     // Neither guard may fire on the other's error, or the two classifications collapse.
-    expect(isUnresolvableIssuerError(new IssuerKeyNotFoundError('x'))).toBe(false)
-    expect(isIssuerKeyNotFoundError(new UnresolvableIssuerError('x'))).toBe(false)
+    expect(isUnresolvableIssuerError(new IssuerKeyNotFoundError({ message: 'x' }))).toBe(false)
+    expect(isIssuerKeyNotFoundError(new UnresolvableIssuerError({ message: 'x' }))).toBe(false)
   })
 
   it('brands the error so a duplicated copy of this package still matches', async () => {

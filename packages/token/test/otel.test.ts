@@ -23,8 +23,8 @@ afterAll(async () => {
 
 test('token sign + verify emit kokuin-prefixed spans with auth attrs', async () => {
   const identity = randomIdentity()
-  const signed = await identity.signToken({ aud: 'someone' })
-  await verifyToken(signed)
+  const signed = await identity.signToken({ payload: { aud: 'someone' } })
+  await verifyToken({ token: signed })
 
   await provider.forceFlush()
   const spans = exporter.getFinishedSpans()

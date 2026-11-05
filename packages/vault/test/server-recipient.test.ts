@@ -50,7 +50,7 @@ describe('an engine identity as a wrapping recipient', () => {
   })
 
   test('createFullIdentity from a configured private key', async () => {
-    const identity = createFullIdentity(randomIdentity().privateKey)
+    const identity = createFullIdentity({ privateKey: randomIdentity().privateKey })
     expect(isKeyAgreementIdentity(identity)).toBe(true)
     await roundTrip(identity.id, identity)
   })
@@ -58,7 +58,9 @@ describe('an engine identity as a wrapping recipient', () => {
 
 describe('when the engine identity cannot decrypt', () => {
   test('a signing-only identity is refused rather than opening the wrapping', async () => {
-    const signing: SigningIdentity = createSigningIdentity(randomIdentity().privateKey)
+    const signing: SigningIdentity = createSigningIdentity({
+      privateKey: randomIdentity().privateKey,
+    })
     expect(isKeyAgreementIdentity(signing)).toBe(false)
 
     const contentKey = suite.generateContentKey(runtime)

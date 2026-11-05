@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 
-import { createInception, didFromInception } from './events.js'
+import { didFor } from './events.js'
 
 export type ProfileEntry = {
   index: number
@@ -48,13 +48,15 @@ export function handleForDID(did: string): string {
  * profiles were used is not seed-derived. A picker should present all of them and let a probe
  * grey out the unused ones when a group, hub, or cache is reachable.
  */
-export function enumerateProfiles(seed: Uint8Array, count: number): Array<ProfileEntry> {
+export type EnumerateProfilesParams = { seed: Uint8Array; count: number }
+
+export function enumerateProfiles({ count, seed }: EnumerateProfilesParams): Array<ProfileEntry> {
   if (!Number.isInteger(count) || count < 1) {
     throw new Error('enumerateProfiles: count must be at least 1')
   }
   const entries: Array<ProfileEntry> = []
   for (let index = 0; index < count; index++) {
-    const did = didFromInception(createInception(seed, index).event)
+    const did = didFor({ seed, profile: index })
     entries.push({ index, did, handle: handleForDID(did) })
   }
   return entries

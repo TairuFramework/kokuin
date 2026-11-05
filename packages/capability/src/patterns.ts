@@ -66,7 +66,9 @@ export function assertValidPattern(value: string | Array<string>): void {
   }
 }
 
-export function isMatch(expected: string, actual: string): boolean {
+export type IsMatchParams = { expected: string; actual: string }
+
+export function isMatch({ actual, expected }: IsMatchParams): boolean {
   return expected === actual || actual === '*'
 }
 
@@ -76,7 +78,9 @@ export function isMatch(expected: string, actual: string): boolean {
 // request (e.g. `foo/bar/baz` vs requested `foo/bar`) does NOT authorize it — that broadening
 // was the privilege-escalation bug. There is no implicit descent either: `foo/bar` does not
 // cover `foo/bar/baz`; use `foo/bar/*` for that.
-export function hasPartsMatch(expected: string, actual: string): boolean {
+export type HasPartsMatchParams = { expected: string; actual: string }
+
+export function hasPartsMatch({ actual, expected }: HasPartsMatchParams): boolean {
   const expectedParts = expected.split('/')
   const actualParts = actual.split('/')
   for (let i = 0; i < actualParts.length; i++) {
@@ -97,31 +101,45 @@ export function hasPartsMatch(expected: string, actual: string): boolean {
   return expectedParts.length === actualParts.length
 }
 
-export function hasPermission(expected: Permission, granted: Permission): boolean {
+export type HasPermissionParams = { expected: Permission; granted: Permission }
+
+export function hasPermission({ granted, expected }: HasPermissionParams): boolean {
   // If multiple actions are expected, check that all of them are granted
   if (Array.isArray(expected.act)) {
-    return expected.act.every((act) => hasPermission({ act, res: expected.res }, granted))
+    return expected.act.every((act) =>
+      hasPermission({ expected: { act, res: expected.res }, granted }),
+    )
   }
   // If multiple resources are expected, check that all of them are granted
   if (Array.isArray(expected.res)) {
-    return expected.res.every((res) => hasPermission({ act: expected.act, res }, granted))
+    return expected.res.every((res) =>
+      hasPermission({ expected: { act: expected.act, res }, granted }),
+    )
   }
   // If multiple actions are granted, check that at least one of them matches the expectation
   if (Array.isArray(granted.act)) {
-    return granted.act.some((act) => hasPermission(expected, { act, res: granted.res }))
+    return granted.act.some((act) =>
+      hasPermission({ expected, granted: { act, res: granted.res } }),
+    )
   }
   // If multiple resource are granted, check that at least one of them matches the expectation
   if (Array.isArray(granted.res)) {
-    return granted.res.some((res) => hasPermission(expected, { act: granted.act, res }))
+    return granted.res.some((res) =>
+      hasPermission({ expected, granted: { act: granted.act, res } }),
+    )
   }
   // Sanity check
   if (granted.act === '' || granted.res === '') {
     return false
   }
-  // Check for exact or wildcard match of the action and resource
-  if (isMatch(expected.act, granted.act) && isMatch(expected.res, granted.res)) {
+  if (
+    isMatch({ expected: expected.act, actual: granted.act }) &&
+    isMatch({ expected: expected.res, actual: granted.res })
+  ) {
     return true
   }
-  // Check for partial match of the action and resource
-  return hasPartsMatch(expected.act, granted.act) && hasPartsMatch(expected.res, granted.res)
+  return (
+    hasPartsMatch({ expected: expected.act, actual: granted.act }) &&
+    hasPartsMatch({ expected: expected.res, actual: granted.res })
+  )
 }

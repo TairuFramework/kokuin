@@ -3,16 +3,23 @@ import { normalizeDID } from '@kokuin/token'
 import {
   isDependencyUnsatisfiedBy,
   type RecordTypeDefinition,
+  type RecordTypeDefinitionVisibleToParams,
   type VisibilityContext,
 } from './apply.js'
 import { settleLimited } from './limit.js'
 import { type VerifiedRecordOp, verifySignedRecord } from './op.js'
 import { compareRecordOps } from './policy.js'
 import {
+  captureMethods,
+  captureOptions,
+  guardedProvider,
+  ProviderFailure,
+} from './provider-options.js'
+import {
   type RecordClaim,
-  recordClaimDigest,
   recordPayloadMatches,
   type SignedRecord,
+  snapshotRecord,
 } from './record.js'
 import { getRecordDecisions, recordKeyText } from './store.js'
 
@@ -105,14 +112,19 @@ function storedRowAdmits(
   if (stored.opHash === proof.opHash) {
     return true
   }
-  if (recordClaimDigest(stored.claim) === recordClaimDigest(proof.claim)) {
+  if (stored.contentDigest === proof.contentDigest) {
     return true
   }
   // The same winner apply would store: the proof must be the op a merge keeps.
-  const decision = compareRecordOps(proof, stored, definition.policy, definition.onEqual)
+  const decision = compareRecordOps({
+    incoming: proof,
+    stored,
+    policy: definition.policy,
+    onEqual: definition.onEqual,
+  })
   return (
     decision.status === 'apply' ||
-    (decision.status === 'fork' && recordClaimDigest(proof.claim) > recordClaimDigest(stored.claim))
+    (decision.status === 'fork' && proof.contentDigest > stored.contentDigest)
   )
 }
 
@@ -122,8 +134,17 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
   if (definition === undefined) {
     return null
   }
-  const op = await verifySignedRecord(proof, ctx.opKind, ctx.methods)
-  if (op === null || op.claim.deleted || !recordPayloadMatches(proof, op.claim)) {
+  const op = await verifySignedRecord({
+    record: proof,
+    opKind: ctx.opKind,
+    methods: ctx.methods,
+    crypto: ctx?.crypto,
+  })
+  if (
+    op === null ||
+    op.claim.deleted ||
+    !(await recordPayloadMatches({ ...ctx, record: proof, claim: op.claim }))
+  ) {
     return null
   }
   const { keyID, keyVersion, recipient } = op.claim.meta
@@ -136,7 +157,7 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
   }
   // A wrapping older than the responder's key, as a revoked recipient's is, earns nothing.
   // The key is the proof owner's, which `visibleTo` binds to the guarded record's owner.
-  const current = await ctx.currentKeyVersion(normalizeDID(op.claim.owner), keyID)
+  const current = await ctx.currentKeyVersion({ owner: normalizeDID(op.claim.owner), keyID })
   if (current === null || keyVersion < current) {
     return null
   }
@@ -144,31 +165,45 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
   // revoked, superseded or taken-over wrapping cannot stand in for the live one. That row and
   // the proof's dependencies are read in one batch.
   const storedKey = { type: proof.type, owner: op.claim.owner, id: proof.id }
-  const dependencies = definition.dependencies(proof, op)
-  const decisions = await getRecordDecisions(ctx.store, [storedKey, ...dependencies])
+  const dependencies = definition.dependencies({ record: proof, op })
+  const decisions = await getRecordDecisions({
+    store: ctx.store,
+    keys: [storedKey, ...dependencies],
+  })
   const storedDecision = decisions.get(recordKeyText(storedKey)) ?? null
   const storedRecord = storedDecision?.copies[0] ?? null
   const storedOp =
-    storedRecord === null ? null : await verifySignedRecord(storedRecord, ctx.opKind, ctx.methods)
+    storedRecord === null
+      ? null
+      : await verifySignedRecord({
+          record: storedRecord,
+          opKind: ctx.opKind,
+          methods: ctx.methods,
+          crypto: ctx?.crypto,
+        })
   if (!storedRowAdmits(op, storedOp, definition)) {
     return null
   }
   // A proof the responder cannot check for lack of a dependency earns nothing, the same as
   // one that fails, rather than parking as it would in apply.
   const unsatisfied = await Promise.all(
-    dependencies.map((dependency) =>
-      isDependencyUnsatisfiedBy(
+    dependencies.map((dependency) => {
+      return isDependencyUnsatisfiedBy({
         dependency,
-        decisions.get(recordKeyText(dependency)) ?? null,
-        ctx.opKind,
-        ctx.methods,
-      ),
-    ),
+        stored: decisions.get(recordKeyText(dependency)) ?? null,
+        opKind: ctx.opKind,
+        methods: ctx.methods,
+        crypto: ctx?.crypto,
+      })
+    }),
   )
   if (unsatisfied.includes(true)) {
     return null
   }
-  const authorized = await ctx.authorizeProof(proof, storedOp === null ? null : storedRecord)
+  const authorized = await ctx.authorizeProof({
+    record: proof,
+    stored: storedOp === null ? null : storedRecord,
+  })
   return authorized ? { keyID, owner: op.claim.owner } : null
 }
 
@@ -184,14 +219,13 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
  * This does not bind the proof to any guarded record's owner; `visibleTo` does, since a proof
  * is valid for its own owner's key alone.
  *
- * Never throws: a proof is hostile input, and one that cannot be checked earns nothing. The
+ * Uncheckable proofs earn nothing. Provider operational failures propagate. The
  * proof is only read, never stored or forwarded.
  */
-export async function verifyHolderProof(
-  proof: SignedRecord,
-  ctx: VisibilityContext,
-): Promise<boolean> {
-  return (await checkedHolding(proof, ctx)) !== null
+export type VerifyHolderProofParams = { proof: SignedRecord; ctx: VisibilityContext }
+
+export async function verifyHolderProof({ ctx, proof }: VerifyHolderProofParams): Promise<boolean> {
+  return (await checkedHolding(snapshotRecord(proof), captureContext(ctx))) !== null
 }
 
 async function checkedHolding(
@@ -199,8 +233,12 @@ async function checkedHolding(
   ctx: VisibilityContext,
 ): Promise<Holding | null> {
   try {
-    return await heldKey(proof, ctx)
-  } catch {
+    return await heldKey(snapshotRecord(proof), {
+      ...ctx,
+      crypto: guardedProvider(ctx.crypto ?? captureOptions().crypto),
+    })
+  } catch (error) {
+    if (error instanceof ProviderFailure) throw error.cause
     return null
   }
 }
@@ -267,7 +305,7 @@ async function isShareTarget(claim: RecordClaim, ctx: VisibilityContext): Promis
   )
   for (const groupID of stringsIn(claim.meta.sharedWithGroups)) {
     for (const did of members) {
-      if (await ctx.isGroupMember(groupID, did)) {
+      if (await ctx.isGroupMember({ groupID, did })) {
         return true
       }
     }
@@ -307,20 +345,29 @@ async function satisfiesRule(
  *
  * Errors from the store or the context's resolvers propagate; errors from a proof do not.
  */
-export async function visibleTo(
-  record: SignedRecord,
-  rules: ReadonlyArray<VisibilityRule>,
-  ctx: VisibilityContext,
-): Promise<boolean> {
+export type VisibleToParams = {
+  record: SignedRecord
+  rules: ReadonlyArray<VisibilityRule>
+  ctx: VisibilityContext
+}
+
+export async function visibleTo({ ctx, rules, record }: VisibleToParams): Promise<boolean> {
+  const captured = captureContext(ctx)
+  const fixedRules = [...rules]
   if (rules.length === 0) {
     return false
   }
-  const op = await verifySignedRecord(record, ctx.opKind, ctx.methods)
+  const op = await verifySignedRecord({
+    record,
+    opKind: captured.opKind,
+    methods: captured.methods,
+    crypto: captured?.crypto,
+  })
   if (op === null) {
     return false
   }
-  for (const rule of rules) {
-    if (await satisfiesRule(rule, op.claim, ctx)) {
+  for (const rule of fixedRules) {
+    if (await satisfiesRule(rule, op.claim, captured)) {
       return true
     }
   }
@@ -330,9 +377,9 @@ export async function visibleTo(
 /** A `RecordTypeDefinition.visibleTo` hook that admits a requester any of `rules` admits. */
 export function visibilityRules(
   rules: ReadonlyArray<VisibilityRule>,
-): (record: SignedRecord, ctx: VisibilityContext) => Promise<boolean> {
+): (params: RecordTypeDefinitionVisibleToParams) => Promise<boolean> {
   const fixed = [...rules]
-  return async (record, ctx) => await visibleTo(record, fixed, ctx)
+  return async ({ record, ctx }) => await visibleTo({ record, rules: fixed, ctx })
 }
 
 /**
@@ -345,38 +392,61 @@ export function visibilityRules(
  * Records are checked together: the `visibleTo` hooks, and the context's resolvers and store,
  * must accept concurrent calls. The first failure in record order is thrown.
  */
-export async function filterVisibleRecords(
-  records: ReadonlyArray<SignedRecord>,
-  types: ReadonlyMap<string, RecordTypeDefinition>,
-  ctx: VisibilityContext,
-): Promise<Array<SignedRecord>> {
+export type FilterVisibleRecordsParams = {
+  records: ReadonlyArray<SignedRecord>
+  types: ReadonlyMap<string, RecordTypeDefinition>
+  ctx: VisibilityContext
+}
+
+export async function filterVisibleRecords({
+  ctx,
+  types,
+  records,
+}: FilterVisibleRecordsParams): Promise<Array<SignedRecord>> {
+  const owned = records.map(snapshotRecord)
+  const captured = captureContext(ctx)
   // One context for this call: holdings and key versions are read once, then indexed.
   const versions = new Map<string, Promise<number | null>>()
   const scoped: VisibilityContext = {
-    ...ctx,
-    currentKeyVersion: (owner, keyID) => {
+    ...captured,
+    currentKeyVersion: ({ owner, keyID }) => {
       const id = holdingID(owner, keyID)
       let version = versions.get(id)
       if (version === undefined) {
-        version = ctx.currentKeyVersion(owner, keyID)
+        version = captured.currentKeyVersion({ owner, keyID })
         versions.set(id, version)
       }
       return version
     },
   }
+  ownedContexts.add(scoped)
   holdingIndexes.set(scoped, { checks: [], held: new Set() })
   // Records are checked together, up to `CONCURRENCY_LIMIT` at once. They share the holding
   // index, so each holding is still checked once. The first failure in record order is thrown.
-  const admitted = await settleLimited(records, async (record) => {
+  const admitted = await settleLimited(owned, async (record) => {
     const hook = types.get(record.type)?.visibleTo
-    return hook !== undefined && (await hook(record, scoped))
+    return hook !== undefined && (await hook({ record, ctx: scoped }))
   })
   const visible: Array<SignedRecord> = []
-  for (const [index, record] of records.entries()) {
+  for (const [index, record] of owned.entries()) {
     const result = admitted[index]
     if (result === undefined) continue
     if (result.status === 'rejected') throw result.reason
     if (result.value) visible.push(record)
   }
   return visible
+}
+
+const ownedContexts = new WeakSet<VisibilityContext>()
+function captureContext(ctx: VisibilityContext): VisibilityContext {
+  if (ownedContexts.has(ctx)) return ctx
+  const captured = {
+    ...ctx,
+    ...captureOptions(ctx),
+    methods: captureMethods(ctx.methods),
+    requester: { ...ctx.requester },
+    proofs: ctx.proofs.map(snapshotRecord),
+  }
+  ownedContexts.add(captured)
+  return captured
 }

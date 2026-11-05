@@ -18,14 +18,14 @@ export default function SignVerify() {
     <Button
       title="Verify token"
       onPress={() => {
-        verifyToken(signedToken).then(setVerifiedToken)
+        verifyToken({ token: signedToken }).then(setVerifiedToken)
       }}
     />
   ) : (
     <Button
       title="Sign token"
       onPress={() => {
-        identity.signToken({ test: 'OK' }).then(setSignedToken)
+        identity.signToken({ payload: { test: 'OK' } }).then(setSignedToken)
       }}
     />
   )

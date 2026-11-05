@@ -1,0 +1,9 @@
+---
+"@kokuin/expo": minor
+---
+
+Pass crypto alongside SecureStore entry options for captured software identity signing. Conflicting cached-store reopens now reject. SecureStore receives only entry options.
+
+Use named params objects for public signatures and constructors. Export their named types. Preserve behaviour and update migration references.
+
+All public APIs with two or more arguments now take one flat params object. Options fields sit at the top level.

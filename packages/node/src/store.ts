@@ -1,3 +1,4 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import {
   createFullIdentity,
@@ -15,6 +16,7 @@ const tracer = createTracer('keystore.node')
 const logger = getLogger(['kokuin', 'node'])
 
 export type NodeKeyStoreParams = {
+  crypto?: CryptoProvider
   service: string
   /**
    * Path to a lockfile enabling **cross-process** exclusion on `provideAsync`.
@@ -50,14 +52,19 @@ export class NodeKeyStore
           `${String(cached.#lockPath)}; cannot reopen with conflicting lockPath: ${lockPath}.`,
       )
     }
+    if ((params.crypto ?? nobleCrypto) !== cached.#crypto) {
+      throw new Error('Cannot reopen a keystore with conflicting crypto provider')
+    }
     return cached
   }
 
+  #crypto: CryptoProvider
   #entries: Record<string, NodeKeyEntry> = Object.create(null)
   #lockPath?: string
   #service: string
 
   constructor(params: NodeKeyStoreParams) {
+    this.#crypto = params.crypto ?? nobleCrypto
     this.#service = params.service
     this.#lockPath = params.lockPath
   }
@@ -105,7 +112,7 @@ export class NodeKeyStore
         const entry = this.entry(keyID)
         const existing = await entry.getAsync()
         const privateKey = existing ?? (await entry.provideAsync())
-        const identity = createFullIdentity(privateKey)
+        const identity = createFullIdentity({ privateKey, crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, existing == null)
         if (existing == null) {
@@ -131,7 +138,7 @@ export class NodeKeyStore
         const entry = this.entry(keyID)
         const existing = entry.get()
         const privateKey = existing ?? entry.provide()
-        const identity = createFullIdentity(privateKey)
+        const identity = createFullIdentity({ privateKey, crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, existing == null)
         if (existing == null) {

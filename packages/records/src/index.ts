@@ -5,6 +5,23 @@
  * @module records
  */
 
+export type {
+  ApplyRecordChunkParamsVerifyCapabilityParams,
+  RecordAuthorizeContextVerifyCapabilityParams,
+  RecordContentRefusalErrorParams,
+  RecordTypeDefinitionAfterApplyParams,
+  RecordTypeDefinitionAfterAuthorizeParams,
+  RecordTypeDefinitionAuthorizeParams,
+  RecordTypeDefinitionDependenciesParams,
+  RecordTypeDefinitionLockKeysParams,
+  RecordTypeDefinitionOnEqualParams,
+  RecordTypeDefinitionPrecheckParams,
+  RecordTypeDefinitionVisibleToParams,
+  RecordTypeGraphErrorParams,
+  VisibilityContextAuthorizeProofParams,
+  VisibilityContextCurrentKeyVersionParams,
+  VisibilityContextIsGroupMemberParams,
+} from './apply.js'
 export {
   type ApplyRecordChunkParams,
   type ApplyResult,
@@ -20,13 +37,25 @@ export {
   RecordTypeGraphError,
   type VisibilityContext,
 } from './apply.js'
+export type { ParseBoundedHLCParams } from './clock.js'
 export { compareRecordDecisionHLC, parseBoundedHLC, parseCanonicalHLC } from './clock.js'
+export type {
+  RecordDecisionDigestParams,
+  RecordDecisionFromVerifiedCopiesParams,
+} from './decision.js'
 export {
   type RecordDecision,
   recordDecisionDigest,
   recordDecisionFromVerifiedCopies,
   type VerifiedRecordCopy,
 } from './decision.js'
+export type {
+  CreateRecordVerifierParams,
+  RecordOpSigningErrorParams,
+  SignRecordOpParams,
+  VerifyRecordOpParams,
+  VerifySignedRecordParams,
+} from './op.js'
 export {
   createRecordVerifier,
   RECORD_OP_MEMO_SIZE,
@@ -36,12 +65,21 @@ export {
   verifyRecordOp,
   verifySignedRecord,
 } from './op.js'
+export type { CompareRecordOpsParams, CompareRecordOpsParamsOnEqualParams } from './policy.js'
 export {
   compareRecordOps,
   type EqualVersionDecision,
   type MergeDecision,
   type MergePolicy,
 } from './policy.js'
+export type {
+  FingerprintRangeParams,
+  RangeContainsParams,
+  RangeLeafParams,
+  RecordRangeErrorParams,
+  SplitRangeParams,
+  SummarizeRangeParams,
+} from './range.js'
 export {
   assertListedLeaf,
   fingerprintRange,
@@ -58,6 +96,7 @@ export {
   splitRange,
   summarizeRange,
 } from './range.js'
+export type { AdvanceRecordPullParams, NextRequesterStepsParams } from './reconcile.js'
 export {
   advanceRecordPull,
   beginRecordPull,
@@ -66,6 +105,13 @@ export {
   type RecordPullState,
   type RequesterStep,
 } from './reconcile.js'
+export type {
+  RecordClaimDigestParams,
+  RecordClaimErrorParams,
+  RecordPayloadDigestParams,
+  RecordPayloadMatchesParams,
+  RecordSignerKeyParams,
+} from './record.js'
 export {
   canonicalRecordClaim,
   isRecordClaim,
@@ -78,7 +124,13 @@ export {
   recordPayloadMatches,
   recordSignerKey,
   type SignedRecord,
+  snapshotRecord,
 } from './record.js'
+export type {
+  GetRecordDecisionsParams,
+  RecordStoreAdapterListByGroupParams,
+  RecordStoreAdapterPruneCopyParams,
+} from './store.js'
 export {
   getRecordDecisions,
   type RecordDecisionMap,
@@ -86,6 +138,11 @@ export {
   type RecordStoreAdapter,
   recordKeyText,
 } from './store.js'
+export type {
+  FilterVisibleRecordsParams,
+  VerifyHolderProofParams,
+  VisibleToParams,
+} from './visibility.js'
 export {
   filterVisibleRecords,
   type VisibilityRule,

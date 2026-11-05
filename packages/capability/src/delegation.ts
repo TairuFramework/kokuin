@@ -20,6 +20,13 @@ import type {
   SignCapabilityPayload,
 } from './types.js'
 
+export type CreateCapabilityParams<Payload extends SignCapabilityPayload = SignCapabilityPayload> =
+  {
+    signer: SigningIdentity
+    payload: Payload
+    header?: Record<string, unknown>
+  } & CreateCapabilityOptions
+
 /**
  * Maximum delegation links an offline verifier will walk.
  *
@@ -41,6 +48,12 @@ export const DEFAULT_MAX_DELEGATION_DEPTH = 4
  */
 const HISTORIC_ISSUANCE = true
 
+function captureOptions<Options extends CreateCapabilityOptions | DelegationChainOptions>(
+  options?: Options,
+): Options | undefined {
+  return options == null ? undefined : { ...options, verifiers: { ...options.verifiers } }
+}
+
 function assertExpiryWithinParent(parent: { exp?: number }, child: { exp?: number }): void {
   if (parent.exp != null && (child.exp == null || child.exp > parent.exp)) {
     throw new Error('Invalid capability: child expiry exceeds parent capability')
@@ -49,12 +62,15 @@ function assertExpiryWithinParent(parent: { exp?: number }, child: { exp?: numbe
 
 export async function createCapability<
   Payload extends SignCapabilityPayload = SignCapabilityPayload,
->(
-  signer: SigningIdentity,
-  payload: Payload,
-  header?: Record<string, unknown>,
-  options?: CreateCapabilityOptions,
-): Promise<CapabilityToken<Payload & { iss: string }, SignedHeader>> {
+>({
+  signer,
+  payload,
+  header,
+  ...options
+}: CreateCapabilityParams<Payload>): Promise<
+  CapabilityToken<Payload & { iss: string }, SignedHeader>
+> {
+  const capturedOptions = captureOptions(options)
   const signerID = signer.id
 
   // Validate act/res patterns
@@ -63,7 +79,7 @@ export async function createCapability<
 
   // If signer is the subject, no parent validation needed (root capability)
   if (normalizeDID(payload.sub) === normalizeDID(signerID)) {
-    return await signer.signToken(payload, { header })
+    return await signer.signToken({ payload, header })
   }
 
   // A management member minting on the subject's behalf: also a chain root, its authority the
@@ -72,8 +88,8 @@ export async function createCapability<
   // grant by: a well-formed claim, both `exp` and `iat`, and `exp` not before `iat`. The lifetime and
   // lease bounds are left to the verifier: the maximum lifetime is the verifier's setting, and a
   // mint-side default would refuse grants a verifier configured wider accepts.
-  if (options?.member != null) {
-    const { member } = options
+  if (capturedOptions?.member != null) {
+    const { member } = capturedOptions
     if (!isMemberClaim(member)) {
       throw new Error('Invalid capability: malformed mbr claim')
     }
@@ -83,22 +99,25 @@ export async function createCapability<
     if (payload.exp < payload.iat) {
       throw new Error('Invalid capability: a member grant expires before it is issued')
     }
-    return await signer.signToken({ ...payload, mbr: { add: member.add, g: member.g } }, { header })
+    return await signer.signToken({
+      payload: { ...payload, mbr: { add: member.add, g: member.g } },
+      header,
+    })
   }
 
-  // Signer is delegating on behalf of someone else - validate authorization
-  if (options?.parentCapability == null) {
+  if (capturedOptions?.parentCapability == null) {
     throw new Error(
       'Invalid capability: parentCapability required when delegating for another subject',
     )
   }
 
-  // Verify and validate the parent capability
-  const parent = await verifyToken<CapabilityPayload>(options.parentCapability, {
-    cache: options.cache,
-    resolver: options.resolver,
-    methods: options.methods,
-    verifiers: options.verifiers,
+  const parent = await verifyToken<CapabilityPayload>({
+    token: capturedOptions.parentCapability,
+    crypto: capturedOptions.crypto,
+    cache: capturedOptions.cache,
+    resolver: capturedOptions.resolver,
+    methods: capturedOptions.methods,
+    verifiers: capturedOptions.verifiers,
     // See {@link HISTORIC_ISSUANCE}. The parent was minted before this delegation exists at all.
     historic: HISTORIC_ISSUANCE,
   })
@@ -112,11 +131,9 @@ export async function createCapability<
     throw new Error('Invalid capability: subject mismatch with parent capability')
   }
 
-  // Check parent is not expired
-  assertNonExpired(parent.payload)
+  assertNonExpired({ payload: parent.payload })
   assertExpiryWithinParent(parent.payload, payload)
 
-  // Check that the new capability doesn't exceed parent permissions
   const newPermission: Permission = {
     act: payload.act,
     res: payload.res,
@@ -126,18 +143,20 @@ export async function createCapability<
     res: parent.payload.res,
   }
 
-  if (!hasPermission(newPermission, parentPermission)) {
+  if (!hasPermission({ expected: newPermission, granted: parentPermission })) {
     throw new Error('Invalid capability: delegated permission exceeds parent capability')
   }
 
-  return await signer.signToken(payload, { header })
+  return await signer.signToken({ payload, header })
 }
 
-export function assertValidDelegation(
-  from: CapabilityPayload,
-  to: CapabilityPayload,
-  atTime?: number,
-): void {
+export type AssertValidDelegationParams = {
+  from: CapabilityPayload
+  to: CapabilityPayload
+  atTime?: number
+}
+
+export function assertValidDelegation({ atTime, to, from }: AssertValidDelegationParams): void {
   const time = atTime ?? now()
   if (normalizeDID(to.iss) !== normalizeDID(from.aud)) {
     throw new Error('Invalid capability: audience mismatch')
@@ -145,9 +164,9 @@ export function assertValidDelegation(
   if (normalizeDID(to.sub) !== normalizeDID(from.sub)) {
     throw new Error('Invalid capability: subject mismatch')
   }
-  assertNonExpired(from, time)
-  assertValidIssuedAt(from, time)
-  if (!hasPermission(to, from)) {
+  assertNonExpired({ payload: from, atTime: time })
+  assertValidIssuedAt({ payload: from, atTime: time })
+  if (!hasPermission({ expected: to, granted: from })) {
     throw new Error('Invalid capability: permission mismatch')
   }
 }
@@ -169,11 +188,17 @@ function presentedGrant(payload: SignedPayload): Permission | undefined {
   return { act, res }
 }
 
-export async function checkDelegationChain(
-  payload: CapabilityPayload,
-  capabilities: Array<string>,
-  options?: DelegationChainOptions,
-): Promise<void> {
+export type CheckDelegationChainParams = {
+  payload: CapabilityPayload
+  capabilities: Array<string>
+} & DelegationChainOptions
+
+export async function checkDelegationChain({
+  capabilities,
+  payload,
+  ...inputOptions
+}: CheckDelegationChainParams): Promise<void> {
+  const options = captureOptions(inputOptions)
   const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH
   const atTime = options?.atTime ?? now()
 
@@ -195,13 +220,13 @@ export async function checkDelegationChain(
       // of the same view as the issuer's membership. `assertMemberRoot` requires the link's signature
       // to have verified: the walk did so before recursing here, and a direct caller with an empty
       // chain vouches for its payload, as on the subject arm.
-      await assertMemberRoot(payload, options, atTime)
+      await assertMemberRoot({ ...options, payload, time: atTime })
       return
     }
     await assertAudienceNotRevoked(payload, options)
-    assertNonExpired(payload, atTime)
-    assertValidNotBefore(payload as { nbf?: number }, atTime)
-    assertValidIssuedAt(payload, atTime)
+    assertNonExpired({ payload, atTime })
+    assertValidNotBefore({ payload: payload as { nbf?: number }, atTime })
+    assertValidIssuedAt({ payload, atTime })
     return
   }
 
@@ -214,8 +239,10 @@ export async function checkDelegationChain(
   // Verify the leaf capability's own time claims (exp/nbf) at the same reference
   // time used for the delegation checks, so a capability that was valid when the
   // request was issued is not rejected by a later wall-clock during verification.
-  const next = await verifyToken<CapabilityPayload>(head, {
+  const next = await verifyToken<CapabilityPayload>({
+    token: head,
     atTime,
+    crypto: options?.crypto,
     cache: options?.cache,
     resolver: options?.resolver,
     methods: options?.methods,
@@ -225,11 +252,16 @@ export async function checkDelegationChain(
   })
   assertCapabilityToken(next)
   if (options?.verifyToken != null) {
-    await options.verifyToken(next, head)
+    await options.verifyToken({ token: next, raw: head })
   }
-  assertValidDelegation(next.payload, payload, atTime)
+  assertValidDelegation({ from: next.payload, to: payload, atTime })
   assertExpiryWithinParent(next.payload, payload)
-  await checkDelegationChain(next.payload, tail, { ...options, atTime })
+  await checkDelegationChain({
+    ...options,
+    payload: next.payload,
+    capabilities: tail,
+    atTime,
+  })
 }
 
 /**
@@ -241,11 +273,17 @@ export async function checkDelegationChain(
  * not merely its parent's, and its audience is subject to the deny set. Checking only its ancestors
  * made attenuation at the last hop a no-op and left the deny set blind to the actual holder.
  */
-export async function checkCapability(
-  permission: Permission,
-  payload: SignedPayload,
-  options?: DelegationChainOptions,
-): Promise<void> {
+export type CheckCapabilityParams = {
+  permission: Permission
+  payload: SignedPayload
+} & DelegationChainOptions
+
+export async function checkCapability({
+  payload,
+  permission,
+  ...inputOptions
+}: CheckCapabilityParams): Promise<void> {
+  const options = captureOptions(inputOptions)
   if (payload.sub == null) {
     throw new Error('Invalid payload: no subject')
   }
@@ -254,9 +292,9 @@ export async function checkCapability(
   if (normalizeDID(payload.iss) === normalizeDID(payload.sub)) {
     // Subject is issuer, no delegation required
     // But still need to validate the permission is granted
-    assertNonExpired(payload, time)
-    assertValidNotBefore(payload as { nbf?: number }, time)
-    assertValidIssuedAt(payload as { iat?: number }, time)
+    assertNonExpired({ payload, atTime: time })
+    assertValidNotBefore({ payload: payload as { nbf?: number }, atTime: time })
+    assertValidIssuedAt({ payload: payload as { iat?: number }, atTime: time })
     // This branch never reaches `checkDelegationChain`, so it needs its own audience check.
     await assertAudienceNotRevoked(payload, options)
 
@@ -269,7 +307,7 @@ export async function checkCapability(
       throw new Error('Invalid payload: missing act or res for self-issued token')
     }
 
-    if (!hasPermission(permission, { act, res })) {
+    if (!hasPermission({ expected: permission, granted: { act, res } })) {
       throw new Error('Invalid capability: permission not granted')
     }
 
@@ -284,10 +322,10 @@ export async function checkCapability(
     if (grant == null) {
       throw new Error('Invalid payload: missing act or res for member-issued token')
     }
-    if (!hasPermission(permission, grant)) {
+    if (!hasPermission({ expected: permission, granted: grant })) {
       throw new Error('Invalid capability: permission not granted')
     }
-    await assertMemberRoot(payload as CapabilityPayload, options, time)
+    await assertMemberRoot({ ...options, payload: payload as CapabilityPayload, time })
     return
   }
 
@@ -296,16 +334,16 @@ export async function checkCapability(
   // whatever its ancestors say.
   const grant = presentedGrant(payload)
   if (grant != null) {
-    if (!hasPermission(permission, grant)) {
+    if (!hasPermission({ expected: permission, granted: grant })) {
       throw new Error('Invalid capability: permission not granted')
     }
     // A presented capability's own time claims are checked nowhere else: it never passes through
     // `verifyToken` here and the walk below starts at its parent, so without this an expired,
     // not-yet-valid or future-dated capability was accepted on this arm. Same three claims and `time`
     // as the `iss === sub` arm — the arms differ in how authority is derived, not when a token is valid.
-    assertNonExpired(payload, time)
-    assertValidNotBefore(payload as { nbf?: number }, time)
-    assertValidIssuedAt(payload as { iat?: number }, time)
+    assertNonExpired({ payload, atTime: time })
+    assertValidNotBefore({ payload: payload as { nbf?: number }, atTime: time })
+    assertValidIssuedAt({ payload: payload as { iat?: number }, atTime: time })
   }
 
   if (payload.cap == null) {
@@ -326,8 +364,10 @@ export async function checkCapability(
   }
   // Verify the leaf capability's own time claims at the resolved reference time
   // (`atTime` when provided, else now()), matching the delegation checks below.
-  const capability = await verifyToken<CapabilityPayload>(head, {
+  const capability = await verifyToken<CapabilityPayload>({
+    token: head,
     atTime: time,
+    crypto: options?.crypto,
     cache: options?.cache,
     resolver: options?.resolver,
     methods: options?.methods,
@@ -337,7 +377,7 @@ export async function checkCapability(
   })
   assertCapabilityToken(capability)
   if (options?.verifyToken != null) {
-    await options.verifyToken(capability, head)
+    await options.verifyToken({ token: capability, raw: head })
   }
 
   // The presented capability's audience is the actual holder, and the one audience the walk never
@@ -355,9 +395,14 @@ export async function checkCapability(
   const toCapability = (
     grant == null ? { ...payload, ...permission } : payload
   ) as CapabilityPayload
-  assertValidDelegation(capability.payload, toCapability, time)
+  assertValidDelegation({ from: capability.payload, to: toCapability, atTime: time })
   if (grant != null) {
     assertExpiryWithinParent(capability.payload, toCapability)
   }
-  await checkDelegationChain(capability.payload, tail, { ...options, atTime: time })
+  await checkDelegationChain({
+    ...options,
+    payload: capability.payload,
+    capabilities: tail,
+    atTime: time,
+  })
 }

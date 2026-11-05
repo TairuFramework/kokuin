@@ -1,6 +1,7 @@
 import { createTokenEncrypter, decryptToken, encryptToken } from '@kokuin/jwe'
+import type { CryptoOptions } from '@kokuin/token'
 import { CODECS, getDID, verifyToken } from '@kokuin/token'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import { createBrowserIdentity, createLegacyES256Identity } from '../src/identity.js'
 import { generateKeyRecord } from '../src/utils.js'
@@ -9,15 +10,15 @@ describe('createBrowserIdentity', () => {
   test('yields a did:key EdDSA FullIdentity', async () => {
     const record = await generateKeyRecord()
     const identity = await createBrowserIdentity(record)
-    expect(identity.id).toBe(getDID(CODECS.EdDSA, record.publicKey))
+    expect(identity.id).toBe(getDID({ codec: CODECS.EdDSA, publicKey: record.publicKey }))
     expect(identity.publicKey).toEqual(record.publicKey)
   })
 
   test('signs tokens the @kokuin/token verifier accepts', async () => {
     const identity = await createBrowserIdentity(await generateKeyRecord())
-    const token = await identity.signToken({ aud: 'did:key:zSomeone', sub: 'test' })
+    const token = await identity.signToken({ payload: { aud: 'did:key:zSomeone', sub: 'test' } })
     expect(token.header.alg).toBe('EdDSA')
-    const verified = await verifyToken(token)
+    const verified = await verifyToken({ token })
     expect(verified.payload.iss).toBe(identity.id)
   })
 
@@ -26,16 +27,18 @@ describe('createBrowserIdentity', () => {
 
     // The sender knows only the DID. If the agreement key were independently generated, this
     // would fail — which is exactly what subtle.generateKey would have produced.
-    const jwe = await encryptToken(
-      createTokenEncrypter(identity.id),
-      new TextEncoder().encode('secret'),
+    const jwe = await encryptToken({
+      encrypter: createTokenEncrypter({ recipient: identity.id }),
+      plaintext: new TextEncoder().encode('secret'),
+    })
+    expect(new TextDecoder().decode(await decryptToken({ decrypter: identity, jwe }))).toBe(
+      'secret',
     )
-    expect(new TextDecoder().decode(await decryptToken(identity, jwe))).toBe('secret')
   })
 
   test('rejects a payload whose iss is not this identity', async () => {
     const identity = await createBrowserIdentity(await generateKeyRecord())
-    await expect(identity.signToken({ iss: 'did:key:zOther' })).rejects.toThrow(
+    await expect(identity.signToken({ payload: { iss: 'did:key:zOther' } })).rejects.toThrow(
       /issuer does not match/,
     )
   })
@@ -59,9 +62,33 @@ describe('createLegacyES256Identity', () => {
     const identity = await createLegacyES256Identity(await legacyRecord())
     // Repeat: WebCrypto emits high-S about half the time, and the verifier runs lowS: true.
     for (let i = 0; i < 8; i++) {
-      const token = await identity.signToken({ sub: `test-${i}` })
+      const token = await identity.signToken({ payload: { sub: `test-${i}` } })
       expect(token.header.alg).toBe('ES256')
-      await expect(verifyToken(token)).resolves.toBeDefined()
+      await expect(verifyToken({ token })).resolves.toBeDefined()
     }
   })
+})
+
+const providerSigning = vi.hoisted(() => ({ sign: vi.fn(), signBatch: vi.fn() }))
+vi.mock('@kokuin/crypto', async (importOriginal) => {
+  const actual = await importOriginal<{ nobleCrypto: NonNullable<CryptoOptions['crypto']> }>()
+  return { ...actual, nobleCrypto: { ...actual.nobleCrypto, ...providerSigning } }
+})
+
+test('WebCrypto signs both algorithms without provider signing', async () => {
+  const subtleSign = vi.spyOn(crypto.subtle, 'sign')
+  try {
+    const identity = await createBrowserIdentity(await generateKeyRecord())
+    const pair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
+      'sign',
+    ])) as CryptoKeyPair
+    const legacy = await createLegacyES256Identity(pair)
+    for (const signer of [identity, legacy])
+      await verifyToken({ token: await signer.signToken({ payload: { sub: 'retained' } }) })
+    expect(subtleSign).toHaveBeenCalledTimes(2)
+    expect(providerSigning.sign).not.toHaveBeenCalled()
+    expect(providerSigning.signBatch).not.toHaveBeenCalled()
+  } finally {
+    subtleSign.mockRestore()
+  }
 })

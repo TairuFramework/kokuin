@@ -10,9 +10,11 @@ export type DIDResolver = (did: string) => DIDDoc | undefined | Promise<DIDDoc |
  * Content-addressed store for did:peer:4 documents, keyed by the short-form DID.
  * `set` MUST verify that the short form matches the hash of the canonical doc before storing.
  */
+export type DIDCacheSetParams = { shortForm: string; doc: DIDDoc }
+
 export type DIDCache = {
   get(shortForm: string): DIDDoc | undefined | Promise<DIDDoc | undefined>
-  set(shortForm: string, doc: DIDDoc): void | Promise<void>
+  set(params: DIDCacheSetParams): void | Promise<void>
 }
 
 export type CreateInMemoryDIDCacheOptions = {
@@ -46,7 +48,7 @@ export function createInMemoryDIDCache(options: CreateInMemoryDIDCacheOptions = 
       }
       return doc
     },
-    set(shortForm, doc) {
+    set({ shortForm, doc }) {
       if (!isPeer4(shortForm)) {
         return Promise.reject(new Error('DIDCache: short form must be a did:peer:4 identifier'))
       }

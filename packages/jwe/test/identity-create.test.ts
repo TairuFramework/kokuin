@@ -43,11 +43,12 @@ describe('createIdentity', () => {
       ],
     })
     const cache = createInMemoryDIDCache()
-    await cache.set(identity.id, identity.doc)
-    const signed = await identity.signToken({ aud: 'someone' })
+    await cache.set({ shortForm: identity.id, doc: identity.doc })
+    const signed = await identity.signToken({ payload: { aud: 'someone' } })
     expect(signed.header.kid).toBeDefined()
     expect(signed.payload.iss).toBe(identity.longForm)
-    const verified = await verifyToken(signed, {
+    const verified = await verifyToken({
+      token: signed,
       resolver: (did) => cache.get(did),
     })
     expect((verified as { verifiedPublicKey: Uint8Array }).verifiedPublicKey.length).toBe(32)
@@ -60,7 +61,7 @@ describe('createIdentity', () => {
         { purpose: 'sig', alg: 'EdDSA' },
       ],
     })
-    const signed = await identity.signToken({ aud: 'a' }, { kid: '#key-1' })
+    const signed = await identity.signToken({ payload: { aud: 'a' }, kid: '#key-1' })
     expect(signed.header.kid).toBe('#key-1')
   })
 
@@ -70,11 +71,11 @@ describe('createIdentity', () => {
       keys: [{ purpose: 'sig', alg: 'EdDSA', privateKey: priv }],
     })
     expect(identity.id.startsWith('did:key:')).toBe(true)
-    const signed = await identity.signToken({})
+    const signed = await identity.signToken({ payload: {} })
     expect(signed.payload.iss).toBe(identity.id)
   })
 
-  it('decrypts a token addressed to its KEM key', async () => {
+  it('decrypts a token directly with a multi-key identity', async () => {
     const identity = await createIdentity({
       keys: [
         { purpose: 'sig', alg: 'EdDSA' },
@@ -84,9 +85,15 @@ describe('createIdentity', () => {
     const kemKey = identity.keys.find((k) => k.purpose === 'kem')
     if (kemKey == null) throw new Error('no kem key')
     const plaintext = new TextEncoder().encode('hello world')
-    const encrypter = createTokenEncrypter(kemKey.publicKey, { algorithm: 'X25519' })
-    const jwe = await encryptToken(encrypter, plaintext)
-    const decrypted = await decryptToken(identity, jwe)
+    const encrypter = createTokenEncrypter({
+      recipient: kemKey.publicKey,
+      algorithm: 'X25519',
+    })
+    const jwe = await encryptToken({ encrypter, plaintext })
+    const decrypted = await decryptToken({
+      decrypter: identity,
+      jwe,
+    })
     expect(new TextDecoder().decode(decrypted)).toBe('hello world')
   })
 
@@ -95,9 +102,12 @@ describe('createIdentity', () => {
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],
     })
     const plaintext = new TextEncoder().encode('hello world')
-    const encrypter = createTokenEncrypter(identity.id)
-    const jwe = await encryptToken(encrypter, plaintext)
-    const decrypted = await decryptToken(identity, jwe)
+    const encrypter = createTokenEncrypter({ recipient: identity.id })
+    const jwe = await encryptToken({ encrypter, plaintext })
+    const decrypted = await decryptToken({
+      decrypter: identity,
+      jwe,
+    })
     expect(new TextDecoder().decode(decrypted)).toBe('hello world')
   })
 
@@ -109,6 +119,8 @@ describe('createIdentity', () => {
       ],
     })
     expect(isPeer4(identity.id)).toBe(true)
-    await expect(identity.agreeKey(new Uint8Array(32))).rejects.toThrow(/no KEM key|no kem key/i)
+    await expect(identity.agreeKey({ ephemeralPublicKey: new Uint8Array(32) })).rejects.toThrow(
+      /no KEM key|no kem key/i,
+    )
   })
 })

@@ -10,6 +10,11 @@
  * @module controller
  */
 
+export type {
+  IsCanonicalizableParams,
+  VerifyDigestParams,
+  WithinCanonicalDepthParams,
+} from './canonical.js'
 export {
   canonicalBytes,
   digestOf,
@@ -18,6 +23,12 @@ export {
   verifyDigest,
   withinCanonicalDepth,
 } from './canonical.js'
+export type {
+  AgreementPathParams,
+  AuthorityPathParams,
+  DeriveKeyMaterialParams,
+  DeriveKeyPairParams,
+} from './derivation.js'
 export {
   agreementPath,
   authorityPath,
@@ -25,6 +36,7 @@ export {
   deriveKeyPair,
   recoveryPath,
 } from './derivation.js'
+export type { DeviceRevokeIndexParams, DeviceRevokeIndicesParams } from './device-revoke.js'
 export {
   type CreateDeviceRevokeParams,
   createDeviceRevoke,
@@ -32,6 +44,7 @@ export {
   deviceRevokeIndices,
 } from './device-revoke.js'
 export { TOO_MANY_FAILED_SIGNATURES } from './epoch.js'
+export type { EpochSignatureSigner, VerifyEpochSignatureParams } from './epoch-events.js'
 export {
   type AddEvent,
   type CreateAddParams,
@@ -52,6 +65,15 @@ export {
   type RevokeEvent,
   verifyEpochSignature,
 } from './epoch-events.js'
+export type {
+  CreateInceptionParams,
+  CreateResetParams,
+  DidForParams,
+  VerifyInceptionParams,
+  VerifyResetParams,
+  VerifyRotateParams,
+  VerifySignaturesParams,
+} from './events.js'
 export {
   type CreateRotateParams,
   createInception,
@@ -76,6 +98,7 @@ export {
   verifyRotate,
   verifySignatures,
 } from './events.js'
+export type { FoldLogParams, KeyStateAtParams, SnapshotOfParams } from './fold.js'
 export {
   type FoldResult,
   foldLog,
@@ -92,6 +115,7 @@ export {
   snapshotOf,
   TOO_MANY_UNKNOWN_EVENTS,
 } from './fold.js'
+export type { LogStoreMergeParams } from './history.js'
 export {
   type AuthoritativeLog,
   type AuthoritativeLogParams,
@@ -101,10 +125,15 @@ export {
   LOG_NOT_AUTHORITATIVE,
   type LogStore,
 } from './history.js'
+export type {
+  CreateControllerIdentityParams,
+  CreateControllerIdentityWithKeyParams,
+} from './identity.js'
 export {
   createControllerIdentity,
   createControllerIdentityWithKey,
 } from './identity.js'
+export type { EncodeKeyParams } from './keys.js'
 export {
   decodeKey,
   encodeKey,
@@ -125,6 +154,7 @@ export {
   MAX_FAILED_SIGNATURES,
   MAX_LOG_EVENTS,
 } from './limits.js'
+export type { EpochHeadsParams, MergeLogsParams, PruneLogParams } from './log.js'
 export {
   type ControllerLog,
   epochHeads,
@@ -135,6 +165,7 @@ export {
   mergeLogs,
   pruneLog,
 } from './log.js'
+export type { EnumerateProfilesParams } from './profiles.js'
 export { enumerateProfiles, handleForDID, type ProfileEntry } from './profiles.js'
 export {
   type ControllerResolver,
@@ -142,6 +173,7 @@ export {
   createControllerResolver,
 } from './resolver.js'
 export { EPOCH_SATURATED, MEMBER_NOT_EFFECTIVE, MEMBER_NOT_HISTORIC } from './state-resolver.js'
+export type { ResolveBranchesParams } from './supersede.js'
 export {
   type Duplicity,
   type ResolveFailure,

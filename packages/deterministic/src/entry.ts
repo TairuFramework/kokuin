@@ -45,7 +45,7 @@ export class HDKeyEntry implements KeyEntry<Uint8Array> {
   }
 
   #derive(): Uint8Array {
-    this.#cachedKey ??= derivePrivateKey(this.#seed, this.#path)
+    this.#cachedKey ??= derivePrivateKey({ seed: this.#seed, path: this.#path })
     return this.#cachedKey
   }
 

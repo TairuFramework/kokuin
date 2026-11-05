@@ -136,10 +136,13 @@ function startsWithJsonCodec(bytes: Uint8Array): boolean {
  * Decode a did:peer:4 long form into its DID document.
  * Verifies the embedded hash against the encoded doc; throws on mismatch.
  */
-export function decodePeer4(
-  longForm: string,
-  options: DecodePeer4Options = {},
-): { longForm: string; shortForm: string; doc: DIDDoc } {
+export type DecodePeer4Params = { longForm: string } & DecodePeer4Options
+
+export function decodePeer4({ longForm, ...options }: DecodePeer4Params): {
+  longForm: string
+  shortForm: string
+  doc: DIDDoc
+} {
   if (!isPeer4(longForm)) {
     throw new Error('Invalid did:peer:4 identifier')
   }
@@ -172,7 +175,7 @@ export function decodePeer4(
   }
 
   const hashBytes = decodeMultibase(hashEncoded)
-  if (!verifyMultihash(hashBytes, fromUTF(encodedDoc))) {
+  if (!verifyMultihash({ multihash: hashBytes, bytes: fromUTF(encodedDoc) })) {
     throw new Error('did:peer:4 hash mismatch')
   }
 

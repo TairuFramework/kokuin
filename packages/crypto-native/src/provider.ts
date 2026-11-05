@@ -1,4 +1,13 @@
-import type { CryptoAlgorithm, CryptoProvider, SignItem, VerifyItem } from '@kokuin/crypto'
+import type {
+  CryptoAlgorithm,
+  CryptoProvider,
+  CryptoProviderBlake3BatchParams,
+  CryptoProviderBlake3Params,
+  CryptoProviderSignBatchParams,
+  CryptoProviderSignParams,
+  SignItem,
+  VerifyItem,
+} from '@kokuin/crypto'
 
 import type { ByteView, Crypto, CryptoRequest } from './Crypto.nitro.js'
 
@@ -70,24 +79,19 @@ function verified(bytes: Uint8Array): boolean {
 export function providerFor(bridge: Pick<Crypto, 'abiVersion' | 'execute'>): CryptoProvider {
   if (bridge.abiVersion !== 1) throw new Error('Native crypto ABI mismatch')
   return {
-    async sign(alg: 'EdDSA', privateKey: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
+    async sign({ alg, privateKey, message }: CryptoProviderSignParams): Promise<Uint8Array> {
       return decode(
         await bridge.execute([signingRequest(alg, { privateKey, message })]),
         1,
         64,
       )[0] as Uint8Array
     },
-    async signBatch(alg: 'EdDSA', items: Array<SignItem>): Promise<Array<Uint8Array>> {
+    async signBatch({ alg, items }: CryptoProviderSignBatchParams): Promise<Array<Uint8Array>> {
       if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
       const requests = items.map((item) => signingRequest(alg, item))
       return decode(await bridge.execute(requests), requests.length, 64)
     },
-    async verify(
-      alg: CryptoAlgorithm,
-      signature: Uint8Array,
-      message: Uint8Array,
-      publicKey: Uint8Array,
-    ): Promise<boolean> {
+    async verify({ alg, signature, message, publicKey }: VerifyItem): Promise<boolean> {
       return verified(
         decode(
           await bridge.execute([verifyRequest({ alg, signature, message, publicKey })]),
@@ -100,10 +104,13 @@ export function providerFor(bridge: Pick<Crypto, 'abiVersion' | 'execute'>): Cry
       const requests = items.map(verifyRequest)
       return decode(await bridge.execute(requests), requests.length, 1).map(verified)
     },
-    async blake3(input: Uint8Array, dkLen: number): Promise<Uint8Array> {
+    async blake3({ input, dkLen }: CryptoProviderBlake3Params): Promise<Uint8Array> {
       return decode(await bridge.execute([hashRequest(input, dkLen)]), 1, dkLen)[0] as Uint8Array
     },
-    async blake3Batch(inputs: Array<Uint8Array>, dkLen: number): Promise<Array<Uint8Array>> {
+    async blake3Batch({
+      inputs,
+      dkLen,
+    }: CryptoProviderBlake3BatchParams): Promise<Array<Uint8Array>> {
       hashRequest(EMPTY, dkLen)
       const requests = inputs.map((input) => hashRequest(input, dkLen))
       return decode(await bridge.execute(requests), requests.length, dkLen)

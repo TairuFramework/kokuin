@@ -40,13 +40,13 @@ import { fixedViewResolver } from './fixed-view.js'
 
 const seed = new Uint8Array(32).fill(7)
 const profile = 0
-const icp = createInception(seed, profile)
+const icp = await createInception({ seed, profile })
 const did = didFromInception(icp.event)
 const root: EpochSigner = { root: { seed, profile } }
 const LEASE = 1_900_000_000
 
-function headOf(log: ControllerLog): KeyState {
-  const result = foldLog(did, log)
+async function headOf(log: ControllerLog): Promise<KeyState> {
+  const result = await foldLog({ did, input: log })
   if (!result.ok) {
     throw new Error(`fixture does not fold: ${result.reason}`)
   }
@@ -54,13 +54,13 @@ function headOf(log: ControllerLog): KeyState {
 }
 
 const chain: Array<SignedEvent> = [icp]
-const head = headOf({ chain, events: [] })
+const head = await headOf({ chain, events: [] })
 
 type Member = { privateKey: Uint8Array; key: string; did: string }
 
 function memberOf(fill: number): Member {
   const privateKey = new Uint8Array(32).fill(fill)
-  const key = encodeKey(ed25519.getPublicKey(privateKey), 'EdDSA')
+  const key = encodeKey({ publicKey: ed25519.getPublicKey(privateKey), alg: 'EdDSA' })
   return { privateKey, key, did: `did:key:${key}` }
 }
 
@@ -76,8 +76,11 @@ function peerDID(key: string): string {
 
 const digest = (signed: SignedEvent<EpochEvent>): string => digestOf(signed.event)
 
-function addOf(member: { did: string; key: string }, lease = LEASE): SignedEvent<EpochEvent> {
-  return createAdd({
+async function addOf(
+  member: { did: string; key: string },
+  lease = LEASE,
+): Promise<SignedEvent<EpochEvent>> {
+  return await createAdd({
     seed,
     profile,
     did,
@@ -87,12 +90,12 @@ function addOf(member: { did: string; key: string }, lease = LEASE): SignedEvent
   })
 }
 
-function revokeOf(target: string, parents: Array<string>): SignedEvent<EpochEvent> {
-  return createRevoke({ signer: root, did, head, parents, target })
+async function revokeOf(target: string, parents: Array<string>): Promise<SignedEvent<EpochEvent>> {
+  return await createRevoke({ signer: root, did, head, parents, target })
 }
 
 const m = memberOf(31)
-const added = addOf(m)
+const added = await addOf(m)
 const add = digest(added)
 const withMember: ControllerLog = { chain, events: [added] }
 
@@ -112,7 +115,10 @@ async function refusal(promise: Promise<unknown>): Promise<unknown> {
 describe('resolveMember()', () => {
   test('an effective member resolves to its pinned key and lease', async () => {
     const resolver = serving(withMember)
-    const resolved = await resolver.resolveMember?.(did, { did: m.did, add, gen: 0 })
+    const resolved = await resolver.resolveMember?.({
+      subject: did,
+      member: { did: m.did, add, gen: 0 },
+    })
     expect(resolved).toEqual({
       key: { alg: 'EdDSA', publicKey: ed25519.getPublicKey(m.privateKey) },
       lease: LEASE,
@@ -120,9 +126,9 @@ describe('resolveMember()', () => {
   })
 
   test('a removed member, a denied member, a wrong DID or a previous generation does not resolve', async () => {
-    const removed = createRemove({ signer: root, did, head, parents: [add], add })
-    const deniedByDID = revokeOf(m.did, [add])
-    const deniedByKey = revokeOf(keyTarget(m.key), [add])
+    const removed = await createRemove({ signer: root, did, head, parents: [add], add })
+    const deniedByDID = await revokeOf(m.did, [add])
+    const deniedByKey = await revokeOf(keyTarget(m.key), [add])
     const other = memberOf(32)
     const cases: Array<[string, ControllerLog, MemberQuery]> = [
       ['removed', { chain, events: [added, removed] }, { did: m.did, add, gen: 0 }],
@@ -133,64 +139,82 @@ describe('resolveMember()', () => {
       ['a generation the head is not at', withMember, { did: m.did, add, gen: 1 }],
     ]
     for (const [label, log, query] of cases) {
-      const error = await refusal(serving(log).resolveMember?.(did, query) ?? Promise.resolve())
+      const error = await refusal(
+        serving(log).resolveMember?.({ subject: did, member: query }) ?? Promise.resolve(),
+      )
       expect(isIssuerKeyNotFoundError(error), label).toBe(true)
       expect(String(error), label).toContain(MEMBER_NOT_EFFECTIVE)
     }
     // CONTROL — each case's log and query are one change away from resolving.
     await expect(
-      serving(withMember).resolveMember?.(did, { did: m.did, add, gen: 0 }),
+      serving(withMember).resolveMember?.({ subject: did, member: { did: m.did, add, gen: 0 } }),
     ).resolves.toMatchObject({ lease: LEASE })
   })
 
   test('a long-form and short-form did:peer:4 member DID resolve alike', async () => {
     const peer = memberOf(33)
     const long = peerDID(peer.key)
-    const peerAdd = addOf({ did: long, key: peer.key })
+    const peerAdd = await addOf({ did: long, key: peer.key })
     const resolver = serving({ chain, events: [peerAdd] })
     for (const spelling of [long, getPeer4ShortForm(long)]) {
       await expect(
-        resolver.resolveMember?.(did, { did: spelling, add: digest(peerAdd), gen: 0 }),
+        resolver.resolveMember?.({
+          subject: did,
+          member: { did: spelling, add: digest(peerAdd), gen: 0 },
+        }),
       ).resolves.toMatchObject({ lease: LEASE })
     }
     // Another key's peer DID is a different member, however it is spelled.
     const stranger = peerDID(memberOf(34).key)
     for (const spelling of [stranger, getPeer4ShortForm(stranger)]) {
       await expect(
-        resolver.resolveMember?.(did, { did: spelling, add: digest(peerAdd), gen: 0 }),
+        resolver.resolveMember?.({
+          subject: did,
+          member: { did: spelling, add: digest(peerAdd), gen: 0 },
+        }),
       ).rejects.toThrow(MEMBER_NOT_EFFECTIVE)
     }
     // A denial in the short form reaches the long-form member.
     const denied = serving({
       chain,
-      events: [peerAdd, revokeOf(getPeer4ShortForm(long), [digest(peerAdd)])],
+      events: [peerAdd, await revokeOf(getPeer4ShortForm(long), [digest(peerAdd)])],
     })
     await expect(
-      denied.resolveMember?.(did, { did: long, add: digest(peerAdd), gen: 0 }),
+      denied.resolveMember?.({ subject: did, member: { did: long, add: digest(peerAdd), gen: 0 } }),
     ).rejects.toThrow(MEMBER_NOT_EFFECTIVE)
   })
 
   test('a reset with a snapshot carrying the member does not revive the previous generation', async () => {
-    const reset = createReset(seed, profile, 1, {
-      members: [{ did: m.did, key: m.key, add, lease: LEASE }],
-      deny: [],
+    const reset = await createReset({
+      seed,
+      profile,
+      gen: 1,
+      snapshot: {
+        members: [{ did: m.did, key: m.key, add, lease: LEASE }],
+        deny: [],
+      },
     })
     const recovered: ControllerLog = { chain: [icp, reset], events: [] }
     // The snapshot keeps the incarnation's add reference: only the generation tells the two apart.
-    expect(headOf(recovered).members.get(add)?.effective).toBe(true)
+    expect((await headOf(recovered)).members.get(add)?.effective).toBe(true)
     const resolver = serving(recovered)
-    await expect(resolver.resolveMember?.(did, { did: m.did, add, gen: 0 })).rejects.toThrow(
-      MEMBER_NOT_EFFECTIVE,
-    )
-    expect(await resolver.resolveMember?.(did, { did: m.did, add, gen: 1 })).toMatchObject({
+    await expect(
+      resolver.resolveMember?.({ subject: did, member: { did: m.did, add, gen: 0 } }),
+    ).rejects.toThrow(MEMBER_NOT_EFFECTIVE)
+    expect(
+      await resolver.resolveMember?.({ subject: did, member: { did: m.did, add, gen: 1 } }),
+    ).toMatchObject({
       lease: LEASE,
     })
     // A blind reset carries no one: the member is gone in every generation.
-    const blind = serving({ chain: [icp, createReset(seed, profile, 1)], events: [] })
+    const blind = serving({
+      chain: [icp, await createReset({ seed, profile, gen: 1 })],
+      events: [],
+    })
     for (const gen of [0, 1]) {
-      await expect(blind.resolveMember?.(did, { did: m.did, add, gen })).rejects.toThrow(
-        MEMBER_NOT_EFFECTIVE,
-      )
+      await expect(
+        blind.resolveMember?.({ subject: did, member: { did: m.did, add, gen } }),
+      ).rejects.toThrow(MEMBER_NOT_EFFECTIVE)
     }
   })
 })
@@ -198,13 +222,13 @@ describe('resolveMember()', () => {
 describe('epoch-aware resolution', () => {
   test('a denial made in the epoch is in the resolved deny set', async () => {
     const audience = 'did:key:zAudience'
-    const resolver = serving({ chain, events: [revokeOf(audience, [head.epoch])] })
+    const resolver = serving({ chain, events: [await revokeOf(audience, [head.epoch])] })
     expect((await resolver.resolveDenySet?.(did))?.has(audience)).toBe(true)
   })
 
   test('with a history store, a later presentation withholding a seen epoch event cannot hide it', async () => {
     const audience = 'did:key:zAudience'
-    let served: ControllerLog = { chain, events: [added, revokeOf(audience, [add])] }
+    let served: ControllerLog = { chain, events: [added, await revokeOf(audience, [add])] }
     const resolver = createControllerResolver({
       loadLog: async () => served,
       history: createMemoryLogStore(),
@@ -214,13 +238,13 @@ describe('epoch-aware resolution', () => {
     // presentation alone.
     served = { chain, events: [] }
     expect((await resolver.resolveDenySet?.(did))?.has(audience)).toBe(true)
-    await expect(resolver.resolveMember?.(did, { did: m.did, add, gen: 0 })).resolves.toMatchObject(
-      { lease: LEASE },
-    )
+    await expect(
+      resolver.resolveMember?.({ subject: did, member: { did: m.did, add, gen: 0 } }),
+    ).resolves.toMatchObject({ lease: LEASE })
   })
 
   test('a retired key denied in the epoch no longer resolves historically', async () => {
-    const rotated = createRotate({
+    const rotated = await createRotate({
       seed,
       profile,
       did,
@@ -228,13 +252,16 @@ describe('epoch-aware resolution', () => {
       snapshot: { members: [], deny: [] },
     })
     const rotatedChain = [icp, rotated]
-    const settled = headOf({ chain: rotatedChain, events: [] })
+    const settled = await headOf({ chain: rotatedChain, events: [] })
     const retired = icp.event.k[0] ?? ''
     // CONTROL — a rotate alone keeps the retired key good for past-issued material.
     await expect(
-      serving({ chain: rotatedChain, events: [] }).resolveHistoric?.(did, { kid: `#${retired}` }),
+      serving({ chain: rotatedChain, events: [] }).resolveHistoric?.({
+        did,
+        header: { kid: `#${retired}` },
+      }),
     ).resolves.toMatchObject({ alg: 'EdDSA' })
-    const denial = createRevoke({
+    const denial = await createRevoke({
       signer: root,
       did,
       head: settled,
@@ -242,30 +269,36 @@ describe('epoch-aware resolution', () => {
       target: keyTarget(retired),
     })
     await expect(
-      serving({ chain: rotatedChain, events: [denial] }).resolveHistoric?.(did, {
-        kid: `#${retired}`,
+      serving({ chain: rotatedChain, events: [denial] }).resolveHistoric?.({
+        did,
+        header: {
+          kid: `#${retired}`,
+        },
       }),
     ).rejects.toThrow(KEY_REVOKED)
   })
 })
 
-describe('saturation', () => {
-  const events = [revokeOf('did:key:zA', [head.epoch]), revokeOf('did:key:zB', [head.epoch])]
+describe('saturation', async () => {
+  const events = [
+    await revokeOf('did:key:zA', [head.epoch]),
+    await revokeOf('did:key:zB', [head.epoch]),
+  ]
   const saturated: ControllerLog = { chain, events: [added, ...events] }
   const limits = { MAX_EPOCH_EVENTS: 2 }
 
   async function expectEveryMemberRefused(resolver: DIDMethodResolver): Promise<void> {
     const expected = `${EPOCH_SATURATED}: ${did}`
-    await expect(resolver.resolve(did, {})).rejects.toThrow(expected)
-    await expect(resolver.resolveHistoric?.(did, {})).rejects.toThrow(expected)
+    await expect(resolver.resolve({ did, header: {} })).rejects.toThrow(expected)
+    await expect(resolver.resolveHistoric?.({ did, header: {} })).rejects.toThrow(expected)
     await expect(
-      resolver.resolveMemberHistoric?.(did, { did: m.did, add, gen: 0 }),
+      resolver.resolveMemberHistoric?.({ subject: did, member: { did: m.did, add, gen: 0 } }),
     ).rejects.toThrow(expected)
     await expect(resolver.resolveDenySet?.(did)).rejects.toThrow(expected)
     await expect(resolver.resolveAgreementKey?.(did)).rejects.toThrow(expected)
-    await expect(resolver.resolveMember?.(did, { did: m.did, add, gen: 0 })).rejects.toThrow(
-      expected,
-    )
+    await expect(
+      resolver.resolveMember?.({ subject: did, member: { did: m.did, add, gen: 0 } }),
+    ).rejects.toThrow(expected)
   }
 
   test('a saturated epoch refuses every resolver member', async () => {
@@ -278,7 +311,7 @@ describe('saturation', () => {
     )
     await expectEveryMemberRefused(remembering)
 
-    const result = foldLog(did, saturated)
+    const result = await foldLog({ did, input: saturated })
     if (!result.ok) throw new Error('fixture does not fold')
     await expectEveryMemberRefused(
       fixedViewResolver(did, result.states, { ...result.head, saturated: true }),
@@ -287,10 +320,12 @@ describe('saturation', () => {
 
   test('CONTROL: the same log under the default threshold answers', async () => {
     const resolver = createControllerResolverWithin({ loadLog: async () => saturated }, {})
-    await expect(resolver.resolve(did, {})).resolves.toMatchObject({ alg: 'EdDSA' })
-    await expect(resolver.resolveMember?.(did, { did: m.did, add, gen: 0 })).resolves.toMatchObject(
-      { lease: LEASE },
-    )
+    await expect(resolver.resolve({ did, header: {} })).resolves.toMatchObject({
+      alg: 'EdDSA',
+    })
+    await expect(
+      resolver.resolveMember?.({ subject: did, member: { did: m.did, add, gen: 0 } }),
+    ).resolves.toMatchObject({ lease: LEASE })
   })
 })
 
@@ -306,11 +341,11 @@ describe('frozen()', () => {
         loads++
         return asked === did ? current : undefined
       },
-      appendRevokeOfAudience() {
-        current = { chain, events: [...current.events, revokeOf(audience, [add])] }
+      async appendRevokeOfAudience() {
+        current = { chain, events: [...current.events, await revokeOf(audience, [add])] }
       },
-      removeMember() {
-        const removal = createRemove({ signer: root, did, head, parents: [add], add })
+      async removeMember() {
+        const removal = await createRemove({ signer: root, did, head, parents: [add], add })
         current = { chain, events: [...current.events, removal] }
       },
       loads: () => loads,
@@ -321,23 +356,27 @@ describe('frozen()', () => {
     const store = changingStore()
     const resolver = createControllerResolver({ loadLog: store.loadLog })
     const view = resolver.frozen()
-    await view.resolveMember?.(did, query)
-    store.appendRevokeOfAudience()
-    store.removeMember()
+    await view.resolveMember?.({ subject: did, member: query })
+    await store.appendRevokeOfAudience()
+    await store.removeMember()
     expect((await view.resolveDenySet?.(did))?.has(audience)).toBe(false)
-    await expect(view.resolveMember?.(did, query)).resolves.toMatchObject({ lease: LEASE })
-    await view.resolve(did, {})
-    await expect(view.resolveMemberHistoric?.(did, query)).resolves.toEqual({
+    await expect(view.resolveMember?.({ subject: did, member: query })).resolves.toMatchObject({
+      lease: LEASE,
+    })
+    await view.resolve({ did, header: {} })
+    await expect(view.resolveMemberHistoric?.({ subject: did, member: query })).resolves.toEqual({
       key: { alg: 'EdDSA', publicKey: ed25519.getPublicKey(m.privateKey) },
       lease: LEASE,
       removed: false,
     })
-    await view.resolveHistoric?.(did, {})
+    await view.resolveHistoric?.({ did, header: {} })
     await view.resolveAgreementKey?.(did)
     expect(store.loads()).toBe(1)
     // The live resolver re-reads.
     expect((await resolver.resolveDenySet?.(did))?.has(audience)).toBe(true)
-    await expect(resolver.resolveMember?.(did, query)).rejects.toThrow(MEMBER_NOT_EFFECTIVE)
+    await expect(resolver.resolveMember?.({ subject: did, member: query })).rejects.toThrow(
+      MEMBER_NOT_EFFECTIVE,
+    )
     // A fresh view sees the new state.
     expect((await resolver.frozen().resolveDenySet?.(did))?.has(audience)).toBe(true)
   })
@@ -349,8 +388,8 @@ describe('frozen()', () => {
       history: createMemoryLogStore(),
     })
     const view = resolver.frozen()
-    await view.resolveMember?.(did, query)
-    store.appendRevokeOfAudience()
+    await view.resolveMember?.({ subject: did, member: query })
+    await store.appendRevokeOfAudience()
     expect((await view.resolveDenySet?.(did))?.has(audience)).toBe(false)
     expect((await resolver.resolveDenySet?.(did))?.has(audience)).toBe(true)
     expect(store.loads()).toBe(2)
@@ -370,10 +409,10 @@ describe('frozen()', () => {
         return read
       },
     }).frozen()
-    const first = view.resolveMember?.(did, query)
+    const first = view.resolveMember?.({ subject: did, member: query })
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(store.loads()).toBe(1)
-    store.appendRevokeOfAudience()
+    await store.appendRevokeOfAudience()
     const second = view.resolveDenySet?.(did)
     release()
     const [member, denied] = await Promise.all([first, second])
@@ -392,72 +431,86 @@ describe('frozen()', () => {
         return withMember
       },
     }).frozen()
-    await expect(view.resolveMember?.(did, query)).rejects.toThrow('store unavailable')
+    await expect(view.resolveMember?.({ subject: did, member: query })).rejects.toThrow(
+      'store unavailable',
+    )
     fail = false
-    await expect(view.resolveMember?.(did, query)).resolves.toMatchObject({ lease: LEASE })
+    await expect(view.resolveMember?.({ subject: did, member: query })).resolves.toMatchObject({
+      lease: LEASE,
+    })
   })
 
   test('a frozen view answers only for the DIDs its loader knows', async () => {
     const view = createControllerResolver({ loadLog: async () => undefined }).frozen()
-    await expect(view.resolve(did, {})).rejects.toThrow(/Unknown DID/)
-    await expect(serving(withMember).frozen().resolve('did:key:zNotKokuin', {})).rejects.toThrow(
-      /Unknown DID/,
-    )
+    await expect(view.resolve({ did, header: {} })).rejects.toThrow(/Unknown DID/)
+    await expect(
+      serving(withMember).frozen().resolve({ did: 'did:key:zNotKokuin', header: {} }),
+    ).rejects.toThrow(/Unknown DID/)
   })
 })
 
-describe('historic management membership', () => {
+describe('historic management membership', async () => {
   const query = { did: m.did, add, gen: 0 }
-  const removed = createRemove({ signer: root, did, head, parents: [add], add })
+  const removed = await createRemove({ signer: root, did, head, parents: [add], add })
   const removedLog = { chain, events: [added, removed] }
-  const settle = (log: ControllerLog, deny = headOf(log).deny) => {
+  const settle = async (log: ControllerLog, deny?: ReadonlySet<string>) => {
     const prior = log.chain.at(-1)
     if (prior === undefined) throw new Error('fixture has no chain')
-    return createRotate({
+    return await createRotate({
       seed,
       profile,
       did,
       prior: prior.event,
-      snapshot: { ...snapshotOf(headOf(log)), deny: [...deny] },
+      snapshot: {
+        ...snapshotOf({ state: await headOf(log) }),
+        deny: [...(deny ?? (await headOf(log)).deny)],
+      },
     })
   }
 
-  const carried = settle(withMember)
+  const carried = await settle(withMember)
   const carriedLog = { chain: [icp, carried], events: [] }
-  const carriedHead = headOf(carriedLog)
-  const removedAfterSettle = createRemove({
+  const carriedHead = await headOf(carriedLog)
+  const removedAfterSettle = await createRemove({
     signer: root,
     did,
     head: carriedHead,
     parents: [carriedHead.epoch],
     add,
   })
-  const tombstone = settle(removedLog)
+  const tombstone = await settle(removedLog)
   const removedAfterSettleLog = { ...carriedLog, events: [removedAfterSettle] }
-  const droppedAfterRemoval = createRotate({
+  const droppedAfterRemoval = await createRotate({
     seed,
     profile,
     did,
     prior: carried.event,
-    snapshot: snapshotOf(headOf(removedAfterSettleLog), { members: [add] }),
+    snapshot: snapshotOf({ state: await headOf(removedAfterSettleLog), members: [add] }),
   })
-  const prune = (prior: SignedEvent) =>
-    createRotate({ seed, profile, did, prior: prior.event, snapshot: { members: [], deny: [] } })
+  const prune = async (prior: SignedEvent) => {
+    return await createRotate({
+      seed,
+      profile,
+      did,
+      prior: prior.event,
+      snapshot: { members: [], deny: [] },
+    })
+  }
   const historicCases: Array<[string, ControllerLog, boolean]> = [
     ['effective member', withMember, false],
     ['removed in the current epoch', removedLog, true],
     ['added and removed before settlement', { chain: [icp, tombstone], events: [] }, true],
     ['removed after settlement', { chain: [icp, carried], events: [removedAfterSettle] }, true],
-    ['pruned live member', { chain: [icp, carried, prune(carried)], events: [] }, true],
+    ['pruned live member', { chain: [icp, carried, await prune(carried)], events: [] }, true],
     [
       'removed in epoch then settled without tombstone',
       { chain: [icp, carried, droppedAfterRemoval], events: [] },
       true,
     ],
-    ['pruned tombstone', { chain: [icp, tombstone, prune(tombstone)], events: [] }, true],
+    ['pruned tombstone', { chain: [icp, tombstone, await prune(tombstone)], events: [] }, true],
     [
       'removed then denied at settlement',
-      { chain: [icp, settle(removedLog, new Set([m.did]))], events: [] },
+      { chain: [icp, await settle(removedLog, new Set([m.did]))], events: [] },
       true,
     ],
   ]
@@ -466,7 +519,7 @@ describe('historic management membership', () => {
     test.each(historicCases)('%s', async (_label, log, removed) => {
       const resolver = serving(log)
       const view = frozen ? resolver.frozen() : resolver
-      await expect(view.resolveMemberHistoric?.(did, query)).resolves.toEqual({
+      await expect(view.resolveMemberHistoric?.({ subject: did, member: query })).resolves.toEqual({
         key: { alg: 'EdDSA', publicKey: ed25519.getPublicKey(m.privateKey) },
         lease: LEASE,
         removed,
@@ -475,8 +528,8 @@ describe('historic management membership', () => {
 
     test('re-adding the same key keeps the old incarnation removed and the new one live', async () => {
       const tombstoneLog = { chain: [icp, tombstone], events: [] }
-      const next = headOf(tombstoneLog)
-      const readded = createAdd({
+      const next = await headOf(tombstoneLog)
+      const readded = await createAdd({
         seed,
         profile,
         did,
@@ -493,7 +546,7 @@ describe('historic management membership', () => {
         [newAdd, false],
       ] as const) {
         await expect(
-          view.resolveMemberHistoric?.(did, { ...query, add: incarnation }),
+          view.resolveMemberHistoric?.({ subject: did, member: { ...query, add: incarnation } }),
         ).resolves.toEqual({
           key: { alg: 'EdDSA', publicKey: ed25519.getPublicKey(m.privateKey) },
           lease: LEASE,
@@ -506,30 +559,39 @@ describe('historic management membership', () => {
   test('removal preserves historic authority before and after settlement, including later denials', async () => {
     for (const log of [
       removedLog,
-      { chain: [icp, settle(removedLog)], events: [] },
-      { chain: [icp, settle(removedLog, new Set([m.did]))], events: [] },
-      { chain: [icp, settle(removedLog, new Set([keyTarget(m.key)]))], events: [] },
+      { chain: [icp, await settle(removedLog)], events: [] },
+      { chain: [icp, await settle(removedLog, new Set([m.did]))], events: [] },
+      { chain: [icp, await settle(removedLog, new Set([keyTarget(m.key)]))], events: [] },
     ]) {
       const resolver = serving(log)
-      await expect(resolver.resolveMember?.(did, query)).rejects.toThrow(MEMBER_NOT_EFFECTIVE)
-      await expect(resolver.resolveMemberHistoric?.(did, query)).resolves.toMatchObject({
+      await expect(resolver.resolveMember?.({ subject: did, member: query })).rejects.toThrow(
+        MEMBER_NOT_EFFECTIVE,
+      )
+      await expect(
+        resolver.resolveMemberHistoric?.({ subject: did, member: query }),
+      ).resolves.toMatchObject({
         lease: LEASE,
       })
-      await expect(resolver.frozen().resolveMemberHistoric?.(did, query)).resolves.toMatchObject({
+      await expect(
+        resolver.frozen().resolveMemberHistoric?.({ subject: did, member: query }),
+      ).resolves.toMatchObject({
         lease: LEASE,
       })
     }
   })
 
   test('a member carried through settlement can be removed in the next epoch', async () => {
-    const rot = settle(withMember)
-    const next = headOf({ chain: [icp, rot], events: [] })
-    const rmv = createRemove({ signer: root, did, head: next, parents: [next.epoch], add })
+    const rot = await settle(withMember)
+    const next = await headOf({ chain: [icp, rot], events: [] })
+    const rmv = await createRemove({ signer: root, did, head: next, parents: [next.epoch], add })
     await expect(
-      serving({ chain: [icp, rot], events: [rmv] }).resolveMemberHistoric?.(did, query),
+      serving({ chain: [icp, rot], events: [rmv] }).resolveMemberHistoric?.({
+        subject: did,
+        member: query,
+      }),
     ).resolves.toMatchObject({ lease: LEASE })
     // A previous chain snapshot remains evidence even if root later prunes the member.
-    const pruned = createRotate({
+    const pruned = await createRotate({
       seed,
       profile,
       did,
@@ -537,17 +599,22 @@ describe('historic management membership', () => {
       snapshot: { members: [], deny: [] },
     })
     await expect(
-      serving({ chain: [icp, rot, pruned], events: [] }).resolveMemberHistoric?.(did, query),
+      serving({ chain: [icp, rot, pruned], events: [] }).resolveMemberHistoric?.({
+        subject: did,
+        member: query,
+      }),
     ).resolves.toMatchObject({ lease: LEASE })
   })
 
   test('historic fallback refuses evidence checkpointed in an earlier generation', async () => {
-    const rot = settle(withMember)
+    const rot = await settle(withMember)
     const before = { chain: [icp, rot], events: [] }
-    await expect(serving(before).resolveMemberHistoric?.(did, query)).resolves.toMatchObject({
+    await expect(
+      serving(before).resolveMemberHistoric?.({ subject: did, member: query }),
+    ).resolves.toMatchObject({
       lease: LEASE,
     })
-    const pruned = createRotate({
+    const pruned = await createRotate({
       seed,
       profile,
       did,
@@ -556,24 +623,31 @@ describe('historic management membership', () => {
     })
     // CONTROL: fallback to the same checkpoint works within its generation.
     await expect(
-      serving({ chain: [icp, rot, pruned], events: [] }).resolveMemberHistoric?.(did, query),
+      serving({ chain: [icp, rot, pruned], events: [] }).resolveMemberHistoric?.({
+        subject: did,
+        member: query,
+      }),
     ).resolves.toMatchObject({ lease: LEASE })
-    for (const snapshot of [undefined, snapshotOf(headOf(before))]) {
-      const reset = createReset(seed, profile, 1, snapshot)
+    for (const snapshot of [undefined, snapshotOf({ state: await headOf(before) })]) {
+      const reset = await createReset({ seed, profile, gen: 1, snapshot })
       const resolver = serving({ chain: [icp, rot, reset], events: [] })
-      await expect(resolver.resolveMemberHistoric?.(did, query)).rejects.toThrow(
-        'not a historic management member',
-      )
+      await expect(
+        resolver.resolveMemberHistoric?.({ subject: did, member: query }),
+      ).rejects.toThrow('not a historic management member')
       const currentQuery = { ...query, gen: 1 }
       if (snapshot === undefined) {
-        await expect(resolver.resolveMemberHistoric?.(did, currentQuery)).rejects.toThrow(
-          'not a historic management member',
-        )
+        await expect(
+          resolver.resolveMemberHistoric?.({ subject: did, member: currentQuery }),
+        ).rejects.toThrow('not a historic management member')
       } else {
-        await expect(resolver.resolveMemberHistoric?.(did, currentQuery)).resolves.toMatchObject({
+        await expect(
+          resolver.resolveMemberHistoric?.({ subject: did, member: currentQuery }),
+        ).resolves.toMatchObject({
           lease: LEASE,
         })
-        await expect(resolver.resolveMember?.(did, currentQuery)).resolves.toMatchObject({
+        await expect(
+          resolver.resolveMember?.({ subject: did, member: currentQuery }),
+        ).resolves.toMatchObject({
           lease: LEASE,
         })
       }
@@ -583,8 +657,8 @@ describe('historic management membership', () => {
   test('current DID and key denials refuse pruned live evidence but preserve pruned tombstones', async () => {
     for (const target of [m.did, keyTarget(m.key)]) {
       for (const removed of [false, true]) {
-        const rot = settle(removed ? removedLog : withMember)
-        const pruned = createRotate({
+        const rot = await settle(removed ? removedLog : withMember)
+        const pruned = await createRotate({
           seed,
           profile,
           did,
@@ -592,8 +666,8 @@ describe('historic management membership', () => {
           snapshot: { members: [], deny: [target] },
         })
         const log = { chain: [icp, rot, pruned], events: [] }
-        expect(headOf(log).members.has(add)).toBe(false)
-        const result = serving(log).resolveMemberHistoric?.(did, query)
+        expect((await headOf(log)).members.has(add)).toBe(false)
+        const result = serving(log).resolveMemberHistoric?.({ subject: did, member: query })
         if (removed) {
           await expect(result).resolves.toMatchObject({ lease: LEASE })
         } else {
@@ -609,25 +683,38 @@ describe('historic management membership', () => {
       [withMember, { ...query, did: memberOf(32).did }],
       [withMember, { ...query, gen: 1 }],
       [
-        { chain: [icp, createReset(seed, profile, 1, snapshotOf(headOf(withMember)))], events: [] },
+        {
+          chain: [
+            icp,
+            await createReset({
+              seed,
+              profile,
+              gen: 1,
+              snapshot: snapshotOf({ state: await headOf(withMember) }),
+            }),
+          ],
+          events: [],
+        },
         query,
       ],
-      [{ chain, events: [added, revokeOf(m.did, [add])] }, query],
-      [{ chain, events: [added, revokeOf(keyTarget(m.key), [head.epoch])] }, query],
+      [{ chain, events: [added, await revokeOf(m.did, [add])] }, query],
+      [{ chain, events: [added, await revokeOf(keyTarget(m.key), [head.epoch])] }, query],
     ]
     for (const [log, asked] of cases) {
       const error = await refusal(
-        serving(log).resolveMemberHistoric?.(did, asked) ?? Promise.resolve(),
+        serving(log).resolveMemberHistoric?.({ subject: did, member: asked }) ?? Promise.resolve(),
       )
       expect(isIssuerKeyNotFoundError(error)).toBe(true)
       expect(String(error)).toContain('not a historic management member')
     }
     // CONTROL: the admitted incarnation without denial resolves.
-    await expect(serving(withMember).resolveMemberHistoric?.(did, query)).resolves.toMatchObject({
+    await expect(
+      serving(withMember).resolveMemberHistoric?.({ subject: did, member: query }),
+    ).resolves.toMatchObject({
       lease: LEASE,
     })
-    const deny = revokeOf(m.did, [head.epoch])
-    const refusedAdd = createAdd({
+    const deny = await revokeOf(m.did, [head.epoch])
+    const refusedAdd = await createAdd({
       seed,
       profile,
       did,
@@ -635,65 +722,91 @@ describe('historic management membership', () => {
       parents: [digest(deny)],
       member: { did: m.did, key: m.key, lease: LEASE },
     })
-    expect(headOf({ chain, events: [deny, refusedAdd] }).members.has(digest(refusedAdd))).toBe(
-      false,
-    )
+    expect(
+      (await headOf({ chain, events: [deny, refusedAdd] })).members.has(digest(refusedAdd)),
+    ).toBe(false)
     await expect(
-      serving({ chain, events: [deny, refusedAdd] }).resolveMemberHistoric?.(did, {
-        ...query,
-        add: digest(refusedAdd),
+      serving({ chain, events: [deny, refusedAdd] }).resolveMemberHistoric?.({
+        subject: did,
+        member: {
+          ...query,
+          add: digest(refusedAdd),
+        },
       }),
     ).rejects.toThrow('not a historic management member')
   })
 
   test('a concurrent add and denial admits only historic authority after removal', async () => {
-    const denial = revokeOf(m.did, [head.epoch])
-    const removal = createRemove({ signer: root, did, head, parents: [add, digest(denial)], add })
+    const denial = await revokeOf(m.did, [head.epoch])
+    const removal = await createRemove({
+      signer: root,
+      did,
+      head,
+      parents: [add, digest(denial)],
+      add,
+    })
     const log = { chain, events: [added, denial, removal] }
-    expect(headOf(log).members.get(add)).toMatchObject({ removed: true, effective: false })
-    await expect(serving(log).resolveMemberHistoric?.(did, query)).resolves.toMatchObject({
+    expect((await headOf(log)).members.get(add)).toMatchObject({ removed: true, effective: false })
+    await expect(
+      serving(log).resolveMemberHistoric?.({ subject: did, member: query }),
+    ).resolves.toMatchObject({
       lease: LEASE,
     })
-    const rot = settle(log)
+    const rot = await settle(log)
     await expect(
-      serving({ chain: [icp, rot], events: [] }).resolveMemberHistoric?.(did, query),
+      serving({ chain: [icp, rot], events: [] }).resolveMemberHistoric?.({
+        subject: did,
+        member: query,
+      }),
     ).resolves.toMatchObject({ lease: LEASE })
     // CONTROL: without removal the concurrent denial refuses historic authority.
     await expect(
-      serving({ chain, events: [added, denial] }).resolveMemberHistoric?.(did, query),
+      serving({ chain, events: [added, denial] }).resolveMemberHistoric?.({
+        subject: did,
+        member: query,
+      }),
     ).rejects.toThrow('not a historic management member')
   })
 
   test('historic queries normalise member DIDs', async () => {
     const long = peerDID(m.key)
-    const admission = addOf({ did: long, key: m.key })
+    const admission = await addOf({ did: long, key: m.key })
     await expect(
-      serving({ chain, events: [admission] }).resolveMemberHistoric?.(did, {
-        did: getPeer4ShortForm(long),
-        add: digest(admission),
-        gen: 0,
+      serving({ chain, events: [admission] }).resolveMemberHistoric?.({
+        subject: did,
+        member: {
+          did: getPeer4ShortForm(long),
+          add: digest(admission),
+          gen: 0,
+        },
       }),
     ).resolves.toMatchObject({ lease: LEASE })
   })
 
-  test('tombstones refuse root renewal and cannot sign removal, renewal or revocation', () => {
-    const rot = settle(removedLog)
+  test('tombstones refuse root renewal and cannot sign removal, renewal or revocation', async () => {
+    const rot = await settle(removedLog)
     const nextChain = [icp, rot]
-    const next = headOf({ chain: nextChain, events: [] })
+    const next = await headOf({ chain: nextChain, events: [] })
     const signer: EpochSigner = { member: { add, privateKey: m.privateKey } }
     const events = [
-      createRemove({ signer, did, head: next, parents: [next.epoch], add }),
-      createRenew({ signer, did, head: next, parents: [next.epoch], add, lease: LEASE + 1 }),
-      createRevoke({ signer, did, head: next, parents: [next.epoch], target: memberOf(32).did }),
+      await createRemove({ signer, did, head: next, parents: [next.epoch], add }),
+      await createRenew({ signer, did, head: next, parents: [next.epoch], add, lease: LEASE + 1 }),
+      await createRevoke({
+        signer,
+        did,
+        head: next,
+        parents: [next.epoch],
+        target: memberOf(32).did,
+      }),
     ]
     for (const event of events) {
-      const result = foldLog(did, { chain: nextChain, events: [event] })
+      const result = await foldLog({ did, input: { chain: nextChain, events: [event] } })
       expect(result.ok && result.head.members.has(add)).toBe(false)
       expect(result.ok && result.head.tombstones?.get(add)).toMatchObject({ lease: LEASE })
       expect(result.ok && result.rejected).toBe(1)
       expect(result.ok && result.head.deny.size).toBe(0)
     }
-    const renewal = createRenew({
+    const renewal = await createRenew({
       signer: root,
       did,
       head: next,
@@ -701,12 +814,12 @@ describe('historic management membership', () => {
       add,
       lease: LEASE + 1,
     })
-    const result = foldLog(did, { chain: nextChain, events: [renewal] })
+    const result = await foldLog({ did, input: { chain: nextChain, events: [renewal] } })
     expect(result.ok && result.applied).toEqual([])
     expect(result.ok && result.rejected).toBe(1)
-    const renewed = headOf({ chain: nextChain, events: [renewal] })
+    const renewed = await headOf({ chain: nextChain, events: [renewal] })
     expect(renewed.members.has(add)).toBe(false)
     expect(renewed.tombstones?.get(add)).toEqual(next.tombstones?.get(add))
-    expect(snapshotOf(next, { members: [add] }).removed ?? []).toEqual([])
+    expect(snapshotOf({ state: next, members: [add] }).removed ?? []).toEqual([])
   })
 })

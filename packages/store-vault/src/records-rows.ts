@@ -13,7 +13,7 @@ import {
   recordPayloadMatches,
   verifySignedRecord,
 } from '@kokuin/records'
-import { decodeVaultRecord, VAULT_RECORD_TYPES } from '@kokuin/vault'
+import { decodeVaultRecord, VAULT_RECORD_TYPES, VaultRecordPayloadError } from '@kokuin/vault'
 
 import { PARAMETER_BUDGET } from './batch.js'
 import type { VaultDatabase } from './record-context.js'
@@ -23,10 +23,12 @@ import type { VaultMethods } from './records-methods.js'
 import { settleAll } from './settle.js'
 import type { VaultStoreAPI } from './types.js'
 
+export type VaultRecordRowErrorParams = RecordKey & { cause?: unknown }
+
 export class VaultRecordRowError extends Error {
   #type: string
   #id: string
-  constructor(key: RecordKey & { cause?: unknown }) {
+  constructor(key: VaultRecordRowErrorParams) {
     super(`Stored vault record ${key.type} ${key.id} is corrupt`, { cause: key.cause })
     this.name = 'VaultRecordRowError'
     this.#type = key.type
@@ -135,39 +137,47 @@ export async function assertDomain(bound: Bound): Promise<void> {
 export async function checked(row: VaultRecordTable, bound: Bound): Promise<CheckedRecord | null> {
   const key = { type: row.type, owner: row.owner, id: row.id }
 
+  let copy: SignedRecord
+  let meta: unknown
   try {
     if (row.deleted !== 0 && row.deleted !== 1) throw new Error('invalid deleted flag')
-
-    const payload = row.payload === null ? null : Uint8Array.from(row.payload)
-
+    const payload = row.payload === null ? null : new Uint8Array(row.payload)
     if ((row.deleted === 1) !== (payload === null)) throw new Error('invalid payload liveness')
-
-    const meta = json(row.meta)
-
+    meta = json(row.meta)
     if (meta === null || typeof meta !== 'object' || Array.isArray(meta))
       throw new Error('invalid metadata')
-
-    const copy = { ...key, hlc: row.hlc, opJWT: row.op_jwt, opHash: row.op_hash, payload }
-    const op = await verifySignedRecord(copy, bound.opKind, bound.methods)
-
-    if (op === null) return null
-
-    if (
-      !recordPayloadMatches(copy, op.claim) ||
-      row.payload_digest !== op.claim.payloadDigest ||
-      row.deleted !== Number(op.claim.deleted) ||
-      recordClaimDigest({ ...op.claim, meta: meta as Record<string, unknown> }) !==
-        recordClaimDigest(op.claim)
-    )
-      throw new Error('stored claim mismatch')
-
-    if (!op.claim.deleted) decodeVaultRecord(copy, op.claim.meta)
-
-    return { copy, op }
+    copy = { ...key, hlc: row.hlc, opJWT: row.op_jwt, opHash: row.op_hash, payload }
   } catch (cause) {
     // biome-ignore lint/style/useErrorCause: the constructor forwards cause
     throw new VaultRecordRowError({ ...key, cause })
   }
+  const op = await verifySignedRecord({
+    record: copy,
+    opKind: bound.opKind,
+    methods: bound.methods,
+    crypto: bound.params?.crypto,
+  })
+  if (op === null) return null
+  if (
+    !(await recordPayloadMatches({ record: copy, claim: op.claim, ...bound.params })) ||
+    row.payload_digest !== op.claim.payloadDigest ||
+    row.deleted !== Number(op.claim.deleted) ||
+    (await recordClaimDigest({
+      claim: { ...op.claim, meta: meta as Record<string, unknown> },
+      ...bound.params,
+    })) !== op.contentDigest
+  )
+    throw new VaultRecordRowError(key)
+  if (!op.claim.deleted) {
+    try {
+      await decodeVaultRecord({ record: copy, recordMeta: op.claim.meta, ...bound.params })
+    } catch (cause) {
+      if (!(cause instanceof VaultRecordPayloadError)) throw cause
+      // biome-ignore lint/style/useErrorCause: the constructor forwards cause
+      throw new VaultRecordRowError({ ...key, cause })
+    }
+  }
+  return { copy, op }
 }
 
 export async function decision(
@@ -190,7 +200,7 @@ export async function decision(
 
     if (value === null) continue
 
-    const contentDigest = recordClaimDigest(value.op.claim)
+    const contentDigest = value.op.contentDigest
     const decisionHLC =
       typeof value.op.claim.meta.version === 'string'
         ? value.op.claim.meta.version

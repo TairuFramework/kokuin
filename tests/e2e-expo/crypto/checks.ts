@@ -15,20 +15,30 @@ export async function checkNativeCrypto(native: CryptoProvider): Promise<void> {
   const seed = hexToBytes('9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60')
   const message = new Uint8Array()
   const key = ed25519.getPublicKey(seed)
-  const expected = await strictNoble.sign('EdDSA', seed, message)
+  const expected = await strictNoble.sign({ alg: 'EdDSA', privateKey: seed, message })
   const padded = new Uint8Array(40)
   padded.set(seed, 4)
-  const pending = native.sign('EdDSA', padded.subarray(4, 36), message)
+  const pending = native.sign({
+    alg: 'EdDSA',
+    privateKey: padded.subarray(4, 36),
+    message,
+  })
   padded.fill(0)
   const retained = await pending
   equal(retained, expected)
-  const signatures = await native.signBatch('EdDSA', [
-    { privateKey: seed, message },
-    { privateKey: seed, message: new Uint8Array([1]) },
-  ])
+  const signatures = await native.signBatch({
+    alg: 'EdDSA',
+    items: [
+      { privateKey: seed, message },
+      { privateKey: seed, message: new Uint8Array([1]) },
+    ],
+  })
   equal(signatures[0] as Uint8Array, expected)
-  equal(signatures[1] as Uint8Array, await strictNoble.sign('EdDSA', seed, new Uint8Array([1])))
-  if (!(await native.verify('EdDSA', retained, message, key)))
+  equal(
+    signatures[1] as Uint8Array,
+    await strictNoble.sign({ alg: 'EdDSA', privateKey: seed, message: new Uint8Array([1]) }),
+  )
+  if (!(await native.verify({ alg: 'EdDSA', signature: retained, message, publicKey: key })))
     throw new Error('Valid Ed25519 signature rejected')
   const results = await native.verifyBatch([
     { alg: 'EdDSA', signature: retained, message, publicKey: key },
@@ -42,18 +52,28 @@ export async function checkNativeCrypto(native: CryptoProvider): Promise<void> {
   secret[31] = 1
   const esKey = p256.getPublicKey(secret)
   const esSignature = p256.sign(message, secret, { lowS: true })
-  if (!(await native.verify('ES256', esSignature, message, esKey)))
+  if (
+    !(await native.verify({
+      alg: 'ES256',
+      signature: esSignature,
+      message,
+      publicKey: esKey,
+    }))
+  )
     throw new Error('Valid ES256 signature rejected')
   for (const length of [16, 32, 64]) {
-    equal(await native.blake3(message, length), await strictNoble.blake3(message, length))
-    const hashes = await native.blake3Batch([message, seed], length)
-    equal(hashes[0] as Uint8Array, await strictNoble.blake3(message, length))
-    equal(hashes[1] as Uint8Array, await strictNoble.blake3(seed, length))
+    equal(
+      await native.blake3({ input: message, dkLen: length }),
+      await strictNoble.blake3({ input: message, dkLen: length }),
+    )
+    const hashes = await native.blake3Batch({ inputs: [message, seed], dkLen: length })
+    equal(hashes[0] as Uint8Array, await strictNoble.blake3({ input: message, dkLen: length }))
+    equal(hashes[1] as Uint8Array, await strictNoble.blake3({ input: seed, dkLen: length }))
   }
   if (
-    (await native.signBatch('EdDSA', [])).length !== 0 ||
+    (await native.signBatch({ alg: 'EdDSA', items: [] })).length !== 0 ||
     (await native.verifyBatch([])).length !== 0 ||
-    (await native.blake3Batch([], 32)).length !== 0
+    (await native.blake3Batch({ inputs: [], dkLen: 32 })).length !== 0
   )
     throw new Error('Empty batch mismatch')
   // Retained output must survive subsequent native allocations and Promise settlements.

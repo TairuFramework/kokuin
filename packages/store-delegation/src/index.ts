@@ -1,6 +1,15 @@
 export type { RevocationClaims } from '@kokuin/capability'
 
-export type { DelegationStoreAPI, PurgeParams } from './api.js'
+export type {
+  CreateDelegationStoreParams,
+  DelegationStoreAPI,
+  DelegationStoreAPIDeletePendingRevocationsFromOtherIssuersParams,
+  DelegationStoreAPIGetPendingRevocationByIssuerParams,
+  DelegationStoreAPIGetRevocationByIssuerParams,
+  DelegationStoreAPIIsRevokedByParams,
+  DelegationStoreAPIMarkRevocationVerifiedParams,
+  PurgeParams,
+} from './api.js'
 export {
   createDelegationStore,
   MAX_CAP_TTL_SECONDS,
@@ -12,6 +21,11 @@ export {
   delegationStoreDefinition,
   getDelegationStore,
 } from './definition.js'
+export type {
+  CreateDelegationRevocationCheckerParams,
+  DelegationRevocationVerdictParams,
+  VerifiedRevocationErrorParams,
+} from './revocation-checker.js'
 export {
   createDelegationRevocationBackend,
   createDelegationRevocationChecker,

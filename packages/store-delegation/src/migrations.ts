@@ -10,9 +10,11 @@ export function getDelegationMigrations(ctx: MigrationContext): Record<string, M
   // SQL `>` and JS `<=` must agree on `hlc` order. SQLite's default collation is
   // byte-wise, but a Postgres default collation can be locale-sensitive.
   // Typed structurally: `@hozon/db` does not re-export kysely's `ColumnDefinitionBuilder`.
-  const hlcColumn = <C extends { notNull(): C; modifyFront(modifier: Expression<unknown>): C }>(
-    col: C,
-  ): C => {
+  const hlcColumn = <
+    TItem extends { notNull(): TItem; modifyFront(modifier: Expression<unknown>): TItem },
+  >(
+    col: TItem,
+  ): TItem => {
     const notNull = col.notNull()
     return ctx.kind === 'postgres' ? notNull.modifyFront(sql`collate "C"`) : notNull
   }

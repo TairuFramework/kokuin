@@ -56,7 +56,9 @@ export type DelegationStoreAPI = {
    * `verified_at`, or verify through `markRevocationVerified`, which requires it.
    */
   addRevocation(input: InsertRevokedCapability): Promise<boolean>
-  getRevocationByIssuer(jti: string, issuer: string): Promise<RevokedCapability | null>
+  getRevocationByIssuer(
+    params: DelegationStoreAPIGetRevocationByIssuerParams,
+  ): Promise<RevokedCapability | null>
   listRevocations(jti: string): Promise<Array<RevokedCapability>>
   /**
    * Diagnostic only -- **not** an authorization read. The `verified_at IS NOT NULL` predicate is
@@ -64,15 +66,15 @@ export type DelegationStoreAPI = {
    * genuine revocation stays pending forever and this answers `false` for it. Authorization must
    * read the issuer's row whatever its verification state.
    */
-  isRevokedBy(jti: string, issuer: string): Promise<boolean>
+  isRevokedBy(params: DelegationStoreAPIIsRevokedByParams): Promise<boolean>
   getHeldRevocations(params: { audience: string }): Promise<Array<HeldRevocation>>
-  markRevocationVerified(
-    jti: string,
-    issuer: string,
-    params: { cap_exp: number; verified_at?: number },
-  ): Promise<boolean>
-  getPendingRevocationByIssuer(jti: string, issuer: string): Promise<RevokedCapability | null>
-  deletePendingRevocationsFromOtherIssuers(jti: string, issuer: string): Promise<number>
+  markRevocationVerified(params: DelegationStoreAPIMarkRevocationVerifiedParams): Promise<boolean>
+  getPendingRevocationByIssuer(
+    params: DelegationStoreAPIGetPendingRevocationByIssuerParams,
+  ): Promise<RevokedCapability | null>
+  deletePendingRevocationsFromOtherIssuers(
+    params: DelegationStoreAPIDeletePendingRevocationsFromOtherIssuersParams,
+  ): Promise<number>
   /**
    * Deletes verified rows whose `cap_exp` is more than the grace in the past. A single
    * time-predicate `DELETE`: atomic, idempotent, and safe alongside writes. Nothing calls it
@@ -165,11 +167,17 @@ const storeDatabases = new WeakMap<DelegationStoreAPI, Kysely<DelegationStoreTab
 // attacker involved. Every DID crossing this boundary -- written or compared --
 // is folded through `normalizeDID`, because a raw equality here silently
 // returns "not revoked".
-export function createDelegationStore(
-  db: Kysely<DelegationStoreTables>,
-  adapter: Adapter,
-  context: StoreContext,
-): DelegationStoreAPI {
+export type CreateDelegationStoreParams = {
+  db: Kysely<DelegationStoreTables>
+  adapter: Adapter
+  context: StoreContext
+}
+
+export function createDelegationStore({
+  context,
+  adapter,
+  db,
+}: CreateDelegationStoreParams): DelegationStoreAPI {
   const api: DelegationStoreAPI = {
     // Lock before reading so arbitration preserves history even on one ambient transaction.
     async addDelegationToken(token: InsertDelegationToken): Promise<boolean> {
@@ -206,9 +214,9 @@ export function createDelegationStore(
                 hlc: token.hlc,
                 superseded: 1,
               })
-              .onConflict((oc) =>
-                oc.columns(['grantor', 'audience', 'resource', 'jti']).doNothing(),
-              )
+              .onConflict((oc) => {
+                return oc.columns(['grantor', 'audience', 'resource', 'jti']).doNothing()
+              })
               .execute()
             return false
           }
@@ -235,16 +243,18 @@ export function createDelegationStore(
               hlc: token.hlc,
               superseded: 0,
             })
-            .onConflict((oc) =>
-              oc.columns(['grantor', 'audience', 'resource', 'jti']).doUpdateSet((eb) => ({
-                token: eb.ref('excluded.token'),
-                act: eb.ref('excluded.act'),
-                exp: eb.ref('excluded.exp'),
-                hlc: eb.ref('excluded.hlc'),
-                superseded: 0,
-                updated_at: adapter.encodeTimestamp(new Date()) as number,
-              })),
-            )
+            .onConflict((oc) => {
+              return oc.columns(['grantor', 'audience', 'resource', 'jti']).doUpdateSet((eb) => {
+                return {
+                  token: eb.ref('excluded.token'),
+                  act: eb.ref('excluded.act'),
+                  exp: eb.ref('excluded.exp'),
+                  hlc: eb.ref('excluded.hlc'),
+                  superseded: 0,
+                  updated_at: adapter.encodeTimestamp(new Date()) as number,
+                }
+              })
+            })
             .execute()
 
           return (
@@ -283,23 +293,23 @@ export function createDelegationStore(
     }): Promise<Array<DelegationToken>> {
       return await db
         .selectFrom('delegation_tokens')
-        .leftJoin('revoked_capabilities', (join) =>
-          join
+        .leftJoin('revoked_capabilities', (join) => {
+          return join
             .onRef('revoked_capabilities.jti', '=', 'delegation_tokens.jti')
-            .onRef('revoked_capabilities.revoker_did', '=', 'delegation_tokens.grantor'),
-        )
+            .onRef('revoked_capabilities.revoker_did', '=', 'delegation_tokens.grantor')
+        })
         .selectAll('delegation_tokens')
         .where('audience', '=', normalizeDID(params.audience))
         .where('delegation_tokens.superseded', '=', 0)
         .where('exp', '>', params.atTime)
         // Pending revocations (verified_at IS NULL) are not binding until the
         // cap-arrival cross-check verifies them, so they don't filter tokens.
-        .where((eb) =>
-          eb.or([
+        .where((eb) => {
+          return eb.or([
             eb('revoked_capabilities.jti', 'is', null),
             eb('revoked_capabilities.verified_at', 'is', null),
-          ]),
-        )
+          ])
+        })
         .execute()
     },
 
@@ -316,11 +326,11 @@ export function createDelegationStore(
       const grantor = normalizeDID(params.grantor)
       return await db
         .selectFrom('delegation_tokens')
-        .leftJoin('revoked_capabilities', (join) =>
-          join
+        .leftJoin('revoked_capabilities', (join) => {
+          return join
             .onRef('revoked_capabilities.jti', '=', 'delegation_tokens.jti')
-            .onRef('revoked_capabilities.revoker_did', '=', 'delegation_tokens.grantor'),
-        )
+            .onRef('revoked_capabilities.revoker_did', '=', 'delegation_tokens.grantor')
+        })
         .selectAll('delegation_tokens')
         .where('delegation_tokens.grantor', '=', grantor)
         .where('audience', '=', normalizeDID(params.audience))
@@ -412,19 +422,21 @@ export function createDelegationStore(
             cap_exp: capExp,
             hlc: input.hlc,
           })
-          .onConflict((oc) =>
-            oc
+          .onConflict((oc) => {
+            return oc
               .columns(['jti', 'revoker_did'])
-              .doUpdateSet((eb) => ({
-                revoked_iat: eb.ref('excluded.revoked_iat'),
-                revocation_token: eb.ref('excluded.revocation_token'),
-                verified_at: eb.ref('excluded.verified_at'),
-                cap_exp: eb.ref('excluded.cap_exp'),
-                hlc: eb.ref('excluded.hlc'),
-                updated_at: adapter.encodeTimestamp(new Date()) as number,
-              }))
-              .where((eb) => eb('excluded.hlc', '>', eb.ref('revoked_capabilities.hlc'))),
-          )
+              .doUpdateSet((eb) => {
+                return {
+                  revoked_iat: eb.ref('excluded.revoked_iat'),
+                  revocation_token: eb.ref('excluded.revocation_token'),
+                  verified_at: eb.ref('excluded.verified_at'),
+                  cap_exp: eb.ref('excluded.cap_exp'),
+                  hlc: eb.ref('excluded.hlc'),
+                  updated_at: adapter.encodeTimestamp(new Date()) as number,
+                }
+              })
+              .where((eb) => eb('excluded.hlc', '>', eb.ref('revoked_capabilities.hlc')))
+          })
           .execute()
 
         if (existing == null) {
@@ -445,7 +457,7 @@ export function createDelegationStore(
 
     // `jti` alone does not identify a row: several revokers may name the same
     // capability and only the one signed by its issuer binds.
-    async getRevocationByIssuer(jti: string, issuer: string): Promise<RevokedCapability | null> {
+    async getRevocationByIssuer({ jti, issuer }): Promise<RevokedCapability | null> {
       const row = await db
         .selectFrom('revoked_capabilities')
         .selectAll()
@@ -466,7 +478,7 @@ export function createDelegationStore(
         .execute()
     },
 
-    async isRevokedBy(jti: string, issuer: string): Promise<boolean> {
+    async isRevokedBy({ jti, issuer }): Promise<boolean> {
       const row = await db
         .selectFrom('revoked_capabilities')
         .select('jti')
@@ -484,11 +496,11 @@ export function createDelegationStore(
     async getHeldRevocations(params: { audience: string }): Promise<Array<HeldRevocation>> {
       const rows = await db
         .selectFrom('revoked_capabilities')
-        .innerJoin('delegation_tokens', (join) =>
-          join
+        .innerJoin('delegation_tokens', (join) => {
+          return join
             .onRef('delegation_tokens.jti', '=', 'revoked_capabilities.jti')
-            .onRef('delegation_tokens.grantor', '=', 'revoked_capabilities.revoker_did'),
-        )
+            .onRef('delegation_tokens.grantor', '=', 'revoked_capabilities.revoker_did')
+        })
         .select([
           'revoked_capabilities.jti as jti',
           'delegation_tokens.grantor as grantor',
@@ -501,30 +513,28 @@ export function createDelegationStore(
         .where('revoked_capabilities.verified_at', 'is not', null)
         .where('delegation_tokens.audience', '=', normalizeDID(params.audience))
         .execute()
-      return rows.map((row) => ({
-        jti: row.jti,
-        grantor: row.grantor,
-        audience: row.audience,
-        revoker_did: row.revoker_did,
-        revoked_iat: row.revoked_iat,
-        // Non-null by the WHERE above.
-        verified_at: row.verified_at as number,
-        cap_exp: row.cap_exp,
-      }))
+      return rows.map((row) => {
+        return {
+          jti: row.jti,
+          grantor: row.grantor,
+          audience: row.audience,
+          revoker_did: row.revoker_did,
+          revoked_iat: row.revoked_iat,
+          // Non-null by the WHERE above.
+          verified_at: row.verified_at as number,
+          cap_exp: row.cap_exp,
+        }
+      })
     },
 
     // Promotion is an authorization decision about one author's claim: the
     // arriving capability proves only that its own issuer's record is genuine.
-    async markRevocationVerified(
-      jti: string,
-      issuer: string,
-      params: { cap_exp: number; verified_at?: number },
-    ): Promise<boolean> {
+    async markRevocationVerified({ jti, issuer, cap_exp, verified_at }): Promise<boolean> {
       const result = await db
         .updateTable('revoked_capabilities')
         .set({
-          verified_at: params.verified_at ?? nowSeconds(),
-          cap_exp: params.cap_exp,
+          verified_at: verified_at ?? nowSeconds(),
+          cap_exp,
           updated_at: adapter.encodeTimestamp(new Date()) as number,
         })
         .where('jti', '=', jti)
@@ -534,10 +544,7 @@ export function createDelegationStore(
       return (result.numUpdatedRows ?? 0n) > 0n
     },
 
-    async getPendingRevocationByIssuer(
-      jti: string,
-      issuer: string,
-    ): Promise<RevokedCapability | null> {
+    async getPendingRevocationByIssuer({ jti, issuer }): Promise<RevokedCapability | null> {
       const row = await db
         .selectFrom('revoked_capabilities')
         .selectAll()
@@ -550,7 +557,7 @@ export function createDelegationStore(
 
     // The inverse scoping of `markRevocationVerified`: what that promotes this
     // discards, so together they settle every pending row for the `jti`.
-    async deletePendingRevocationsFromOtherIssuers(jti: string, issuer: string): Promise<number> {
+    async deletePendingRevocationsFromOtherIssuers({ jti, issuer }): Promise<number> {
       const result = await db
         .deleteFrom('revoked_capabilities')
         .where('jti', '=', jti)
@@ -590,4 +597,22 @@ export function createDelegationStore(
 
   storeDatabases.set(api, db)
   return api
+}
+
+export type DelegationStoreAPIGetRevocationByIssuerParams = { jti: string; issuer: string }
+
+export type DelegationStoreAPIIsRevokedByParams = { jti: string; issuer: string }
+
+export type DelegationStoreAPIMarkRevocationVerifiedParams = {
+  jti: string
+  issuer: string
+  cap_exp: number
+  verified_at?: number
+}
+
+export type DelegationStoreAPIGetPendingRevocationByIssuerParams = { jti: string; issuer: string }
+
+export type DelegationStoreAPIDeletePendingRevocationsFromOtherIssuersParams = {
+  jti: string
+  issuer: string
 }

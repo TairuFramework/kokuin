@@ -21,3 +21,9 @@ for (const conformanceCase of cases) {
 
 The suite itself is meta-tested (`test/index.test.ts`) against deliberately-broken
 stores, so its checks are proven to have teeth rather than merely asserted.
+
+Method and callback contracts follow the same convention.
+
+| API | Named params type | Previous form |
+| --- | --- | --- |
+| `KeyStoreConformanceHarness.isSameKey` | `KeyStoreConformanceHarnessIsSameKeyParams` | `isSameKey(a, b)` |

@@ -1,3 +1,4 @@
+import type { CryptoProvider } from '@kokuin/crypto'
 /**
  * JWE encryption for kokuin tokens.
  *
@@ -68,7 +69,7 @@ export type SharedSecretResult = {
   sharedSecret: Uint8Array
   /**
    * Send this to the recipient. They recover the same `sharedSecret` bytes with
-   * `identity.agreeKey(ephemeralPublicKey)`.
+   * `identity.agreeKey({ ephemeralPublicKey })`.
    */
   ephemeralPublicKey: Uint8Array
 }
@@ -131,7 +132,6 @@ function agreeWithKey(recipientPublicKey: Uint8Array): SharedSecretResult {
 function encryptWithX25519(recipientPublicKey: Uint8Array, plaintext: Uint8Array): string {
   const { sharedSecret, ephemeralPublicKey } = agreeWithKey(recipientPublicKey)
 
-  // Derive content encryption key via Concat KDF
   const cek = concatKDF({
     sharedSecret,
     keyLength: 256,
@@ -140,10 +140,8 @@ function encryptWithX25519(recipientPublicKey: Uint8Array, plaintext: Uint8Array
     partyVInfo: new Uint8Array(0),
   })
 
-  // Generate random 96-bit IV for AES-GCM
   const iv = randomBytes(12)
 
-  // Build protected header
   const protectedHeader: JWEHeader = {
     alg: 'ECDH-ES',
     enc: 'A256GCM',
@@ -154,13 +152,11 @@ function encryptWithX25519(recipientPublicKey: Uint8Array, plaintext: Uint8Array
     },
   }
 
-  // Encode protected header
   const encodedHeader = b64uFromJSON(protectedHeader as unknown as Record<string, unknown>)
 
   // AAD is the ASCII bytes of the encoded header (per RFC 7516 Section 5.1 step 14)
   const aad = new TextEncoder().encode(encodedHeader)
 
-  // Encrypt with AES-256-GCM (tag is appended to ciphertext)
   const cipher = gcm(cek, iv, aad)
   const ciphertextWithTag = cipher.encrypt(plaintext)
 
@@ -189,7 +185,7 @@ function resolveX25519Key(recipient: Uint8Array | string): { key: Uint8Array; id
         `Cannot encrypt to a did:peer:4 short form: ${shortForm}. Pass the long form, which carries the document.`,
       )
     }
-    const { doc } = decodePeer4(recipient)
+    const { doc } = decodePeer4({ longForm: recipient })
     const key = getAgreementKey(doc)
     if (key == null) {
       throw new Error(`Recipient publishes no X25519 keyAgreement key: ${shortForm}`)
@@ -210,7 +206,7 @@ function resolveX25519Key(recipient: Uint8Array | string): { key: Uint8Array; id
  * `did:key`'s birationally derived one), generates a single-use ephemeral pair, and returns the ECDH
  * output; the ephemeral private key never leaves this function.
  *
- * The recipient recovers the identical bytes with `identity.agreeKey(ephemeralPublicKey)` and no
+ * The recipient recovers the identical bytes with `identity.agreeKey({ ephemeralPublicKey })` and no
  * `kid` — the sender always resolves the *first* published `keyAgreement` key, so a different `kid`
  * on a multi-KEM identity silently recovers different bytes.
  *
@@ -236,14 +232,16 @@ export function deriveSharedSecret(recipient: string): SharedSecretResult {
 /**
  * Create a token encrypter for a recipient identified by X25519 public key or DID string.
  */
-export function createTokenEncrypter(recipient: Uint8Array, options: EncryptOptions): TokenEncrypter
-export function createTokenEncrypter(recipient: string): TokenEncrypter
-export function createTokenEncrypter(
-  recipient: Uint8Array | string,
-  options?: EncryptOptions,
-): TokenEncrypter {
-  if (typeof recipient !== 'string' && options?.algorithm !== 'X25519') {
-    throw new Error(`Unsupported algorithm: ${options?.algorithm}`)
+export type CreateTokenEncrypterParams =
+  | ({ recipient: Uint8Array } & EncryptOptions)
+  | { recipient: string; algorithm?: 'X25519' }
+
+export function createTokenEncrypter({
+  recipient,
+  ...options
+}: CreateTokenEncrypterParams): TokenEncrypter {
+  if (typeof recipient !== 'string' && options.algorithm !== 'X25519') {
+    throw new Error(`Unsupported algorithm: ${options.algorithm}`)
   }
 
   const { key, id } =
@@ -317,7 +315,7 @@ async function resolveRecipientKey(
   recipient: string,
   options: ResolveRecipientOptions,
 ): Promise<{ key: Uint8Array; id: string }> {
-  const resolver = findMethodResolver(options.methods, recipient)
+  const resolver = findMethodResolver({ registry: options.methods, did: recipient })
   if (resolver != null) {
     return resolveViaMethodResolver(recipient, resolver)
   }
@@ -336,10 +334,12 @@ async function resolveRecipientKey(
  * @param recipient a DID string. Self-contained DIDs (`did:key`, `did:peer:4` long form) resolve
  *   the same way `deriveSharedSecret` does; any other DID is looked up in `options.methods`.
  */
-export async function deriveSharedSecretAsync(
-  recipient: string,
-  options: ResolveRecipientOptions,
-): Promise<SharedSecretResult> {
+export type DeriveSharedSecretAsyncParams = { recipient: string } & ResolveRecipientOptions
+
+export async function deriveSharedSecretAsync({
+  recipient,
+  ...options
+}: DeriveSharedSecretAsyncParams): Promise<SharedSecretResult> {
   if (typeof recipient !== 'string') {
     throw new Error('deriveSharedSecretAsync requires a DID string')
   }
@@ -352,10 +352,12 @@ export async function deriveSharedSecretAsync(
  * reached through a registered `DIDMethodResolver` (e.g. `did:kokuin:`), in addition to the
  * self-contained DIDs `createTokenEncrypter` already handles.
  */
-export async function createTokenEncrypterAsync(
-  recipient: string,
-  options: ResolveRecipientOptions,
-): Promise<TokenEncrypter> {
+export type CreateTokenEncrypterAsyncParams = { recipient: string } & ResolveRecipientOptions
+
+export async function createTokenEncrypterAsync({
+  recipient,
+  ...options
+}: CreateTokenEncrypterAsyncParams): Promise<TokenEncrypter> {
   const { key, id } = await resolveRecipientKey(recipient, options)
 
   return {
@@ -369,20 +371,18 @@ export async function createTokenEncrypterAsync(
 /**
  * Encrypt plaintext to JWE compact serialization using the given encrypter.
  */
-export async function encryptToken(
-  encrypter: TokenEncrypter,
-  plaintext: Uint8Array,
-): Promise<string> {
+export type EncryptTokenParams = { encrypter: TokenEncrypter; plaintext: Uint8Array }
+
+export async function encryptToken({ plaintext, encrypter }: EncryptTokenParams): Promise<string> {
   return encrypter.encrypt(plaintext)
 }
 
 /**
  * Decrypt a JWE compact serialization string.
  */
-export async function decryptToken(
-  decrypter: KeyAgreementIdentity,
-  jwe: string,
-): Promise<Uint8Array> {
+export type DecryptTokenParams = { decrypter: KeyAgreementIdentity; jwe: string }
+
+export async function decryptToken({ jwe, decrypter }: DecryptTokenParams): Promise<Uint8Array> {
   const parts = jwe.split('.')
   if (parts.length !== 5) {
     throw new Error(`Invalid JWE format: expected 5 parts, got ${parts.length}`)
@@ -398,7 +398,6 @@ export async function decryptToken(
     throw new Error('Invalid JWE format: expected 5 parts separated by dots')
   }
 
-  // Parse protected header
   const header = b64uToJSON<JWEHeader>(encodedHeader)
 
   if (header.alg !== 'ECDH-ES') {
@@ -408,13 +407,10 @@ export async function decryptToken(
     throw new Error(`Unsupported JWE encryption: ${header.enc}`)
   }
 
-  // Extract ephemeral public key from header
   const ephemeralPublicKey = fromB64U(header.epk.x)
 
-  // Compute shared secret via ECDH key agreement
-  const sharedSecret = await decrypter.agreeKey(ephemeralPublicKey)
+  const sharedSecret = await decrypter.agreeKey({ ephemeralPublicKey })
 
-  // Derive content encryption key
   const cek = concatKDF({
     sharedSecret,
     keyLength: 256,
@@ -423,7 +419,6 @@ export async function decryptToken(
     partyVInfo: header.apv != null ? fromB64U(header.apv) : new Uint8Array(0),
   })
 
-  // Decode components
   const iv = fromB64U(encodedIV)
   const ciphertext = fromB64U(encodedCiphertext)
   const tag = fromB64U(encodedTag)
@@ -436,7 +431,6 @@ export async function decryptToken(
   // AAD is the ASCII bytes of the encoded header
   const aad = new TextEncoder().encode(encodedHeader)
 
-  // Decrypt with AES-256-GCM
   const cipher = gcm(cek, iv, aad)
   return cipher.decrypt(ciphertextWithTag)
 }
@@ -455,6 +449,7 @@ export type WrapOptions = {
 }
 
 export type UnwrapOptions = {
+  crypto?: CryptoProvider
   decrypter?: KeyAgreementIdentity
   verifiers?: Verifiers
 }
@@ -462,35 +457,52 @@ export type UnwrapOptions = {
 /**
  * Wrap a payload into a token string according to the specified envelope mode.
  */
-export async function wrapEnvelope(
-  mode: EnvelopeMode,
-  payload: Record<string, unknown>,
-  options: WrapOptions,
-): Promise<string> {
+export type WrapEnvelopeParams = {
+  mode: EnvelopeMode
+  payload: Record<string, unknown>
+} & WrapOptions
+
+export async function wrapEnvelope({
+  payload,
+  mode,
+  ...options
+}: WrapEnvelopeParams): Promise<string> {
   switch (mode) {
     case 'plain': {
-      const token = createUnsignedToken(payload, options.header)
+      const token = createUnsignedToken({ payload, header: options.header })
       // Append empty signature segment for RFC 7519 unsecured JWT format (header.payload.)
       return `${stringifyToken(token)}.`
     }
     case 'jws': {
       if (options.signer == null) throw new Error('Signer required for jws mode')
-      const token = await options.signer.signToken(payload, { header: options.header })
+      const token = await options.signer.signToken({
+        payload,
+        header: options.header,
+      })
       return stringifyToken(token)
     }
     case 'jws-in-jwe': {
       if (options.signer == null) throw new Error('Signer required for jws-in-jwe mode')
       if (options.encrypter == null) throw new Error('Encrypter required for jws-in-jwe mode')
-      const signed = await options.signer.signToken(payload, { header: options.header })
+      const signed = await options.signer.signToken({
+        payload,
+        header: options.header,
+      })
       const jwsString = stringifyToken(signed)
-      return encryptToken(options.encrypter, new TextEncoder().encode(jwsString))
+      return encryptToken({
+        encrypter: options.encrypter,
+        plaintext: new TextEncoder().encode(jwsString),
+      })
     }
     case 'jwe-in-jws': {
       if (options.signer == null) throw new Error('Signer required for jwe-in-jws mode')
       if (options.encrypter == null) throw new Error('Encrypter required for jwe-in-jws mode')
       const plaintext = new TextEncoder().encode(JSON.stringify(payload))
-      const jwe = await encryptToken(options.encrypter, plaintext)
-      const signed = await options.signer.signToken({ jwe }, { header: options.header })
+      const jwe = await encryptToken({ encrypter: options.encrypter, plaintext })
+      const signed = await options.signer.signToken({
+        payload: { jwe },
+        header: options.header,
+      })
       return stringifyToken(signed)
     }
   }
@@ -499,32 +511,40 @@ export async function wrapEnvelope(
 /**
  * Unwrap a token string, auto-detecting the envelope mode from its structure.
  */
-export async function unwrapEnvelope(
-  message: string,
-  options: UnwrapOptions,
-): Promise<UnwrappedEnvelope> {
+export type UnwrapEnvelopeParams = { message: string } & UnwrapOptions
+
+export async function unwrapEnvelope({
+  message,
+  ...options
+}: UnwrapEnvelopeParams): Promise<UnwrappedEnvelope> {
+  const crypto = options.crypto
+  const verifiers = { ...options.verifiers }
   const parts = message.split('.')
   if (parts.length === 5) {
     // JWE outer → jws-in-jwe mode
     if (options.decrypter == null) throw new Error('Decrypter required for JWE message')
-    const decrypted = await decryptToken(options.decrypter, message)
+    const decrypted = await decryptToken({ decrypter: options.decrypter, jwe: message })
     const jwsString = new TextDecoder().decode(decrypted)
-    const token = await verifyToken(jwsString, { verifiers: options.verifiers })
+    const token = await verifyToken({ token: jwsString, crypto, verifiers })
     return { payload: token.payload as Record<string, unknown>, mode: 'jws-in-jwe' }
   }
   if (parts.length === 3) {
     // JWT: could be plain, jws, or jwe-in-jws
-    const token = await verifyToken(message, {
-      verifiers: options.verifiers,
+    const token = await verifyToken({
+      token: message,
+      crypto,
+      verifiers,
       allowUnsigned: true,
     })
     if (isUnsignedToken(token)) {
       return { payload: token.payload as Record<string, unknown>, mode: 'plain' }
     }
-    // Check if payload contains a JWE (jwe-in-jws)
     if ('jwe' in token.payload && typeof token.payload.jwe === 'string') {
       if (options.decrypter == null) throw new Error('Decrypter required for jwe-in-jws message')
-      const decrypted = await decryptToken(options.decrypter, token.payload.jwe as string)
+      const decrypted = await decryptToken({
+        decrypter: options.decrypter,
+        jwe: token.payload.jwe as string,
+      })
       const innerPayload = JSON.parse(new TextDecoder().decode(decrypted))
       return { payload: innerPayload, mode: 'jwe-in-jws' }
     }

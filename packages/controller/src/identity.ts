@@ -1,10 +1,10 @@
+import type { CryptoOptions, SigningIdentitySignTokenParams } from '@kokuin/token'
 import {
   createKeyAgreementIdentityForDID,
   createSigningIdentityForDID,
   type DIDString,
   type FullIdentity,
   type SigningIdentity,
-  type SignTokenOptions,
 } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 
@@ -45,10 +45,10 @@ function didFromLog(log: ControllerLog): DIDString {
 function withKid(identity: SigningIdentity, kid: string): SigningIdentity {
   return {
     ...identity,
-    async signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
-      payload: Payload,
-      options: SignTokenOptions = {},
-    ) {
+    async signToken<Payload extends Record<string, unknown> = Record<string, unknown>>({
+      payload,
+      ...options
+    }: SigningIdentitySignTokenParams<Payload>) {
       for (const supplied of [options.kid, options.header?.kid]) {
         if (supplied != null && supplied !== kid) {
           throw new Error(
@@ -56,7 +56,11 @@ function withKid(identity: SigningIdentity, kid: string): SigningIdentity {
           )
         }
       }
-      return identity.signToken(payload, { ...options, header: { ...options.header, kid } })
+      return await identity.signToken({
+        ...options,
+        payload,
+        header: { ...options.header, kid },
+      })
     },
   }
 }
@@ -74,13 +78,14 @@ function identityForKey({
   did,
   state,
   mismatch,
+  crypto,
 }: {
   privateKey: Uint8Array
   publicKey: Uint8Array
   did: DIDString
   state: KeyState
   mismatch: string
-}): SigningIdentity {
+} & CryptoOptions): SigningIdentity {
   if (state.keys.length === 0) {
     // Defensive, unreachable through the fold today (`verifySignatures` rejects an empty key set, and
     // the chain holds only key-establishing events). Kept so a future event type that can empty the
@@ -89,14 +94,14 @@ function identityForKey({
     throw new Error(`Controller ${did} has no signing key`)
   }
 
-  const key = encodeKey(publicKey, 'EdDSA')
+  const key = encodeKey({ publicKey, alg: 'EdDSA' })
   if (!state.keys.includes(key)) {
     throw new Error(`${CONTEXT}: ${mismatch} of ${did}`)
   }
 
   // The resolver picks by `kid` and defaults to `keys[0]`, so a token whose key is not first is
   // unverifiable unless the header names the key that signed it.
-  return withKid(createSigningIdentityForDID(did, privateKey), `#${key}`)
+  return withKid(createSigningIdentityForDID({ id: did, privateKey, crypto }), `#${key}`)
 }
 
 /**
@@ -108,38 +113,47 @@ function identityForState({
   profile,
   did,
   state,
+  crypto,
 }: {
   seed: Uint8Array
   profile: number
   did: DIDString
   state: KeyState
-}): FullIdentity {
-  const authority = deriveKeyPair(seed, authorityPath(profile, state.keyGen, state.keySeq), 'EdDSA')
+} & CryptoOptions): FullIdentity {
+  const authority = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen: state.keyGen, seq: state.keySeq }),
+    alg: 'EdDSA',
+  })
   const signing = identityForKey({
     privateKey: authority.privateKey,
     publicKey: authority.publicKey,
     did,
     state,
+    crypto,
     mismatch: 'derived key is not one of the current authority keys',
   })
   // The agreement key sits at the same (keyGen, keySeq) as the authority key — both icp and rot
   // derive them at matching indices — so one position locates both. Verified against the folded
   // set, failing closed like the authority membership check.
-  const agreement = deriveKeyPair(
+  const agreement = deriveKeyPair({
     seed,
-    agreementPath(profile, state.keyGen, state.keySeq),
-    'X25519',
-  )
-  const encoded = encodeKey(agreement.publicKey, 'X25519')
+    path: agreementPath({ profile, gen: state.keyGen, seq: state.keySeq }),
+    alg: 'X25519',
+  })
+  const encoded = encodeKey({ publicKey: agreement.publicKey, alg: 'X25519' })
   if (!state.agreement.includes(encoded)) {
     throw new Error(
       `${CONTEXT}: derived agreement key is not one of the current agreement keys of ${did}`,
     )
   }
-  return { ...signing, ...createKeyAgreementIdentityForDID(did, agreement.privateKey) }
+  return {
+    ...signing,
+    ...createKeyAgreementIdentityForDID({ id: did, x25519PrivateKey: agreement.privateKey }),
+  }
 }
 
-export type CreateControllerIdentityParams = {
+export type CreateControllerIdentityParams = CryptoOptions & {
   seed: Uint8Array
   profile: number
   log: ControllerLog
@@ -160,21 +174,27 @@ export type CreateControllerIdentityParams = {
  * there is no `kid` parameter — one naming any other key is a request it could not honour, and is
  * rejected on mismatch rather than dropped.
  *
- * Synchronous, and stays so: kubun's apply path depends on it.
- *
  * @throws when the log does not fold, or when the derived key is not one of the profile's current
  * authority keys (a wrong `seed` or `profile` for this log).
  */
-export function createControllerIdentity({
+export async function createControllerIdentity({
   seed,
   profile,
   log,
-}: CreateControllerIdentityParams): FullIdentity {
+  crypto,
+}: CreateControllerIdentityParams): Promise<FullIdentity> {
+  seed = seed.slice()
   const did = didFromLog(log)
-  return identityForState({ seed, profile, did, state: currentState(did, log, CONTEXT) })
+  return identityForState({
+    seed,
+    profile,
+    did,
+    crypto,
+    state: await currentState({ did, log, context: CONTEXT, crypto }),
+  })
 }
 
-export type CreateControllerIdentityWithKeyParams = {
+export type CreateControllerIdentityWithKeyParams = CryptoOptions & {
   privateKey: Uint8Array
   log: ControllerLog
 }
@@ -197,16 +217,19 @@ export type CreateControllerIdentityWithKeyParams = {
  * @throws when the log does not fold, or when the key's public half is not one of the profile's
  * current authority keys — a stale log, or a key the profile has rotated away.
  */
-export function createControllerIdentityWithKey({
+export async function createControllerIdentityWithKey({
   privateKey,
   log,
-}: CreateControllerIdentityWithKeyParams): SigningIdentity {
+  crypto,
+}: CreateControllerIdentityWithKeyParams): Promise<SigningIdentity> {
+  privateKey = privateKey.slice()
   const did = didFromLog(log)
   return identityForKey({
     privateKey,
     publicKey: ed25519.getPublicKey(privateKey),
     did,
-    state: currentState(did, log, CONTEXT),
+    state: await currentState({ did, log, context: CONTEXT, crypto }),
+    crypto,
     mismatch: 'the supplied key is not one of the current authority keys',
   })
 }

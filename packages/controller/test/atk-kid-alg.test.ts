@@ -31,23 +31,35 @@ function signRaw(
 
 const seed = new Uint8Array(32).fill(9)
 const otherSeed = new Uint8Array(32).fill(19)
-const inception = createInception(seed, 0)
+const inception = await createInception({ seed, profile: 0 })
 const did = didFromInception(inception.event)
-const otherInception = createInception(otherSeed, 0)
+const otherInception = await createInception({ seed: otherSeed, profile: 0 })
 const otherDID = didFromInception(otherInception.event)
 
-const k0 = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
-const k1 = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
-const o0 = deriveKeyPair(otherSeed, authorityPath(0, 0, 0), 'EdDSA')
+const k0 = deriveKeyPair({
+  seed,
+  path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+  alg: 'EdDSA',
+})
+const k1 = deriveKeyPair({
+  seed,
+  path: authorityPath({ profile: 0, gen: 0, seq: 1 }),
+  alg: 'EdDSA',
+})
+const o0 = deriveKeyPair({
+  seed: otherSeed,
+  path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+  alg: 'EdDSA',
+})
 
-const rotated = createRotate({
+const rotated = await createRotate({
   seed,
   profile: 0,
   did,
   prior: inception.event,
   snapshot: { members: [], deny: [] },
 })
-const reset = createReset(seed, 0, 1)
+const reset = await createReset({ seed, profile: 0, gen: 1 })
 
 function registryFor(log: Array<SignedEvent>, otherLog: Array<SignedEvent> = [otherInception]) {
   const methods: MethodRegistry = [
@@ -70,7 +82,10 @@ async function attempt(
   privateKey = k0.privateKey,
 ): Promise<string> {
   try {
-    await verifyToken(signRaw(privateKey, header, payload), { methods: registryFor(log) })
+    await verifyToken({
+      token: signRaw(privateKey, header, payload),
+      methods: registryFor(log),
+    })
     return 'ACCEPTED'
   } catch (error) {
     return error instanceof Error ? error.message : String(error)
@@ -79,7 +94,7 @@ async function attempt(
 
 describe('ATTACK: kid selection through the real state resolver', () => {
   test('one mutation of the header kid at a time', async () => {
-    const key0 = encodeKey(k0.publicKey, 'EdDSA')
+    const key0 = encodeKey({ publicKey: k0.publicKey, alg: 'EdDSA' })
     const rows: Array<[string, Record<string, unknown>]> = [
       [
         'CONTROL: the key that signed, in fragment form',
@@ -97,7 +112,7 @@ describe('ATTACK: kid selection through the real state resolver', () => {
         {
           typ: 'JWT',
           alg: 'EdDSA',
-          kid: `#${encodeKey(k1.publicKey, 'EdDSA')}`,
+          kid: `#${encodeKey({ publicKey: k1.publicKey, alg: 'EdDSA' })}`,
         },
       ],
       [
@@ -105,7 +120,7 @@ describe('ATTACK: kid selection through the real state resolver', () => {
         {
           typ: 'JWT',
           alg: 'EdDSA',
-          kid: `#${encodeKey(o0.publicKey, 'EdDSA')}`,
+          kid: `#${encodeKey({ publicKey: o0.publicKey, alg: 'EdDSA' })}`,
         },
       ],
       [
@@ -137,8 +152,8 @@ describe('ATTACK: kid selection through the real state resolver', () => {
   })
 
   test('a key from an earlier position, and from a superseded generation', async () => {
-    const key0 = encodeKey(k0.publicKey, 'EdDSA')
-    const key1 = encodeKey(k1.publicKey, 'EdDSA')
+    const key0 = encodeKey({ publicKey: k0.publicKey, alg: 'EdDSA' })
+    const key1 = encodeKey({ publicKey: k1.publicKey, alg: 'EdDSA' })
     const rotatedLog = [inception, rotated]
     const resetLog = [inception, reset]
 
@@ -167,7 +182,7 @@ describe('ATTACK: kid selection through the real state resolver', () => {
 
 describe('ATTACK: algorithm, typ and signature layer', () => {
   test('header mutations, each re-signed with the real key', async () => {
-    const key0 = encodeKey(k0.publicKey, 'EdDSA')
+    const key0 = encodeKey({ publicKey: k0.publicKey, alg: 'EdDSA' })
     const results = {
       'CONTROL: untouched': await attempt([inception], {
         typ: 'JWT',
@@ -211,7 +226,7 @@ describe('ATTACK: algorithm, typ and signature layer', () => {
   })
 
   test('a signer with the WRONG key, and Ed25519 S-malleability', async () => {
-    const key0 = encodeKey(k0.publicKey, 'EdDSA')
+    const key0 = encodeKey({ publicKey: k0.publicKey, alg: 'EdDSA' })
     const header = { typ: 'JWT', alg: 'EdDSA', kid: `#${key0}` }
 
     // The wrong key entirely: the baseline that must never pass.
@@ -240,13 +255,13 @@ describe('ATTACK: algorithm, typ and signature layer', () => {
     const methods = registryFor([inception])
     let malleableResult: string
     try {
-      await verifyToken(`${data}.${b64uBytes(malleable)}`, { methods })
+      await verifyToken({ token: `${data}.${b64uBytes(malleable)}`, methods })
       malleableResult = 'ACCEPTED'
     } catch (error) {
       malleableResult = error instanceof Error ? error.message : String(error)
     }
     // CONTROL: the untouched signature over the very same data verifies (throws if it does not).
-    await verifyToken(`${data}.${b64uBytes(sig)}`, { methods })
+    await verifyToken({ token: `${data}.${b64uBytes(sig)}`, methods })
 
     expect(wrongKey).not.toBe('ACCEPTED')
     expect(malleableResult, 'S+L malleability').not.toBe('ACCEPTED')

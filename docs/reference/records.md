@@ -19,7 +19,7 @@ Metadata must survive JSON encoding unchanged. Claims reject extra fields, negat
 import { signRecordOp, verifySignedRecord } from '@kokuin/records'
 
 const opKind = 'example/record-op'
-const signed = await signRecordOp(identity, claim, opKind)
+const signed = await signRecordOp({ identity: identity, claim: claim, opKind: opKind })
 const record = {
   type: claim.type,
   owner: claim.owner,
@@ -28,7 +28,7 @@ const record = {
   payload,
   ...signed,
 }
-const verified = await verifySignedRecord(record, opKind, methods)
+const verified = await verifySignedRecord({ record: record, opKind: opKind, methods: methods })
 ```
 
 The token envelope contains exactly `iss`, `kind`, and the base64url canonical claim bytes.
@@ -41,7 +41,7 @@ It leaves payload verification to `recordPayloadMatches`.
 
 `opKind` is required when signing or verifying. It has no default.
 A signature under one kind cannot verify under another.
-`verifyRecordOp`, `verifySignedRecord`, and `recordDecisionDigest` take it before the optional method registry.
+`verifyRecordOp`, `verifySignedRecord`, and `recordDecisionDigest` take it as a required params field, beside the optional `methods` registry.
 Apply and visibility contexts carry one required `opKind`, which their internal checks reuse for stored copies, dependencies, and holder proofs.
 
 WARNING: choose distinct kinds for distinct protocols. Reusing a kind permits replay between protocols sharing the claim shape.
@@ -52,7 +52,7 @@ The verified issuer identifies the signer. The claim's owner remains an assertio
 A `RecordDecision` contains a key, `decisionHLC`, `contentDigest`, and signed copies of that content.
 `recordClaimDigest` hashes the canonical claim, replacing its `hlc` with string `meta.version` when present.
 This keeps a versioned content decision stable across signing stamps and signers.
-`recordDecisionDigest(record, opKind, methods)` verifies first, then returns that content digest.
+`recordDecisionDigest({ record, opKind, methods })` verifies first, then returns that content digest.
 
 `recordDecisionFromVerifiedCopies` selects the greatest canonical decision stamp, then the greatest content digest.
 Its explicit stamp source selects claim `hlc` or metadata `version`.
@@ -117,9 +117,9 @@ Within a caller-owned transaction, the refusal propagates to the caller.
 
 ### Hooks
 
-`afterApply(record, store)` runs inside the transaction after a winning content decision is stored.
+`afterApply({ record, store })` runs inside the transaction after a winning content decision is stored.
 Adding another signed copy of the same decision does not run `afterApply`.
-`afterAuthorize(record, store)` runs after authorization and payload verification, including for an op that subsequently loses the merge.
+`afterAuthorize({ record, store })` runs after authorization and payload verification, including for an op that subsequently loses the merge.
 It can retain authenticated branch evidence. Stored replays bypass both hooks.
 
 ## Store adapter
@@ -136,7 +136,7 @@ These comparison values do not isolate replay domains themselves.
 | `getMany?(keys)` | Same answers and errors as `get`, keyed by `recordKeyText`, with missing decisions omitted |
 | `list(types)` | Current decisions for the requested types, including tombstones |
 | `putCopy(record)` | Retain an authorized copy of the winning decision, replacing prior content when the decision changes |
-| `pruneCopy(key, signerDID)` | Remove a signer's copies after a replacement is held |
+| `pruneCopy({ key, signerDID })` | Remove a signer's copies after a replacement is held |
 | `transaction(fn)` | Supply a transaction-bound adapter, commit on success, and roll back on errors |
 | `isTransaction?` | Identify an adapter already bound to a caller-owned transaction |
 | `lock?(keys)` | Acquire transaction-scoped locks together before authoritative reads |
@@ -152,7 +152,7 @@ Adapters bound to an enclosing transaction join it and set `isTransaction: true`
 
 A `RecordTypeDefinition` supplies `type`, `policy`, `dependsOn`, `dependencies`, and `authorize`.
 Optional hooks provide stateless checks, visibility, equal-version decisions, locks, and effects inside the transaction.
-`authorize(op, ctx)` receives the verified issuer and claim, incoming record, verified stored record or `null`, transaction store, and caller resolvers.
+`authorize({ op, ctx })` receives the verified issuer and claim, incoming record, verified stored record or `null`, transaction store, and caller resolvers.
 
 WARNING: verify payload bytes with `recordPayloadMatches` before an authorizer reads them. Authorization runs before the engine's final digest check.
 Related-record reads use `ctx.store`, which contains the current transaction's writes.
@@ -183,9 +183,9 @@ Types without that hook, and unregistered types, disclose nothing.
 | `keyHolder` | A verified holding proves access to this owner's named key at the current version |
 | `sharedWith` | Signed DID targets match the peer or controller, or `isGroupMember` accepts a signed group target |
 
-`isGroupMember(groupID, did)` resolves share targets independently of the transport carrying a request.
+`isGroupMember({ groupID, did })` resolves share targets independently of the transport carrying a request.
 Malformed metadata satisfies no rule.
-`currentKeyVersion(owner, keyID)` scopes a key id to its owner.
+`currentKeyVersion({ owner, keyID })` scopes a key id to its owner.
 Only registered `holderTypes` count as holdings.
 
 `verifyHolderProof` checks the signature, indexed fields, payload digest, recipient, key version, stored decision, dependencies, and `authorizeProof`.
@@ -217,3 +217,55 @@ An empty requester receives visible records directly.
 Leaf lists request missing decisions, later decisions, greater equal-order content digests, or changed signer sets for identical content.
 A requester-only record causes no fetch in this direction. The reverse pass handles the other direction.
 Fetched records still require `applyRecordChunk` with the same `opKind` and authorization policy.
+
+### Records migration to 0.7.0
+
+`VerifiedRecordOp` now requires `contentDigest: string`. Verification computes it before returning the operation.
+Verified operations contain frozen, owned claims and a protected digest. Synchronous decisions consume this carried digest.
+Fixtures must obtain it through verification or an awaited digest of the exact fixture claim.
+Persisted-operation reconstruction must verify the signed operation again before trusting its content digest.
+No database schema migration is required for the carried field.
+
+Params objects carry `methods?` and `crypto?` as top-level fields.
+
+| Export | Arguments after migration | Result |
+| --- | --- | --- |
+| `recordClaimDigest` | `RecordClaimDigestParams` | `Promise<string>` |
+| `recordPayloadDigest` | `RecordPayloadDigestParams` | `Promise<string \| null>` |
+| `recordPayloadMatches` | `RecordPayloadMatchesParams` | `Promise<boolean>` |
+| `recordDecisionDigest` | `{ record, opKind, methods?, crypto? }` | `Promise<string>` |
+| `fingerprintRange` | `FingerprintRangeParams` | `Promise<string>` |
+| `summarizeRange` | `SummarizeRangeParams` | `Promise<RangeSummary>` |
+| `splitRange` | `{ leaves, rangeBounds, leafThreshold, crypto? }` | `Promise<Array<RangeSummary \| RangeLeafList>>` |
+| `rangeLeaf` | `RangeLeafParams` | `Promise<RangeLeaf \| null>` |
+| `nextRequesterSteps` | `NextRequesterStepsParams` | `Promise<Array<RequesterStep>>` |
+| `advanceRecordPull` | `{ state, local, response, crypto? }` | `Promise<{ state: RecordPullState; steps: Array<RequesterStep> }>` |
+
+`signRecordOp({ identity, claim, opKind, crypto? })` keeps its Promise result. Options select hashing, while the identity owns signing.
+`verifyRecordOp({ opJWT, opKind, methods?, crypto? })` and `verifySignedRecord({ record, opKind, methods?, crypto? })` keep `Promise<VerifiedRecordOp | null>`.
+`createRecordVerifier(params: CreateRecordVerifierParams)` remains synchronous and captures options for its asynchronous verifier.
+`ApplyRecordChunkParams`, `RecordReceiveContext` and `VisibilityContext` gain `crypto?`.
+`verifyHolderProof`, `visibleTo` and `filterVisibleRecords` keep their asynchronous contracts and forward that context.
+`visibilityRules(rules)` keeps its signature. Its returned hook consumes the extended context.
+Internal dependency checks carry `methods?` and provider options in named params objects and remain asynchronous.
+
+`beginRecordPull`, ordering, policies, decisions and content comparisons remain synchronous.
+Hashing preserves canonical bytes, string `meta.version` substitution, tombstones and range framing.
+Payload checks must be awaited before persistence. A Promise itself is always truthy.
+Provider operational failures reject rather than becoming invalid-input refusals.
+
+```ts
+const options = { crypto }
+const op = await verifySignedRecord({
+  record: record,
+  opKind: opKind,
+  methods: methods,
+  ...options,
+})
+if (op !== null && (await recordPayloadMatches({ record, claim: op.claim, ...options }))) {
+  const digest = op.contentDigest
+  // Apply authorisation and persistence policy using this verified content.
+}
+```
+
+See [provider adoption](crypto-provider.md) for selection, strict verification and provider failures.

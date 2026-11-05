@@ -1,13 +1,18 @@
 import type { StoreProvider } from '@hozon/db'
 import { HozonDB } from '@hozon/db'
 import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
-import type { MethodRegistry } from '@kokuin/token'
+import type { CryptoProviderBlake3Params } from '@kokuin/crypto'
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
+import type { SignedRecord } from '@kokuin/records'
+import { signRecordOp, verifySignedRecord } from '@kokuin/records'
+import type { DIDMethodResolverResolveParams, MethodRegistry } from '@kokuin/token'
 import { createSigningIdentityForDID, randomIdentity } from '@kokuin/token'
 import { VAULT_OP_KIND } from '@kokuin/vault'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { createRuntime } from '@sozai/runtime'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
+import type { VaultCoordinatorParams } from '../src/index.js'
 import {
   createVaultCoordinator,
   getVaultRecordsStore,
@@ -22,12 +27,12 @@ async function fixture() {
   const db = new HozonDB({ adapter: new NodeSQLiteAdapter({ database: ':memory:' }) })
   db.register(vaultStoreDefinition)
   db.register(vaultRecordsStoreDefinition)
-  await getVaultRecordsStore(db, VAULT_OP_KIND)
+  await getVaultRecordsStore({ provider: db, opKind: VAULT_OP_KIND })
   const identity = randomIdentity()
-  const signer = createSigningIdentityForDID(
-    'did:test:provider-issuer',
-    ed25519.utils.randomSecretKey(),
-  )
+  const signer = createSigningIdentityForDID({
+    id: 'did:test:provider-issuer',
+    privateKey: ed25519.utils.randomSecretKey(),
+  })
   const signingKey = { alg: 'EdDSA' as const, publicKey: signer.publicKey }
   const staticMethods: MethodRegistry = [{ method: 'test', resolve: async () => signingKey }]
   let counter = 1000
@@ -65,9 +70,9 @@ async function fixture() {
     return [
       {
         method: 'test',
-        resolve: async (did) => {
+        resolve: async ({ did }: DIDMethodResolverResolveParams) => {
           expect(did).toBe(signer.id)
-          let timer: ReturnType<typeof setTimeout> | undefined
+          let timer: NodeJS.Timeout | undefined
           try {
             const row = await Promise.race([
               getVaultStore(provider).then((store) => store.getKey(key)),
@@ -142,7 +147,7 @@ test('records apply resolves methods again inside its transaction', async () => 
     )
     f.calls.length = 0
     f.resolved.length = 0
-    const result = await f.manager.records.apply(records)
+    const result = await f.manager.records.apply({ records })
     expect(result.rejected).toEqual([])
     expect(result.parked).toEqual([])
     expect(f.calls.some((provider) => provider.isTransactionBound)).toBe(true)
@@ -185,7 +190,7 @@ test('apply scopes verification hooks while importing a signed branch and its de
   try {
     db.register(vaultStoreDefinition)
     db.register(vaultRecordsStoreDefinition)
-    await getVaultRecordsStore(db, VAULT_OP_KIND)
+    await getVaultRecordsStore({ provider: db, opKind: VAULT_OP_KIND })
     const records = (
       await f.manager.records.adapter.list([
         'vault.key',
@@ -195,32 +200,34 @@ test('apply scopes verification hooks while importing a signed branch and its de
       ])
     ).flatMap((decision) => decision.copies)
     const providers: Array<StoreProvider> = []
-    const methodsFor = (provider: StoreProvider): MethodRegistry => [
-      {
-        method: 'test',
-        resolve: async () => {
-          let timer: ReturnType<typeof setTimeout> | undefined
-          try {
-            await Promise.race([
-              getVaultStore(provider).then((store) => store.listKeys(f.key.ownerDID)),
-              new Promise<never>((_, reject) => {
-                timer = setTimeout(() => reject(new Error('Resolver query timed out')), 300)
-              }),
-            ])
-            providers.push(provider)
-            return { alg: 'EdDSA', publicKey: f.params.signer.publicKey }
-          } finally {
-            clearTimeout(timer)
-          }
+    const methodsFor = (provider: StoreProvider): MethodRegistry => {
+      return [
+        {
+          method: 'test',
+          resolve: async () => {
+            let timer: NodeJS.Timeout | undefined
+            try {
+              await Promise.race([
+                getVaultStore(provider).then((store) => store.listKeys(f.key.ownerDID)),
+                new Promise<never>((_, reject) => {
+                  timer = setTimeout(() => reject(new Error('Resolver query timed out')), 300)
+                }),
+              ])
+              providers.push(provider)
+              return { alg: 'EdDSA', publicKey: f.params.signer.publicKey }
+            } finally {
+              clearTimeout(timer)
+            }
+          },
         },
-      },
-    ]
+      ]
+    }
     const manager = createVaultCoordinator({
       ...f.params,
       store: await getVaultStore(db),
       records: { ...f.params.records, methods: methodsFor(db), methodsFor },
     })
-    const result = await manager.records.apply(records)
+    const result = await manager.records.apply({ records })
     expect(result.rejected).toEqual([])
     expect(result.parked).toEqual([])
     expect(result.applied).toBe(4)
@@ -231,3 +238,250 @@ test('apply scopes verification hooks while importing a signed branch and its de
     await f.db.close()
   }
 }, 3_000)
+
+test('local row writes own bytes and metadata before waiting for the provider', async () => {
+  const db = new HozonDB({ adapter: new NodeSQLiteAdapter({ database: ':memory:' }) })
+  db.register(vaultStoreDefinition)
+  try {
+    const store = await getVaultStore(db)
+    const row = {
+      ownerDID: randomIdentity().id,
+      keyID: 'snapshot-key',
+      entryID: 'snapshot-entry',
+      keyVersion: 1,
+      kind: 'blob',
+      label: 'Original',
+      attributes: { name: 'original' },
+      iv: new Uint8Array(12),
+      ciphertext: new Uint8Array([1, 2, 3]),
+      hlc: '2026-10-01T00:00:00.000Z:00000001:snapshot',
+      provenance: 'local',
+    }
+    const pending = store.putEntry(row)
+    row.label = 'Changed'
+    row.attributes.name = 'changed'
+    row.ciphertext.fill(9)
+    await pending
+    const stored = await store.getEntry(row)
+    expect(stored?.label).toBe('Original')
+    expect(stored?.attributes).toEqual({ name: 'original' })
+    expect(stored?.ciphertext).toEqual(new Uint8Array([1, 2, 3]))
+  } finally {
+    await db.close()
+  }
+})
+
+test('coordinator writes own plaintext before awaiting authority', async () => {
+  const f = await fixture()
+  try {
+    const entered = Promise.withResolvers<void>()
+    const released = Promise.withResolvers<void>()
+    const manager = createVaultCoordinator({
+      ...f.params,
+      authority: {
+        authorize: async () => {
+          entered.resolve()
+          await released.promise
+          return true
+        },
+      },
+    })
+    const request = { ...f.entry, plaintext: bytes('original') }
+    const pending = manager.updateEntry(request)
+    await entered.promise
+    request.plaintext.fill(9)
+    released.resolve()
+    await pending
+    expect(await manager.readEntry(f.entry)).toEqual(bytes('original'))
+  } finally {
+    await f.db.close()
+  }
+})
+
+test('coordinator rejects conflicting nested crypto before any provider call', async () => {
+  const f = await fixture()
+  try {
+    const blake3 = vi.fn(nobleCrypto.blake3)
+    const crypto = { ...nobleCrypto, blake3 }
+    expect(() => {
+      return createVaultCoordinator({
+        ...f.params,
+        crypto,
+        records: { ...f.params.records, crypto: { ...nobleCrypto } },
+      })
+    }).toThrow(/crypto/i)
+    expect(blake3).not.toHaveBeenCalled()
+  } finally {
+    await f.db.close()
+  }
+})
+
+test('coordinator captures one provider for key IDs, records, projections and descriptor checks', async () => {
+  const f = await fixture()
+  try {
+    const blake3 = vi.fn(nobleCrypto.blake3)
+    const verify = vi.fn(nobleCrypto.verify)
+    const crypto = { ...nobleCrypto, blake3, verify }
+    const params: Extract<VaultCoordinatorParams, { mode: 'replicated' }> & {
+      crypto: CryptoProvider
+    } = { ...f.params, crypto }
+    const manager = createVaultCoordinator(params)
+    params.crypto = {
+      ...nobleCrypto,
+      blake3: async () => {
+        throw new Error('replacement')
+      },
+    }
+    const key = await manager.createKey({ ownerDID: f.key.ownerDID })
+    expect(blake3).toHaveBeenCalled()
+    expect(verify).toHaveBeenCalled()
+    blake3.mockClear()
+    await manager.openKey(key)
+    expect(blake3).toHaveBeenCalled()
+  } finally {
+    await f.db.close()
+  }
+})
+
+for (const failure of ['provider', 'payload', 'commitment'] as const) {
+  test.each([false, true])(
+    `${failure} failure rolls back prior adapter writes in ambient=%s transactions`,
+    async (ambient) => {
+      const f = await fixture()
+      try {
+        const sentinel = new Error('provider failed')
+        let reject = false
+        const crypto = {
+          ...nobleCrypto,
+          blake3: async ({ input, dkLen: length }: CryptoProviderBlake3Params) => {
+            if (reject) throw sentinel
+            return nobleCrypto.blake3({ input, dkLen: length })
+          },
+        }
+        const record = (await f.manager.records.adapter.list(['vault.entry']))[0]?.copies[0]
+        if (record === undefined) throw new Error('Missing entry fixture')
+        const op = await verifySignedRecord({
+          record,
+          opKind: VAULT_OP_KIND,
+          methods: f.params.records.methods,
+        })
+        if (op === null) throw new Error('Fixture signature failed')
+        const marker = {
+          ...record,
+          id: 'rollback-marker',
+          ...(await signRecordOp({
+            identity: f.params.signer,
+            claim: { ...op.claim, id: 'rollback-marker' },
+            opKind: VAULT_OP_KIND,
+          })),
+        }
+        let invalid: SignedRecord = { ...record, payload: bytes('mismatched payload') }
+        if (failure === 'commitment') {
+          const key = (await f.manager.records.adapter.list(['vault.key']))[0]?.copies[0]
+          if (key === undefined || key.payload === null) throw new Error('Missing key fixture')
+          const keyOp = await verifySignedRecord({
+            record: key,
+            opKind: VAULT_OP_KIND,
+            methods: f.params.records.methods,
+          })
+          if (keyOp === null) throw new Error('Fixture key signature failed')
+          invalid = {
+            ...key,
+            payload: key.payload,
+            ...(await signRecordOp({
+              identity: f.params.signer,
+              claim: {
+                ...keyOp.claim,
+                meta: { ...keyOp.claim.meta, keyUnique: 'AAAAAAAAAAAAAAAAAAAAAA' },
+              },
+              opKind: VAULT_OP_KIND,
+            })),
+          }
+        }
+        const write = async (provider: StoreProvider) => {
+          const store = await getVaultStore(provider)
+          const manager = createVaultCoordinator({ ...f.params, store, crypto })
+          return manager.records.adapter.transaction(async (adapter) => {
+            await adapter.putCopy(marker)
+            reject = failure === 'provider'
+            await adapter.putCopy(failure === 'provider' ? record : invalid)
+          })
+        }
+        const pending = ambient ? f.db.withTransaction(write) : write(f.db)
+        if (failure === 'provider') await expect(pending).rejects.toBe(sentinel)
+        else await expect(pending).rejects.toThrow(/Invalid vault record/)
+        expect(
+          await f.params.store.getEntry({ ownerDID: f.key.ownerDID, entryID: marker.id }),
+        ).toBeUndefined()
+        expect(await f.params.store.getEntry(f.entry)).toBeDefined()
+      } finally {
+        await f.db.close()
+      }
+    },
+  )
+}
+
+test.each([false, true])(
+  'caught late provider rejection preserves previous copies in ambient=%s transactions',
+  async (ambient) => {
+    const f = await fixture()
+    try {
+      const { decodeVaultRecord, encodeVaultRecordPayload } = await import('@kokuin/vault')
+      const { recordPayloadDigest } = await import('@kokuin/records')
+      const original = (await f.manager.records.adapter.list(['vault.entry']))[0]?.copies[0]
+      if (original === undefined) throw new Error('Missing fixture')
+      const op = await verifySignedRecord({
+        record: original,
+        opKind: VAULT_OP_KIND,
+        methods: f.params.records.methods,
+      })
+      if (op === null) throw new Error('Invalid fixture')
+      const decoded = await decodeVaultRecord({ record: original, recordMeta: op.claim.meta })
+      if (decoded.type !== 'vault.entry') throw new Error('Wrong fixture type')
+      const payload = encodeVaultRecordPayload({
+        type: 'vault.entry',
+        payload: {
+          ...decoded.payload,
+          ciphertext: new Uint8Array([7, 8, 9]),
+        },
+      })
+      const incoming = {
+        ...original,
+        payload,
+        ...(await signRecordOp({
+          identity: f.params.signer,
+          claim: { ...op.claim, payloadDigest: await recordPayloadDigest({ payload }) },
+          opKind: VAULT_OP_KIND,
+        })),
+      }
+      const sentinel = new Error('Late provider failure')
+      let payloadCalls = 0
+      const crypto = {
+        ...nobleCrypto,
+        blake3: async ({ input: bytes, dkLen: length }: CryptoProviderBlake3Params) => {
+          if (
+            bytes.length === payload.length &&
+            bytes.every((value, index) => value === payload[index]) &&
+            ++payloadCalls === 2
+          )
+            throw sentinel
+          return nobleCrypto.blake3({ input: bytes, dkLen: length })
+        },
+      }
+      const write = async (provider: StoreProvider) => {
+        const store = await getVaultStore(provider)
+        const manager = createVaultCoordinator({ ...f.params, store, crypto })
+        await manager.records.adapter.transaction(async (adapter) => {
+          await expect(adapter.putCopy(incoming)).rejects.toBe(sentinel)
+        })
+      }
+      if (ambient) await f.db.withTransaction(write)
+      else await write(f.db)
+      expect(payloadCalls).toBe(2)
+      const kept = await f.manager.records.adapter.get(original)
+      expect(kept?.copies.map((record) => record.opJWT)).toEqual([original.opJWT])
+    } finally {
+      await f.db.close()
+    }
+  },
+)

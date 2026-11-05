@@ -20,19 +20,29 @@ import type { OpenedKey, OpenKeyParams } from './coordinator-types.js'
 import { settledValue } from './settle.js'
 import type { EntryRow, VaultStoreAPI } from './types.js'
 
+type OpenParams = {
+  address: OpenKeyParams
+  store?: VaultStoreAPI
+  specific?: string
+  wrappingID?: string
+}
+type DecryptParams = {
+  row: EntryRow | undefined
+  address: OpenKeyParams
+  store?: VaultStoreAPI
+  specific?: boolean
+}
+type DoOpenParams = {
+  address: OpenKeyParams
+  store: VaultStoreAPI
+  generation: string
+  specific?: string
+  wrappingID?: string
+}
+
 export type OpenFunctions = {
-  open(
-    address: OpenKeyParams,
-    store?: VaultStoreAPI,
-    specific?: string,
-    wrappingID?: string,
-  ): Promise<OpenedKey>
-  decrypt(
-    row: EntryRow | undefined,
-    address: OpenKeyParams,
-    store?: VaultStoreAPI,
-    specific?: boolean,
-  ): Promise<Uint8Array>
+  open(params: OpenParams): Promise<OpenedKey>
+  decrypt(params: DecryptParams): Promise<Uint8Array>
   revoked(address: OpenKeyParams, store: VaultStoreAPI): Promise<boolean>
 }
 
@@ -45,18 +55,20 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     if (params.mode !== 'replicated') return false
 
     const denied = await ctx.recordsFor(store).listRevocations(address)
-    const own = vaultRevocationRecordID(address.keyID, params.principal)
+    const own = vaultRevocationRecordID({ keyID: address.keyID, recipientDID: params.principal })
 
-    return denied.some((did) => vaultRevocationRecordID(address.keyID, did) === own)
+    return denied.some(
+      (did) => vaultRevocationRecordID({ keyID: address.keyID, recipientDID: did }) === own,
+    )
   }
 
-  async function doOpen(
-    address: OpenKeyParams,
-    store: VaultStoreAPI,
-    generation: string,
-    specific?: string,
-    wrappingID?: string,
-  ): Promise<OpenedKey> {
+  async function doOpen({
+    address,
+    store,
+    generation,
+    specific,
+    wrappingID,
+  }: DoOpenParams): Promise<OpenedKey> {
     // Both reads run together. Their results are checked in the old order: key, version, revocation.
     const [keyRead, revokedRead] = await Promise.allSettled([
       ctx.key(address, store),
@@ -73,17 +85,22 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
       throw new VaultNotFound()
     }
 
-    const branch = await ctx.branch(address, version, store, specific)
+    const branch = await ctx.branch({
+      address,
+      version,
+      store,
+      specific,
+    })
     const supplied = Object.values(address.inputs ?? {}).some((input) => input !== undefined)
 
     if (!supplied && wrappingID === undefined) {
-      const hit = cache.get(cacheID(address), version)
+      const hit = cache.get({ keyID: cacheID(address), keyVersion: version })
 
       if (hit !== null) {
         if (hit.branchID === branch.branchID) return { ...hit, version, suite: branch.suite }
 
         hit.contentKey.fill(0)
-        cache.evictVersion(cacheID(address), version)
+        cache.evictVersion({ keyID: cacheID(address), keyVersion: version })
       }
     }
 
@@ -95,7 +112,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
       if (wrappingID !== undefined && row.wrappingID !== wrappingID) continue
       if (params.mode === 'replicated' && row.provenance !== branch.branchID) continue
 
-      const needed = satisfiableFactors(row.descriptors, params.identity)
+      const needed = satisfiableFactors({ descriptors: row.descriptors, identity: params.identity })
 
       if (needed === null) continue
 
@@ -104,6 +121,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
 
       try {
         const contentKey = await getSuite(branch.suite).unwrap({
+          crypto: params.crypto,
           ...row,
           identity: params.identity,
           inputs: address.inputs,
@@ -115,7 +133,12 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
           specific === undefined &&
           wrappingID === undefined
         )
-          cache.set(cacheID(address), contentKey, version, branch.branchID)
+          cache.set({
+            keyID: cacheID(address),
+            contentKey,
+            keyVersion: version,
+            branchID: branch.branchID,
+          })
 
         return { contentKey, version, suite: branch.suite, branchID: branch.branchID }
       } catch (error) {
@@ -136,7 +159,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
       wrappings.some((w) => {
         return (
           w.provenance !== branch.branchID &&
-          satisfiableFactors(w.descriptors, params.identity) !== null
+          satisfiableFactors({ descriptors: w.descriptors, identity: params.identity }) !== null
         )
       })
     )
@@ -145,28 +168,37 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     throw new VaultNotFound()
   }
 
-  async function open(
-    address: OpenKeyParams,
+  async function open({
+    address,
     store = params.store,
-    specific?: string,
-    wrappingID?: string,
-  ): Promise<OpenedKey> {
+    specific,
+    wrappingID,
+  }: OpenParams): Promise<OpenedKey> {
     const generation = ctx.generation(address)
 
     if (address.inputs?.pin !== undefined) {
       const id = cacheID(address)
       const rejected = (cause?: unknown) => {
-        return new VaultPinRejected(address.keyID, {
-          cause,
-          attemptsRemaining: throttle.attemptsRemaining(id),
-          retryAfter: throttle.retryAfter(id),
+        return new VaultPinRejected({
+          keyID: address.keyID,
+          options: {
+            cause,
+            attemptsRemaining: throttle.attemptsRemaining(id),
+            retryAfter: throttle.retryAfter(id),
+          },
         })
       }
 
       if (throttle.retryAfter(id) > 0) throw rejected()
 
       try {
-        const opened = await doOpen(address, store, generation, specific, wrappingID)
+        const opened = await doOpen({
+          address,
+          store,
+          generation,
+          specific,
+          wrappingID,
+        })
 
         throttle.recordSuccess(id)
 
@@ -188,13 +220,19 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
       Object.values(address.inputs ?? {}).some((input) => input !== undefined) ||
       store !== params.store
     )
-      return doOpen(address, store, generation, specific, wrappingID)
+      return doOpen({
+        address,
+        store,
+        generation,
+        specific,
+        wrappingID,
+      })
 
     const flightID = JSON.stringify([cacheID(address), address.atVersion])
 
     while (inFlight.has(flightID)) await inFlight.get(flightID)
 
-    const run = doOpen(address, store, generation)
+    const run = doOpen({ address, store, generation })
     const gate = run.then(
       () => {},
       () => {},
@@ -208,19 +246,19 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     }
   }
 
-  async function decrypt(
-    row: EntryRow | undefined,
-    address: OpenKeyParams,
+  async function decrypt({
+    row,
+    address,
     store = params.store,
     specific = false,
-  ): Promise<Uint8Array> {
+  }: DecryptParams): Promise<Uint8Array> {
     if (row === undefined) throw new VaultNotFound()
 
-    const opened = await open(
-      { ...address, atVersion: row.keyVersion },
+    const opened = await open({
+      address: { ...address, atVersion: row.keyVersion },
       store,
-      specific ? row.provenance : undefined,
-    )
+      specific: specific ? row.provenance : undefined,
+    })
 
     try {
       if (params.mode === 'replicated' && row.provenance !== opened.branchID)

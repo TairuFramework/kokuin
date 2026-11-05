@@ -35,8 +35,8 @@ async function race(
   lockPath?: string,
 ): Promise<Array<{ did?: string; error?: string }>> {
   const readyFiles = [join(dir, `${keyID}.ready-0`), join(dir, `${keyID}.ready-1`)]
-  const processes = readyFiles.map((readyFile) =>
-    run(process.execPath, [
+  const processes = readyFiles.map((readyFile) => {
+    return run(process.execPath, [
       '--experimental-strip-types',
       CLI,
       service,
@@ -44,8 +44,8 @@ async function race(
       startFile,
       readyFile,
       ...(lockPath ? [lockPath] : []),
-    ]),
-  )
+    ])
+  })
   // Release only once both processes have started and are spinning on the start file. Writing it
   // straight after spawning lets each one through as soon as it boots, so startup jitter decides
   // the order and the creates often never overlap.
@@ -72,18 +72,19 @@ async function race(
   }
   await writeFile(startFile, '')
   const settled = await Promise.all(
-    processes.map((proc) =>
-      proc.then(
+    processes.map((proc) => {
+      return proc.then(
         (result) => JSON.parse(result.stdout) as { did?: string; error?: string },
         // execFile rejects on a non-zero exit, but the CLI wrote its {error} JSON to stdout
         // before exit(1). Recover it from the rejection rather than letting Promise.all throw.
-        (error: { stdout?: string }) =>
-          (error.stdout != null ? JSON.parse(error.stdout) : { error: String(error) }) as {
+        (error: { stdout?: string }) => {
+          return (error.stdout != null ? JSON.parse(error.stdout) : { error: String(error) }) as {
             did?: string
             error?: string
-          },
-      ),
-    ),
+          }
+        },
+      )
+    }),
   )
   return settled
 }
@@ -113,9 +114,9 @@ describe('cross-process provideAsync', () => {
       const bothSucceeded = first.did != null && second.did != null
       const diverged = bothSucceeded && first.did !== second.did
 
-      const duplicateErrors = [first, second].filter((result) =>
-        /already exists|errSecDuplicate|duplicate item/i.test(result.error ?? ''),
-      )
+      const duplicateErrors = [first, second].filter((result) => {
+        return /already exists|errSecDuplicate|duplicate item/i.test(result.error ?? '')
+      })
       const oneThrewDuplicate =
         duplicateErrors.length === 1 && (first.did != null || second.did != null)
 

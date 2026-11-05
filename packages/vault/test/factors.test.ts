@@ -23,22 +23,26 @@ describe('factor helpers', () => {
 
   test('reconstructs recipients and supplied secrets without losing costs or order', () => {
     expect(
-      factorsFromDescriptors(
-        [
+      factorsFromDescriptors({
+        descriptors: [
           { kind: 'did', params: { recipient: 'did:example:owner' } },
           { kind: 'passphrase', params: { m: 64, t: 2, p: 1 } },
         ],
-        { passphrase: input },
-      ),
+        inputs: { passphrase: input },
+      }),
     ).toEqual([
       { kind: 'did', recipientDID: 'did:example:owner' },
       { kind: 'passphrase', input, cost: { m: 64, t: 2, p: 1 } },
     ])
-    expect(() => factorsFromDescriptors([{ kind: 'did', params: {} }])).toThrow(VaultTampered)
-    expect(() => factorsFromDescriptors([{ kind: 'pin', params: {} }])).toThrow(NoAvailableFactor)
-    expect(() => factorsFromDescriptors([{ kind: 'unknown', params: {} }])).toThrow(
+    expect(() => factorsFromDescriptors({ descriptors: [{ kind: 'did', params: {} }] })).toThrow(
+      VaultTampered,
+    )
+    expect(() => factorsFromDescriptors({ descriptors: [{ kind: 'pin', params: {} }] })).toThrow(
       NoAvailableFactor,
     )
+    expect(() =>
+      factorsFromDescriptors({ descriptors: [{ kind: 'unknown', params: {} }] }),
+    ).toThrow(NoAvailableFactor)
   })
 
   test('compares long and short recipient forms without changing the stored resolution input', async () => {
@@ -56,24 +60,37 @@ describe('factor helpers', () => {
     expect(wrappableDID(identity)).toBe(identity.longForm)
     const simple = randomIdentity()
     expect(wrappableDID(simple)).toBe(simple.id)
-    expect(satisfiableFactors(descriptors, identity)).toEqual(['pin'])
-    expect(satisfiableFactors(descriptors, simple)).toBeNull()
-    expect(satisfiableFactors(descriptors, null)).toBeNull()
-    expect(satisfiableFactors([{ kind: 'unknown', params: {} }], identity)).toBeNull()
     expect(
-      wrappingNamesExcludedRecipient(
-        { recipientDID: null, factors: descriptors },
-        new Set([identity.id]),
-      ),
+      satisfiableFactors({
+        descriptors,
+        identity,
+      }),
+    ).toEqual(['pin'])
+    expect(satisfiableFactors({ descriptors, identity: simple })).toBeNull()
+    expect(satisfiableFactors({ descriptors, identity: null })).toBeNull()
+    expect(
+      satisfiableFactors({
+        descriptors: [{ kind: 'unknown', params: {} }],
+        identity,
+      }),
+    ).toBeNull()
+    expect(
+      wrappingNamesExcludedRecipient({
+        wrapping: { recipientDID: null, factors: descriptors },
+        excluded: new Set([identity.id]),
+      }),
     ).toBe(true)
     expect(
-      wrappingNamesExcludedRecipient(
-        { recipientDID: simple.id, factors: [] },
-        new Set([simple.id]),
-      ),
+      wrappingNamesExcludedRecipient({
+        wrapping: { recipientDID: simple.id, factors: [] },
+        excluded: new Set([simple.id]),
+      }),
     ).toBe(true)
     expect(
-      wrappingNamesExcludedRecipient({ recipientDID: null, factors: descriptors }, new Set()),
+      wrappingNamesExcludedRecipient({
+        wrapping: { recipientDID: null, factors: descriptors },
+        excluded: new Set(),
+      }),
     ).toBe(false)
     expect(descriptors[0]?.params.recipient).toBe(identity.longForm)
   })

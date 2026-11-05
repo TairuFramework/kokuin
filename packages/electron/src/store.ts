@@ -1,3 +1,4 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { createTracer, KokuinAttributeKeys, KokuinSpanNames } from '@kokuin/otel'
 import {
   createFullIdentity,
@@ -18,6 +19,7 @@ const tracer = createTracer('keystore.electron')
 const logger = getLogger(['kokuin', 'electron'])
 
 export type ElectronKeyStoreParams = {
+  crypto?: CryptoProvider
   /** The electron-store file name. Defaults to `'keystore'`. */
   name?: string
   allowInsecureStorage?: boolean
@@ -65,15 +67,20 @@ export class ElectronKeyStore
           `${String(cached.#lockPath)}; cannot reopen with conflicting lockPath: ${params.lockPath}.`,
       )
     }
+    if ((params?.crypto ?? nobleCrypto) !== cached.#crypto) {
+      throw new Error('Cannot reopen a keystore with conflicting crypto provider')
+    }
     return cached
   }
 
+  #crypto: CryptoProvider
   #entries: Record<string, ElectronKeyEntry> = Object.create(null)
   #storage: KeyStorage
   #allowInsecureStorage: boolean
   #lockPath?: string
 
   constructor(params?: ElectronKeyStoreParams) {
+    this.#crypto = params?.crypto ?? nobleCrypto
     this.#allowInsecureStorage = params?.allowInsecureStorage ?? false
     this.#lockPath = params?.lockPath
     const store = new Store<StoreValues>({
@@ -117,7 +124,7 @@ export class ElectronKeyStore
         const entry = this.entry(keyID)
         const existing = await entry.getAsync()
         const privateKey = existing ?? (await entry.provideAsync())
-        const identity = createFullIdentity(privateKey)
+        const identity = createFullIdentity({ privateKey, crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, existing == null)
         if (existing == null) {
@@ -138,7 +145,7 @@ export class ElectronKeyStore
         const entry = this.entry(keyID)
         const existing = entry.get()
         const privateKey = existing ?? entry.provide()
-        const identity = createFullIdentity(privateKey)
+        const identity = createFullIdentity({ privateKey, crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, existing == null)
         if (existing == null) {

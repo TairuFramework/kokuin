@@ -55,7 +55,10 @@ export async function assertAudienceNotRevoked(
   if (typeof sub !== 'string' || typeof aud !== 'string') {
     return
   }
-  const resolver = options?.methods == null ? undefined : findMethodResolver(options.methods, sub)
+  const resolver =
+    options?.methods == null
+      ? undefined
+      : findMethodResolver({ registry: options.methods, did: sub })
   if (resolver == null) {
     if (carriesOwnKeys(sub)) {
       return

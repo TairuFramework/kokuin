@@ -16,30 +16,33 @@ describe('assertDeviceCapabilityPolicy()', () => {
   const now = 1_800_000_000
 
   test('rejects a capability with no exp — the schema enforces it only when present', () => {
-    expect(() => assertDeviceCapabilityPolicy({}, { now })).toThrow(/must set exp/)
+    expect(() => assertDeviceCapabilityPolicy({ payload: {}, now })).toThrow(/must set exp/)
   })
 
   test('accepts an expiry inside the accepted-loss window', () => {
-    expect(() => assertDeviceCapabilityPolicy({ exp: now + 60 * 60 * 24 }, { now })).not.toThrow()
+    expect(() =>
+      assertDeviceCapabilityPolicy({ payload: { exp: now + 60 * 60 * 24 }, now }),
+    ).not.toThrow()
   })
 
   test('rejects an expiry beyond the default window', () => {
-    expect(() => assertDeviceCapabilityPolicy({ exp: now + 60 * 60 * 24 * 30 }, { now })).toThrow(
-      /lifetime/,
-    )
+    expect(() =>
+      assertDeviceCapabilityPolicy({ payload: { exp: now + 60 * 60 * 24 * 30 }, now }),
+    ).toThrow(/lifetime/)
   })
 
   test('rejects an already-expired capability', () => {
-    expect(() => assertDeviceCapabilityPolicy({ exp: now - 1 }, { now })).toThrow()
+    expect(() => assertDeviceCapabilityPolicy({ payload: { exp: now - 1 }, now })).toThrow()
   })
 
   test('honours a caller-supplied window', () => {
-    expect(() =>
-      assertDeviceCapabilityPolicy(
-        { exp: now + 60 * 60 * 24 * 30 },
-        { now, maxLifetimeSeconds: 60 * 60 * 24 * 60 },
-      ),
-    ).not.toThrow()
+    expect(() => {
+      return assertDeviceCapabilityPolicy({
+        payload: { exp: now + 60 * 60 * 24 * 30 },
+        now,
+        maxLifetimeSeconds: 60 * 60 * 24 * 60,
+      })
+    }).not.toThrow()
   })
 
   test('the default window is seven days', () => {

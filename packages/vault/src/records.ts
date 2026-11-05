@@ -1,11 +1,20 @@
+import { nobleCrypto } from '@kokuin/crypto'
 import type { RecordClaim, SignedRecord } from '@kokuin/records'
 import { parseCanonicalHLC, recordPayloadDigest } from '@kokuin/records'
+import type { CryptoOptions } from '@kokuin/token'
 import { normalizeDID } from '@kokuin/token'
 import { canonicalStringify, fromB64U, fromUTF, toB64U, toUTF } from '@sozai/codec'
 
 import type { FactorDescriptor } from './factors.js'
 import { createVaultKeyID } from './id.js'
 import type { EncryptEntryResult, WrapResult } from './suite.js'
+
+export type VaultRecordPayloadErrorParams = {
+  type: string
+  id: string
+  reason: string
+  cause?: unknown
+}
 
 export const VAULT_OP_KIND = 'kokuin/vault-op/v1'
 export const VAULT_RECORD_TYPES = [
@@ -75,7 +84,7 @@ export type DecodedVaultRecord = {
 export class VaultRecordPayloadError extends Error {
   #type: string
   #id: string
-  constructor(params: { type: string; id: string; reason: string; cause?: unknown }) {
+  constructor(params: VaultRecordPayloadErrorParams) {
     const { type, id, reason, cause } = params
 
     super(`Vault record ${type} ${id}: ${reason}`, { cause })
@@ -91,7 +100,12 @@ export class VaultRecordPayloadError extends Error {
   }
 }
 
-export function vaultRevocationRecordID(keyID: string, recipientDID: string): string {
+export type VaultRevocationRecordIDParams = { keyID: string; recipientDID: string }
+
+export function vaultRevocationRecordID({
+  recipientDID,
+  keyID,
+}: VaultRevocationRecordIDParams): string {
   return `${keyID.length}:${keyID}/${normalizeDID(recipientDID)}`
 }
 
@@ -164,7 +178,7 @@ const entryMetadata = {
 }
 
 /** Structural metadata only. Consumer evidence is checked by the injected validator. */
-export function vaultRecordMeta<Type extends VaultRecordType>(
+export function parseVaultRecordMeta<Type extends VaultRecordType>(
   type: Type,
   claim: RecordClaim,
 ): VaultRecordMetas[Type] | null {
@@ -182,9 +196,7 @@ export function vaultRecordMeta<Type extends VaultRecordType>(
           version: count,
           state: (v) => (claim.deleted ? v === 'deleted' : v === 'active' || v === 'retired'),
           ...consumer,
-        }) &&
-        m.keyID === claim.id &&
-        createVaultKeyID(claim.owner, fromB64U(m.keyUnique as string)) === claim.id
+        }) && m.keyID === claim.id
       break
     case 'vault.key-branch':
       valid = !claim.deleted && shape(m, { keyID, keyVersion: count, branchID: text, ...consumer })
@@ -221,13 +233,39 @@ export function vaultRecordMeta<Type extends VaultRecordType>(
       valid =
         !claim.deleted &&
         shape(m, { keyID, revokedDID: did, ...consumer }) &&
-        claim.id === vaultRevocationRecordID(m.keyID as string, m.revokedDID as string)
+        claim.id ===
+          vaultRevocationRecordID({
+            keyID: m.keyID as string,
+            recipientDID: m.revokedDID as string,
+          })
       break
     default:
       return null
   }
 
   return valid ? (m as VaultRecordMetas[Type]) : null
+}
+
+export type VaultRecordMetaParams<Type extends VaultRecordType> = {
+  type: Type
+  claim: RecordClaim
+} & CryptoOptions
+
+export async function vaultRecordMeta<Type extends VaultRecordType>({
+  claim,
+  type,
+  ...options
+}: VaultRecordMetaParams<Type>): Promise<VaultRecordMetas[Type] | null> {
+  const { id, owner } = claim
+  const parsed = parseVaultRecordMeta(type, claim)
+  if (parsed === null) return null
+  const meta: VaultRecordMetas[Type] = JSON.parse(JSON.stringify(parsed))
+  if (type === 'vault.key') {
+    const key = meta as VaultRecordMetas['vault.key']
+    if ((await createVaultKeyID({ ...options, owner, unique: fromB64U(key.keyUnique) })) !== id)
+      return null
+  }
+  return meta
 }
 
 function wire(type: VaultRecordType, payload: VaultRecordPayloads[VaultRecordType]): unknown {
@@ -247,10 +285,15 @@ function wire(type: VaultRecordType, payload: VaultRecordPayloads[VaultRecordTyp
 }
 
 /** Canonical JSON with binary fields encoded as unpadded base64url. */
-export function encodeVaultRecordPayload<Type extends VaultRecordType>(
-  type: Type,
-  payload: VaultRecordPayloads[Type],
-): Uint8Array {
+export type EncodeVaultRecordPayloadParams<Type extends VaultRecordType> = {
+  type: Type
+  payload: VaultRecordPayloads[Type]
+}
+
+export function encodeVaultRecordPayload<Type extends VaultRecordType>({
+  payload,
+  type,
+}: EncodeVaultRecordPayloadParams<Type>): Uint8Array {
   return fromUTF(canonicalStringify(wire(type, payload)))
 }
 
@@ -327,11 +370,42 @@ function payloadOf(type: VaultRecordType, data: Uint8Array): VaultRecordPayloads
 }
 
 /** Pure codec. Signature and payload-digest verification belong to the caller. */
-export function decodeVaultRecord(
-  record: Pick<SignedRecord, 'type' | 'id' | 'owner' | 'hlc' | 'payload'>,
-  meta: Record<string, unknown>,
-): DecodedVaultRecord {
-  const { type, id, owner, hlc, payload } = record
+export type DecodeVaultRecordParams = {
+  record: Pick<SignedRecord, 'type' | 'id' | 'owner' | 'hlc' | 'payload'>
+  recordMeta: Record<string, unknown>
+} & CryptoOptions
+
+export async function decodeVaultRecord({
+  recordMeta,
+  record,
+  ...options
+}: DecodeVaultRecordParams): Promise<DecodedVaultRecord> {
+  const { type, id, owner, hlc } = record
+  const captured = { crypto: options.crypto ?? nobleCrypto }
+  const payload = record.payload === null ? null : new Uint8Array(record.payload)
+
+  let meta: Record<string, unknown>
+  try {
+    meta = JSON.parse(JSON.stringify(recordMeta))
+  } catch (cause) {
+    // biome-ignore lint/style/useErrorCause: the constructor carries cause in its parameter object
+    throw new VaultRecordPayloadError({
+      type,
+      id,
+      reason: cause instanceof Error ? cause.message : 'invalid record',
+      cause,
+    })
+  }
+  const payloadDigest =
+    payload === null ? null : await recordPayloadDigest({ ...captured, payload })
+  const recordType = type as VaultRecordType
+  const decodedMeta = (VAULT_RECORD_TYPES as ReadonlyArray<string>).includes(type)
+    ? await vaultRecordMeta({
+        ...captured,
+        type: recordType,
+        claim: { type, id, owner, hlc, meta, deleted: false, payloadDigest },
+      })
+    : null
 
   try {
     if (!(VAULT_RECORD_TYPES as ReadonlyArray<string>).includes(type))
@@ -339,20 +413,9 @@ export function decodeVaultRecord(
 
     if (payload === null) throw new Error('a tombstone has no payload')
 
-    const recordType = type as VaultRecordType
-    const decodedMeta = vaultRecordMeta(recordType, {
-      type,
-      id,
-      owner,
-      hlc,
-      meta,
-      deleted: false,
-      payloadDigest: recordPayloadDigest(payload),
-    })
-
     if (decodedMeta === null) throw new Error('record metadata')
 
-    if (type === 'vault.key-branch' && id !== recordPayloadDigest(payload))
+    if (type === 'vault.key-branch' && id !== payloadDigest)
       throw new Error('record id is not the payload digest')
 
     return {

@@ -26,20 +26,27 @@ import type {
 } from './coordinator-types.js'
 import { VaultWriteConflict } from './record-context.js'
 import { settleAll, settledValue } from './settle.js'
+import { snapshotCall } from './snapshot.js'
 import type { KeyAddress, KeyRow, WrappingRow } from './types.js'
 
-export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoordinator {
-  const ctx = createCoordinatorContext(params)
+export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoordinator {
+  const ctx = createCoordinatorContext(input)
+  const params = ctx.params
   const open = createOpenFunctions(ctx)
   const records = createRecordFunctions(ctx)
   const rotate = createRotateFunctions(ctx, open, records)
   const entries = createEntryFunctions(ctx, open, records)
 
-  async function createKey(request: CreateKeyParams): Promise<KeyAddress> {
-    await ctx.authorize('createKey', 'administer', request)
+  async function createKey(input: CreateKeyParams): Promise<KeyAddress> {
+    const request = snapshotCall(input)
+    await ctx.authorize({ operation: 'createKey', verb: 'administer', address: request })
 
     const unique = params.runtime.getRandomValues(new Uint8Array(16))
-    const { keyID, keyUnique } = createVaultKeyReference(request.ownerDID, unique)
+    const { keyID, keyUnique } = await createVaultKeyReference({
+      ...params,
+      owner: request.ownerDID,
+      unique,
+    })
     const key: KeyRow = {
       ownerDID: request.ownerDID,
       keyID,
@@ -74,12 +81,18 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         // Key records and wraps are independent. Wrapping IDs are drawn in factor-set order.
         const [chain, wrapped] = await settleAll([
           params.mode === 'replicated'
-            ? ctx.keyRecords(key, store, keyUnique, request.consumer)
+            ? ctx.keyRecords({
+                row: key,
+                store,
+                unique: keyUnique,
+                consumer: request.consumer,
+              })
             : Promise.resolve({ records: [], branchID: '', branchRecordID: '' }),
           settleAll(
             factorSets.map(async (factors) => {
               const wrappingID = params.runtime.getRandomID()
               const result = await suite.wrap({
+                crypto: params.crypto,
                 runtime: params.runtime,
                 contentKey,
                 factors,
@@ -110,14 +123,20 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
           // Signing stays sequential: a failure stops the rest. HLC allocation and output order
           // follow the factor sets.
           for (const row of rows)
-            output.push(await records.wrapping(row, chain, request.consumer ?? null))
+            output.push(
+              await records.wrapping({
+                row,
+                branch: chain,
+                consumer: request.consumer ?? null,
+              }),
+            )
 
-          await ctx.write(
+          await ctx.write({
             store,
             output,
-            { key: { ...key, expectedVersion: null, expectedBranches: [] } },
-            request,
-          )
+            preconditions: { key: { ...key, expectedVersion: null, expectedBranches: [] } },
+            call: request,
+          })
         } else {
           await store.putKey(key)
           await store.putWrappings(rows)
@@ -137,7 +156,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
     await ctx.locked([request], async (store) => {
       const key = await ctx.key(request, store)
       const [branch, branches, wrappings] = await settleAll([
-        ctx.branch(request, key.version, store),
+        ctx.branch({ address: request, version: key.version, store }),
         ctx.branches(key, key.version, store),
         store.listWrappings({ ...key, keyVersion: key.version }),
       ])
@@ -145,7 +164,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         return (
           (params.mode === 'local' || w.provenance === branch.branchID) &&
           w.descriptors.some((d) => d.kind === 'did') &&
-          satisfiableFactors(w.descriptors, params.identity) !== null
+          satisfiableFactors({ descriptors: w.descriptors, identity: params.identity }) !== null
         )
       })
 
@@ -159,12 +178,18 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         throw new VaultWriteConflict()
 
       const evidence = await ctx.wrappingEvidence(existing, store)
-      const opened = await open.open({ ...request, atVersion: key.version }, store)
+      const opened = await open.open({
+        address: { ...request, atVersion: key.version },
+        store,
+      })
 
       try {
         const wrappingID = params.runtime.getRandomID()
-        const factors = change(factorsFromDescriptors(existing.descriptors, request.inputs))
+        const factors = change(
+          factorsFromDescriptors({ descriptors: existing.descriptors, inputs: request.inputs }),
+        )
         const wrapped = await getSuite(opened.suite).wrap({
+          crypto: params.crypto,
           runtime: params.runtime,
           contentKey: opened.contentKey,
           factors,
@@ -189,31 +214,35 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
 
           const consumer =
             request.consumer === undefined ? evidence.op.claim.meta.consumer : request.consumer
-          const replacement = await records.wrapping(row, branch, consumer)
-          const deletion = await ctx.signed(
-            'vault.wrapping',
-            { ownerDID: key.ownerDID, id: existing.wrappingID },
-            null,
-            {
+          const replacement = await records.wrapping({
+            row,
+            branch,
+            consumer,
+          })
+          const deletion = await ctx.signed({
+            type: 'vault.wrapping',
+            address: { ownerDID: key.ownerDID, id: existing.wrappingID },
+            payload: null,
+            meta: {
               keyID: key.keyID,
               keyVersion: key.version,
               recipient: existing.recipientDID,
               consumer,
             },
-          )
+          })
 
-          await ctx.write(
+          await ctx.write({
             store,
-            [replacement, deletion],
-            {
+            output: [replacement, deletion],
+            preconditions: {
               key: {
                 ...key,
                 expectedVersion: key.version,
                 expectedBranches: branches.map((b) => b.branchID),
               },
             },
-            request,
-          )
+            call: request,
+          })
         }
       } finally {
         opened.contentKey.fill(0)
@@ -231,27 +260,27 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
     },
     createKey,
     async openKey(request) {
-      await ctx.authorize('openKey', 'read', request)
+      await ctx.authorize({ operation: 'openKey', verb: 'read', address: request })
 
-      return open.open(request)
+      return open.open({ address: request })
     },
     async unlock(request) {
-      await ctx.authorize('unlock', 'read', request)
+      await ctx.authorize({ operation: 'unlock', verb: 'read', address: request })
 
-      const opened = await open.open(request)
+      const opened = await open.open({ address: request })
 
       opened.contentKey.fill(0)
     },
     async lock(address) {
-      await ctx.authorize('lock', 'read', address)
+      await ctx.authorize({ operation: 'lock', verb: 'read', address })
       ctx.evict(address)
     },
-    async lockAll(ownerDID, call = {}) {
-      await ctx.authorize('lockAll', 'read', { ownerDID, ...call })
+    async lockAll({ ownerDID, ...call }) {
+      await ctx.authorize({ operation: 'lockAll', verb: 'read', address: { ownerDID, ...call } })
       ctx.evictAll(ownerDID)
     },
     async status(request): Promise<KeyStatus> {
-      await ctx.authorize('status', 'read', request)
+      await ctx.authorize({ operation: 'status', verb: 'read', address: request })
 
       // Both reads run together. Their results are checked in the old order: key, suite, revocation.
       const [keyRead, revokedRead] = await Promise.allSettled([
@@ -270,8 +299,8 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         return { state: 'unopenable' }
       }
 
-      const branch = await ctx.branch(request, version)
-      const hit = ctx.cache.get(ctx.cacheID(request), version)
+      const branch = await ctx.branch({ address: request, version })
+      const hit = ctx.cache.get({ keyID: ctx.cacheID(request), keyVersion: version })
 
       if (hit !== null) {
         const matches = hit.branchID === branch.branchID
@@ -283,7 +312,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
 
       const options = (await params.store.listWrappings({ ...request, keyVersion: version }))
         .filter((w) => params.mode === 'local' || w.provenance === branch.branchID)
-        .map((w) => satisfiableFactors(w.descriptors, params.identity))
+        .map((w) => satisfiableFactors({ descriptors: w.descriptors, identity: params.identity }))
         .filter((value) => value !== null)
 
       if (options.some((o) => o.length === 0)) return { state: 'available' }
@@ -292,13 +321,14 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         ? { state: 'locked', unlockOptions: options }
         : { state: 'unopenable' }
     },
-    async listKeys(ownerDID, call = {}) {
-      await ctx.authorize('listKeys', 'read', { ownerDID, ...call })
+    async listKeys({ ownerDID, ...call }) {
+      await ctx.authorize({ operation: 'listKeys', verb: 'read', address: { ownerDID, ...call } })
 
       return params.store.listKeys(ownerDID)
     },
-    async setKeyState(request) {
-      await ctx.authorize('setKeyState', 'administer', request)
+    async setKeyState(input) {
+      const request = snapshotCall(input)
+      await ctx.authorize({ operation: 'setKeyState', verb: 'administer', address: request })
       await ctx.locked([request], async (store) => {
         if (params.mode === 'local') {
           await ctx.key(request, store)
@@ -311,11 +341,11 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
           ctx.key(request, store),
           ctx.stored({ type: 'vault.key', owner: request.ownerDID, id: request.keyID }, store),
         ])
-        const record = await ctx.signed(
-          'vault.key',
-          { ownerDID: key.ownerDID, id: key.keyID },
-          { suite: key.suite, state: request.state },
-          {
+        const record = await ctx.signed({
+          type: 'vault.key',
+          address: { ownerDID: key.ownerDID, id: key.keyID },
+          payload: { suite: key.suite, state: request.state },
+          meta: {
             ...previous.op.claim.meta,
             keyID: key.keyID,
             keyUnique: previous.op.claim.meta.keyUnique as string,
@@ -324,15 +354,21 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
             consumer:
               request.consumer === undefined ? previous.op.claim.meta.consumer : request.consumer,
           },
-        )
+        })
 
-        await ctx.write(store, [record], { key: { ...key, expectedVersion: key.version } }, request)
+        await ctx.write({
+          store,
+          output: [record],
+          preconditions: { key: { ...key, expectedVersion: key.version } },
+          call: request,
+        })
       })
 
       ctx.evict(request)
     },
-    async deleteKey(request) {
-      await ctx.authorize('deleteKey', 'administer', request)
+    async deleteKey(input) {
+      const request = snapshotCall(input)
+      await ctx.authorize({ operation: 'deleteKey', verb: 'administer', address: request })
       await ctx.locked([request], async (store) => {
         if (params.mode === 'local') {
           await ctx.key(request, store)
@@ -349,11 +385,11 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
 
         if (typeof keyUnique !== 'string') throw new VaultNotFound()
 
-        const record = await ctx.signed(
-          'vault.key',
-          { ownerDID: key.ownerDID, id: key.keyID },
-          null,
-          {
+        const record = await ctx.signed({
+          type: 'vault.key',
+          address: { ownerDID: key.ownerDID, id: key.keyID },
+          payload: null,
+          meta: {
             keyID: key.keyID,
             keyUnique,
             version: key.version,
@@ -361,15 +397,21 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
             consumer:
               request.consumer === undefined ? previous.op.claim.meta.consumer : request.consumer,
           },
-        )
+        })
 
-        await ctx.write(store, [record], { key: { ...key, expectedVersion: key.version } }, request)
+        await ctx.write({
+          store,
+          output: [record],
+          preconditions: { key: { ...key, expectedVersion: key.version } },
+          call: request,
+        })
       })
 
       ctx.evict(request)
     },
-    async grant(request) {
-      await ctx.authorize('grant', 'administer', request)
+    async grant(input) {
+      const request = snapshotCall(input)
+      await ctx.authorize({ operation: 'grant', verb: 'administer', address: request })
       await ctx.locked([request], async (store) => {
         const [key, revocations] = await settleAll([
           ctx.key(request, store),
@@ -381,8 +423,8 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         if (
           revocations.some((did) => {
             return (
-              vaultRevocationRecordID(key.keyID, did) ===
-              vaultRevocationRecordID(key.keyID, request.recipientDID)
+              vaultRevocationRecordID({ keyID: key.keyID, recipientDID: did }) ===
+              vaultRevocationRecordID({ keyID: key.keyID, recipientDID: request.recipientDID })
             )
           })
         )
@@ -391,11 +433,15 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         if (request.atVersion !== undefined && request.atVersion !== key.version)
           throw new VaultWriteConflict()
 
-        const opened = await open.open({ ...request, atVersion: key.version }, store)
+        const opened = await open.open({
+          address: { ...request, atVersion: key.version },
+          store,
+        })
 
         try {
           const wrappingID = params.runtime.getRandomID()
           const wrapped = await getSuite(opened.suite).wrap({
+            crypto: params.crypto,
             runtime: params.runtime,
             contentKey: opened.contentKey,
             factors: [{ kind: 'did', recipientDID: request.recipientDID }],
@@ -418,35 +464,45 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
           if (params.mode === 'local') await store.putWrapping(row)
           else {
             const [branch, branches] = await settleAll([
-              ctx.branch(key, key.version, store),
+              ctx.branch({ address: key, version: key.version, store }),
               ctx.branches(key, key.version, store),
             ])
-            const record = await records.wrapping(row, branch, request.consumer)
+            const record = await records.wrapping({
+              row,
+              branch,
+              consumer: request.consumer,
+            })
 
-            await ctx.write(
+            await ctx.write({
               store,
-              [record],
-              {
+              output: [record],
+              preconditions: {
                 key: {
                   ...key,
                   expectedVersion: key.version,
                   expectedBranches: branches.map((b) => b.branchID),
                 },
               },
-              request,
-            )
+              call: request,
+            })
           }
         } finally {
           opened.contentKey.fill(0)
         }
       })
     },
-    async refreshWrapping(request) {
-      await ctx.authorize('refreshWrapping', 'administer', request)
+    async refreshWrapping(input) {
+      const request = snapshotCall(input)
+      await ctx.authorize({ operation: 'refreshWrapping', verb: 'administer', address: request })
       if (params.mode !== 'replicated')
         throw new TypeError('Wrapping refresh requires replicated mode')
       return ctx.locked([request], async (store) => {
-        await ctx.authorize('refreshWrapping', 'administer', request, store)
+        await ctx.authorize({
+          operation: 'refreshWrapping',
+          verb: 'administer',
+          address: request,
+          store,
+        })
         const key = await ctx.key(request, store)
         const row = await store.getWrapping(request)
         if (
@@ -457,7 +513,7 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
         )
           throw new VaultNotFound()
         const [branch, branches, evidence, revocations] = await settleAll([
-          ctx.branch(key, key.version, store),
+          ctx.branch({ address: key, version: key.version, store }),
           ctx.branches(key, key.version, store),
           ctx.wrappingEvidence(row, store),
           ctx.recordsFor(store).listRevocations(key),
@@ -473,32 +529,37 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
           ...row.descriptors.filter((d) => d.kind === 'did').map((d) => d.params.recipient),
         ]
         if (
-          revocations.some((did) =>
-            recipients.some(
-              (recipient) =>
+          revocations.some((did) => {
+            return recipients.some((recipient) => {
+              return (
                 typeof recipient === 'string' &&
-                vaultRevocationRecordID(key.keyID, recipient) ===
-                  vaultRevocationRecordID(key.keyID, did),
-            ),
-          )
+                vaultRevocationRecordID({ keyID: key.keyID, recipientDID: recipient }) ===
+                  vaultRevocationRecordID({ keyID: key.keyID, recipientDID: did })
+              )
+            })
+          })
         )
           throw new VaultNotFound()
         if (evidence.record.opHash !== request.expectedOpHash) throw new VaultWriteConflict()
-        const decoded = decodeVaultRecord(evidence.record, evidence.op.claim.meta)
+        const decoded = await decodeVaultRecord({
+          ...params,
+          record: evidence.record,
+          recordMeta: evidence.op.claim.meta,
+        })
         if (decoded.type !== 'vault.wrapping') throw new VaultNotFound()
         const hlc = await params.nextHLC()
         if (compareRecordDecisionHLC(hlc, evidence.record.hlc) <= 0) throw new VaultWriteConflict()
-        const record = await ctx.signed(
-          'vault.wrapping',
-          { ownerDID: key.ownerDID, id: row.wrappingID },
-          decoded.payload,
-          { ...decoded.meta, consumer: request.consumer },
+        const record = await ctx.signed({
+          type: 'vault.wrapping',
+          address: { ownerDID: key.ownerDID, id: row.wrappingID },
+          payload: decoded.payload,
+          meta: { ...decoded.meta, consumer: request.consumer },
           hlc,
-        )
-        await ctx.write(
+        })
+        await ctx.write({
           store,
-          [record],
-          {
+          output: [record],
+          preconditions: {
             key: {
               ...key,
               expectedVersion: key.version,
@@ -511,18 +572,20 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
               expectedOpHash: request.expectedOpHash,
             },
           },
-          request,
-        )
+          call: request,
+        })
         if (await open.revoked(request, store)) throw new VaultNotFound()
         return record
       })
     },
-    async addFactor(request) {
-      await ctx.authorize('addFactor', 'administer', request)
+    async addFactor(input) {
+      const request = snapshotCall(input)
+      await ctx.authorize({ operation: 'addFactor', verb: 'administer', address: request })
       await rewrap(request, (factors) => [...factors, request.factor])
     },
-    async removeFactor(request) {
-      await ctx.authorize('removeFactor', 'administer', request)
+    async removeFactor(input) {
+      const request = snapshotCall(input)
+      await ctx.authorize({ operation: 'removeFactor', verb: 'administer', address: request })
       await rewrap(request, (factors) => {
         if (!factors.some((f) => f.kind === request.kind)) throw new VaultNotFound()
 
@@ -530,21 +593,31 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
       })
     },
     async readEntry(request) {
-      await ctx.authorize('readEntry', 'read', request)
+      await ctx.authorize({ operation: 'readEntry', verb: 'read', address: request })
 
       return ctx.read(async (store) => {
         const row = await store.getEntry(request)
 
         if (row === undefined) throw new VaultNotFound()
 
-        await ctx.authorize('readEntry', 'read', { ...request, keyID: row.keyID }, store)
+        await ctx.authorize({
+          operation: 'readEntry',
+          verb: 'read',
+          address: { ...request, keyID: row.keyID },
+          store,
+        })
         await records.entryInfo(row, store)
 
         let specific = false
         if (params.mode === 'replicated' && params.authorizeEquivalentBranch !== undefined) {
-          const winning = await ctx.branch(row, row.keyVersion, store)
+          const winning = await ctx.branch({ address: row, version: row.keyVersion, store })
           if (winning.branchID !== row.provenance) {
-            const own = await ctx.branch(row, row.keyVersion, store, row.provenance)
+            const own = await ctx.branch({
+              address: row,
+              version: row.keyVersion,
+              store,
+              specific: row.provenance,
+            })
             const [entry, entryBranch, winningBranch] = await ctx.storedMany(
               [
                 { type: 'vault.entry', owner: row.ownerDID, id: row.entryID },
@@ -562,16 +635,21 @@ export function createVaultCoordinator(params: VaultCoordinatorParams): VaultCoo
               })) === true
           }
         }
-        return open.decrypt(row, { ...row, inputs: request.inputs }, store, specific)
+        return open.decrypt({
+          row,
+          address: { ...row, inputs: request.inputs },
+          store,
+          specific,
+        })
       })
     },
     async getEntry(request) {
-      await ctx.authorize('getEntry', 'read', request)
+      await ctx.authorize({ operation: 'getEntry', verb: 'read', address: request })
 
       return params.store.getEntry(request)
     },
     async listEntries(request) {
-      await ctx.authorize('listEntries', 'read', request)
+      await ctx.authorize({ operation: 'listEntries', verb: 'read', address: request })
 
       return params.store.listEntries(request)
     },

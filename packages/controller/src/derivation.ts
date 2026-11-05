@@ -5,6 +5,13 @@ import HDKey from 'micro-key-producer/slip10.js'
 
 import { VERSION_TAG } from './version.js'
 
+export type DeriveKeyMaterialParams = {
+  seed: Uint8Array
+  path: string
+  alg: string
+  length?: number
+}
+
 const BASE_PATH = "m/44'/876'"
 const DELEGABLE = "0'"
 const ROOT_ONLY = "1'"
@@ -26,14 +33,18 @@ function profilePath(profile: number): string {
  * Authority signing key at a position. Lives under the delegable branch, so handing out the
  * profile sub-seed delegates it.
  */
-export function authorityPath(profile: number, gen: number, seq: number): string {
+export type AuthorityPathParams = { profile: number; gen: number; seq: number }
+
+export function authorityPath({ seq, gen, profile }: AuthorityPathParams): string {
   assertIndex('gen', gen)
   assertIndex('seq', seq)
   return `${profilePath(profile)}/${ROLE_AUTHORITY}/${gen}'/${seq}'`
 }
 
 /** Profile-level key agreement key. Durable data encrypts to these, never to device keys. */
-export function agreementPath(profile: number, gen: number, seq: number): string {
+export type AgreementPathParams = { profile: number; gen: number; seq: number }
+
+export function agreementPath({ seq, gen, profile }: AgreementPathParams): string {
   assertIndex('gen', gen)
   assertIndex('seq', seq)
   return `${profilePath(profile)}/${ROLE_AGREEMENT}/${gen}'/${seq}'`
@@ -61,12 +72,12 @@ const KEY_LENGTHS: Record<string, number> = {
  * algorithm separation and arbitrary lengths, so adding an algorithm needs a new `info` string
  * and no path change.
  */
-export function deriveKeyMaterial(
-  seed: Uint8Array,
-  path: string,
-  alg: string,
-  length: number = KEY_LENGTHS[alg] ?? 32,
-): Uint8Array {
+export function deriveKeyMaterial({
+  seed,
+  path,
+  alg,
+  length = KEY_LENGTHS[alg] ?? 32,
+}: DeriveKeyMaterialParams): Uint8Array {
   const node = HDKey.fromMasterSeed(seed).derive(path)
   const ikm = node.privateKey
   if (ikm == null) {
@@ -76,12 +87,13 @@ export function deriveKeyMaterial(
   return hkdf(sha256, ikm, undefined, info, length)
 }
 
-export function deriveKeyPair(
-  seed: Uint8Array,
-  path: string,
-  alg: string,
-): { privateKey: Uint8Array; publicKey: Uint8Array } {
-  const privateKey = deriveKeyMaterial(seed, path, alg)
+export type DeriveKeyPairParams = { seed: Uint8Array; path: string; alg: string }
+
+export function deriveKeyPair({ alg, path, seed }: DeriveKeyPairParams): {
+  privateKey: Uint8Array
+  publicKey: Uint8Array
+} {
+  const privateKey = deriveKeyMaterial({ seed, path, alg })
   if (alg === 'EdDSA') {
     return { privateKey, publicKey: ed25519.getPublicKey(privateKey) }
   }

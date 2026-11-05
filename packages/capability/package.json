@@ -34,6 +34,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
+    "@kokuin/crypto": "workspace:^",
     "@kokuin/token": "workspace:^"
   },
   "devDependencies": {

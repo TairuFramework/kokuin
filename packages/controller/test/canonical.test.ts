@@ -92,15 +92,15 @@ describe('digestOf()', () => {
 
 describe('verifyDigest()', () => {
   test('accepts a matching value', () => {
-    expect(verifyDigest(digestOf({ a: 1 }), { a: 1 })).toBe(true)
+    expect(verifyDigest({ digest: digestOf({ a: 1 }), value: { a: 1 } })).toBe(true)
   })
 
   test('rejects a mismatched value', () => {
-    expect(verifyDigest(digestOf({ a: 1 }), { a: 2 })).toBe(false)
+    expect(verifyDigest({ digest: digestOf({ a: 1 }), value: { a: 2 } })).toBe(false)
   })
 
   test('rejects a malformed digest instead of throwing', () => {
-    expect(verifyDigest('not-multibase', { a: 1 })).toBe(false)
+    expect(verifyDigest({ digest: 'not-multibase', value: { a: 1 } })).toBe(false)
   })
 
   test('answers a value it cannot canonicalize with false rather than throwing', () => {
@@ -113,7 +113,7 @@ describe('verifyDigest()', () => {
     }
     let value: unknown
     expect(() => {
-      value = verifyDigest(digestOf({ a: 1 }), deep)
+      value = verifyDigest({ digest: digestOf({ a: 1 }), value: deep })
     }).not.toThrow()
     expect(value).toBe(false)
     // Control: the same call one level *inside* the bound answers on the merits.
@@ -121,6 +121,6 @@ describe('verifyDigest()', () => {
     for (let i = 0; i < MAX_CANONICAL_DEPTH - 2; i++) {
       shallow = [shallow]
     }
-    expect(verifyDigest(digestOf(shallow), shallow)).toBe(true)
+    expect(verifyDigest({ digest: digestOf(shallow), value: shallow })).toBe(true)
   })
 })

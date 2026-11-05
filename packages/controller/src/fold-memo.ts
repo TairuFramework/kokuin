@@ -1,10 +1,14 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
+
 import { digestOf } from './canonical.js'
+import type { EpochLimits } from './epoch.js'
 import {
   type AuthoritativeLog,
   type AuthoritativeLogParams,
   authoritativeLogWithin,
 } from './history.js'
 import { type ControllerLog, isControllerLog } from './log.js'
+import { snapshotLog } from './log-snapshot.js'
 
 /** How many settled folds {@link memoizedAuthoritativeLog} keeps, least recently used evicted first. */
 export const FOLD_MEMO_SIZE = 256
@@ -16,11 +20,19 @@ export const FOLD_MEMO_SIZE = 256
  */
 type MemoEntry = { log: ControllerLog; unchanged: boolean; result: AuthoritativeLog['result'] }
 
-// Module-level, not per resolver: a consumer that builds a resolver per resolution (kubun's engine
-// does) would otherwise never hit. Sharing is sound because the key is the whole input of a pure
-// function — see `memoKey` — so two resolvers can only share an entry when they would compute the
-// same answer.
+// Share pure folds across resolver instances. The key includes every input.
 const memo = new Map<string, MemoEntry>()
+const providerIDs = new WeakMap<CryptoProvider, number>()
+let nextProviderID = 0
+
+function providerID(crypto: CryptoProvider): number {
+  let id = providerIDs.get(crypto)
+  if (id === undefined) {
+    id = nextProviderID++
+    providerIDs.set(crypto, id)
+  }
+  return id
+}
 
 /** Whether a log entry is shaped like a signed event and carries no capability authorisation. */
 function memoizableEntry(entry: unknown): boolean {
@@ -49,14 +61,19 @@ function memoizableLog(log: unknown): log is ControllerLog {
  * are a test-only path.
  */
 function memoKey(
-  { did, loaded, seen }: AuthoritativeLogParams,
+  { did, loaded, seen, crypto }: AuthoritativeLogParams,
   limits: object | undefined,
 ): string | undefined {
   if (limits !== undefined) return undefined
   if (!memoizableLog(loaded)) return undefined
   if (seen !== undefined && !memoizableLog(seen)) return undefined
   try {
-    return JSON.stringify([did, digestOf(loaded), seen === undefined ? null : digestOf(seen)])
+    return JSON.stringify([
+      providerID(crypto ?? nobleCrypto),
+      did,
+      digestOf(loaded),
+      seen === undefined ? null : digestOf(seen),
+    ])
   } catch {
     // Not canonicalizable (non-finite number, too deep): the fold refuses it, and nothing is kept.
     return undefined
@@ -73,13 +90,14 @@ function memoKey(
  * key: a prefix memoized before anything was seen is a different entry from the same prefix
  * presented against the longer log accepted since, and that one is folded — and refused.
  */
-export function memoizedAuthoritativeLog(
-  params: AuthoritativeLogParams,
-  limits?: Parameters<typeof authoritativeLogWithin>[1],
-): AuthoritativeLog {
+export async function memoizedAuthoritativeLog(
+  input: AuthoritativeLogParams,
+  limits?: Partial<EpochLimits>,
+): Promise<AuthoritativeLog> {
+  const params = { ...input, loaded: snapshotLog(input.loaded) }
   const key = memoKey(params, limits)
   if (key === undefined) {
-    return authoritativeLogWithin(params, limits)
+    return await authoritativeLogWithin(params, limits)
   }
   const known = memo.get(key)
   if (known !== undefined) {
@@ -89,7 +107,7 @@ export function memoizedAuthoritativeLog(
     const { seen } = params
     return { log: known.unchanged && seen !== undefined ? seen : known.log, result: known.result }
   }
-  const settled = authoritativeLogWithin(params, limits)
+  const settled = await authoritativeLogWithin(params, limits)
   memo.set(key, {
     log: settled.log,
     unchanged: settled.log === params.seen,

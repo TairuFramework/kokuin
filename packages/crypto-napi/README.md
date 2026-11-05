@@ -8,7 +8,7 @@ import { createNapiCrypto } from '@kokuin/crypto-napi'
 
 const crypto = createNapiCrypto()
 crypto.backend // 'napi', or 'node' after a fallback; `crypto.failure` then says why
-const signature = await crypto.sign('EdDSA', seed, message)
+const signature = await crypto.sign({ alg: 'EdDSA', privateKey: seed, message })
 ```
 
 | Call | Route |
@@ -34,3 +34,29 @@ against the Rust core, strict noble, `nodeCrypto` and this provider.
 
 Prebuilt binaries are not published yet. In this repository, `pnpm --filter @kokuin/crypto-napi run build:native`
 compiles one for the current host into `native/`. Requires Node.js 22 or later.
+
+## Named params migration
+
+`CryptoProvider.verify` now accepts one `VerifyItem`: `{ alg, signature, message, publicKey }`.
+`sign`, `signBatch`, `blake3` and `blake3Batch` take flat params objects.
+`verifyBatch` retains its single array argument.
+
+| Export | Named params type | Fields |
+| --- | --- | --- |
+| `NapiBinding.sign` | `NapiBindingSignParams` | `seed, message` |
+| `NapiBinding.signBatch` | `Array<NapiBindingSignParams>` | `seeds, messages` |
+| `NapiBinding.blake3` | `NapiBindingBlake3Params` | `input, length` |
+| `NapiBinding.blake3Batch` | `NapiBindingBlake3BatchParams` | `inputs, length` |
+| `NapiBinding.verify` | `NapiVerifyParams` | `es256, signature, message, publicKey` |
+| `NapiBinding.verifyBatch` | `Array<NapiVerifyParams>` | `es256, signatures, messages, publicKeys` |
+
+`NapiBinding` accepts named signing, hashing and verification objects. The loader adapts them to the unchanged positional native ABI.
+
+These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.
+
+| API | Named params type | Previous positional form |
+| --- | --- | --- |
+| `CryptoProvider.sign` | `CryptoProviderSignParams` | `sign(alg, privateKey, message)` |
+| `CryptoProvider.signBatch` | `CryptoProviderSignBatchParams` | `signBatch(alg, items)` |
+| `CryptoProvider.blake3` | `CryptoProviderBlake3Params` | `blake3(input, dkLen)` |
+| `CryptoProvider.blake3Batch` | `CryptoProviderBlake3BatchParams` | `blake3Batch(inputs, dkLen)` |

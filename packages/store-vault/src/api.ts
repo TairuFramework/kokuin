@@ -26,6 +26,7 @@ import { claimModes, VaultModeConflict, vaultDatabases } from './record-context.
 import { getVaultRecordsStore } from './record-definition.js'
 import type { VaultRecordsTables } from './record-tables.js'
 import { settleAll } from './settle.js'
+import { snapshotData } from './snapshot.js'
 import type {
   VaultEntryTable,
   VaultKeyTable,
@@ -41,6 +42,13 @@ import type {
   VaultStoreAPI,
   WrappingRow,
 } from './types.js'
+
+export type LocalModeParams = {
+  trx: Kysely<VaultStoreTables>
+  type: 'vault.key' | 'vault.entry' | 'vault.wrapping'
+  owner: string
+  id: string
+}
 
 const databases = new WeakMap<VaultStoreAPI, Kysely<VaultStoreTables>>()
 
@@ -103,11 +111,13 @@ function wrappingRow(row: Selectable<VaultWrappingTable>): WrappingRow {
   }
 }
 
-export function createVaultStore(
-  db: Kysely<VaultStoreTables>,
-  adapter: Adapter,
-  context: StoreContext,
-): VaultStoreAPI {
+export type CreateVaultStoreParams = {
+  db: Kysely<VaultStoreTables>
+  adapter: Adapter
+  context: StoreContext
+}
+
+export function createVaultStore({ context, adapter, db }: CreateVaultStoreParams): VaultStoreAPI {
   const read = <Result>(
     fn: (trx: Kysely<VaultStoreTables>) => Promise<Result>,
   ): Promise<Result> => {
@@ -160,7 +170,7 @@ export function createVaultStore(
     if (rows.flat().some((row) => row.mode === 'replicated')) throw new VaultModeConflict()
 
     if (context.provider.hasStore('vault-records')) {
-      await getVaultRecordsStore(context.provider)
+      await getVaultRecordsStore({ provider: context.provider })
       await claimModes(
         trx as Kysely<VaultRecordsTables>,
         keys.map((key) => ({ type, owner: key.owner, id: key.id })),
@@ -168,22 +178,19 @@ export function createVaultStore(
       )
     }
   }
-  const localMode = (
-    trx: Kysely<VaultStoreTables>,
-    type: 'vault.key' | 'vault.entry' | 'vault.wrapping',
-    owner: string,
-    id: string,
-  ): Promise<void> => {
+  const localMode = ({ trx, type, owner, id }: LocalModeParams): Promise<void> => {
     return localModes(trx, type, [{ owner, id }])
   }
   // One lock per key, however many rows name it.
   const keysOf = (rows: ReadonlyArray<KeyAddress>): Array<KeyAddress> => {
     return [
       ...new Map(
-        rows.map((row) => [
-          JSON.stringify([row.ownerDID, row.keyID]),
-          { ownerDID: row.ownerDID, keyID: row.keyID },
-        ]),
+        rows.map((row) => {
+          return [
+            JSON.stringify([row.ownerDID, row.keyID]),
+            { ownerDID: row.ownerDID, keyID: row.keyID },
+          ]
+        }),
       ).values(),
     ]
   }
@@ -250,7 +257,7 @@ export function createVaultStore(
   }
   const updateEntry = async (row: EntryRow, expectedHLC?: string): Promise<UpdateEntryResult> => {
     return locked([row], async (trx) => {
-      await localMode(trx, 'vault.entry', row.ownerDID, row.entryID)
+      await localMode({ trx, type: 'vault.entry', owner: row.ownerDID, id: row.entryID })
 
       let update = trx
         .updateTable('vault_entries')
@@ -285,19 +292,22 @@ export function createVaultStore(
         return withStoreTransaction(await transactionDatabase(tx), async () => fn(store))
       })
     },
-    async lockKeyRow(address) {
+    async lockKeyRow(input) {
+      const address = snapshotData(input)
       if (!context.provider.isTransactionBound) throw new Error('Key locks require a transaction')
 
       await locked([address], async () => {})
     },
-    async lockKeyRows(addresses) {
+    async lockKeyRows(input) {
+      const addresses = snapshotData(input)
       if (!context.provider.isTransactionBound) throw new Error('Key locks require a transaction')
 
       await locked(addresses, async () => {})
     },
-    async putKey(row) {
+    async putKey(input) {
+      const row = snapshotData(input)
       await locked([row], async (trx) => {
-        await localMode(trx, 'vault.key', row.ownerDID, row.keyID)
+        await localMode({ trx, type: 'vault.key', owner: row.ownerDID, id: row.keyID })
 
         const values = {
           owner_did: row.ownerDID,
@@ -355,9 +365,10 @@ export function createVaultStore(
         return rows.map((row) => row.owner_did)
       })
     },
-    async setKeyState(row) {
+    async setKeyState(input) {
+      const row = snapshotData(input)
       await locked([row], async (trx) => {
-        await localMode(trx, 'vault.key', row.ownerDID, row.keyID)
+        await localMode({ trx, type: 'vault.key', owner: row.ownerDID, id: row.keyID })
         await trx
           .updateTable('vault_keys')
           .set({ state: row.state })
@@ -366,9 +377,10 @@ export function createVaultStore(
           .execute()
       })
     },
-    async setKeyVersion(row) {
+    async setKeyVersion(input) {
+      const row = snapshotData(input)
       await locked([row], async (trx) => {
-        await localMode(trx, 'vault.key', row.ownerDID, row.keyID)
+        await localMode({ trx, type: 'vault.key', owner: row.ownerDID, id: row.keyID })
         await trx
           .updateTable('vault_keys')
           .set({ version: row.version })
@@ -378,9 +390,10 @@ export function createVaultStore(
           .execute()
       })
     },
-    async deleteKey(address) {
+    async deleteKey(input) {
+      const address = snapshotData(input)
       await locked([address], async (trx) => {
-        await localMode(trx, 'vault.key', address.ownerDID, address.keyID)
+        await localMode({ trx, type: 'vault.key', owner: address.ownerDID, id: address.keyID })
         await trx
           .deleteFrom('vault_keys')
           .where('owner_did', '=', address.ownerDID)
@@ -391,10 +404,11 @@ export function createVaultStore(
     async putWrapping(row) {
       await api.putWrappings([row])
     },
-    async putWrappings(input) {
-      const { rows, rekeyed } = lastWrites(input, (row) =>
-        JSON.stringify([row.ownerDID, row.wrappingID]),
-      )
+    async putWrappings(source) {
+      const input = snapshotData(source)
+      const { rows, rekeyed } = lastWrites(input, (row) => {
+        return JSON.stringify([row.ownerDID, row.wrappingID])
+      })
 
       if (rows.length === 0) return
 
@@ -420,12 +434,9 @@ export function createVaultStore(
         )
 
         if (
-          existing
-            .flat()
-            .some(
-              (held) =>
-                keyOf.get(JSON.stringify([held.owner_did, held.wrapping_id])) !== held.key_id,
-            )
+          existing.flat().some((held) => {
+            return keyOf.get(JSON.stringify([held.owner_did, held.wrapping_id])) !== held.key_id
+          })
         )
           throw new Error('Wrapping belongs to another key')
 
@@ -468,7 +479,8 @@ export function createVaultStore(
     async deleteWrapping(address) {
       await api.deleteWrappings([address])
     },
-    async deleteWrappings(addresses) {
+    async deleteWrappings(source) {
+      const addresses = snapshotData(source)
       if (addresses.length === 0) return
 
       // Discover each key before locking, then qualify deletion so a changed association survives.
@@ -503,7 +515,8 @@ export function createVaultStore(
         },
       )
     },
-    async deleteWrappingsBelowVersion(address) {
+    async deleteWrappingsBelowVersion(source) {
+      const address = snapshotData(source)
       await locked([address], async (trx) => {
         const rows = await trx
           .selectFrom('vault_wrappings')
@@ -530,10 +543,11 @@ export function createVaultStore(
     async putEntry(row) {
       await api.putEntries([row])
     },
-    async putEntries(input) {
-      const { rows, rekeyed } = lastWrites(input, (row) =>
-        JSON.stringify([row.ownerDID, row.entryID]),
-      )
+    async putEntries(source) {
+      const input = snapshotData(source)
+      const { rows, rekeyed } = lastWrites(input, (row) => {
+        return JSON.stringify([row.ownerDID, row.entryID])
+      })
 
       if (rows.length === 0) return
 
@@ -577,13 +591,14 @@ export function createVaultStore(
           throw new Error('Entry belongs to another key')
       })
     },
-    async moveEntry(row) {
+    async moveEntry(input) {
+      const row = snapshotData(input)
       const source = await api.getEntry(row)
 
       if (source == null) return
 
       await locked([source, row], async (trx) => {
-        await localMode(trx, 'vault.entry', row.ownerDID, row.entryID)
+        await localMode({ trx, type: 'vault.entry', owner: row.ownerDID, id: row.entryID })
         // UPDATE-only plus the source predicate prevents resurrection and stale reassociation.
         await trx
           .updateTable('vault_entries')
@@ -594,10 +609,12 @@ export function createVaultStore(
           .execute()
       })
     },
-    async updateEntryIfPresent(row) {
+    async updateEntryIfPresent(source) {
+      const row = snapshotData(source)
       return (await updateEntry(row)) as 'updated' | 'absent'
     },
-    async updateEntryIfUnchanged(row) {
+    async updateEntryIfUnchanged(source) {
+      const row = snapshotData(source)
       return updateEntry(row, row.expectedHLC)
     },
     async getEntry(address) {
@@ -658,7 +675,8 @@ export function createVaultStore(
     async deleteEntry(address) {
       await api.deleteEntries([address])
     },
-    async deleteEntries(addresses) {
+    async deleteEntries(source) {
+      const addresses = snapshotData(source)
       if (addresses.length === 0) return
 
       const rows = (

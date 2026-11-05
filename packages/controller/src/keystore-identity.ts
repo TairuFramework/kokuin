@@ -1,10 +1,10 @@
-import type { FullIdentity, KeyEntry } from '@kokuin/token'
+import type { CryptoOptions, FullIdentity, KeyEntry } from '@kokuin/token'
 
 import { createInception, didFor } from './events.js'
 import type { LogStore } from './history.js'
 import { createControllerIdentity } from './identity.js'
 
-export type ProvideControllerIdentityParams = {
+export type ProvideControllerIdentityParams = CryptoOptions & {
   /** The seed source: `provideAsync()`'s bytes are the controller root seed. Generates on first use. */
   entry: KeyEntry<Uint8Array>
   /** Which profile under the seed to resolve. */
@@ -25,16 +25,22 @@ export async function provideControllerIdentity({
   entry,
   profile,
   logStore,
+  crypto,
 }: ProvideControllerIdentityParams): Promise<FullIdentity> {
-  const seed = await entry.provideAsync()
-  const did = didFor(seed, profile)
+  const seed = (await entry.provideAsync()).slice()
+  const did = didFor({ seed, profile })
   let log = await logStore.get(did)
   if (log == null || log.chain.length === 0) {
-    const inception = [createInception(seed, profile)]
+    const inception = [await createInception({ seed, profile, crypto })]
     // Through the merge, so a log another writer stored meanwhile is kept rather than overwritten.
-    log = await logStore.merge(did, async (current) =>
-      current != null && current.chain.length > 0 ? current : { chain: inception, events: [] },
-    )
+    log = await logStore.merge({
+      did,
+      update: async (current) => {
+        return current != null && current.chain.length > 0
+          ? current
+          : { chain: inception, events: [] }
+      },
+    })
   }
-  return createControllerIdentity({ seed, profile, log })
+  return await createControllerIdentity({ seed, profile, log, crypto })
 }

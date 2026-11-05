@@ -10,12 +10,15 @@
  * @module ledger-identity
  */
 
+export type { EncodeSignMessageChunksParams } from './apdu.js'
 export { type APDUChunk, CLA, encodeDerivationPath, encodeSignMessageChunks, INS } from './apdu.js'
+export type { LedgerDisconnectedErrorParams, LedgerErrorParams } from './errors.js'
 export {
   LedgerAppNotOpenError,
   LedgerDisconnectedError,
   LedgerError,
   LedgerUserRejectedError,
 } from './errors.js'
+export type { CreateLedgerIdentityProviderParams } from './provider.js'
 export { createLedgerIdentityProvider, type LedgerIdentityProviderOptions } from './provider.js'
 export type { LedgerTransport } from './types.js'

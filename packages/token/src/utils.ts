@@ -2,10 +2,13 @@ import { b64uFromJSON, b64uToJSON } from '@sozai/codec'
 
 import type { SignedToken, Token } from './types.js'
 
-export function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const out = new Uint8Array(a.length + b.length)
-  out.set(a, 0)
-  out.set(b, a.length)
+export function concatBytes(...parts: Array<Uint8Array>): Uint8Array {
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0))
+  let offset = 0
+  for (const part of parts) {
+    out.set(part, offset)
+    offset += part.length
+  }
   return out
 }
 

@@ -10,6 +10,12 @@
  * @module hd-keystore
  */
 
+export type { DerivePrivateKeyParams, ResolveDerivationPathParams } from './derivation.js'
 export { derivePrivateKey, resolveDerivationPath } from './derivation.js'
 export { HDKeyEntry, type HDKeyEntryParams } from './entry.js'
+export type {
+  HDKeyStoreFromMnemonicParams,
+  HDKeyStoreFromSeedParams,
+  HDKeyStoreOptions,
+} from './store.js'
 export { HDKeyStore, type HDKeyStoreParams } from './store.js'

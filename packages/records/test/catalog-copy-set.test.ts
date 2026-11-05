@@ -29,6 +29,13 @@ import {
   verifySignedRecord,
 } from '../src/index.js'
 
+type ApplyWithParams = {
+  input: ReadonlyArray<SignedRecord>
+  store: RecordStoreAdapter
+  types?: ReadonlyArray<RecordTypeDefinition>
+  overrides?: Partial<ApplyRecordChunkParams>
+}
+
 const TEST_OP_KIND = 'test/record-op'
 
 const NOW = Date.now()
@@ -56,22 +63,27 @@ async function signed(
   const claim: RecordClaim = {
     ...key,
     hlc: options.hlc ?? stamp(signer),
-    payloadDigest: recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest({ payload }),
     deleted: payload === null,
     meta: options.meta ?? {},
   }
-  return { ...key, hlc: claim.hlc, payload, ...(await signRecordOp(signer, claim, TEST_OP_KIND)) }
+  return {
+    ...key,
+    hlc: claim.hlc,
+    payload,
+    ...(await signRecordOp({ identity: signer, claim, opKind: TEST_OP_KIND })),
+  }
 }
 
 async function decisionFor(record: SignedRecord): Promise<RecordDecision> {
-  const op = await verifySignedRecord(record, TEST_OP_KIND)
+  const op = await verifySignedRecord({ record, opKind: TEST_OP_KIND })
   if (op === null) throw new Error('The signed fixture did not verify')
   return {
     key: { type: record.type, owner: record.owner, id: record.id },
     decisionHLC: typeof op.claim.meta.version === 'string' ? op.claim.meta.version : op.claim.hlc,
     contentDigest:
       typeof records.recordDecisionDigest === 'function'
-        ? await records.recordDecisionDigest(record, TEST_OP_KIND)
+        ? await records.recordDecisionDigest({ record, opKind: TEST_OP_KIND })
         : toB64U(blake3(canonicalRecordClaim(op.claim), { dkLen: 32 })),
     copies: [record],
   }
@@ -84,8 +96,11 @@ function memoryStore(initial: ReadonlyArray<RecordDecision> = []) {
 
   const adapterOver = (view: () => Map<string, RecordDecision>) => {
     const adapter = {
-      transaction: async <R>(fn: (tx: RecordStoreAdapter) => Promise<R>): Promise<R> =>
-        await fn(adapter as unknown as RecordStoreAdapter),
+      transaction: async <TResult>(
+        fn: (tx: RecordStoreAdapter) => Promise<TResult>,
+      ): Promise<TResult> => {
+        return await fn(adapter as unknown as RecordStoreAdapter)
+      },
       get: async (keyOrType: RecordKey | string, id?: string) => {
         if (typeof keyOrType === 'string') {
           return (
@@ -96,8 +111,9 @@ function memoryStore(initial: ReadonlyArray<RecordDecision> = []) {
         }
         return view().get(keyOf(keyOrType)) ?? null
       },
-      list: async (types: ReadonlyArray<string>) =>
-        [...view().values()].filter((decision) => types.includes(decision.key.type)),
+      list: async (types: ReadonlyArray<string>) => {
+        return [...view().values()].filter((decision) => types.includes(decision.key.type))
+      },
       put: async (record: SignedRecord) => {
         view().set(keyOf(record), await decisionFor(record))
       },
@@ -114,13 +130,13 @@ function memoryStore(initial: ReadonlyArray<RecordDecision> = []) {
               : [record],
         })
       },
-      pruneCopy: async (key: RecordKey, signerDID: string) => {
+      pruneCopy: async ({ key, signerDID }: { key: RecordKey; signerDID: string }) => {
         pruned.push({ key, signerDID })
         const decision = view().get(keyOf(key))
         if (decision === undefined) return
         const copies: Array<SignedRecord> = []
         for (const copy of decision.copies) {
-          const op = await verifySignedRecord(copy, TEST_OP_KIND)
+          const op = await verifySignedRecord({ record: copy, opKind: TEST_OP_KIND })
           if (op?.issuer !== signerDID) copies.push(copy)
         }
         view().set(keyOf(key), { ...decision, copies })
@@ -130,7 +146,9 @@ function memoryStore(initial: ReadonlyArray<RecordDecision> = []) {
   }
   const store = {
     ...adapterOver(() => rows),
-    transaction: async <R>(fn: (tx: RecordStoreAdapter) => Promise<R>): Promise<R> => {
+    transaction: async <TResult>(
+      fn: (tx: RecordStoreAdapter) => Promise<TResult>,
+    ): Promise<TResult> => {
       const draft = new Map(rows)
       const result = await fn(adapterOver(() => draft) as unknown as RecordStoreAdapter)
       rows = draft
@@ -147,19 +165,17 @@ function definition(overrides: Partial<RecordTypeDefinition> = {}): RecordTypeDe
     type: TYPE,
     policy: LWW,
     dependsOn: [],
-    authorize: async (op, ctx) =>
-      op.issuer === op.claim.owner || (await ctx.resolveController(op.issuer)) === op.claim.owner,
+    authorize: async ({ op, ctx }) => {
+      return (
+        op.issuer === op.claim.owner || (await ctx.resolveController(op.issuer)) === op.claim.owner
+      )
+    },
     dependencies: () => [],
     ...overrides,
   }
 }
 
-function applyWith(
-  input: ReadonlyArray<SignedRecord>,
-  store: RecordStoreAdapter,
-  types: ReadonlyArray<RecordTypeDefinition> = [definition()],
-  overrides: Partial<ApplyRecordChunkParams> = {},
-) {
+function applyWith({ input, store, types = [definition()], overrides = {} }: ApplyWithParams) {
   return applyRecordChunk({
     opKind: TEST_OP_KIND,
     records: input,
@@ -189,17 +205,25 @@ describe('owner-qualified decisions and signed copies', () => {
     const valid = await signed(signer, key, {
       meta: { version: stamp(signer, 1) },
     })
-    const invalidOp = await verifySignedRecord(invalid, TEST_OP_KIND)
-    const missingOp = await verifySignedRecord(missing, TEST_OP_KIND)
-    const validOp = await verifySignedRecord(valid, TEST_OP_KIND)
+    const invalidOp = await verifySignedRecord({ record: invalid, opKind: TEST_OP_KIND })
+    const missingOp = await verifySignedRecord({ record: missing, opKind: TEST_OP_KIND })
+    const validOp = await verifySignedRecord({ record: valid, opKind: TEST_OP_KIND })
     if (invalidOp === null || missingOp === null || validOp === null)
       throw new Error('invalid signed fixture')
 
     expect(
-      records.recordDecisionFromVerifiedCopies(key, [{ copy: invalid, op: invalidOp }], 'version'),
+      records.recordDecisionFromVerifiedCopies({
+        key,
+        entries: [{ copy: invalid, op: invalidOp }],
+        stampSource: 'version',
+      }),
     ).toBeNull()
     expect(
-      records.recordDecisionFromVerifiedCopies(key, [{ copy: missing, op: missingOp }], 'version'),
+      records.recordDecisionFromVerifiedCopies({
+        key,
+        entries: [{ copy: missing, op: missingOp }],
+        stampSource: 'version',
+      }),
     ).toBeNull()
     for (const entries of [
       [
@@ -211,9 +235,13 @@ describe('owner-qualified decisions and signed copies', () => {
         { copy: invalid, op: invalidOp },
       ],
     ]) {
-      expect(records.recordDecisionFromVerifiedCopies(key, entries, 'version')?.copies).toEqual([
-        valid,
-      ])
+      expect(
+        records.recordDecisionFromVerifiedCopies({
+          key,
+          entries,
+          stampSource: 'version',
+        })?.copies,
+      ).toEqual([valid])
     }
   })
 
@@ -236,13 +264,16 @@ describe('owner-qualified decisions and signed copies', () => {
         payload: null,
         meta: { version: version('z') },
       })
-      const highOp = await verifySignedRecord(high, TEST_OP_KIND)
+      const highOp = await verifySignedRecord({ record: high, opKind: TEST_OP_KIND })
       if (highOp === null) throw new Error('invalid signed fixture')
       for (let index = 0; index < 32; index++) {
         const copy = await signed(signer, key, { meta: { version: version(`a${index}`) } })
-        const op = await verifySignedRecord(copy, TEST_OP_KIND)
+        const op = await verifySignedRecord({ record: copy, opKind: TEST_OP_KIND })
         if (op === null) throw new Error('invalid signed fixture')
-        if (records.recordClaimDigest(op.claim) > records.recordClaimDigest(highOp.claim)) {
+        if (
+          (await records.recordClaimDigest({ claim: op.claim })) >
+          (await records.recordClaimDigest({ claim: highOp.claim }))
+        ) {
           pair = { key, high, highOp, low: { copy, op } }
           break
         }
@@ -255,9 +286,13 @@ describe('owner-qualified decisions and signed copies', () => {
       [low, { copy: high, op: highOp }],
       [{ copy: high, op: highOp }, low],
     ]) {
-      expect(records.recordDecisionFromVerifiedCopies(key, entries, 'version')?.copies).toEqual([
-        high,
-      ])
+      expect(
+        records.recordDecisionFromVerifiedCopies({
+          key,
+          entries,
+          stampSource: 'version',
+        })?.copies,
+      ).toEqual([high])
     }
   })
 
@@ -278,22 +313,24 @@ describe('owner-qualified decisions and signed copies', () => {
       [malloryLive, aliceLive],
     ]) {
       const memory = memoryStore()
-      expect((await applyWith(order, memory.store)).applied).toBe(2)
+      expect((await applyWith({ input: order, store: memory.store })).applied).toBe(2)
       expect(memory.read(aliceKey)?.copies).toEqual([aliceLive])
       expect(memory.read(malloryKey)?.copies).toEqual([malloryLive])
-      expect((await applyWith([malloryDelete], memory.store)).applied).toBe(1)
+      expect((await applyWith({ input: [malloryDelete], store: memory.store })).applied).toBe(1)
       expect(memory.read(aliceKey)?.copies).toEqual([aliceLive])
       expect(memory.read(malloryKey)?.copies).toEqual([malloryDelete])
-      const leaves = [memory.read(aliceKey), memory.read(malloryKey)].map((decision) => {
-        const leaf = rangeLeaf(decision as RecordDecision, LWW)
-        if (leaf === null) throw new Error('Decision leaf was not produced')
-        return leaf
-      })
+      const leaves = await Promise.all(
+        [memory.read(aliceKey), memory.read(malloryKey)].map(async (decision) => {
+          const leaf = await rangeLeaf({ decision: decision as RecordDecision, policy: LWW })
+          if (leaf === null) throw new Error('Decision leaf was not produced')
+          return leaf
+        }),
+      )
       expect(leaves.map((leaf) => leaf.owner)).toEqual([aliceKey.owner, malloryKey.owner])
       expect(new Set(leaves.map((leaf) => leaf.id)).size).toBe(1)
       const bounds = { type: TYPE, lower: null, upper: null }
-      expect(summarizeRange(leaves, bounds).count).toBe(2)
-      expect(splitRange(leaves, bounds, 16)).toEqual([
+      expect((await summarizeRange({ leaves, rangeBounds: bounds })).count).toBe(2)
+      expect(await splitRange({ leaves, rangeBounds: bounds, leafThreshold: 16 })).toEqual([
         {
           bounds,
           leaves: [...leaves].sort((left, right) => (left.owner < right.owner ? -1 : 1)),
@@ -320,16 +357,22 @@ describe('owner-qualified decisions and signed copies', () => {
       definition({
         type: childKey.type,
         dependsOn: [aliceParent.type],
-        dependencies: (_record, op) => [
-          { type: aliceParent.type, owner: op.claim.owner, id: op.claim.meta.parent as string },
-        ],
+        dependencies: ({ record: _record, op }) => {
+          return [
+            { type: aliceParent.type, owner: op.claim.owner, id: op.claim.meta.parent as string },
+          ]
+        },
       }),
     ]
     const memory = memoryStore([await decisionFor(stranger)])
-    const first = await applyWith([child], memory.store, types)
+    const first = await applyWith({ input: [child], store: memory.store, types })
     expect(first.parked).toEqual([child])
     expect(memory.read(childKey)).toBeNull()
-    const second = await applyWith([parent, ...first.parked], memory.store, types)
+    const second = await applyWith({
+      input: [parent, ...first.parked],
+      store: memory.store,
+      types,
+    })
     expect(second.applied).toBe(2)
     expect(memory.read(childKey)?.copies).toEqual([child])
     expect(memory.read(malloryParent)?.copies).toEqual([stranger])
@@ -362,32 +405,36 @@ describe('owner-qualified decisions and signed copies', () => {
     const wrappingType = definition({
       type: wrappingKey.type,
       dependsOn: [branchKey.type],
-      dependencies: (_record, op) => [
-        {
-          type: branchKey.type,
-          owner: op.claim.owner,
-          id: 'key:3',
-          satisfiedBy: (stored) => stored.claim.meta.keyVersion === 3,
-        },
-      ],
+      dependencies: ({ record: _record, op }) => {
+        return [
+          {
+            type: branchKey.type,
+            owner: op.claim.owner,
+            id: 'key:3',
+            satisfiedBy: (stored) => stored.claim.meta.keyVersion === 3,
+          },
+        ]
+      },
     })
-    const context = (store: RecordStoreAdapter): VisibilityContext => ({
-      opKind: TEST_OP_KIND,
-      requester: { peerDID: readerDID, controllerDID: null },
-      proofs: [proof],
-      store,
-      authorizeProof: async () => true,
-      currentKeyVersion: async () => 3,
-      isGroupMember: async () => false,
-      holderTypes: new Map([[wrappingKey.type, wrappingType]]),
-    })
+    const context = (store: RecordStoreAdapter): VisibilityContext => {
+      return {
+        opKind: TEST_OP_KIND,
+        requester: { peerDID: readerDID, controllerDID: null },
+        proofs: [proof],
+        store,
+        authorizeProof: async () => true,
+        currentKeyVersion: async () => 3,
+        isGroupMember: async () => false,
+        holderTypes: new Map([[wrappingKey.type, wrappingType]]),
+      }
+    }
     const wrongBranch = memoryStore([await decisionFor(malloryBranch)])
-    expect(await verifyHolderProof(proof, context(wrongBranch.store))).toBe(false)
+    expect(await verifyHolderProof({ proof, ctx: context(wrongBranch.store) })).toBe(false)
     const wrongWrapping = memoryStore([
       await decisionFor(aliceBranch),
       await decisionFor(malloryWrapping),
     ])
-    expect(await verifyHolderProof(proof, context(wrongWrapping.store))).toBe(true)
+    expect(await verifyHolderProof({ proof, ctx: context(wrongWrapping.store) })).toBe(true)
     const device = randomIdentity()
     const deviceWrapping = await signed(device, wrappingKey, {
       hlc: proof.hlc,
@@ -397,7 +444,7 @@ describe('owner-qualified decisions and signed copies', () => {
       await decisionFor(aliceBranch),
       await decisionFor(deviceWrapping),
     ])
-    expect(await verifyHolderProof(proof, context(alternateCopy.store))).toBe(true)
+    expect(await verifyHolderProof({ proof, ctx: context(alternateCopy.store) })).toBe(true)
   })
 
   test('equalDecisionUsesContentDigestNotSigningTime', async () => {
@@ -409,17 +456,19 @@ describe('owner-qualified decisions and signed copies', () => {
     const high = await signed(alice, key, { hlc, payload: new Uint8Array([2]) })
     const resignedHigh = await signed(device, key, { hlc, payload: new Uint8Array([2]) })
     expect(records.recordDecisionDigest).toBeTypeOf('function')
-    const lowDigest = await records.recordDecisionDigest(low, TEST_OP_KIND)
-    const highDigest = await records.recordDecisionDigest(high, TEST_OP_KIND)
-    expect(await records.recordDecisionDigest(resignedHigh, TEST_OP_KIND)).toBe(highDigest)
+    const lowDigest = await records.recordDecisionDigest({ record: low, opKind: TEST_OP_KIND })
+    const highDigest = await records.recordDecisionDigest({ record: high, opKind: TEST_OP_KIND })
+    expect(await records.recordDecisionDigest({ record: resignedHigh, opKind: TEST_OP_KIND })).toBe(
+      highDigest,
+    )
     const versionedOriginal = await signed(alice, key, { hlc, meta: { version: hlc } })
     const versionedResigned = await signed(device, key, {
       hlc: stamp(device, 1),
       meta: { version: hlc },
     })
-    expect(await records.recordDecisionDigest(versionedResigned, TEST_OP_KIND)).toBe(
-      await records.recordDecisionDigest(versionedOriginal, TEST_OP_KIND),
-    )
+    expect(
+      await records.recordDecisionDigest({ record: versionedResigned, opKind: TEST_OP_KIND }),
+    ).toBe(await records.recordDecisionDigest({ record: versionedOriginal, opKind: TEST_OP_KIND }))
     expect(lowDigest).not.toBe(highDigest)
     const winner = lowDigest > highDigest ? low : high
     for (const order of [
@@ -428,11 +477,16 @@ describe('owner-qualified decisions and signed copies', () => {
       [low, resignedHigh, high],
     ]) {
       const memory = memoryStore()
-      await applyWith(order, memory.store, [definition()], {
-        resolveController: async (did) => (did === normalizeDID(device.id) ? key.owner : null),
+      await applyWith({
+        input: order,
+        store: memory.store,
+        types: [definition()],
+        overrides: {
+          resolveController: async (did) => (did === normalizeDID(device.id) ? key.owner : null),
+        },
       })
       expect(memory.read(key)?.contentDigest).toBe(
-        await records.recordDecisionDigest(winner, TEST_OP_KIND),
+        await records.recordDecisionDigest({ record: winner, opKind: TEST_OP_KIND }),
       )
     }
   })
@@ -449,24 +503,26 @@ describe('owner-qualified decisions and signed copies', () => {
       deleted: true,
       meta: { topic: 'catalog', version: decisionHLC },
     }
-    const sign = async (signedClaim: RecordClaim): Promise<SignedRecord> => ({
-      type: signedClaim.type,
-      id: signedClaim.id,
-      owner: signedClaim.owner,
-      hlc: signedClaim.hlc,
-      payload: null,
-      ...(await signRecordOp(signer, signedClaim, TEST_OP_KIND)),
-    })
+    const sign = async (signedClaim: RecordClaim): Promise<SignedRecord> => {
+      return {
+        type: signedClaim.type,
+        id: signedClaim.id,
+        owner: signedClaim.owner,
+        hlc: signedClaim.hlc,
+        payload: null,
+        ...(await signRecordOp({ identity: signer, claim: signedClaim, opKind: TEST_OP_KIND })),
+      }
+    }
     const first = await sign(claim)
     const resigned = await sign({
       ...claim,
       hlc: '2026-09-27T00:00:02.000Z:00000000:node',
     })
     expect(first.opHash).not.toBe(resigned.opHash)
-    expect(await records.recordDecisionDigest(first, TEST_OP_KIND)).toBe(
+    expect(await records.recordDecisionDigest({ record: first, opKind: TEST_OP_KIND })).toBe(
       'uO4S0JWZcbMAIZT8a4gzva2n3XCguybZvIb7GcT2HLw',
     )
-    expect(await records.recordDecisionDigest(resigned, TEST_OP_KIND)).toBe(
+    expect(await records.recordDecisionDigest({ record: resigned, opKind: TEST_OP_KIND })).toBe(
       'uO4S0JWZcbMAIZT8a4gzva2n3XCguybZvIb7GcT2HLw',
     )
   })
@@ -480,20 +536,30 @@ describe('owner-qualified decisions and signed copies', () => {
     const replacement = await signed(alice, key, { hlc })
     const oldDecision = await decisionFor(old)
     const both: RecordDecision = { ...oldDecision, copies: [old, replacement] }
-    expect(() => rangeLeaf(oldDecision, LWW)).not.toThrow()
-    const oldLeaf = rangeLeaf(oldDecision, LWW)
-    const bothLeaf = rangeLeaf(both, LWW)
+    expect(async () => await rangeLeaf({ decision: oldDecision, policy: LWW })).not.toThrow()
+    const oldLeaf = await rangeLeaf({ decision: oldDecision, policy: LWW })
+    const bothLeaf = await rangeLeaf({ decision: both, policy: LWW })
     if (oldLeaf === null || bothLeaf === null) throw new Error('Decision leaf was not produced')
-    expect(fingerprintRange([oldLeaf])).not.toBe(fingerprintRange([bothLeaf]))
+    expect(await fingerprintRange({ leaves: [oldLeaf] })).not.toBe(
+      await fingerprintRange({ leaves: [bothLeaf] }),
+    )
     expect(
-      nextRequesterSteps([oldLeaf], {
-        bounds: { type: TYPE, lower: null, upper: null },
-        leaves: [bothLeaf],
+      await nextRequesterSteps({
+        local: [oldLeaf],
+        response: {
+          bounds: { type: TYPE, lower: null, upper: null },
+          leaves: [bothLeaf],
+        },
       }),
     ).toEqual([{ get: [key] }])
     const memory = memoryStore([oldDecision])
-    await applyWith([old, replacement], memory.store, [definition()], {
-      resolveController: async (did) => (did === normalizeDID(device.id) ? key.owner : null),
+    await applyWith({
+      input: [old, replacement],
+      store: memory.store,
+      types: [definition()],
+      overrides: {
+        resolveController: async (did) => (did === normalizeDID(device.id) ? key.owner : null),
+      },
     })
     expect(
       memory
@@ -514,8 +580,13 @@ describe('owner-qualified decisions and signed copies', () => {
     const memory = memoryStore([await decisionFor(old)])
     expect(memory.restart().read(key)?.copies).toEqual([old])
     expect(memory.pruned).toEqual([])
-    await applyWith([replacement], memory.store, [definition()], {
-      resolveController: async () => null,
+    await applyWith({
+      input: [replacement],
+      store: memory.store,
+      types: [definition()],
+      overrides: {
+        resolveController: async () => null,
+      },
     })
     expect(memory.read(key)?.copies).toEqual([replacement])
     expect(memory.restart().read(key)?.copies).toEqual([replacement])
@@ -528,20 +599,22 @@ describe('owner-qualified decisions and signed copies', () => {
     const bad = await signed(signer, key)
     const good = await signed(signer, { ...key, id: 'good' })
     const memory = memoryStore()
-    const refusal = new RecordContentRefusalError('invalid content')
+    const refusal = new RecordContentRefusalError({ message: 'invalid content' })
     const type = definition({
-      precheck: async (_op, record) => {
+      precheck: async ({ op: _op, record }) => {
         if (record.id === bad.id) throw refusal
         return true
       },
     })
-    const result = await applyWith([bad, good], memory.store, [type])
+    const result = await applyWith({ input: [bad, good], store: memory.store, types: [type] })
     expect(result.rejected).toEqual([{ record: bad, reason: 'content-refused' }])
     expect(result.applied).toBe(1)
     expect(memory.read(key)).toBeNull()
     expect(memory.read({ ...key, id: 'good' })?.copies).toEqual([good])
     memory.store.isTransaction = true
-    await expect(applyWith([bad], memory.store, [type])).rejects.toBe(refusal)
+    await expect(applyWith({ input: [bad], store: memory.store, types: [type] })).rejects.toBe(
+      refusal,
+    )
   })
 
   test('recordFaultDoesNotQuarantine', async () => {
@@ -551,49 +624,58 @@ describe('owner-qualified decisions and signed copies', () => {
     const good = await signed(alice, { ...key, id: 'good' })
     const resolverError = new Error('controller unavailable')
     await expect(
-      applyWith(
-        [bad],
-        memoryStore().store,
-        [
+      applyWith({
+        input: [bad],
+        store: memoryStore().store,
+        types: [
           definition({
-            authorize: async (_op, ctx) => {
+            authorize: async ({ op: _op, ctx }) => {
               await ctx.resolveController('device')
               return true
             },
           }),
         ],
-        {
+        overrides: {
           resolveController: async () => {
             throw resolverError
           },
         },
-      ),
+      }),
     ).rejects.toBe(resolverError)
     const storeError = new Error('store unavailable')
     const faulty = memoryStore()
     faulty.store.transaction = async () => {
       throw storeError
     }
-    await expect(applyWith([bad], faulty.store)).rejects.toBe(storeError)
+    await expect(applyWith({ input: [bad], store: faulty.store })).rejects.toBe(storeError)
     const hookError = new Error('hook unavailable')
     await expect(
-      applyWith([bad], memoryStore().store, [
-        definition({
-          afterApply: async () => {
-            throw hookError
-          },
-        }),
-      ]),
+      applyWith({
+        input: [bad],
+        store: memoryStore().store,
+        types: [
+          definition({
+            afterApply: async () => {
+              throw hookError
+            },
+          }),
+        ],
+      }),
     ).rejects.toBe(hookError)
 
     const memory = memoryStore()
-    const result = await applyWith([bad, good], memory.store, [
-      definition({
-        afterApply: async (record) => {
-          if (record.id === bad.id) throw new RecordContentRefusalError('bad content')
-        },
-      }),
-    ])
+    const result = await applyWith({
+      input: [bad, good],
+      store: memory.store,
+      types: [
+        definition({
+          afterApply: async ({ record }) => {
+            if (record.id === bad.id)
+              throw new RecordContentRefusalError({ message: 'bad content' })
+          },
+        }),
+      ],
+    })
     expect(result.rejected.map(({ record }) => record)).toEqual([bad])
     expect(result.applied).toBe(1)
     expect(memory.read(key)).toBeNull()

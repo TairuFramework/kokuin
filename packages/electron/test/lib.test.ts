@@ -1,22 +1,25 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-// Mock electron safeStorage — identity transform for testing
-let encryptionAvailable = true
-vi.mock('electron', () => ({
-  safeStorage: {
-    encryptString: vi.fn((str: string) => Buffer.from(str)),
-    decryptString: vi.fn((buf: Buffer) => buf.toString()),
-    isEncryptionAvailable: vi.fn(() => encryptionAvailable),
-  },
-}))
+type MockStoreParams = { name: string }
 
-// Mock electron-store — in-memory storage
+let encryptionAvailable = true
+vi.mock('electron', () => {
+  return {
+    safeStorage: {
+      encryptString: vi.fn((str: string) => Buffer.from(str)),
+      decryptString: vi.fn((buf: Buffer) => buf.toString()),
+      isEncryptionAvailable: vi.fn(() => encryptionAvailable),
+    },
+  }
+})
+
 let storeData: Record<string, Record<string, string>>
 
 vi.mock('electron-store', () => {
   class MockStore {
     name: string
-    constructor(options: { name: string }) {
+    constructor(options: MockStoreParams) {
       this.name = options.name
     }
     get(key: string, defaultValue: Record<string, string> = {}) {
@@ -165,9 +168,9 @@ describe('ElectronKeyStore', () => {
 
   test('open() throws on conflicting allowInsecureStorage flag for a cached name', () => {
     ElectronKeyStore.open({ name: 'flag-conflict', allowInsecureStorage: false })
-    expect(() =>
-      ElectronKeyStore.open({ name: 'flag-conflict', allowInsecureStorage: true }),
-    ).toThrow(/allowInsecureStorage/i)
+    expect(() => {
+      return ElectronKeyStore.open({ name: 'flag-conflict', allowInsecureStorage: true })
+    }).toThrow(/allowInsecureStorage/i)
   })
 
   test('open() reuses cached instance when flag matches or is omitted', () => {
@@ -229,5 +232,31 @@ describe('ElectronKeyStore#provideIdentitySync / #provideIdentity', () => {
     const store = ElectronKeyStore.open({ name: 'eid-3' })
     const identity = await store.provideIdentity('k1')
     expect(identity.id).toMatch(/^did:key:z/)
+  })
+})
+
+describe('provider capture', () => {
+  test('reopen compares resolved providers by reference', () => {
+    const crypto = { ...nobleCrypto }
+    const different = { ...nobleCrypto }
+    const defaults = ElectronKeyStore.open({ name: 'provider-default' })
+    expect(() => ElectronKeyStore.open({ name: 'provider-default', crypto })).toThrow(/crypto/i)
+    expect(ElectronKeyStore.open({ name: 'provider-default', crypto: nobleCrypto })).toBe(defaults)
+    const custom = ElectronKeyStore.open({ name: 'provider-custom', crypto })
+    expect(() => ElectronKeyStore.open({ name: 'provider-custom' })).toThrow(/crypto/i)
+    expect(() => ElectronKeyStore.open({ name: 'provider-custom', crypto: different })).toThrow(
+      /crypto/i,
+    )
+    expect(ElectronKeyStore.open({ name: 'provider-custom', crypto })).toBe(custom)
+  })
+  test('both identity paths sign through the captured provider', async () => {
+    const sign = vi.fn(nobleCrypto.sign)
+    const crypto = { ...nobleCrypto, sign }
+    const options: { name: string; crypto: CryptoProvider } = { name: 'provider-sign', crypto }
+    const store = new ElectronKeyStore(options)
+    options.crypto = { ...nobleCrypto }
+    await store.provideIdentitySync('sync').signToken({ payload: { value: 1 } })
+    await (await store.provideIdentity('async')).signToken({ payload: { value: 2 } })
+    expect(sign).toHaveBeenCalledTimes(2)
   })
 })

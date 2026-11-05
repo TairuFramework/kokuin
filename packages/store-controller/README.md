@@ -24,7 +24,7 @@ const logs = await getControllerStore(db)
 // current epoch are not re-verified, so a forged one would be applied.
 await logs.merge(
   did,
-  async (seen) => authoritativeLog({ did, loaded: presented, seen, context: 'sync' }).log,
+  async (seen) => (await authoritativeLog({ did, loaded: presented, seen, context: 'sync' })).log,
 )
 const stored = await logs.get(did)
 ```
@@ -35,10 +35,32 @@ Postgres permits concurrent merges for other DIDs. SQLite reserves its single wr
 
 Obtain the store from `db.withTransaction`'s callback provider for a read followed by a dependent write.
 
-`markObserved(did, at = new Date()): Promise<void>` updates only the observation timestamp.
+`markObserved(params: ControllerStoreAPIMarkObservedParams): Promise<void>` updates only the observation timestamp.
 Use it after accepting an identical network presentation. It preserves the stored log bytes and returns no change signal.
 Unknown DIDs are a no-op. It joins host transactions and rolls back with them.
 Timestamp precision follows the adapter: SQLite stores whole seconds.
 Unchanged `merge` calls still write nothing and require an explicit `markObserved` to refresh observation time.
 
 See [docs/reference/stores.md](../../docs/reference/stores.md).
+
+## Controller contract alignment to 0.7.0
+
+The store retains its existing factory signatures and asynchronous merge callbacks.
+Controller verification now returns Promises. Merge callbacks must await `authoritativeLog` before reading its `.log` result.
+Provider selection belongs to controller options, rather than SQL store construction.
+Only authoritative accepted logs belong in storage. Stored epoch authentication remains trusted across provider changes.
+Strict verification applies on reverification, without a historical rescan or version gate.
+
+See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+| Export | Named params type | Previous positional form |
+| --- | --- | --- |
+| `createControllerStore` | `CreateControllerStoreParams` | `createControllerStore(db: Kysely<ControllerStoreTables>, adapter: Adapter, context: StoreContext)` |
+
+Method and callback contracts follow the same convention.
+
+| API | Named params type | Previous form |
+| --- | --- | --- |
+| `ControllerStoreAPI.markObserved` | `ControllerStoreAPIMarkObservedParams` | `markObserved(did, at?)` |

@@ -1,5 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 
+import type * as keysModule from '../src/keys.js'
+
 // `resolve` reads the algorithm off the decoded signing key rather than hardcoding 'EdDSA'
 // (resolver.ts:44-47). `KeyAlgorithm` is a closed two-member union and the encoder rejects
 // anything outside it, so a hand-built event carrying a differently-tagged algorithm is not
@@ -8,7 +10,7 @@ import { describe, expect, test, vi } from 'vitest'
 // than alongside `resolver.test.ts`, because `vi.mock` replaces the module for every test in the
 // file it appears in, and the other resolver tests rely on `decodeKey` behaving for real.
 vi.mock('../src/keys.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/keys.js')>()
+  const actual = await importOriginal<typeof keysModule>()
   return { ...actual, decodeKey: vi.fn(actual.decodeKey) }
 })
 
@@ -20,7 +22,7 @@ const seed = new Uint8Array(32).fill(1)
 
 describe('createControllerResolver().resolve() algorithm passthrough', () => {
   test('surfaces whatever algorithm the decoded key carries, not a hardcoded EdDSA', async () => {
-    const icp = createInception(seed, 0)
+    const icp = await createInception({ seed, profile: 0 })
     const did = didFromInception(icp.event)
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp], events: [] }),
@@ -35,7 +37,7 @@ describe('createControllerResolver().resolve() algorithm passthrough', () => {
       publicKey: new Uint8Array(32).fill(7),
     })
 
-    const resolved = await resolver.resolve(did, {})
+    const resolved = await resolver.resolve({ did, header: {} })
     expect(resolved.alg).toBe('Ed448')
     expect(resolved.publicKey).toEqual(new Uint8Array(32).fill(7))
   })

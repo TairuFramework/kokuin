@@ -26,7 +26,9 @@ const KEY_LENGTHS: Record<KeyAlgorithm, number> = {
   X25519: 32,
 }
 
-export function encodeKey(publicKey: Uint8Array, alg: KeyAlgorithm): string {
+export type EncodeKeyParams = { publicKey: Uint8Array; alg: KeyAlgorithm }
+
+export function encodeKey({ alg, publicKey }: EncodeKeyParams): string {
   const codec = CODECS[alg]
   const bytes = new Uint8Array(codec.length + publicKey.length)
   bytes.set(codec, 0)

@@ -1,9 +1,10 @@
+import type { Runtime } from '@sozai/runtime'
 import { describe, expect, test } from 'vitest'
 
 import { fetchOAuthJSON, OAuthTokenError } from '../src/index.js'
 import { fakeRuntime } from './fake-runtime.js'
 
-function baseParams(runtime: ReturnType<typeof fakeRuntime>) {
+function baseParams(runtime: Runtime) {
   return {
     runtime,
     url: 'https://token',
@@ -49,8 +50,9 @@ describe('fetchOAuthJSON()', () => {
 
   test('allows an http loopback endpoint', async () => {
     const runtime = fakeRuntime({
-      fetch: async () =>
-        new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } }),
+      fetch: async () => {
+        return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } })
+      },
     })
     const result = await fetchOAuthJSON({
       ...baseParams(runtime),
@@ -68,11 +70,15 @@ describe('fetchOAuthJSON()', () => {
 
   test('non-OK JSON body throws an OAuthTokenError with parsed code', async () => {
     const runtime = fakeRuntime({
-      fetch: async () =>
-        new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'bad code' }), {
-          status: 400,
-          headers: { 'content-type': 'application/json' },
-        }),
+      fetch: async () => {
+        return new Response(
+          JSON.stringify({ error: 'invalid_grant', error_description: 'bad code' }),
+          {
+            status: 400,
+            headers: { 'content-type': 'application/json' },
+          },
+        )
+      },
     })
     const error = await fetchOAuthJSON(baseParams(runtime)).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(OAuthTokenError)
@@ -98,10 +104,11 @@ describe('fetchOAuthJSON()', () => {
 
   test('aborts on the timeout deadline', async () => {
     const runtime = fakeRuntime({
-      fetch: (_url, init) =>
-        new Promise<Response>((_resolve, reject) => {
+      fetch: (_url, init) => {
+        return new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
-        }),
+        })
+      },
     })
     await expect(fetchOAuthJSON({ ...baseParams(runtime), timeoutMs: 20 })).rejects.toThrow(
       'aborted',
@@ -110,10 +117,11 @@ describe('fetchOAuthJSON()', () => {
 
   test('aborts when the caller signal fires, not the timeout', async () => {
     const runtime = fakeRuntime({
-      fetch: (_url, init) =>
-        new Promise<Response>((_resolve, reject) => {
+      fetch: (_url, init) => {
+        return new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
-        }),
+        })
+      },
     })
     const controller = new AbortController()
     const promise = fetchOAuthJSON({

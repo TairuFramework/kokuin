@@ -1,12 +1,12 @@
-import type { SignedRecord, VerifiedRecordOp } from '@kokuin/records'
-import { decodeVaultRecord } from '@kokuin/vault'
+import type { SignedRecord } from '@kokuin/records'
+import type { DecodedVaultRecord, FactorDescriptor } from '@kokuin/vault'
 
 import { VaultModeConflict } from './record-context.js'
 import type { Bound } from './records-rows.js'
 
 export async function projection(
   record: SignedRecord,
-  op: VerifiedRecordOp,
+  decoded: DecodedVaultRecord | null,
   bound: Bound,
 ): Promise<void> {
   const { db, adapter } = bound
@@ -44,7 +44,7 @@ export async function projection(
     }
   }
 
-  const decoded = decodeVaultRecord(record, op.claim.meta)
+  if (decoded === null) throw new Error('Live projection requires decoded content')
 
   switch (decoded.type) {
     case 'vault.key': {
@@ -71,9 +71,7 @@ export async function projection(
         wrapping_id: decoded.id,
         key_id: decoded.meta.keyID,
         key_version: decoded.meta.keyVersion,
-        descriptors: adapter.encodeJSON(
-          decoded.payload.descriptors,
-        ) as typeof decoded.payload.descriptors,
+        descriptors: adapter.encodeJSON(decoded.payload.descriptors) as Array<FactorDescriptor>,
         descriptor_digest: decoded.payload.descriptorDigest,
         iv: adapter.encodeBinary(decoded.payload.iv) as Uint8Array,
         wrapped_key: adapter.encodeBinary(decoded.payload.wrappedKey) as Uint8Array,

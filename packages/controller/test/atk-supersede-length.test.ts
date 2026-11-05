@@ -4,11 +4,13 @@ import { createInception, createRotate, didFromInception, type SignedEvent } fro
 import { foldLog } from '../src/fold.js'
 import { resolveBranches } from '../src/supersede.js'
 
+type RotateRunParams = { did: string; icp: SignedEvent; length: number; tag: string }
+
 const seed = new Uint8Array(32).fill(1)
 const victim = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
-function build() {
-  const icp = createInception(seed, 0)
+async function build() {
+  const icp = await createInception({ seed, profile: 0 })
   return { icp, did: didFromInception(icp.event) }
 }
 
@@ -17,11 +19,11 @@ function build() {
  * with different tags diverge at their first rotate: both are signed by the pre-committed key, so
  * neither supersedes the other there.
  */
-function rotateRun(did: string, icp: SignedEvent, length: number, tag: string): Array<SignedEvent> {
+async function rotateRun({ did, icp, length, tag }: RotateRunParams): Promise<Array<SignedEvent>> {
   const branch: Array<SignedEvent> = [icp]
   let prior = icp.event
   for (let i = 0; i < length; i++) {
-    const rot = createRotate({
+    const rot = await createRotate({
       seed,
       profile: 0,
       did,
@@ -39,39 +41,61 @@ function rotateRun(did: string, icp: SignedEvent, length: number, tag: string): 
 // `icp`/`rot`, so two branches that both fold and contradict each other diverge on two rotates, and
 // no amount of extension on one side settles that: it is duplicity, for a reset to resolve.
 describe('superseding is not decided by branch LENGTH', () => {
-  test('ROW 1: a longer run of rotates does not outrank a rotate it contradicts', () => {
-    const { icp, did } = build()
-    const longer = rotateRun(did, icp, 3, 'a')
-    const shorter = rotateRun(did, icp, 1, 'b')
+  test('ROW 1: a longer run of rotates does not outrank a rotate it contradicts', async () => {
+    const { icp, did } = await build()
+    const longer = await rotateRun({ did, icp, length: 3, tag: 'a' })
+    const shorter = await rotateRun({ did, icp, length: 1, tag: 'b' })
 
-    const result = resolveBranches(did, [longer, shorter])
+    const result = await resolveBranches({ did, chains: [longer, shorter] })
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.failure).toBe('duplicity')
     expect(result.duplicity.seq).toBe(1)
   })
 
-  test('ROW 2 (control: both runs are valid, not incidentally malformed)', () => {
-    const { icp, did } = build()
-    expect(foldLog(did, { chain: rotateRun(did, icp, 5, 'a'), events: [] }).ok).toBe(true)
-    expect(foldLog(did, { chain: rotateRun(did, icp, 1, 'b'), events: [] }).ok).toBe(true)
+  test('ROW 2 (control: both runs are valid, not incidentally malformed)', async () => {
+    const { icp, did } = await build()
+    expect(
+      (
+        await foldLog({
+          did,
+          input: {
+            chain: await rotateRun({ did, icp, length: 5, tag: 'a' }),
+            events: [],
+          },
+        })
+      ).ok,
+    ).toBe(true)
+    expect(
+      (
+        await foldLog({
+          did,
+          input: {
+            chain: await rotateRun({ did, icp, length: 1, tag: 'b' }),
+            events: [],
+          },
+        })
+      ).ok,
+    ).toBe(true)
   })
 
-  test('ROW 3: the answer is the same in every presentation order and at every length', () => {
-    const { icp, did } = build()
+  test('ROW 3: the answer is the same in every presentation order and at every length', async () => {
+    const { icp, did } = await build()
     for (const n of [1, 2, 3, 4]) {
-      const a = rotateRun(did, icp, n + 1, 'a')
-      const b = rotateRun(did, icp, n, 'b')
-      expect(resolveBranches(did, [a, b])).toEqual(resolveBranches(did, [b, a]))
-      expect(resolveBranches(did, [a, b]).ok).toBe(false)
+      const a = await rotateRun({ did, icp, length: n + 1, tag: 'a' })
+      const b = await rotateRun({ did, icp, length: n, tag: 'b' })
+      expect(await resolveBranches({ did, chains: [a, b] })).toEqual(
+        await resolveBranches({ did, chains: [b, a] }),
+      )
+      expect((await resolveBranches({ did, chains: [a, b] })).ok).toBe(false)
     }
   })
 
-  test('ROW 4 (control): a longer branch wins when it is the same history carried further', () => {
-    const { icp, did } = build()
-    const longer = rotateRun(did, icp, 3, 'a')
+  test('ROW 4 (control): a longer branch wins when it is the same history carried further', async () => {
+    const { icp, did } = await build()
+    const longer = await rotateRun({ did, icp, length: 3, tag: 'a' })
     const prefix = longer.slice(0, 2)
-    const result = resolveBranches(did, [prefix, longer])
+    const result = await resolveBranches({ did, chains: [prefix, longer] })
     expect(result.ok && result.winner).toBe(longer)
   })
 })

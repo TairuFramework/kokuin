@@ -1,11 +1,23 @@
-import type { DIDString } from '@kokuin/token'
-import { ed25519 } from '@noble/curves/ed25519.js'
+import { nobleCrypto, type VerifyItem } from '@kokuin/crypto'
+import type { CryptoOptions, DIDString } from '@kokuin/token'
 import { base64urlnopad } from '@scure/base'
 
 import { canonicalBytes, digestOf, isCanonicalizable } from './canonical.js'
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from './derivation.js'
 import type { EpochEventCommon } from './epoch-events.js'
 import { encodeKey, tryDecodeKey } from './keys.js'
+
+export type VerifySignaturesParams = {
+  event: EventCommon | EpochEventCommon
+  sigs: Array<string>
+  keys: Array<string>
+} & CryptoOptions
+export type CreateResetParams = {
+  seed: Uint8Array
+  profile: number
+  gen: number
+  snapshot?: StateSnapshot
+} & CryptoOptions
 
 export const DID_PREFIX = 'did:kokuin:'
 
@@ -68,8 +80,8 @@ export type InceptionEvent = EventCommon & {
  * Generic over both tiers: a root-chain event and an epoch event share the envelope and signatures
  * over canonical bytes, and nothing else.
  */
-export type SignedEvent<E extends EventCommon | EpochEventCommon = EventCommon> = {
-  event: E
+export type SignedEvent<TEvent extends EventCommon | EpochEventCommon = EventCommon> = {
+  event: TEvent
   /** base64url ed25519 signatures over the canonical event bytes, positional against `event.k`. */
   sigs: Array<string>
   /**
@@ -79,12 +91,21 @@ export type SignedEvent<E extends EventCommon | EpochEventCommon = EventCommon> 
   recoveryKey?: string
 }
 
-export function signEvent(
+export async function signEvent(
   event: EventCommon | EpochEventCommon,
   privateKeys: Array<Uint8Array>,
-): Array<string> {
+  options: CryptoOptions = {},
+): Promise<Array<string>> {
   const bytes = canonicalBytes(event)
-  return privateKeys.map((key) => base64urlnopad.encode(ed25519.sign(bytes, key)))
+  const items = privateKeys.map((privateKey) => {
+    return {
+      privateKey: privateKey.slice(),
+      message: bytes,
+    }
+  })
+  return (await (options.crypto ?? nobleCrypto).signBatch({ alg: 'EdDSA', items })).map((sig) => {
+    return base64urlnopad.encode(sig)
+  })
 }
 
 /**
@@ -130,28 +151,26 @@ function verifyAgreementKeys(ka: Array<string>): boolean {
 }
 
 /**
- * Total: a malformed signature or key yields false rather than throwing, including a body the
- * canonicalizer refuses. `canonicalBytes` throws on a non-finite number or nesting past
- * `MAX_CANONICAL_DEPTH` (both from `JSON.parse`); the fold's envelope guard rejects such a body one
- * layer out, so this is unreachable through `foldLog` but stays because the export is documented
- * total and a direct caller reaches it with a parsed body. `false` is honest: a body with no
- * canonical encoding has no bytes for a signature to be over.
+ * Malformed signatures, keys and non-canonical bodies yield false. Provider failures propagate.
+ * Direct callers need the canonicalisation guard even though the fold also checks the body.
  */
-export function verifySignatures(
-  event: EventCommon | EpochEventCommon,
-  sigs: Array<string>,
-  keys: Array<string>,
-): boolean {
+export async function verifySignatures({
+  event,
+  sigs,
+  keys,
+  ...options
+}: VerifySignaturesParams): Promise<boolean> {
   if (!Array.isArray(sigs) || !Array.isArray(keys)) {
     return false
   }
   if (sigs.length !== keys.length || sigs.length === 0) {
     return false
   }
-  if (!isCanonicalizable(event)) {
+  if (!isCanonicalizable({ value: event })) {
     return false
   }
   const bytes = canonicalBytes(event)
+  const items: Array<VerifyItem> = []
   for (const [i, sig] of sigs.entries()) {
     try {
       const encodedKey = keys[i]
@@ -162,10 +181,19 @@ export function verifySignatures(
       if (key == null || key.alg !== 'EdDSA') {
         return false
       }
-      if (!ed25519.verify(base64urlnopad.decode(sig), bytes, key.publicKey)) {
-        return false
-      }
+      items.push({
+        alg: 'EdDSA',
+        signature: base64urlnopad.decode(sig),
+        message: bytes,
+        publicKey: key.publicKey,
+      })
     } catch {
+      return false
+    }
+  }
+  const crypto = options.crypto ?? nobleCrypto
+  for (let index = 0; index < items.length; index += 4) {
+    if (!(await crypto.verifyBatch(items.slice(index, index + 4))).every(Boolean)) {
       return false
     }
   }
@@ -177,10 +205,20 @@ export function verifySignatures(
  * so the DID is a pure function of the seed and profile index. Never add a label: a mistyped one on
  * recovery would reproduce a different DID.
  */
-export function createInception(seed: Uint8Array, profile: number): SignedEvent<InceptionEvent> {
+export type CreateInceptionParams = { seed: Uint8Array; profile: number } & CryptoOptions
+
+export async function createInception({
+  profile,
+  seed,
+  ...options
+}: CreateInceptionParams): Promise<SignedEvent<InceptionEvent>> {
   const event = inceptionEvent(seed, profile)
-  const current = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
-  return { event, sigs: signEvent(event, [current.privateKey]) }
+  const current = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen: 0, seq: 0 }),
+    alg: 'EdDSA',
+  })
+  return { event, sigs: await signEvent(event, [current.privateKey], options) }
 }
 
 /**
@@ -189,10 +227,22 @@ export function createInception(seed: Uint8Array, profile: number): SignedEvent<
  * find out is the one expensive step.
  */
 function inceptionEvent(seed: Uint8Array, profile: number): InceptionEvent {
-  const current = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
-  const next = deriveKeyPair(seed, authorityPath(profile, 0, 1), 'EdDSA')
-  const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
-  const agreement = deriveKeyPair(seed, agreementPath(profile, 0, 0), 'X25519')
+  const current = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen: 0, seq: 0 }),
+    alg: 'EdDSA',
+  })
+  const next = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen: 0, seq: 1 }),
+    alg: 'EdDSA',
+  })
+  const recovery = deriveKeyPair({ seed, path: recoveryPath(profile), alg: 'EdDSA' })
+  const agreement = deriveKeyPair({
+    seed,
+    path: agreementPath({ profile, gen: 0, seq: 0 }),
+    alg: 'X25519',
+  })
 
   return {
     v: 1,
@@ -200,12 +250,12 @@ function inceptionEvent(seed: Uint8Array, profile: number): InceptionEvent {
     g: 0,
     s: 0,
     crit: true,
-    k: [encodeKey(current.publicKey, 'EdDSA')],
-    ka: [encodeKey(agreement.publicKey, 'X25519')],
-    n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
+    k: [encodeKey({ publicKey: current.publicKey, alg: 'EdDSA' })],
+    ka: [encodeKey({ publicKey: agreement.publicKey, alg: 'X25519' })],
+    n: [digestOf(encodeKey({ publicKey: next.publicKey, alg: 'EdDSA' }))],
     kt: 1,
     nt: 1,
-    r: digestOf(encodeKey(recovery.publicKey, 'EdDSA')),
+    r: digestOf(encodeKey({ publicKey: recovery.publicKey, alg: 'EdDSA' })),
   }
 }
 
@@ -214,11 +264,22 @@ export function didFromInception(event: InceptionEvent): DIDString {
 }
 
 /** The did:kokuin: identifier a seed and profile produce, without signing an inception. */
-export function didFor(seed: Uint8Array, profile: number): DIDString {
+export type DidForParams = { seed: Uint8Array; profile: number }
+
+export function didFor({ profile, seed }: DidForParams): DIDString {
   return didFromInception(inceptionEvent(seed, profile))
 }
 
-export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string): boolean {
+export type VerifyInceptionParams = {
+  signed: SignedEvent<InceptionEvent>
+  did: string
+} & CryptoOptions
+
+export async function verifyInception({
+  did,
+  signed,
+  ...options
+}: VerifyInceptionParams): Promise<boolean> {
   if (signed.event.t !== 'icp' || signed.event.i !== undefined) {
     return false
   }
@@ -245,7 +306,12 @@ export function verifyInception(signed: SignedEvent<InceptionEvent>, did: string
   if (!verifyAgreementKeys(signed.event.ka)) {
     return false
   }
-  return verifySignatures(signed.event, signed.sigs, signed.event.k)
+  return await verifySignatures({
+    ...options,
+    event: signed.event,
+    sigs: signed.sigs,
+    keys: signed.event.k,
+  })
 }
 
 /**
@@ -323,7 +389,7 @@ export type RotateEvent = EventCommon & {
   d?: Array<string>
 }
 
-export type CreateRotateParams = {
+export type CreateRotateParams = CryptoOptions & {
   seed: Uint8Array
   profile: number
   did: string
@@ -356,14 +422,15 @@ export type CreateRotateParams = {
  * **Throws rather than emitting an event the fold will reject.** The revealed key must be the one
  * `prior` committed in `n`, which a prior not built from this chain's own events need not be.
  */
-export function createRotate({
+export async function createRotate({
   seed,
   profile,
   did,
   prior,
   snapshot,
   seal,
-}: CreateRotateParams): SignedEvent<RotateEvent> {
+  crypto,
+}: CreateRotateParams): Promise<SignedEvent<RotateEvent>> {
   const gen = prior.g
   const seq = prior.s + 1
   // The commitment the revealed key must match. Every `icp`/`rot` carries one; a hand-built prior of
@@ -380,14 +447,26 @@ export function createRotate({
   }
   // The agreement key lands at the same index as the authority key, so `KeyState.keyGen`/`keySeq`
   // names both for a recipient re-deriving from the seed.
-  const current = deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA')
-  const next = deriveKeyPair(seed, authorityPath(profile, gen, seq + 1), 'EdDSA')
-  const agreement = deriveKeyPair(seed, agreementPath(profile, gen, seq), 'X25519')
+  const current = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen, seq }),
+    alg: 'EdDSA',
+  })
+  const next = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen, seq: seq + 1 }),
+    alg: 'EdDSA',
+  })
+  const agreement = deriveKeyPair({
+    seed,
+    path: agreementPath({ profile, gen, seq }),
+    alg: 'X25519',
+  })
 
   if (root && committed != null) {
     // Exactly what `verifyRotate` checks, checked here where the caller can still act. Arity first:
     // this generator emits a single key, so a prior committing any other number has no rotate here.
-    const revealed = encodeKey(current.publicKey, 'EdDSA')
+    const revealed = encodeKey({ publicKey: current.publicKey, alg: 'EdDSA' })
     if (committed.length !== 1 || digestOf(revealed) !== committed[0]) {
       throw new Error(
         `createRotate: the key at (gen ${gen}, seq ${seq}) is not the one the prior event ` +
@@ -404,18 +483,18 @@ export function createRotate({
     s: seq,
     p: digestOf(prior),
     crit: true,
-    k: [encodeKey(current.publicKey, 'EdDSA')],
-    ka: [encodeKey(agreement.publicKey, 'X25519')],
-    n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
+    k: [encodeKey({ publicKey: current.publicKey, alg: 'EdDSA' })],
+    ka: [encodeKey({ publicKey: agreement.publicKey, alg: 'X25519' })],
+    n: [digestOf(encodeKey({ publicKey: next.publicKey, alg: 'EdDSA' }))],
     kt: 1,
     nt: 1,
     a: seal,
-    m: snapshot.members,
-    u: snapshot.removed,
-    d: snapshot.deny,
+    m: structuredClone(snapshot.members),
+    u: snapshot.removed === undefined ? undefined : structuredClone(snapshot.removed),
+    d: [...snapshot.deny],
   }
 
-  return { event, sigs: signEvent(event, [current.privateKey]) }
+  return { event, sigs: await signEvent(event, [current.privateKey], { crypto }) }
 }
 
 /**
@@ -450,10 +529,16 @@ function isPublishedRotate(event: RotateEvent): boolean {
  * A rotate is valid when it chains to the prior digest, its revealed keys match the prior event's
  * pre-rotation commitment, and its signatures verify against those keys.
  */
-export function verifyRotate(
-  signed: SignedEvent<RotateEvent>,
-  prior: { digest: string; n: Array<string> },
-): boolean {
+export type VerifyRotateParams = {
+  signed: SignedEvent<RotateEvent>
+  prior: { digest: string; n: Array<string> }
+} & CryptoOptions
+
+export async function verifyRotate({
+  prior,
+  signed,
+  ...options
+}: VerifyRotateParams): Promise<boolean> {
   const { event, sigs } = signed
   if (event.t !== 'rot' || event.p !== prior.digest) {
     return false
@@ -472,7 +557,7 @@ export function verifyRotate(
   if (!verifyAgreementKeys(event.ka)) {
     return false
   }
-  return verifySignatures(event, sigs, event.k)
+  return await verifySignatures({ ...options, event, sigs, keys: event.k })
 }
 
 /**
@@ -500,22 +585,35 @@ export function verifyRotate(
  * competing reset at any generation): a blind root starts at `gen = 1` and retries higher if it
  * learns of one — the cost is a round trip, never loss of control.
  */
-export function createReset(
-  seed: Uint8Array,
-  profile: number,
-  gen: number,
-  snapshot?: StateSnapshot,
-): SignedEvent<RotateEvent> {
+export async function createReset({
+  seed,
+  profile,
+  gen,
+  snapshot,
+  ...options
+}: CreateResetParams): Promise<SignedEvent<RotateEvent>> {
   if (gen < 1) {
     throw new Error(`Reset: gen must be >= 1, got ${gen}`)
   }
 
-  const inception = createInception(seed, profile)
-  const did = didFromInception(inception.event)
-  const current = deriveKeyPair(seed, authorityPath(profile, gen, 0), 'EdDSA')
-  const next = deriveKeyPair(seed, authorityPath(profile, gen, 1), 'EdDSA')
-  const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
-  const agreement = deriveKeyPair(seed, agreementPath(profile, gen, 0), 'X25519')
+  const inception = inceptionEvent(seed, profile)
+  const did = didFromInception(inception)
+  const current = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen, seq: 0 }),
+    alg: 'EdDSA',
+  })
+  const next = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen, seq: 1 }),
+    alg: 'EdDSA',
+  })
+  const recovery = deriveKeyPair({ seed, path: recoveryPath(profile), alg: 'EdDSA' })
+  const agreement = deriveKeyPair({
+    seed,
+    path: agreementPath({ profile, gen, seq: 0 }),
+    alg: 'X25519',
+  })
 
   const event: RotateEvent = {
     v: 1,
@@ -523,11 +621,11 @@ export function createReset(
     i: did,
     g: gen,
     s: 0,
-    p: digestOf(inception.event),
+    p: digestOf(inception),
     crit: true,
-    k: [encodeKey(current.publicKey, 'EdDSA')],
-    ka: [encodeKey(agreement.publicKey, 'X25519')],
-    n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
+    k: [encodeKey({ publicKey: current.publicKey, alg: 'EdDSA' })],
+    ka: [encodeKey({ publicKey: agreement.publicKey, alg: 'X25519' })],
+    n: [digestOf(encodeKey({ publicKey: next.publicKey, alg: 'EdDSA' }))],
     kt: 1,
     nt: 1,
   }
@@ -538,14 +636,14 @@ export function createReset(
     // to a blind reset rather than a second encoding of it.
     event.d = []
   } else {
-    event.m = snapshot.members
-    event.d = snapshot.deny
+    event.m = structuredClone(snapshot.members)
+    event.d = [...snapshot.deny]
   }
 
   return {
     event,
-    sigs: signEvent(event, [recovery.privateKey]),
-    recoveryKey: encodeKey(recovery.publicKey, 'EdDSA'),
+    sigs: await signEvent(event, [recovery.privateKey], options),
+    recoveryKey: encodeKey({ publicKey: recovery.publicKey, alg: 'EdDSA' }),
   }
 }
 
@@ -558,7 +656,16 @@ export function createReset(
  * `recoveryPath(profile)` carries no index for the same reason — one recovery key per profile, for
  * its lifetime. See {@link RotateEvent} for what was removed.
  */
-export function verifyReset(signed: SignedEvent<RotateEvent>, inception: InceptionEvent): boolean {
+export type VerifyResetParams = {
+  signed: SignedEvent<RotateEvent>
+  inception: InceptionEvent
+} & CryptoOptions
+
+export async function verifyReset({
+  inception,
+  signed,
+  ...options
+}: VerifyResetParams): Promise<boolean> {
   const { event, sigs } = signed
   if (event.t !== 'rot' || event.p !== digestOf(inception) || event.s !== 0 || event.g < 1) {
     return false
@@ -598,7 +705,7 @@ export function verifyReset(signed: SignedEvent<RotateEvent>, inception: Incepti
   if (revealed == null || digestOf(revealed) !== inception.r) {
     return false
   }
-  return verifySignatures(event, sigs, [revealed])
+  return await verifySignatures({ ...options, event, sigs, keys: [revealed] })
 }
 
 /**

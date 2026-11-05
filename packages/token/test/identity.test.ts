@@ -74,20 +74,19 @@ describe('identity type guards', () => {
 describe('createSigningIdentity', () => {
   test('creates a signing identity from Ed25519 private key', async () => {
     const privateKey = ed25519.utils.randomSecretKey()
-    const identity = createSigningIdentity(privateKey)
+    const identity = createSigningIdentity({ privateKey })
     expect(identity.id).toMatch(/^did:key:z/)
     expect(isSigningIdentity(identity)).toBe(true)
-    const token = await identity.signToken({ test: true })
+    const token = await identity.signToken({ payload: { test: true } })
     expect(token.payload.iss).toBe(identity.id)
-    // Verify the token is cryptographically valid
-    const verified = await verifyToken(token)
+    const verified = await verifyToken({ token })
     expect(verified).toBeDefined()
   })
 
   test('rejects payload with mismatched issuer using generic error', async () => {
     const privateKey = ed25519.utils.randomSecretKey()
-    const identity = createSigningIdentity(privateKey)
-    await expect(identity.signToken({ iss: 'did:key:wrong' })).rejects.toThrow(
+    const identity = createSigningIdentity({ privateKey })
+    await expect(identity.signToken({ payload: { iss: 'did:key:wrong' } })).rejects.toThrow(
       'Invalid payload: issuer does not match signer',
     )
   })
@@ -96,15 +95,15 @@ describe('createSigningIdentity', () => {
 describe('createFullIdentity', () => {
   test('creates a full identity from Ed25519 private key', () => {
     const privateKey = ed25519.utils.randomSecretKey()
-    const identity = createFullIdentity(privateKey)
+    const identity = createFullIdentity({ privateKey })
     expect(identity.id).toMatch(/^did:key:z/)
     expect(isFullIdentity(identity)).toBe(true)
   })
 
   test('same private key produces same id', () => {
     const privateKey = ed25519.utils.randomSecretKey()
-    const id1 = createFullIdentity(privateKey)
-    const id2 = createFullIdentity(privateKey)
+    const id1 = createFullIdentity({ privateKey })
+    const id2 = createFullIdentity({ privateKey })
     expect(id2.id).toBe(id1.id)
   })
 })
@@ -131,9 +130,9 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
       didMethod: 'peer:4',
     })
     const aud = 'did:example:bob'
-    const t1 = await identity.signToken({ sub: identity.id, aud })
+    const t1 = await identity.signToken({ payload: { sub: identity.id, aud } })
     expect(t1.payload.iss).toBe(identity.longForm)
-    const t2 = await identity.signToken({ sub: identity.id, aud })
+    const t2 = await identity.signToken({ payload: { sub: identity.id, aud } })
     expect(t2.payload.iss).toBe(identity.id) // short form
   })
 
@@ -142,8 +141,8 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],
       didMethod: 'peer:4',
     })
-    await identity.signToken({ sub: identity.id, aud: 'did:example:bob' })
-    const t = await identity.signToken({ sub: identity.id, aud: 'did:example:alice' })
+    await identity.signToken({ payload: { sub: identity.id, aud: 'did:example:bob' } })
+    const t = await identity.signToken({ payload: { sub: identity.id, aud: 'did:example:alice' } })
     expect(t.payload.iss).toBe(identity.longForm)
   })
 
@@ -152,7 +151,7 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],
       didMethod: 'peer:4',
     })
-    const t = await identity.signToken({ sub: identity.id })
+    const t = await identity.signToken({ payload: { sub: identity.id } })
     expect(t.payload.iss).toBe(identity.longForm)
   })
 
@@ -161,7 +160,7 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],
       didMethod: 'peer:4',
     })
-    const t = await identity.signToken({ sub: identity.id, aud: ['did:example:bob'] })
+    const t = await identity.signToken({ payload: { sub: identity.id, aud: ['did:example:bob'] } })
     expect(t.payload.iss).toBe(identity.longForm)
   })
 
@@ -171,8 +170,8 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
       didMethod: 'peer:4',
     })
     // Audience-less: nothing to key first contact on, so it must not mark any peer as contacted.
-    await identity.signToken({ sub: identity.id })
-    const t = await identity.signToken({ sub: identity.id, aud: 'did:example:bob' })
+    await identity.signToken({ payload: { sub: identity.id } })
+    const t = await identity.signToken({ payload: { sub: identity.id, aud: 'did:example:bob' } })
     expect(t.payload.iss).toBe(identity.longForm)
   })
 
@@ -181,7 +180,10 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],
       didMethod: 'peer:4',
     })
-    const t = await identity.signToken({ sub: identity.id }, { embedLongForm: false })
+    const t = await identity.signToken({
+      payload: { sub: identity.id },
+      embedLongForm: false,
+    })
     expect(t.payload.iss).toBe(identity.id)
   })
 
@@ -193,8 +195,8 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
         { purpose: 'kem', alg: 'X25519' },
       ],
     })
-    const t = await identity.signToken({ sub: identity.id })
-    await expect(verifyToken(t)).resolves.toBeDefined()
+    const t = await identity.signToken({ payload: { sub: identity.id } })
+    await expect(verifyToken({ token: t })).resolves.toBeDefined()
   })
 
   it('embedLongForm:true forces long form even on repeat aud', async () => {
@@ -203,8 +205,11 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
       didMethod: 'peer:4',
     })
     const aud = 'did:example:bob'
-    await identity.signToken({ sub: identity.id, aud })
-    const t = await identity.signToken({ sub: identity.id, aud }, { embedLongForm: true })
+    await identity.signToken({ payload: { sub: identity.id, aud } })
+    const t = await identity.signToken({
+      payload: { sub: identity.id, aud },
+      embedLongForm: true,
+    })
     expect(t.payload.iss).toBe(identity.longForm)
   })
 
@@ -213,10 +218,10 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],
       didMethod: 'peer:4',
     })
-    const t = await identity.signToken(
-      { sub: identity.id, aud: 'did:example:bob' },
-      { embedLongForm: false },
-    )
+    const t = await identity.signToken({
+      payload: { sub: identity.id, aud: 'did:example:bob' },
+      embedLongForm: false,
+    })
     expect(t.payload.iss).toBe(identity.id)
   })
 
@@ -234,11 +239,11 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
     const peerShort = peerIdentity.id
 
     // First sign: long-form aud → should use long-form iss
-    const t1 = await identity.signToken({ sub: identity.id, aud: peerLong })
+    const t1 = await identity.signToken({ payload: { sub: identity.id, aud: peerLong } })
     expect(t1.payload.iss).toBe(identity.longForm)
 
     // Second sign: short-form aud (same identity) → sentTo already has normalizedAud; use short-form iss
-    const t2 = await identity.signToken({ sub: identity.id, aud: peerShort })
+    const t2 = await identity.signToken({ payload: { sub: identity.id, aud: peerShort } })
     expect(t2.payload.iss).toBe(identity.id)
   })
 
@@ -247,12 +252,12 @@ describe('MultiKeyIdentity.signToken first-per-aud long-form policy', () => {
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],
       didMethod: 'key',
     })
-    const t1 = await identity.signToken({ sub: identity.id, aud: 'did:example:bob' })
+    const t1 = await identity.signToken({ payload: { sub: identity.id, aud: 'did:example:bob' } })
     expect(t1.payload.iss).toBe(identity.id)
-    const t2 = await identity.signToken(
-      { sub: identity.id, aud: 'did:example:bob' },
-      { embedLongForm: true },
-    )
+    const t2 = await identity.signToken({
+      payload: { sub: identity.id, aud: 'did:example:bob' },
+      embedLongForm: true,
+    })
     expect(t2.payload.iss).toBe(identity.id)
   })
 })
@@ -261,7 +266,7 @@ describe('createKeyAgreementIdentityForDID', () => {
   test('binds the supplied DID and agrees on the raw X25519 scalar', async () => {
     const recipientPriv = x25519.utils.randomSecretKey()
     const did = 'did:kokuin:zExampleControllerDigest'
-    const identity = createKeyAgreementIdentityForDID(did, recipientPriv)
+    const identity = createKeyAgreementIdentityForDID({ id: did, x25519PrivateKey: recipientPriv })
 
     expect(identity.id).toBe(did)
 
@@ -272,7 +277,7 @@ describe('createKeyAgreementIdentityForDID', () => {
     const senderPub = x25519.getPublicKey(senderPriv)
 
     const senderSecret = x25519.getSharedSecret(senderPriv, recipientPub)
-    const recipientSecret = await identity.agreeKey(senderPub)
+    const recipientSecret = await identity.agreeKey({ ephemeralPublicKey: senderPub })
     expect(recipientSecret).toEqual(senderSecret)
   })
 })

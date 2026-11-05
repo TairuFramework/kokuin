@@ -1,3 +1,7 @@
+import type {
+  KeyAgreementIdentityAgreeKeyParams,
+  SigningIdentitySignTokenParams,
+} from '@kokuin/token'
 import {
   CODECS,
   type FullIdentity,
@@ -5,7 +9,6 @@ import {
   type SignedHeader,
   type SignedToken,
   type SigningIdentity,
-  type SignTokenOptions,
 } from '@kokuin/token'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
@@ -20,7 +23,7 @@ import { type BrowserKeyRecord, getES256PublicKey, type LegacyES256Record } from
  */
 export async function createBrowserIdentity(record: BrowserKeyRecord): Promise<FullIdentity> {
   const publicKey = record.publicKey
-  const id = getDID(CODECS.EdDSA, publicKey)
+  const id = getDID({ codec: CODECS.EdDSA, publicKey })
 
   // The agreement key is stored as raw bytes (WebKit cannot persist an X25519 CryptoKey; see
   // BrowserKeyRecord). Re-import it here, non-extractable, for ECDH.
@@ -38,10 +41,10 @@ export async function createBrowserIdentity(record: BrowserKeyRecord): Promise<F
     ['deriveBits'],
   )
 
-  async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
-    payload: Payload,
-    options: SignTokenOptions = {},
-  ): Promise<SignedToken<Payload>> {
+  async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>({
+    payload,
+    ...options
+  }: SigningIdentitySignTokenParams<Payload>): Promise<SignedToken<Payload>> {
     if (payload.iss != null && payload.iss !== id) {
       throw new Error('Invalid payload: issuer does not match signer')
     }
@@ -69,7 +72,9 @@ export async function createBrowserIdentity(record: BrowserKeyRecord): Promise<F
     }
   }
 
-  async function agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array> {
+  async function agreeKey({
+    ephemeralPublicKey,
+  }: KeyAgreementIdentityAgreeKeyParams): Promise<Uint8Array> {
     const ephemeral = await globalThis.crypto.subtle.importKey(
       'raw',
       ephemeralPublicKey as BufferSource,
@@ -108,12 +113,12 @@ export async function createLegacyES256Identity(
   record: LegacyES256Record,
 ): Promise<SigningIdentity> {
   const publicKey = await getES256PublicKey(record)
-  const id = getDID(CODECS.ES256, publicKey)
+  const id = getDID({ codec: CODECS.ES256, publicKey })
 
-  async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
-    payload: Payload,
-    options: SignTokenOptions = {},
-  ): Promise<SignedToken<Payload>> {
+  async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>({
+    payload,
+    ...options
+  }: SigningIdentitySignTokenParams<Payload>): Promise<SignedToken<Payload>> {
     if (payload.iss != null && payload.iss !== id) {
       throw new Error('Invalid payload: issuer does not match signer')
     }

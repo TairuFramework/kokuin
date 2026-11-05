@@ -15,6 +15,7 @@ import {
   keyTarget,
   type SignedEvent,
 } from '@kokuin/controller'
+import type { CryptoOptions, DIDString } from '@kokuin/token'
 import {
   randomIdentity as createIdentity,
   createIdentity as createPeer4Identity,
@@ -64,14 +65,17 @@ async function openStore(): Promise<{ db: HozonDB; store: DelegationStoreAPI }> 
 
 async function capability(grantor: SigningIdentity, jti: string) {
   const iat = nowSeconds()
-  return await createCapability(grantor, {
-    sub: grantor.id,
-    aud: 'did:key:z6MkAudience',
-    act: 'document/write',
-    res: '*',
-    iat,
-    exp: iat + 3600,
-    jti,
+  return await createCapability({
+    signer: grantor,
+    payload: {
+      sub: grantor.id,
+      aud: 'did:key:z6MkAudience',
+      act: 'document/write',
+      res: '*',
+      iat,
+      exp: iat + 3600,
+      jti,
+    },
   })
 }
 
@@ -92,7 +96,7 @@ describe('createDelegationRevocationChecker (SQLite)', () => {
     jti: string
     verified_at: number | null
   }) {
-    const record = await createRevocationRecord(params.revoker, params.jti)
+    const record = await createRevocationRecord({ signer: params.revoker, jti: params.jti })
     await store.addRevocation(
       revocation({
         jti: params.jti,
@@ -109,9 +113,11 @@ describe('createDelegationRevocationChecker (SQLite)', () => {
     const jti = 'jti-verified'
     await storeRevocation({ revoker: grantor, jti, verified_at: 1_700_000_100 })
 
-    const check = createDelegationRevocationChecker(store)
+    const check = createDelegationRevocationChecker({ api: store })
     const cap = await capability(grantor, jti)
-    await expect(check(cap, stringifyToken(cap))).rejects.toThrow(`Token revoked: ${jti}`)
+    await expect(check({ token: cap, raw: stringifyToken(cap) })).rejects.toThrow(
+      `Token revoked: ${jti}`,
+    )
   })
 
   // The row a co-member holds for someone else's capability is pending: it
@@ -122,11 +128,13 @@ describe('createDelegationRevocationChecker (SQLite)', () => {
     const grantor = createIdentity()
     const jti = 'jti-pending'
     await storeRevocation({ revoker: grantor, jti, verified_at: null })
-    expect((await store.getRevocationByIssuer(jti, grantor.id))?.verified_at).toBeNull()
+    expect((await store.getRevocationByIssuer({ jti, issuer: grantor.id }))?.verified_at).toBeNull()
 
-    const check = createDelegationRevocationChecker(store)
+    const check = createDelegationRevocationChecker({ api: store })
     const cap = await capability(grantor, jti)
-    await expect(check(cap, stringifyToken(cap))).rejects.toThrow(`Token revoked: ${jti}`)
+    await expect(check({ token: cap, raw: stringifyToken(cap) })).rejects.toThrow(
+      `Token revoked: ${jti}`,
+    )
   })
 
   // The counterweight: dropping the `verified_at` gate must not let any group
@@ -137,11 +145,11 @@ describe('createDelegationRevocationChecker (SQLite)', () => {
     const jti = 'jti-pending-forged'
     await storeRevocation({ revoker: forger, jti, verified_at: null })
     // Not vacuous: the row is there and is what the checker rejects.
-    expect(await store.getRevocationByIssuer(jti, forger.id)).not.toBeNull()
+    expect(await store.getRevocationByIssuer({ jti, issuer: forger.id })).not.toBeNull()
 
-    const check = createDelegationRevocationChecker(store)
+    const check = createDelegationRevocationChecker({ api: store })
     const cap = await capability(grantor, jti)
-    await expect(check(cap, stringifyToken(cap))).resolves.toBeUndefined()
+    await expect(check({ token: cap, raw: stringifyToken(cap) })).resolves.toBeUndefined()
   })
 
   // A did:peer:4 signer embeds its LONG form as the `iss` of its first token to
@@ -162,10 +170,10 @@ describe('createDelegationRevocationChecker (SQLite)', () => {
       didMethod: 'peer:4',
     })
     const jti = 'jti-peer4-form-skew'
-    const record = await grantor.signToken(
-      { jti, rev: true, iat: nowSeconds() },
-      { embedLongForm: true },
-    )
+    const record = await grantor.signToken({
+      payload: { jti, rev: true, iat: nowSeconds() },
+      embedLongForm: true,
+    })
     // What a revoker files: its own `identity.id`.
     await store.addRevocation(
       revocation({
@@ -182,13 +190,13 @@ describe('createDelegationRevocationChecker (SQLite)', () => {
     expect(cap.payload.iss).toBe(grantor.longForm)
     expect(cap.payload.iss).not.toBe(grantor.id)
 
-    const check = createDelegationRevocationChecker(store)
+    const check = createDelegationRevocationChecker({ api: store })
     await expect(
-      checkCapability(
-        { act: 'document/write', res: '*' },
-        { iss: 'did:key:z6MkAudience', sub: grantor.id, cap: [stringifyToken(cap)] },
-        { verifyToken: check },
-      ),
+      checkCapability({
+        permission: { act: 'document/write', res: '*' },
+        payload: { iss: 'did:key:z6MkAudience', sub: grantor.id, cap: [stringifyToken(cap)] },
+        verifyToken: check,
+      }),
     ).rejects.toThrow(`Token revoked: ${jti}`)
   })
 
@@ -205,18 +213,18 @@ describe('createDelegationRevocationChecker (SQLite)', () => {
       }),
     )
 
-    const check = createDelegationRevocationChecker(store)
+    const check = createDelegationRevocationChecker({ api: store })
     const cap = await capability(grantor, jti)
-    await expect(check(cap, stringifyToken(cap))).resolves.toBeUndefined()
+    await expect(check({ token: cap, raw: stringifyToken(cap) })).resolves.toBeUndefined()
   })
 
   test('an unknown jti revokes nothing and writes no row', async () => {
     const grantor = createIdentity()
     const jti = 'jti-unknown'
 
-    const check = createDelegationRevocationChecker(store)
+    const check = createDelegationRevocationChecker({ api: store })
     const cap = await capability(grantor, jti)
-    await expect(check(cap, stringifyToken(cap))).resolves.toBeUndefined()
+    await expect(check({ token: cap, raw: stringifyToken(cap) })).resolves.toBeUndefined()
     // The no-op `add` could only ever write under an author this test does not
     // choose, so the no-write claim has to hold across every author.
     expect(await store.listRevocations(jti)).toEqual([])
@@ -235,11 +243,13 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     await db.close()
   })
 
-  const registry = (did: string, log: Array<SignedEvent>): MethodRegistry => [
-    createControllerResolver({
-      loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
-    }),
-  ]
+  const registry = (did: string, log: Array<SignedEvent>): MethodRegistry => {
+    return [
+      createControllerResolver({
+        loadLog: async (asked) => (asked === did ? { chain: log, events: [] } : undefined),
+      }),
+    ]
+  }
 
   async function fileRecord(params: {
     jti: string
@@ -263,9 +273,9 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     'controller lookup fault (%s) while checking a stored revocation rejects',
     async (message) => {
       const seed = new Uint8Array(32).fill(61)
-      const icp = createInception(seed, 0)
+      const icp = await createInception({ seed, profile: 0 })
       const issuer = didFromInception(icp.event)
-      const identity = createControllerIdentity({
+      const identity = await createControllerIdentity({
         seed,
         profile: 0,
         log: { chain: [icp], events: [] },
@@ -275,21 +285,25 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
       })
       const jti = 'revocation-controller-fault'
       const now = nowSeconds()
-      const cap = await createCapability(identity, {
-        sub: issuer,
-        aud: 'did:key:z6MkAudience',
-        act: 'document/write',
-        res: '*',
-        jti,
-        iat: now,
-        exp: now + 3600,
+      const cap = await createCapability({
+        signer: identity,
+        payload: {
+          sub: issuer,
+          aud: 'did:key:z6MkAudience',
+          act: 'document/write',
+          res: '*',
+          jti,
+          iat: now,
+          exp: now + 3600,
+        },
       })
       const capRaw = stringifyToken(cap)
-      const verified = await verifyToken<CapabilityPayload>(capRaw, {
+      const verified = await verifyToken<CapabilityPayload>({
+        token: capRaw,
         methods: [goodResolver],
         historic: true,
       })
-      const record = await createRevocationRecord(identity, jti)
+      const record = await createRevocationRecord({ signer: identity, jti })
       await fileRecord({ jti, revokerDID: issuer, token: stringifyToken(record) })
       const failure = new Error(message)
       const faultResolver = {
@@ -303,7 +317,10 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
       }
 
       await expect(
-        createDelegationRevocationChecker(store, { methods: [faultResolver] })(verified, capRaw),
+        createDelegationRevocationChecker({ api: store, methods: [faultResolver] })({
+          token: verified,
+          raw: capRaw,
+        }),
       ).rejects.toBe(failure)
     },
   )
@@ -316,15 +333,19 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
   // from reading "not revoked".
   test('an own-issuer resolver fault rejects even when the checker returns normally', async () => {
     const seed = new Uint8Array(32).fill(63)
-    const icp = createInception(seed, 0)
+    const icp = await createInception({ seed, profile: 0 })
     const did = didFromInception(icp.event)
-    const issuer = createControllerIdentity({ seed, profile: 0, log: { chain: [icp], events: [] } })
+    const issuer = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [icp], events: [] },
+    })
     const jti = 'jti-fault-own-issuer'
-    const fragmented = createSigningIdentityForDID(
-      `${did}#key-1` as typeof did,
-      createIdentity().privateKey,
-    )
-    const record = await fragmented.signToken({ jti, rev: true, iat: nowSeconds() })
+    const fragmented = createSigningIdentityForDID({
+      id: `${did}#key-1` as DIDString,
+      privateKey: createIdentity().privateKey,
+    })
+    const record = await fragmented.signToken({ payload: { jti, rev: true, iat: nowSeconds() } })
     await fileRecord({ jti, revokerDID: did, token: stringifyToken(record) })
     const failure = new Error('SQLITE_BUSY: controller log lookup')
     const faultResolver = {
@@ -336,10 +357,10 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     const cap = await capability(issuer, jti)
 
     await expect(
-      createDelegationRevocationChecker(store, { methods: [faultResolver] }).verdict(
-        cap,
-        stringifyToken(cap),
-      ),
+      createDelegationRevocationChecker({ api: store, methods: [faultResolver] }).verdict({
+        token: cap,
+        raw: stringifyToken(cap),
+      }),
     ).rejects.toBe(failure)
   })
 
@@ -348,25 +369,25 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
   // deny the check.
   test('an unresolvable foreign issuer in the row revokes nothing', async () => {
     const seed = new Uint8Array(32).fill(64)
-    const icp = createInception(seed, 0)
-    const foreign = createControllerIdentity({
+    const icp = await createInception({ seed, profile: 0 })
+    const foreign = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [icp], events: [] },
     })
     const grantor = createIdentity()
     const jti = 'jti-foreign-unresolvable'
-    const record = await createRevocationRecord(foreign, jti)
+    const record = await createRevocationRecord({ signer: foreign, jti })
     await fileRecord({ jti, revokerDID: grantor.id, token: stringifyToken(record) })
     // Knows no log at all, so resolving the foreign DID throws `Unknown DID`.
     const resolver = createControllerResolver({ loadLog: async () => undefined })
     const cap = await capability(grantor, jti)
 
     await expect(
-      createDelegationRevocationChecker(store, { methods: [resolver] }).verdict(
-        cap,
-        stringifyToken(cap),
-      ),
+      createDelegationRevocationChecker({ api: store, methods: [resolver] }).verdict({
+        token: cap,
+        raw: stringifyToken(cap),
+      }),
     ).resolves.toBe(false)
   })
 
@@ -382,7 +403,10 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     const cap = await capability(issuer, 'jti-store-fault')
 
     await expect(
-      createDelegationRevocationChecker(faulty).verdict(cap, stringifyToken(cap)),
+      createDelegationRevocationChecker({ api: faulty }).verdict({
+        token: cap,
+        raw: stringifyToken(cap),
+      }),
     ).rejects.toBe(failure)
   })
 
@@ -390,37 +414,40 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
   // earlier key: the record is past-minted and verifies historically.
   test('rotated issuer: a revocation signed before a rotate still revokes', async () => {
     const seed = new Uint8Array(32).fill(71)
-    const icp = createInception(seed, 0)
+    const icp = await createInception({ seed, profile: 0 })
     const did = didFromInception(icp.event)
-    const rotate = createRotate({
+    const rotate = await createRotate({
       seed,
       profile: 0,
       did,
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const beforeRotate = createControllerIdentity({
+    const beforeRotate = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [icp], events: [] },
     })
     const jti = 'jti-rotated'
-    const record = await createRevocationRecord(beforeRotate, jti)
+    const record = await createRevocationRecord({ signer: beforeRotate, jti })
     await fileRecord({ jti, revokerDID: did, token: stringifyToken(record) })
     const cap = await capability(beforeRotate, jti)
 
-    const check = createDelegationRevocationChecker(store, {
+    const check = createDelegationRevocationChecker({
+      api: store,
       methods: registry(did, [icp, rotate]),
     })
-    await expect(check(cap, stringifyToken(cap))).rejects.toBeInstanceOf(VerifiedRevocationError)
+    await expect(check({ token: cap, raw: stringifyToken(cap) })).rejects.toBeInstanceOf(
+      VerifiedRevocationError,
+    )
   })
 
   // Denying a leaked key must not undo the revocations that key signed.
   test('denied key: a revocation signed by a since-denied key still revokes', async () => {
     const seed = new Uint8Array(32).fill(53)
-    const icp = createInception(seed, 0)
+    const icp = await createInception({ seed, profile: 0 })
     const did = didFromInception(icp.event)
-    const rotate = createRotate({
+    const rotate = await createRotate({
       seed,
       profile: 0,
       did,
@@ -432,7 +459,7 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     const revoked: Array<SignedEvent> = [
       icp,
       rotate,
-      createRotate({
+      await createRotate({
         seed,
         profile: 0,
         did,
@@ -440,56 +467,80 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
         snapshot: { members: [], deny: [keyTarget(leaked)] },
       }),
     ]
-    const thief = createControllerIdentity({ seed, profile: 0, log: { chain: [icp], events: [] } })
-    const owner = createControllerIdentity({
+    const thief = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [icp], events: [] },
+    })
+    const owner = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: revoked, events: [] },
     })
     const jti = 'jti-denied-key'
-    const record = await createRevocationRecord(thief, jti)
+    const record = await createRevocationRecord({ signer: thief, jti })
     await fileRecord({ jti, revokerDID: did, token: stringifyToken(record) })
     const cap = await capability(owner, jti)
 
-    const check = createDelegationRevocationChecker(store, { methods: registry(did, revoked) })
-    await expect(check(cap, stringifyToken(cap))).rejects.toBeInstanceOf(VerifiedRevocationError)
+    const check = createDelegationRevocationChecker({
+      api: store,
+      methods: registry(did, revoked),
+    })
+    await expect(check({ token: cap, raw: stringifyToken(cap) })).rejects.toBeInstanceOf(
+      VerifiedRevocationError,
+    )
   })
 
   // Anyone can name an unpublished key, so "no such key" is an answer, not a
   // fault: it must neither revoke nor reject.
   test('a record naming a key the issuer never published revokes nothing', async () => {
     const seed = new Uint8Array(32).fill(81)
-    const icp = createInception(seed, 0)
+    const icp = await createInception({ seed, profile: 0 })
     const did = didFromInception(icp.event)
-    const issuer = createControllerIdentity({ seed, profile: 0, log: { chain: [icp], events: [] } })
-    const unpublished = createInception(new Uint8Array(32).fill(82), 0).event.k[0]
+    const issuer = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [icp], events: [] },
+    })
+    const unpublished = (await createInception({ seed: new Uint8Array(32).fill(82), profile: 0 }))
+      .event.k[0]
     if (unpublished === undefined) throw new Error('expected inception key')
-    const forger = createSigningIdentityForDID(did, createIdentity().privateKey)
+    const forger = createSigningIdentityForDID({ id: did, privateKey: createIdentity().privateKey })
     const jti = 'jti-unpublished-kid'
-    const record = await forger.signToken(
-      { jti, rev: true, iat: nowSeconds() },
-      { header: { kid: keyTarget(unpublished) } },
-    )
+    const record = await forger.signToken({
+      payload: { jti, rev: true, iat: nowSeconds() },
+      header: { kid: keyTarget(unpublished) },
+    })
     await fileRecord({ jti, revokerDID: did, token: stringifyToken(record) })
     const cap = await capability(issuer, jti)
 
-    const check = createDelegationRevocationChecker(store, { methods: registry(did, [icp]) })
-    await expect(check.verdict(cap, stringifyToken(cap))).resolves.toBe(false)
+    const check = createDelegationRevocationChecker({
+      api: store,
+      methods: registry(did, [icp]),
+    })
+    await expect(check.verdict({ token: cap, raw: stringifyToken(cap) })).resolves.toBe(false)
   })
 
   test('never-published key: a record from an unrelated identity revokes nothing', async () => {
     const seed = new Uint8Array(32).fill(91)
-    const icp = createInception(seed, 0)
+    const icp = await createInception({ seed, profile: 0 })
     const did = didFromInception(icp.event)
-    const issuer = createControllerIdentity({ seed, profile: 0, log: { chain: [icp], events: [] } })
+    const issuer = await createControllerIdentity({
+      seed,
+      profile: 0,
+      log: { chain: [icp], events: [] },
+    })
     const jti = 'jti-never-published'
-    const record = await createRevocationRecord(createIdentity(), jti)
+    const record = await createRevocationRecord({ signer: createIdentity(), jti })
     // Filed under the issuer's DID, so the lookup does return it.
     await fileRecord({ jti, revokerDID: did, token: stringifyToken(record) })
     const cap = await capability(issuer, jti)
 
-    const check = createDelegationRevocationChecker(store, { methods: registry(did, [icp]) })
-    await expect(check.verdict(cap, stringifyToken(cap))).resolves.toBe(false)
+    const check = createDelegationRevocationChecker({
+      api: store,
+      methods: registry(did, [icp]),
+    })
+    await expect(check.verdict({ token: cap, raw: stringifyToken(cap) })).resolves.toBe(false)
   })
 
   // Decodes, but the payload is `null`: no issuer, so no evidence.
@@ -500,9 +551,14 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     await fileRecord({ jti, revokerDID: issuer.id, token: `${b64u('{}')}.${b64u('null')}.x` })
     const cap = await capability(issuer, jti)
     // The backend drops it itself, independent of capability's own guard.
-    expect(await createDelegationRevocationBackend(store).get(jti, issuer.id)).toBeUndefined()
+    expect(
+      await createDelegationRevocationBackend(store).get({ jti, issuer: issuer.id }),
+    ).toBeUndefined()
 
-    const verdict = createDelegationRevocationChecker(store).verdict(cap, stringifyToken(cap))
+    const verdict = createDelegationRevocationChecker({ api: store }).verdict({
+      token: cap,
+      raw: stringifyToken(cap),
+    })
     await expect(verdict).resolves.toBe(false)
   })
 
@@ -510,15 +566,18 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     const x = createIdentity()
     const y = createIdentity()
     const jti = 'jti-cross-issuer'
-    const record = await createRevocationRecord(y, jti)
+    const record = await createRevocationRecord({ signer: y, jti })
     await fileRecord({ jti, revokerDID: x.id, token: stringifyToken(record) })
     // Not vacuous: the row is filed under X and holds Y's record.
-    expect((await store.getRevocationByIssuer(jti, x.id))?.revocation_token).toBe(
+    expect((await store.getRevocationByIssuer({ jti, issuer: x.id }))?.revocation_token).toBe(
       stringifyToken(record),
     )
     const cap = await capability(x, jti)
 
-    const verdict = createDelegationRevocationChecker(store).verdict(cap, stringifyToken(cap))
+    const verdict = createDelegationRevocationChecker({ api: store }).verdict({
+      token: cap,
+      raw: stringifyToken(cap),
+    })
     await expect(verdict).resolves.toBe(false)
   })
 
@@ -529,27 +588,27 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     })
     const b = createIdentity()
     const jti = 'jti-scoped'
-    const recordA = await createRevocationRecord(a, jti)
-    const recordB = await createRevocationRecord(b, jti)
+    const recordA = await createRevocationRecord({ signer: a, jti })
+    const recordB = await createRevocationRecord({ signer: b, jti })
     await fileRecord({ jti, revokerDID: a.id, token: stringifyToken(recordA) })
     await fileRecord({ jti, revokerDID: b.id, token: stringifyToken(recordB) })
 
     const backend = createDelegationRevocationBackend(store)
-    const found = await backend.get(jti, normalizeDID(a.longForm))
+    const found = await backend.get({ jti, issuer: normalizeDID(a.longForm) })
     expect(found && stringifyToken(found)).toBe(stringifyToken(recordA))
-    expect(await backend.get(jti, 'did:key:unknown')).toBeUndefined()
+    expect(await backend.get({ jti, issuer: 'did:key:unknown' })).toBeUndefined()
   })
 
   // The reviewer's probe: the row's `jti` and the record's own claims are independent, so a
   // genuine record filed under the wrong `jti` must not revoke the capability that `jti` names.
   test('a genuine revocation of another jti filed under this one does not revoke', async () => {
     const x = createIdentity()
-    const revokesA = await createRevocationRecord(x, 'jti-A')
+    const revokesA = await createRevocationRecord({ signer: x, jti: 'jti-A' })
     await fileRecord({ jti: 'jti-B', revokerDID: x.id, token: stringifyToken(revokesA) })
     const capB = await capability(x, 'jti-B')
 
-    const check = createDelegationRevocationChecker(store)
-    await expect(check.verdict(capB, stringifyToken(capB))).resolves.toBe(false)
+    const check = createDelegationRevocationChecker({ api: store })
+    await expect(check.verdict({ token: capB, raw: stringifyToken(capB) })).resolves.toBe(false)
   })
 
   test('a capability token filed as a revocation does not revoke', async () => {
@@ -558,27 +617,98 @@ describe('createDelegationRevocationChecker with a controller issuer', () => {
     // Signed by the issuer, names the same `jti`, but is not a revocation (no `rev`).
     await fileRecord({ jti: 'jti-B2', revokerDID: x.id, token: stringifyToken(capB2) })
 
-    const check = createDelegationRevocationChecker(store)
-    await expect(check.verdict(capB2, stringifyToken(capB2))).resolves.toBe(false)
+    const check = createDelegationRevocationChecker({ api: store })
+    await expect(check.verdict({ token: capB2, raw: stringifyToken(capB2) })).resolves.toBe(false)
     // Control: a genuine revocation replacing that row (a later hlc wins) revokes.
     await fileRecord({
       jti: 'jti-B2',
       revokerDID: x.id,
-      token: stringifyToken(await createRevocationRecord(x, 'jti-B2')),
+      token: stringifyToken(await createRevocationRecord({ signer: x, jti: 'jti-B2' })),
       hlc: '2026-01-03T00:00:00.000Z:00000000:node-a',
     })
-    await expect(check.verdict(capB2, stringifyToken(capB2))).resolves.toBe(true)
+    await expect(check.verdict({ token: capB2, raw: stringifyToken(capB2) })).resolves.toBe(true)
   })
 
   test('the backend drops a record whose jti differs from the one asked for', async () => {
     const x = createIdentity()
-    const revokesA = await createRevocationRecord(x, 'jti-A')
+    const revokesA = await createRevocationRecord({ signer: x, jti: 'jti-A' })
     await fileRecord({ jti: 'jti-B', revokerDID: x.id, token: stringifyToken(revokesA) })
     await fileRecord({ jti: 'jti-A', revokerDID: x.id, token: stringifyToken(revokesA) })
 
     const backend = createDelegationRevocationBackend(store)
-    expect(await backend.get('jti-B', normalizeDID(x.id))).toBeUndefined()
+    expect(await backend.get({ jti: 'jti-B', issuer: normalizeDID(x.id) })).toBeUndefined()
     // Control: the same record under its own jti comes back.
-    expect(await backend.get('jti-A', normalizeDID(x.id))).toBeDefined()
+    expect(await backend.get({ jti: 'jti-A', issuer: normalizeDID(x.id) })).toBeDefined()
   })
+})
+
+test('tracked revocation dependencies retain crypto verification and sentinel errors', async () => {
+  const { db, store } = await openStore()
+  try {
+    const issuer = createSigningIdentityForDID({
+      id: 'did:test:tracked-provider',
+      privateKey: new Uint8Array(32).fill(25),
+    })
+    const token = await capability(issuer, 'provider-revocation')
+    const record = await createRevocationRecord({ signer: issuer, jti: 'provider-revocation' })
+    await store.addRevocation(
+      revocation({
+        jti: 'provider-revocation',
+        revoker_did: issuer.id,
+        revocation_token: stringifyToken(record),
+      }),
+    )
+    const sentinel = new Error('revocation provider failed')
+    let calls = 0
+    let resolutions = 0
+    const crypto: NonNullable<CryptoOptions['crypto']> = {
+      sign: async () => {
+        throw new Error('Unexpected sign')
+      },
+      signBatch: async () => {
+        throw new Error('Unexpected sign batch')
+      },
+      verify: async () => {
+        calls++
+        throw sentinel
+      },
+      verifyBatch: async () => {
+        throw new Error('Unexpected verify batch')
+      },
+      blake3: async () => {
+        throw new Error('Unexpected hash')
+      },
+      blake3Batch: async () => {
+        throw new Error('Unexpected hash batch')
+      },
+    }
+    const options: CryptoOptions & { methods: MethodRegistry } = {
+      crypto,
+      methods: [
+        {
+          method: 'test',
+          resolveHistoric: async () => {
+            resolutions++
+            return { alg: 'EdDSA', publicKey: issuer.publicKey }
+          },
+          resolve: async () => {
+            resolutions++
+            return { alg: 'EdDSA', publicKey: issuer.publicKey }
+          },
+        },
+      ],
+    }
+    const checker = createDelegationRevocationChecker({ api: store, ...options })
+    options.crypto = {
+      ...crypto,
+      verify: async () => {
+        throw new Error('Replacement provider')
+      },
+    }
+    await expect(checker({ token, raw: stringifyToken(token) })).rejects.toBe(sentinel)
+    expect(calls).toBe(1)
+    expect(resolutions).toBeGreaterThan(0)
+  } finally {
+    await db.close()
+  }
 })

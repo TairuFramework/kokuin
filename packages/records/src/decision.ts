@@ -1,8 +1,14 @@
-import type { MethodRegistry } from '@kokuin/token'
+import type { CryptoOptions, MethodRegistry } from '@kokuin/token'
 
 import { compareRecordDecisionHLC, parseCanonicalHLC } from './clock.js'
 import { type VerifiedRecordOp, verifySignedRecord } from './op.js'
-import { RecordClaimError, type RecordKey, recordClaimDigest, type SignedRecord } from './record.js'
+import { RecordClaimError, type RecordKey, type SignedRecord } from './record.js'
+
+export type RecordDecisionDigestParams = {
+  record: SignedRecord
+  opKind: string
+  methods?: MethodRegistry
+} & CryptoOptions
 
 export type RecordDecision = {
   key: RecordKey
@@ -19,16 +25,22 @@ function decisionStamp(op: VerifiedRecordOp, source: 'hlc' | 'version'): string 
 }
 
 /** Select one signed content decision while retaining every verified copy of it. */
-export function recordDecisionFromVerifiedCopies(
-  key: RecordKey,
-  entries: ReadonlyArray<VerifiedRecordCopy>,
-  stampSource: 'hlc' | 'version',
-): RecordDecision | null {
+export type RecordDecisionFromVerifiedCopiesParams = {
+  key: RecordKey
+  entries: ReadonlyArray<VerifiedRecordCopy>
+  stampSource: 'hlc' | 'version'
+}
+
+export function recordDecisionFromVerifiedCopies({
+  stampSource,
+  entries,
+  key,
+}: RecordDecisionFromVerifiedCopiesParams): RecordDecision | null {
   let winner: { decisionHLC: string; contentDigest: string } | null = null
   for (const { op } of entries) {
     const decisionHLC = decisionStamp(op, stampSource)
     if (decisionHLC === null || parseCanonicalHLC(decisionHLC) === null) continue
-    const contentDigest = recordClaimDigest(op.claim)
+    const contentDigest = op.contentDigest
     if (
       winner === null ||
       compareRecordDecisionHLC(decisionHLC, winner.decisionHLC) > 0 ||
@@ -42,23 +54,30 @@ export function recordDecisionFromVerifiedCopies(
     key,
     ...winner,
     copies: entries
-      .filter(
-        ({ op }) =>
+      .filter(({ op }) => {
+        return (
           decisionStamp(op, stampSource) === winner.decisionHLC &&
-          recordClaimDigest(op.claim) === winner.contentDigest,
-      )
+          op.contentDigest === winner.contentDigest
+        )
+      })
       .map(({ copy }) => copy)
       .sort((a, b) => (a.opHash < b.opHash ? -1 : a.opHash > b.opHash ? 1 : 0)),
   }
 }
 
 /** Stable identity of signed content, independent of the identity that signed this copy. */
-export async function recordDecisionDigest(
-  record: SignedRecord,
-  opKind: string,
-  methods?: MethodRegistry,
-): Promise<string> {
-  const op = await verifySignedRecord(record, opKind, methods)
-  if (op === null) throw new RecordClaimError('Record signature is invalid')
-  return recordClaimDigest(op.claim)
+export async function recordDecisionDigest({
+  record,
+  opKind,
+  methods,
+  ...options
+}: RecordDecisionDigestParams): Promise<string> {
+  const op = await verifySignedRecord({
+    ...options,
+    record,
+    opKind,
+    methods,
+  })
+  if (op === null) throw new RecordClaimError({ message: 'Record signature is invalid' })
+  return op.contentDigest
 }

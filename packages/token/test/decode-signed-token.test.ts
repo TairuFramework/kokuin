@@ -5,7 +5,7 @@ import { decodeSignedToken, stringifyToken } from '../src/index.js'
 
 describe('decodeSignedToken()', () => {
   test('decodes a signed token without losing the signed bytes', async () => {
-    const signed = await randomIdentity().signToken({ sub: 'x' })
+    const signed = await randomIdentity().signToken({ payload: { sub: 'x' } })
     const [header, payload] = stringifyToken(signed).split('.')
     const decoded = decodeSignedToken(stringifyToken(signed))
     expect(decoded).toEqual({
@@ -17,7 +17,7 @@ describe('decodeSignedToken()', () => {
   })
 
   test('does not verify the signature', async () => {
-    const signed = await randomIdentity().signToken({ sub: 'x' })
+    const signed = await randomIdentity().signToken({ payload: { sub: 'x' } })
     const str = stringifyToken(signed)
     const last = str.slice(-1)
     const tampered = `${str.slice(0, -1)}${last === 'A' ? 'B' : 'A'}`

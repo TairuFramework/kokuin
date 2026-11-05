@@ -76,11 +76,11 @@ export function externalConformance(provider: CryptoProvider): Array<ExternalCon
       async run() {
         const wrong: Array<string> = []
         for (const entry of externalVectors.ed25519Sign) {
-          const signature = await provider.sign(
-            'EdDSA',
-            hexToBytes(entry.seed),
-            hexToBytes(entry.message),
-          )
+          const signature = await provider.sign({
+            alg: 'EdDSA',
+            privateKey: hexToBytes(entry.seed),
+            message: hexToBytes(entry.message),
+          })
           if (bytesToHex(signature) !== entry.signature) wrong.push(entry.id)
         }
         failures('supercop-ed25519 signing', wrong)
@@ -93,21 +93,23 @@ export function externalConformance(provider: CryptoProvider): Array<ExternalCon
     cases.push({
       name: `external verify: ${source}`,
       async run() {
-        const items = entries.map((entry) => ({
-          alg: entry.alg,
-          signature: hexToBytes(entry.signature),
-          message: hexToBytes(entry.message),
-          publicKey: hexToBytes(entry.publicKey),
-        }))
+        const items = entries.map((entry) => {
+          return {
+            alg: entry.alg,
+            signature: hexToBytes(entry.signature),
+            message: hexToBytes(entry.message),
+            publicKey: hexToBytes(entry.publicKey),
+          }
+        })
         const wrong: Array<string> = []
         for (const [index, item] of items.entries()) {
           const entry = entries[index] as ExternalVerifyCase
-          const result = await provider.verify(
-            item.alg,
-            item.signature,
-            item.message,
-            item.publicKey,
-          )
+          const result = await provider.verify({
+            alg: item.alg,
+            signature: item.signature,
+            message: item.message,
+            publicKey: item.publicKey,
+          })
           if (result !== entry.valid) wrong.push(`${entry.id} (verify returned ${result})`)
         }
         const batch = await provider.verifyBatch(items)
@@ -127,7 +129,7 @@ export function externalConformance(provider: CryptoProvider): Array<ExternalCon
       for (const entry of externalVectors.blake3) {
         const input = patternInput(entry.inputLength)
         for (const length of [32, 131]) {
-          const output = await provider.blake3(input, length)
+          const output = await provider.blake3({ input, dkLen: length })
           if (bytesToHex(output) !== entry.hash.slice(0, length * 2)) {
             wrong.push(`${entry.id}/${length}`)
           }

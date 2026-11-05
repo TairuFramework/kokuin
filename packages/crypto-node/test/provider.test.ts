@@ -40,7 +40,14 @@ test('the low-S guard is load bearing: OpenSSL alone accepts the high-S vector',
     format: 'jwk',
   })
   expect(opensslVerify('sha256', message, { key, dsaEncoding: 'ieee-p1363' }, signature)).toBe(true)
-  expect(await nodeCrypto.verify('ES256', signature, message, publicKey)).toBe(false)
+  expect(
+    await nodeCrypto.verify({
+      alg: 'ES256',
+      signature,
+      message,
+      publicKey,
+    }),
+  ).toBe(false)
 })
 
 test('rejects a compressed key whose x has no point on the curve', async () => {
@@ -54,16 +61,30 @@ test('rejects a compressed key whose x has no point on the curve', async () => {
     }
   }
   const offCurve = Uint8Array.of(2, ...numberToBytesBE(x, 32))
-  expect(await nodeCrypto.verify('ES256', signature, message, offCurve)).toBe(false)
-  expect(await nobleCrypto.verify('ES256', signature, message, offCurve)).toBe(false)
+  expect(
+    await nodeCrypto.verify({
+      alg: 'ES256',
+      signature,
+      message,
+      publicKey: offCurve,
+    }),
+  ).toBe(false)
+  expect(
+    await nobleCrypto.verify({
+      alg: 'ES256',
+      signature,
+      message,
+      publicKey: offCurve,
+    }),
+  ).toBe(false)
 })
 
 test('agrees with strict noble on random Ed25519 signatures', RANDOM, async () => {
   for (let i = 0; i < 32; i++) {
     const seed = new Uint8Array(randomBytes(32))
     const message = new Uint8Array(randomBytes(i * 73))
-    expect(await nodeCrypto.sign('EdDSA', seed, message)).toEqual(
-      await nobleCrypto.sign('EdDSA', seed, message),
+    expect(await nodeCrypto.sign({ alg: 'EdDSA', privateKey: seed, message })).toEqual(
+      await nobleCrypto.sign({ alg: 'EdDSA', privateKey: seed, message }),
     )
   }
 })
@@ -84,11 +105,20 @@ test('agrees with strict noble on random ES256 verifications', RANDOM, async () 
       [signature, mutated, publicKey],
       [signature, message, otherKey],
     ] as const) {
-      expect(await nodeCrypto.verify('ES256', sig, msg, key)).toBe(
-        await nobleCrypto.verify('ES256', sig, msg, key),
+      expect(
+        await nodeCrypto.verify({ alg: 'ES256', signature: sig, message: msg, publicKey: key }),
+      ).toBe(
+        await nobleCrypto.verify({ alg: 'ES256', signature: sig, message: msg, publicKey: key }),
       )
     }
-    expect(await nodeCrypto.verify('ES256', signature, message, publicKey)).toBe(true)
+    expect(
+      await nodeCrypto.verify({
+        alg: 'ES256',
+        signature,
+        message,
+        publicKey,
+      }),
+    ).toBe(true)
   }
 })
 
@@ -96,26 +126,43 @@ test('rejects shared and detached ES256 inputs like noble', async () => {
   const { signature, message, publicKey } = vector('ES256 compact low-S')
   const shared = new Uint8Array(new SharedArrayBuffer(64))
   shared.set(signature)
-  await expect(nodeCrypto.verify('ES256', shared, message, publicKey)).rejects.toThrow(TypeError)
+  await expect(
+    nodeCrypto.verify({ alg: 'ES256', signature: shared, message, publicKey }),
+  ).rejects.toThrow(TypeError)
   const detached = message.slice()
   structuredClone(detached.buffer, { transfer: [detached.buffer] })
-  await expect(nodeCrypto.verify('ES256', signature, detached, publicKey)).rejects.toThrow(
-    TypeError,
-  )
   await expect(
-    nodeCrypto.verify('RS256' as 'ES256', signature, message, publicKey),
+    nodeCrypto.verify({
+      alg: 'ES256',
+      signature,
+      message: detached,
+      publicKey,
+    }),
+  ).rejects.toThrow(TypeError)
+  await expect(
+    nodeCrypto.verify({
+      alg: 'RS256' as 'ES256',
+      signature,
+      message,
+      publicKey,
+    }),
   ).rejects.toThrow(TypeError)
 })
 
 test('returns plain, independently owned signatures', async () => {
   const seed = new Uint8Array(32).fill(7)
-  const [first, second] = await nodeCrypto.signBatch('EdDSA', [
-    { privateKey: seed, message: new Uint8Array() },
-    { privateKey: seed, message: new Uint8Array() },
-  ])
+  const [first, second] = await nodeCrypto.signBatch({
+    alg: 'EdDSA',
+    items: [
+      { privateKey: seed, message: new Uint8Array() },
+      { privateKey: seed, message: new Uint8Array() },
+    ],
+  })
   expect(Object.getPrototypeOf(first)).toBe(Uint8Array.prototype)
   first?.fill(0)
-  expect(second).toEqual(await nobleCrypto.sign('EdDSA', seed, new Uint8Array()))
+  expect(second).toEqual(
+    await nobleCrypto.sign({ alg: 'EdDSA', privateKey: seed, message: new Uint8Array() }),
+  )
 })
 
 function b64u(bytes: Uint8Array): string {

@@ -17,7 +17,7 @@ describe('deriveSharedSecret()', () => {
     const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(identity.longForm)
     expect(sharedSecret).toHaveLength(32)
     expect(ephemeralPublicKey).toHaveLength(32)
-    expect(await identity.agreeKey(ephemeralPublicKey)).toEqual(sharedSecret)
+    expect(await identity.agreeKey({ ephemeralPublicKey })).toEqual(sharedSecret)
   })
 
   test('a did:key EdDSA identity agrees via the birational map', async () => {
@@ -25,7 +25,7 @@ describe('deriveSharedSecret()', () => {
     expect(isPeer4(identity.id)).toBe(false)
 
     const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(identity.id)
-    expect(await identity.agreeKey(ephemeralPublicKey)).toEqual(sharedSecret)
+    expect(await identity.agreeKey({ ephemeralPublicKey })).toEqual(sharedSecret)
   })
 
   test('a peer:4 uses the published key, NOT the montgomery-derived signing key', async () => {
@@ -83,14 +83,14 @@ describe('deriveSharedSecret()', () => {
 
   test('a non-EdDSA did:key throws', () => {
     // ES256 is a supported *signature* codec but has no X25519 agreement path.
-    const did = getDID(CODECS.ES256, new Uint8Array(33).fill(1))
+    const did = getDID({ codec: CODECS.ES256, publicKey: new Uint8Array(33).fill(1) })
     expect(() => deriveSharedSecret(did)).toThrow(/Unsupported DID algorithm for encryption/)
   })
 
   test('a randomIdentity recipient agrees', async () => {
     const recipient = randomIdentity()
     const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipient.id)
-    expect(await recipient.agreeKey(ephemeralPublicKey)).toEqual(sharedSecret)
+    expect(await recipient.agreeKey({ ephemeralPublicKey })).toEqual(sharedSecret)
   })
 
   test('a peer:4 with multiple kem keys: sender and recipient pick the same one', async () => {
@@ -104,7 +104,7 @@ describe('deriveSharedSecret()', () => {
     expect(isPeer4(identity.id)).toBe(true)
 
     const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(identity.longForm)
-    expect(await identity.agreeKey(ephemeralPublicKey)).toEqual(sharedSecret)
+    expect(await identity.agreeKey({ ephemeralPublicKey })).toEqual(sharedSecret)
   })
 
   test('throws when handed something other than a DID string', () => {

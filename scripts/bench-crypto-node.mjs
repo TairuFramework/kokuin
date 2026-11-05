@@ -100,7 +100,9 @@ function cells() {
           batch,
           size,
           run: (p) =>
-            mode === 'single' ? p.sign('EdDSA', seed, message) : p.signBatch('EdDSA', signItems),
+            mode === 'single'
+              ? p.sign({ alg: 'EdDSA', privateKey: seed, message })
+              : p.signBatch({ alg: 'EdDSA', items: signItems }),
         },
         {
           op: 'ed25519-verify',
@@ -109,7 +111,7 @@ function cells() {
           size,
           run: (p) =>
             mode === 'single'
-              ? p.verify('EdDSA', edSignature, message, edKey)
+              ? p.verify({ alg: 'EdDSA', signature: edSignature, message, publicKey: edKey })
               : p.verifyBatch(edItems),
         },
         {
@@ -121,7 +123,7 @@ function cells() {
           delegated: true,
           run: (p) =>
             mode === 'single'
-              ? p.verify('ES256', esSignature, message, esKey)
+              ? p.verify({ alg: 'ES256', signature: esSignature, message, publicKey: esKey })
               : p.verifyBatch(esItems),
         },
       )
@@ -141,7 +143,8 @@ function cells() {
         mode,
         batch,
         size,
-        run: (p) => (mode === 'single' ? p.blake3(input, dkLen) : p.blake3Batch(inputs, dkLen)),
+        run: (p) =>
+          mode === 'single' ? p.blake3({ input, dkLen }) : p.blake3Batch({ inputs, dkLen }),
       })
     }
   }

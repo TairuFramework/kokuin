@@ -31,11 +31,11 @@ async function makeRecord(
     id,
     owner: normalizeDID(identity.id),
     hlc: HLC.serialize({ wallTime: NOW, counter: 0, nodeID: identity.id }),
-    payloadDigest: recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest({ payload }),
     deleted: false,
     meta: {},
   }
-  const signed = await signRecordOp(identity, claim, TEST_OP_KIND)
+  const signed = await signRecordOp({ identity, claim, opKind: TEST_OP_KIND })
   return { type: claim.type, id, owner: claim.owner, hlc: claim.hlc, payload, ...signed }
 }
 
@@ -98,7 +98,7 @@ describe('getRecordDecisions', () => {
       putCopy: async () => {},
       pruneCopy: async () => {},
     }
-    const decisions = await getRecordDecisions(store, [held, missing, held])
+    const decisions = await getRecordDecisions({ store, keys: [held, missing, held] })
     expect(get).toHaveBeenCalledTimes(2)
     expect([...decisions.keys()]).toEqual([recordKeyText(held)])
     expect(decisions.get(recordKeyText(held))).toEqual(decisionOf(held))
@@ -108,7 +108,7 @@ describe('getRecordDecisions', () => {
     const identity = randomIdentity()
     const held = await makeRecord(identity, 'held')
     const { store, events } = batchStore([held])
-    const decisions = await getRecordDecisions(store, [held, held])
+    const decisions = await getRecordDecisions({ store, keys: [held, held] })
     expect(events).toEqual(['store:getMany:1'])
     expect(store.get).not.toHaveBeenCalled()
     expect(decisions.size).toBe(1)
@@ -116,7 +116,7 @@ describe('getRecordDecisions', () => {
 
   test('reads nothing for no keys', async () => {
     const { store, events } = batchStore()
-    expect((await getRecordDecisions(store, [])).size).toBe(0)
+    expect((await getRecordDecisions({ store, keys: [] })).size).toBe(0)
     expect(events).toEqual([])
   })
 })
@@ -125,7 +125,7 @@ describe('applyRecordChunk reads the store in batches', () => {
   test('prefetches once before the locks and rechecks once under them', async () => {
     const identity = randomIdentity()
     const records = await Promise.all(
-      Array.from({ length: 20 }, (_, index) => makeRecord(identity, `r${index}`)),
+      Array.from({ length: 20 }, async (_, index) => makeRecord(identity, `r${index}`)),
     )
     const { store, events } = batchStore()
     const result = await applyRecordChunk({
@@ -135,7 +135,9 @@ describe('applyRecordChunk reads the store in batches', () => {
       types: new Map([
         [
           'test.value',
-          valueType({ lockKeys: (record) => [{ type: record.type, key: record.id }] }),
+          valueType({
+            lockKeys: ({ incoming: record }) => [{ type: record.type, key: record.id }],
+          }),
         ],
       ]),
       nowMS: NOW,
@@ -155,7 +157,7 @@ describe('applyRecordChunk reads the store in batches', () => {
   test('checks refused records for replays in one read, keeping rejection order', async () => {
     const identity = randomIdentity()
     const [first, replay, last] = await Promise.all(
-      ['a', 'b', 'c'].map((id) => makeRecord(identity, id)),
+      ['a', 'b', 'c'].map(async (id) => makeRecord(identity, id)),
     )
     const { store, events } = batchStore([replay as SignedRecord])
     const result = await applyRecordChunk({
@@ -180,7 +182,7 @@ describe('applyRecordChunk reads the store in batches', () => {
     const identity = randomIdentity()
     const parentRecord = await makeRecord(identity, 'p', 'test.parent')
     const children = await Promise.all(
-      Array.from({ length: 20 }, (_, index) => makeRecord(identity, `c${index}`)),
+      Array.from({ length: 20 }, async (_, index) => makeRecord(identity, `c${index}`)),
     )
     const parentKey = { type: 'test.parent', owner: parentRecord.owner, id: 'p' }
     const seen: Array<boolean> = []
@@ -191,7 +193,7 @@ describe('applyRecordChunk reads the store in batches', () => {
         valueType({
           dependsOn: ['test.parent'],
           dependencies: () => [parentKey],
-          authorize: async (_op, ctx) => {
+          authorize: async ({ op: _op, ctx }) => {
             const decision = await (ctx.decision ?? ((key) => ctx.store.get(key)))(parentKey)
             seen.push(decision !== null)
             return decision !== null

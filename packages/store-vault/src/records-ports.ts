@@ -1,6 +1,6 @@
 import { withStoreTransaction } from '@hozon/db'
 import type { RecordStoreAdapter } from '@kokuin/records'
-import { recordPayloadMatches, verifySignedRecord } from '@kokuin/records'
+import { recordPayloadMatches, snapshotRecord, verifySignedRecord } from '@kokuin/records'
 import type { VaultRecordPorts } from '@kokuin/vault'
 import { vaultRecordMeta, vaultRevocationRecordID } from '@kokuin/vault'
 
@@ -20,15 +20,21 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
   const { db } = bound
 
   return {
-    async retainEntryCandidate(record) {
+    async retainEntryCandidate(input) {
+      const record = snapshotRecord(input)
       if (!db.isTransaction) throw new Error('Candidate retention requires the apply transaction')
 
-      const op = await verifySignedRecord(record, bound.opKind, bound.methods)
+      const op = await verifySignedRecord({
+        record,
+        opKind: bound.opKind,
+        methods: bound.methods,
+        crypto: bound.params?.crypto,
+      })
 
       if (
         op === null ||
-        !recordPayloadMatches(record, op.claim) ||
-        vaultRecordMeta('vault.entry', op.claim) === null
+        !(await recordPayloadMatches({ record, claim: op.claim, ...bound.params })) ||
+        (await vaultRecordMeta({ type: 'vault.entry', claim: op.claim, ...bound.params })) === null
       )
         throw new Error('Invalid entry candidate')
 
@@ -58,14 +64,19 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
 
       return rows.map((row) => row.recipient_did)
     },
-    async dropRevokedWrappings(address) {
+    async dropRevokedWrappings(input) {
+      const address = { ...input }
       if (!db.isTransaction) throw new Error('Wrapping suppression requires the apply transaction')
 
       const [revocations, wrappings] = await settleAll([
         this.listRevocations(address),
         bound.store.listWrappings(address),
       ])
-      const denied = new Set(revocations.map((did) => vaultRevocationRecordID(address.keyID, did)))
+      const denied = new Set(
+        revocations.map((did) =>
+          vaultRevocationRecordID({ keyID: address.keyID, recipientDID: did }),
+        ),
+      )
       const revoked = wrappings
         .filter((row) => {
           const recipients = [
@@ -76,7 +87,7 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
           return recipients.some((recipient) => {
             return (
               typeof recipient === 'string' &&
-              denied.has(vaultRevocationRecordID(address.keyID, recipient))
+              denied.has(vaultRevocationRecordID({ keyID: address.keyID, recipientDID: recipient }))
             )
           })
         })

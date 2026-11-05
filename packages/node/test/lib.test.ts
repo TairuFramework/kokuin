@@ -1,3 +1,4 @@
+import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { toB64 } from '@sozai/codec'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -44,12 +45,12 @@ vi.mock('@napi-rs/keyring', () => {
   return {
     Entry: MockEntry,
     AsyncEntry: MockAsyncEntry,
-    findCredentials: vi.fn((_service?: string) =>
-      Object.entries(mockKeyring).map(([account, password]) => ({ account, password })),
-    ),
-    findCredentialsAsync: vi.fn(async (_service?: string) =>
-      Object.entries(mockKeyring).map(([account, password]) => ({ account, password })),
-    ),
+    findCredentials: vi.fn((_service?: string) => {
+      return Object.entries(mockKeyring).map(([account, password]) => ({ account, password }))
+    }),
+    findCredentialsAsync: vi.fn(async (_service?: string) => {
+      return Object.entries(mockKeyring).map(([account, password]) => ({ account, password }))
+    }),
   }
 })
 
@@ -99,7 +100,6 @@ describe('NodeKeyEntry', () => {
     const provided = entry.provide()
     expect(provided).toBeInstanceOf(Uint8Array)
     expect(provided.length).toBeGreaterThan(0)
-    // Stored in keyring
     expect(entry.get()).toEqual(provided)
   })
 
@@ -253,5 +253,34 @@ describe('NodeKeyStore#provideIdentity()', () => {
     const a = store.provideIdentitySync('same')
     const b = store.provideIdentitySync('same')
     expect(a.id).toBe(b.id)
+  })
+})
+
+describe('provider capture', () => {
+  test('reopen compares resolved providers by reference', () => {
+    const crypto = { ...nobleCrypto }
+    const different = { ...nobleCrypto }
+    const defaults = NodeKeyStore.open({ service: 'provider-default' })
+    expect(() => NodeKeyStore.open({ service: 'provider-default', crypto })).toThrow(/crypto/i)
+    expect(NodeKeyStore.open({ service: 'provider-default', crypto: nobleCrypto })).toBe(defaults)
+    const custom = NodeKeyStore.open({ service: 'provider-custom', crypto })
+    expect(() => NodeKeyStore.open({ service: 'provider-custom' })).toThrow(/crypto/i)
+    expect(() => NodeKeyStore.open({ service: 'provider-custom', crypto: different })).toThrow(
+      /crypto/i,
+    )
+    expect(NodeKeyStore.open({ service: 'provider-custom', crypto })).toBe(custom)
+  })
+  test('both identity paths sign through the captured provider', async () => {
+    const sign = vi.fn(nobleCrypto.sign)
+    const crypto = { ...nobleCrypto, sign }
+    const options: { service: string; crypto: CryptoProvider } = {
+      service: 'provider-sign',
+      crypto,
+    }
+    const store = new NodeKeyStore(options)
+    options.crypto = { ...nobleCrypto }
+    await store.provideIdentitySync('sync').signToken({ payload: { value: 1 } })
+    await (await store.provideIdentity('async')).signToken({ payload: { value: 2 } })
+    expect(sign).toHaveBeenCalledTimes(2)
   })
 })

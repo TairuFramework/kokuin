@@ -56,10 +56,10 @@ function createMockGetStore(): {
 
 /** A store wired to a mock IDB, bypassing BrowserKeyStore.open's indexedDB.open. */
 function createStore(): BrowserKeyStore {
-  return new BrowserKeyStore(createMockGetStore().getStore)
+  return new BrowserKeyStore({ getStore: createMockGetStore().getStore })
 }
 
-function sameRecord(a: StoredKeyRecord, b: StoredKeyRecord): boolean {
+function sameRecord({ a, b }: { a: StoredKeyRecord; b: StoredKeyRecord }): boolean {
   // CryptoKeys are opaque and non-extractable; structured-clone round-trips preserve identity
   // through the mock's Map, so reference equality is the right comparison here.
   return a === b
@@ -96,7 +96,7 @@ describe('BrowserKeyStore identities', () => {
 describe('legacy ES256 records', () => {
   async function storeWithLegacyKey(keyID: string): Promise<BrowserKeyStore> {
     const mock = createMockGetStore()
-    const store = new BrowserKeyStore(mock.getStore)
+    const store = new BrowserKeyStore({ getStore: mock.getStore })
     const keyPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
       'sign',
     ])
@@ -107,7 +107,7 @@ describe('legacy ES256 records', () => {
   test('still sign via provideSigningIdentity', async () => {
     const store = await storeWithLegacyKey('legacy')
     const identity = await store.provideSigningIdentity('legacy')
-    const token = await identity.signToken({ sub: 'test' })
+    const token = await identity.signToken({ payload: { sub: 'test' } })
     expect(token.header.alg).toBe('ES256')
   })
 

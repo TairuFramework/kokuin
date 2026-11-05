@@ -3,23 +3,72 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+export type NapiVerifyParams = {
+  es256: boolean
+  signature: Uint8Array
+  message: Uint8Array
+  publicKey: Uint8Array
+}
+
 /** The ABI the provider expects from `crates/kokuin-crypto-napi` (its `ABI_VERSION`). */
 export const NAPI_ABI_VERSION = 1
 
 /** The shape of the native module built from `crates/kokuin-crypto-napi`. */
-export type NapiBinding = {
+// napi-rs fixes these positional calls at the binary boundary.
+type NativeNapiBinding = {
   ABI_VERSION: number
   sign(seed: Uint8Array, message: Uint8Array): Uint8Array
-  verify(es256: boolean, signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array): boolean
-  blake3(input: Uint8Array, length: number): Uint8Array
   signBatch(seeds: Array<Uint8Array>, messages: Array<Uint8Array>): Promise<Array<Uint8Array>>
+  blake3(input: Uint8Array, length: number): Uint8Array
+  blake3Batch(inputs: Array<Uint8Array>, length: number): Promise<Array<Uint8Array>>
+  verify(es256: boolean, signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array): boolean
   verifyBatch(
     es256: Array<boolean>,
     signatures: Array<Uint8Array>,
     messages: Array<Uint8Array>,
     publicKeys: Array<Uint8Array>,
   ): Promise<Array<boolean>>
-  blake3Batch(inputs: Array<Uint8Array>, length: number): Promise<Array<Uint8Array>>
+}
+
+function adaptBinding(native: NativeNapiBinding): NapiBinding {
+  return {
+    ABI_VERSION: native.ABI_VERSION,
+    sign: ({ seed, message }) => native.sign(seed, message),
+    // The native ABI takes parallel arrays. Split here so nothing above it can misalign entries.
+    signBatch: (items) => {
+      return native.signBatch(
+        items.map((item) => item.seed),
+        items.map((item) => item.message),
+      )
+    },
+    blake3: ({ input, length }) => native.blake3(input, length),
+    blake3Batch: ({ inputs, length }) => native.blake3Batch(inputs, length),
+    verify: ({ es256, signature, message, publicKey }) => {
+      return native.verify(es256, signature, message, publicKey)
+    },
+    verifyBatch: (items) => {
+      return native.verifyBatch(
+        items.map((item) => item.es256),
+        items.map((item) => item.signature),
+        items.map((item) => item.message),
+        items.map((item) => item.publicKey),
+      )
+    },
+  }
+}
+
+export type NapiBindingSignParams = { seed: Uint8Array; message: Uint8Array }
+export type NapiBindingBlake3Params = { input: Uint8Array; length: number }
+export type NapiBindingBlake3BatchParams = { inputs: Array<Uint8Array>; length: number }
+
+export type NapiBinding = {
+  ABI_VERSION: number
+  sign(params: NapiBindingSignParams): Uint8Array
+  verify(params: NapiVerifyParams): boolean
+  blake3(params: NapiBindingBlake3Params): Uint8Array
+  signBatch(items: Array<NapiBindingSignParams>): Promise<Array<Uint8Array>>
+  verifyBatch(items: Array<NapiVerifyParams>): Promise<Array<boolean>>
+  blake3Batch(params: NapiBindingBlake3BatchParams): Promise<Array<Uint8Array>>
 }
 
 /** Why no native binding loaded, or `undefined` when one did. */
@@ -54,10 +103,10 @@ export function loadNapiBinding(): { binding: NapiBinding | null; failure?: Napi
     return cached
   }
   try {
-    const binding = createRequire(import.meta.url)(path) as NapiBinding
+    const binding = createRequire(import.meta.url)(path) as NativeNapiBinding
     cached =
       binding.ABI_VERSION === NAPI_ABI_VERSION
-        ? { binding }
+        ? { binding: adaptBinding(binding) }
         : { binding: null, failure: { reason: 'abi', path } }
   } catch (cause) {
     cached = { binding: null, failure: { reason: 'load', path, cause } }
