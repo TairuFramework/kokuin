@@ -8,10 +8,10 @@
     "directory": "packages/crypto-napi-linux-x64-gnu"
   },
   "license": "MIT",
-  "main": "kokuin-crypto-napi.linux-x64-gnu.node",
   "exports": {
     ".": "./kokuin-crypto-napi.linux-x64-gnu.node"
   },
+  "main": "kokuin-crypto-napi.linux-x64-gnu.node",
   "files": [
     "kokuin-crypto-napi.linux-x64-gnu.node",
     "LICENSE"
@@ -22,10 +22,10 @@
   "cpu": [
     "x64"
   ],
-  "libc": [
-    "glibc"
-  ],
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "libc": [
+    "glibc"
+  ]
 }

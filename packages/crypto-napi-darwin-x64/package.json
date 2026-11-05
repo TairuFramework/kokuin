@@ -8,10 +8,10 @@
     "directory": "packages/crypto-napi-darwin-x64"
   },
   "license": "MIT",
-  "main": "kokuin-crypto-napi.darwin-x64.node",
   "exports": {
     ".": "./kokuin-crypto-napi.darwin-x64.node"
   },
+  "main": "kokuin-crypto-napi.darwin-x64.node",
   "files": [
     "kokuin-crypto-napi.darwin-x64.node",
     "LICENSE"

@@ -5,10 +5,12 @@ import { execSync } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const { napiTarget } = await import(join(root, 'packages/crypto-napi/lib/binding.js'))
+const { napiTarget } = await import(
+  pathToFileURL(join(root, 'packages/crypto-napi/lib/binding.js')).href
+)
 const platformPackage = `@kokuin/crypto-napi-${napiTarget()}`
 const work = mkdtempSync(join(tmpdir(), 'crypto-napi-smoke-'))
 

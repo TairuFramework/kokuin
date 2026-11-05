@@ -70,10 +70,14 @@ jobs:
         run: scripts/prebuild-crypto-napi.sh
       - name: Build and test in the container
         if: matrix.image != ''
+        # Sources are copied in, not bind-mounted: on a mount pnpm moves its store into the project,
+        # and `pnpm exec` then cannot find the Rust toolchain it installed.
         run: |
-          docker run --rm -v "$PWD:/work" -w /work -e CI=true "${{ matrix.image }}" \
-            sh scripts/prebuild-crypto-napi.sh
-          sudo chown -R "$(id -u):$(id -g)" .
+          docker create --name prebuild -i -w /work -e CI=true "${{ matrix.image }}" \
+            sh -c 'tar x && sh scripts/prebuild-crypto-napi.sh'
+          git archive HEAD | docker start -ai prebuild
+          docker cp "prebuild:/work/packages/crypto-napi-${{ matrix.target }}/kokuin-crypto-napi.${{ matrix.target }}.node" \
+            "packages/crypto-napi-${{ matrix.target }}/"
       - uses: actions/upload-artifact@v7
         with:
           name: crypto-napi-${{ matrix.target }}

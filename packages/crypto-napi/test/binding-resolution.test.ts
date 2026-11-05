@@ -26,9 +26,10 @@ test('resolves the platform package when no local binary exists', () => {
 })
 
 test('a local binary takes precedence over the platform package', () => {
-  resolve.mockReturnValue('/installed/binary.node')
-  const local = (resolve.mockImplementationOnce(notFound), napiBindingPath())
+  resolve.mockImplementationOnce(notFound)
+  const local = napiBindingPath()
   existing.add(local)
+  resolve.mockReturnValue('/installed/binary.node')
   expect(napiBindingPath()).toBe(local)
 })
 

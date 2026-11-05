@@ -4,7 +4,7 @@
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 execFileSync(
@@ -23,7 +23,9 @@ const library = {
   win32: 'kokuin_crypto_napi.dll',
 }[process.platform]
 if (library == null) throw new Error(`Unsupported build host: ${process.platform}`)
-const { napiTarget } = await import(join(root, 'packages/crypto-napi/lib/binding.js'))
+const { napiTarget } = await import(
+  pathToFileURL(join(root, 'packages/crypto-napi/lib/binding.js')).href
+)
 const name = `kokuin-crypto-napi.${napiTarget()}.node`
 const target = process.argv.includes('--package')
   ? join(root, `packages/crypto-napi-${napiTarget()}`, name)

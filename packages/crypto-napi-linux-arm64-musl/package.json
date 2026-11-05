@@ -8,10 +8,10 @@
     "directory": "packages/crypto-napi-linux-arm64-musl"
   },
   "license": "MIT",
-  "main": "kokuin-crypto-napi.linux-arm64-musl.node",
   "exports": {
     ".": "./kokuin-crypto-napi.linux-arm64-musl.node"
   },
+  "main": "kokuin-crypto-napi.linux-arm64-musl.node",
   "files": [
     "kokuin-crypto-napi.linux-arm64-musl.node",
     "LICENSE"
@@ -22,10 +22,10 @@
   "cpu": [
     "arm64"
   ],
-  "libc": [
-    "musl"
-  ],
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "libc": [
+    "musl"
+  ]
 }

@@ -8,10 +8,10 @@
     "directory": "packages/crypto-napi-win32-arm64"
   },
   "license": "MIT",
-  "main": "kokuin-crypto-napi.win32-arm64.node",
   "exports": {
     ".": "./kokuin-crypto-napi.win32-arm64.node"
   },
+  "main": "kokuin-crypto-napi.win32-arm64.node",
   "files": [
     "kokuin-crypto-napi.win32-arm64.node",
     "LICENSE"
