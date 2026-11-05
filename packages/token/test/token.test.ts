@@ -17,10 +17,10 @@ import { stringifyToken } from '../src/utils.js'
 
 test('create a signed token and verify it', async () => {
   const identity = randomIdentity()
-  const token = await identity.signToken({ test: true })
+  const token = await identity.signToken({ payload: { test: true } })
   expect(isSignedToken(token)).toBe(true)
   expect(token.payload.iss).toBe(identity.id)
-  const verified = await verifyToken(token)
+  const verified = await verifyToken({ token })
   expect(isVerifiedToken(verified)).toBe(true)
   const publicKey = ed25519.getPublicKey(identity.privateKey)
   expect(equals((verified as VerifiedToken<{ test: true }>).verifiedPublicKey, publicKey)).toBe(
@@ -30,23 +30,23 @@ test('create a signed token and verify it', async () => {
 
 test('verifyToken rejects malformed JWT strings', async () => {
   // Too few parts
-  await expect(verifyToken('header.payload')).rejects.toThrow('Invalid token format')
-  await expect(verifyToken('header')).rejects.toThrow('Invalid token format')
-  await expect(verifyToken('')).rejects.toThrow('Invalid token format')
+  await expect(verifyToken({ token: 'header.payload' })).rejects.toThrow('Invalid token format')
+  await expect(verifyToken({ token: 'header' })).rejects.toThrow('Invalid token format')
+  await expect(verifyToken({ token: '' })).rejects.toThrow('Invalid token format')
 
   // Too many parts
-  await expect(verifyToken('a.b.c.d')).rejects.toThrow('Invalid token format')
-  await expect(verifyToken('a.b.c.d.e')).rejects.toThrow('Invalid token format')
+  await expect(verifyToken({ token: 'a.b.c.d' })).rejects.toThrow('Invalid token format')
+  await expect(verifyToken({ token: 'a.b.c.d.e' })).rejects.toThrow('Invalid token format')
 })
 
 test('create an unsigned token, sign and stringify it', async () => {
-  const unsigned = createUnsignedToken({ test: true })
+  const unsigned = createUnsignedToken({ payload: { test: true } })
   expect(isUnsignedToken(unsigned)).toBe(true)
   const identity = randomIdentity()
-  const signed = await signToken(identity, unsigned)
+  const signed = await signToken({ signer: identity, token: unsigned })
   expect(isSignedToken(signed)).toBe(true)
   const stringified = stringifyToken(signed)
-  const verified = await verifyToken(stringified)
+  const verified = await verifyToken({ token: stringified })
   expect(isVerifiedToken(verified)).toBe(true)
 })
 
@@ -56,86 +56,98 @@ describe('verifyToken with time validation', () => {
   test('rejects expired signed token', async () => {
     const identity = randomIdentity()
     const token = await identity.signToken({
-      test: true,
-      exp: fixedTime - 100,
+      payload: {
+        test: true,
+        exp: fixedTime - 100,
+      },
     })
 
-    await expect(verifyToken(token, { atTime: fixedTime })).rejects.toThrow('Token expired')
+    await expect(verifyToken({ token, atTime: fixedTime })).rejects.toThrow('Token expired')
   })
 
   test('rejects token not yet valid (nbf in future)', async () => {
     const identity = randomIdentity()
     const token = await identity.signToken({
-      test: true,
-      nbf: fixedTime + 100,
+      payload: {
+        test: true,
+        nbf: fixedTime + 100,
+      },
     })
 
-    await expect(verifyToken(token, { atTime: fixedTime })).rejects.toThrow('Token not yet valid')
+    await expect(verifyToken({ token, atTime: fixedTime })).rejects.toThrow('Token not yet valid')
   })
 
   test('accepts token within valid time window', async () => {
     const identity = randomIdentity()
     const token = await identity.signToken({
-      test: true,
-      nbf: fixedTime - 100,
-      exp: fixedTime + 100,
+      payload: {
+        test: true,
+        nbf: fixedTime - 100,
+        exp: fixedTime + 100,
+      },
     })
 
-    const result = await verifyToken(token, { atTime: fixedTime })
+    const result = await verifyToken({ token, atTime: fixedTime })
     expect(result.payload.test).toBe(true)
   })
 
   test('accepts token without time claims', async () => {
     const identity = randomIdentity()
-    const token = await identity.signToken({ test: true })
+    const token = await identity.signToken({ payload: { test: true } })
 
-    const result = await verifyToken(token, { atTime: fixedTime })
+    const result = await verifyToken({ token, atTime: fixedTime })
     expect(result.payload.test).toBe(true)
   })
 
   test('respects clockTolerance option', async () => {
     const identity = randomIdentity()
     const token = await identity.signToken({
-      test: true,
-      exp: fixedTime - 5,
+      payload: {
+        test: true,
+        exp: fixedTime - 5,
+      },
     })
 
-    await expect(verifyToken(token, { atTime: fixedTime })).rejects.toThrow('Token expired')
+    await expect(verifyToken({ token, atTime: fixedTime })).rejects.toThrow('Token expired')
 
-    const result = await verifyToken(token, { atTime: fixedTime, clockTolerance: 10 })
+    const result = await verifyToken({ token, atTime: fixedTime, clockTolerance: 10 })
     expect(result.payload.test).toBe(true)
   })
 
   test('validates time claims for JWT string tokens', async () => {
     const identity = randomIdentity()
     const token = await identity.signToken({
-      test: true,
-      exp: fixedTime - 100,
+      payload: {
+        test: true,
+        exp: fixedTime - 100,
+      },
     })
     const tokenString = stringifyToken(token)
 
-    await expect(verifyToken(tokenString, { atTime: fixedTime })).rejects.toThrow('Token expired')
+    await expect(verifyToken({ token: tokenString, atTime: fixedTime })).rejects.toThrow(
+      'Token expired',
+    )
   })
 })
 
 test('verifyToken uses generic error for invalid header type', async () => {
   const identity = randomIdentity()
-  const token = await identity.signToken({ test: true })
+  const token = await identity.signToken({ payload: { test: true } })
   const str = stringifyToken(token)
   const [, payload, sig] = str.split('.')
   const badHeader = b64uFromJSON({ typ: 'NOT_JWT', alg: 'EdDSA' })
-  await expect(verifyToken(`${badHeader}.${payload}.${sig}`)).rejects.toThrow(
+  await expect(verifyToken({ token: `${badHeader}.${payload}.${sig}` })).rejects.toThrow(
     'Invalid token header type',
   )
 })
 
 test('verifyToken uses generic error for unsupported algorithm', async () => {
   const identity = randomIdentity()
-  const token = await identity.signToken({ test: true })
+  const token = await identity.signToken({ payload: { test: true } })
   const str = stringifyToken(token)
   const [, payload, sig] = str.split('.')
   const badHeader = b64uFromJSON({ typ: 'JWT', alg: 'RS256' })
-  await expect(verifyToken(`${badHeader}.${payload}.${sig}`)).rejects.toThrow(
+  await expect(verifyToken({ token: `${badHeader}.${payload}.${sig}` })).rejects.toThrow(
     'Unsupported signature algorithm',
   )
 })
@@ -145,7 +157,7 @@ describe('object token signature/payload binding', () => {
     const victim = randomIdentity()
     const attacker = randomIdentity()
     // any token signed by the victim, e.g. a capability delegated to the attacker
-    const original = await victim.signToken({ aud: attacker.id, cap: 'kv/read' })
+    const original = await victim.signToken({ payload: { aud: attacker.id, cap: 'kv/read' } })
     // attacker reuses the victim's signature with an arbitrary payload
     const forged = {
       header: original.header,
@@ -153,22 +165,22 @@ describe('object token signature/payload binding', () => {
       signature: original.signature,
       data: original.data,
     }
-    await expect(verifyToken(forged)).rejects.toThrow('data does not match')
+    await expect(verifyToken({ token: forged })).rejects.toThrow('data does not match')
   })
 
   test('verifies object tokens after JSON round-trip', async () => {
     const identity = randomIdentity()
-    const signed = await identity.signToken({ test: 1, nested: { b: 2, a: 1 } })
+    const signed = await identity.signToken({ payload: { test: 1, nested: { b: 2, a: 1 } } })
     const wire = JSON.parse(JSON.stringify(signed))
-    const verified = await verifyToken(wire)
+    const verified = await verifyToken({ token: wire })
     expect(isVerifiedToken(verified)).toBe(true)
   })
 
   test('verifies object tokens without a data field', async () => {
     const identity = randomIdentity()
-    const signed = await identity.signToken({ test: true })
+    const signed = await identity.signToken({ payload: { test: true } })
     const { data: _data, ...withoutData } = signed
-    const verified = await verifyToken(withoutData as SignedToken<{ test: boolean }>)
+    const verified = await verifyToken({ token: withoutData as SignedToken<{ test: boolean }> })
     expect(isVerifiedToken(verified)).toBe(true)
   })
 
@@ -180,15 +192,15 @@ describe('object token signature/payload binding', () => {
     const data = `${b64uFromJSON(header, false)}.${b64uFromJSON(payload, false)}`
     const signature = toB64U(ed25519.sign(fromUTF(data), identity.privateKey))
     const token = { header, payload, signature, data }
-    const verified = await verifyToken(token as string | Token)
+    const verified = await verifyToken({ token: token as string | Token })
     expect(isVerifiedToken(verified)).toBe(true)
   })
 
   test('rejects object tokens whose data is not a string', async () => {
     const identity = randomIdentity()
-    const signed = await identity.signToken({ test: true })
+    const signed = await identity.signToken({ payload: { test: true } })
     const forged = { ...signed, data: { malicious: true } }
-    await expect(verifyToken(forged as unknown as string | Token)).rejects.toThrow(
+    await expect(verifyToken({ token: forged as unknown as string | Token })).rejects.toThrow(
       'data does not match',
     )
   })
@@ -197,8 +209,8 @@ describe('object token signature/payload binding', () => {
 describe('verified token branding', () => {
   test('isVerifiedToken rejects deserialized tokens carrying verifiedPublicKey', async () => {
     const identity = randomIdentity()
-    const signed = await identity.signToken({ test: true })
-    const verified = await verifyToken(signed)
+    const signed = await identity.signToken({ payload: { test: true } })
+    const verified = await verifyToken({ token: signed })
     expect(isVerifiedToken(verified)).toBe(true)
     // round-trip through JSON, as a wire message would arrive
     const wire = JSON.parse(JSON.stringify(verified))
@@ -207,7 +219,7 @@ describe('verified token branding', () => {
 
   test('verifyToken re-verifies tokens carrying an inbound verifiedPublicKey', async () => {
     const victim = randomIdentity()
-    const signed = await victim.signToken({ test: true })
+    const signed = await victim.signToken({ payload: { test: true } })
     // forged payload, victim signature, attacker-injected verifiedPublicKey
     const forged = {
       header: signed.header,
@@ -216,14 +228,16 @@ describe('verified token branding', () => {
       data: signed.data,
       verifiedPublicKey: new Uint8Array(32),
     }
-    await expect(verifyToken(forged)).rejects.toThrow()
+    await expect(verifyToken({ token: forged })).rejects.toThrow()
   })
 
   test('deserialized token with verifiedPublicKey still verifies when genuine', async () => {
     const identity = randomIdentity()
-    const verified = await verifyToken(await identity.signToken({ test: true }))
+    const verified = await verifyToken({
+      token: await identity.signToken({ payload: { test: true } }),
+    })
     const wire = JSON.parse(JSON.stringify(verified))
-    const reverified = await verifyToken(wire)
+    const reverified = await verifyToken({ token: wire })
     expect(isVerifiedToken(reverified)).toBe(true)
   })
 })
@@ -248,7 +262,7 @@ describe('verifyToken with cache', () => {
     const data = `${b64uJSON(header)}.${b64uJSON(payload)}`
     const signature = tb64u(ed.sign(fUTF(data), key.privateKey))
     const token = { header, payload, signature, data }
-    await verifyToken(token, { cache })
+    await verifyToken({ token, cache })
     const { shortForm } = encodePeer4(identity.doc)
     expect(await cache.get(shortForm)).toEqual(identity.doc)
   })
@@ -275,7 +289,7 @@ describe('verifyToken with cache', () => {
     const tamperedBytes = new Uint8Array(64)
     tamperedBytes[0] = 1
     const bad = { header, payload, signature: tb64u(tamperedBytes), data }
-    await expect(verifyToken(bad, { cache })).rejects.toThrow(/Invalid signature/)
+    await expect(verifyToken({ token: bad, cache })).rejects.toThrow(/Invalid signature/)
     const { shortForm } = encodePeer4(identity.doc)
     expect(await cache.get(shortForm)).toBeUndefined()
   })
@@ -289,9 +303,9 @@ describe('verifyToken with cache', () => {
     const { encodePeer4 } = await import('../src/peer4.js')
     const cache = createInMemoryDIDCache()
     const { shortForm } = encodePeer4(identity.doc)
-    await cache.set(shortForm, identity.doc)
-    const token = await identity.signToken({ sub: identity.id, aud: 'someone' })
-    await expect(verifyToken(token, { cache })).resolves.toBeDefined()
+    await cache.set({ shortForm, doc: identity.doc })
+    const token = await identity.signToken({ payload: { sub: identity.id, aud: 'someone' } })
+    await expect(verifyToken({ token, cache })).resolves.toBeDefined()
   })
 
   it('falls through to resolver on cache miss', async () => {
@@ -308,17 +322,17 @@ describe('verifyToken with cache', () => {
       resolverHits++
       return did === shortForm ? identity.doc : undefined
     }
-    const token = await identity.signToken(
-      { sub: identity.id, aud: 'someone' },
-      { embedLongForm: false },
-    )
-    await verifyToken(token, { cache, resolver })
+    const token = await identity.signToken({
+      payload: { sub: identity.id, aud: 'someone' },
+      embedLongForm: false,
+    })
+    await verifyToken({ token, cache, resolver })
     expect(resolverHits).toBe(1)
-    const token2 = await identity.signToken(
-      { sub: identity.id, aud: 'someone-else' },
-      { embedLongForm: false },
-    )
-    await verifyToken(token2, { cache, resolver })
+    const token2 = await identity.signToken({
+      payload: { sub: identity.id, aud: 'someone-else' },
+      embedLongForm: false,
+    })
+    await verifyToken({ token: token2, cache, resolver })
     expect(resolverHits).toBe(1)
   })
 })
@@ -349,14 +363,14 @@ describe('verifyToken rejects alg:none by default', () => {
   }
 
   it('rejects an alg:none token string', async () => {
-    await expect(verifyToken(unsignedString({ test: true }))).rejects.toThrow(
+    await expect(verifyToken({ token: unsignedString({ test: true }) })).rejects.toThrow(
       /unsigned tokens rejected/,
     )
   })
 
   it('rejects an unsigned token object', async () => {
-    const unsigned = createUnsignedToken({ test: true })
-    await expect(verifyToken(unsigned)).rejects.toThrow(/unsigned tokens rejected/)
+    const unsigned = createUnsignedToken({ payload: { test: true } })
+    await expect(verifyToken({ token: unsigned })).rejects.toThrow(/unsigned tokens rejected/)
   })
 
   it('rejects an unsigned object carrying a forged signature and verifiedPublicKey', async () => {
@@ -370,38 +384,43 @@ describe('verifyToken rejects alg:none by default', () => {
       signature: 'Zm9yZ2Vk',
       verifiedPublicKey: new Uint8Array(32),
     }
-    await expect(verifyToken(forged as never)).rejects.toThrow(/unsigned tokens rejected/)
+    await expect(verifyToken({ token: forged as never })).rejects.toThrow(
+      /unsigned tokens rejected/,
+    )
   })
 
   it('accepts an alg:none token string with allowUnsigned', async () => {
-    const token = await verifyToken(unsignedString({ test: true }), { allowUnsigned: true })
+    const token = await verifyToken({
+      token: unsignedString({ test: true }),
+      allowUnsigned: true,
+    })
     expect(isUnsignedToken(token)).toBe(true)
     expect(token.payload).toEqual({ test: true })
   })
 
   it('accepts an unsigned token object with allowUnsigned', async () => {
-    const unsigned = createUnsignedToken({ test: true })
-    const token = await verifyToken(unsigned, { allowUnsigned: true })
+    const unsigned = createUnsignedToken({ payload: { test: true } })
+    const token = await verifyToken({ token: unsigned, allowUnsigned: true })
     expect(token).toBe(unsigned)
   })
 
   it('rejects a malformed unsigned header even with allowUnsigned', async () => {
     const bad = unsignedString({ test: true }, { typ: 'NOTJWT', alg: 'none' })
-    await expect(verifyToken(bad, { allowUnsigned: true })).rejects.toThrow(
+    await expect(verifyToken({ token: bad, allowUnsigned: true })).rejects.toThrow(
       'Invalid token header type',
     )
   })
 
   it('rejects an expired unsigned token with allowUnsigned', async () => {
     const token = unsignedString({ test: true, exp: fixedTime - 100 })
-    await expect(verifyToken(token, { allowUnsigned: true, atTime: fixedTime })).rejects.toThrow(
+    await expect(verifyToken({ token, allowUnsigned: true, atTime: fixedTime })).rejects.toThrow(
       'Token expired',
     )
   })
 
   it('rejects a not-yet-valid unsigned token with allowUnsigned', async () => {
     const token = unsignedString({ test: true, nbf: fixedTime + 100 })
-    await expect(verifyToken(token, { allowUnsigned: true, atTime: fixedTime })).rejects.toThrow(
+    await expect(verifyToken({ token, allowUnsigned: true, atTime: fixedTime })).rejects.toThrow(
       'Token not yet valid',
     )
   })
@@ -409,21 +428,26 @@ describe('verifyToken rejects alg:none by default', () => {
   it('honours clockTolerance for an expired unsigned token', async () => {
     const token = unsignedString({ test: true, exp: fixedTime - 100 })
     await expect(
-      verifyToken(token, { allowUnsigned: true, atTime: fixedTime, clockTolerance: 200 }),
+      verifyToken({
+        token,
+        allowUnsigned: true,
+        atTime: fixedTime,
+        clockTolerance: 200,
+      }),
     ).resolves.toBeDefined()
   })
 
   it('rejects an unsigned token when an audience is expected, even with allowUnsigned', async () => {
     const token = unsignedString({ test: true, aud: 'did:key:service-a' })
     await expect(
-      verifyToken(token, { allowUnsigned: true, audience: 'did:key:service-a' }),
+      verifyToken({ token, allowUnsigned: true, audience: 'did:key:service-a' }),
     ).rejects.toThrow(/requires a signed token/)
   })
 
   it('still verifies a signed token with no options', async () => {
     const identity = randomIdentity()
-    const signed = await identity.signToken({ test: true })
-    const verified = await verifyToken(stringifyToken(signed))
+    const signed = await identity.signToken({ payload: { test: true } })
+    const verified = await verifyToken({ token: stringifyToken(signed) })
     expect(isVerifiedToken(verified)).toBe(true)
   })
 })
@@ -431,20 +455,20 @@ describe('verifyToken rejects alg:none by default', () => {
 describe('verified-token re-submission', () => {
   it('rejects a verified token whose payload was mutated in place', async () => {
     const identity = randomIdentity()
-    const token = await identity.signToken({ sub: 'alice', role: 'user' })
-    const verified = await verifyToken(token)
+    const token = await identity.signToken({ payload: { sub: 'alice', role: 'user' } })
+    const verified = await verifyToken({ token })
     expect(isVerifiedToken(verified)).toBe(true)
     // In-process tampering: same object reference, so the WeakSet still admits it.
     ;(verified.payload as Record<string, unknown>).role = 'admin'
-    await expect(verifyToken(verified)).rejects.toThrow(
+    await expect(verifyToken({ token: verified })).rejects.toThrow(
       'Invalid token: data does not match header and payload',
     )
   })
 
   it('rejects a verified token whose payload was mutated and whose data was recomputed', async () => {
     const identity = randomIdentity()
-    const token = await identity.signToken({ sub: 'alice', role: 'user' })
-    const verified = await verifyToken(token)
+    const token = await identity.signToken({ payload: { sub: 'alice', role: 'user' } })
+    const verified = await verifyToken({ token })
     const mutable = verified as unknown as {
       header: Record<string, unknown>
       payload: Record<string, unknown>
@@ -454,26 +478,26 @@ describe('verified-token re-submission', () => {
     // self-consistent, so the re-bind must compare against the data captured at verification.
     mutable.payload.role = 'admin'
     mutable.data = `${b64uFromJSON(mutable.header)}.${b64uFromJSON(mutable.payload)}`
-    await expect(verifyToken(verified)).rejects.toThrow(
+    await expect(verifyToken({ token: verified })).rejects.toThrow(
       'Invalid token: data does not match header and payload',
     )
   })
 
   it('rejects a verified token whose data was removed', async () => {
     const identity = randomIdentity()
-    const token = await identity.signToken({ sub: 'alice' })
-    const verified = await verifyToken(token)
+    const token = await identity.signToken({ payload: { sub: 'alice' } })
+    const verified = await verifyToken({ token })
     ;(verified as unknown as { data: string | undefined }).data = undefined
     ;(verified.payload as Record<string, unknown>).role = 'admin'
-    await expect(verifyToken(verified)).rejects.toThrow(
+    await expect(verifyToken({ token: verified })).rejects.toThrow(
       'Invalid token: data does not match header and payload',
     )
   })
 
   it('still accepts an untouched verified token and returns the same object', async () => {
     const identity = randomIdentity()
-    const token = await identity.signToken({ sub: 'alice' })
-    const verified = await verifyToken(token)
-    await expect(verifyToken(verified)).resolves.toBe(verified)
+    const token = await identity.signToken({ payload: { sub: 'alice' } })
+    const verified = await verifyToken({ token })
+    await expect(verifyToken({ token: verified })).resolves.toBe(verified)
   })
 })

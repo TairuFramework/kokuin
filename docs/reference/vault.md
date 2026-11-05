@@ -30,7 +30,7 @@ A PIN requires a DID factor in the same wrapping. A passphrase can stand alone.
 `wrappableDID(identity)` preserves a resolvable long-form DID when available.
 Equality checks normalise DIDs without discarding recipient key material needed for agreement.
 
-`createVaultKeyID(owner, unique)` hashes exact owner bytes concatenated with unique bytes using BLAKE3.
+`createVaultKeyID({ owner, unique })` hashes exact owner bytes concatenated with unique bytes using BLAKE3.
 Unsigned varints frame namespace `0xb6`, key type `31` and digest length `32`, followed by the digest.
 The result uses lowercase base36 multibase with prefix `k`.
 `createVaultKeyReference` also returns `keyUnique`, encoded as unpadded base64url.
@@ -64,7 +64,7 @@ Addresses require an explicit `ownerDID`. Base storage preserves owner and recip
 It reads matching base rows in local and replicated mode. Deleted rows and signed tombstones are excluded.
 The lookup only reads and joins the caller's transaction, including uncommitted rows.
 Results identify candidates without granting authority.
-Callers must verify each candidate, for example `await createVaultKeyID(owner, unique) === keyID`, and apply their own authority checks.
+Callers must verify each candidate, for example `await createVaultKeyID({ owner, unique }) === keyID`, and apply their own authority checks.
 
 Rows contain public key/version/state metadata, ordered descriptors, IVs and opaque encrypted bytes.
 Entry `kind`, `label` and string `attributes` remain public.
@@ -92,7 +92,7 @@ import { VAULT_OP_KIND } from '@kokuin/vault'
 // db is a HozonDB with an installed adapter.
 db.register(vaultStoreDefinition)
 db.register(vaultRecordsStoreDefinition)
-await getVaultRecordsStore(db, VAULT_OP_KIND)
+await getVaultRecordsStore({ provider: db, opKind: VAULT_OP_KIND })
 const store = await getVaultStore(db)
 const records = createVaultRecords({
   store,
@@ -107,7 +107,7 @@ const records = createVaultRecords({
 `VAULT_OP_KIND` is the exported constant `kokuin/vault-op/v1`. Factories require an explicit `opKind` and never default it.
 Signing, apply, embedded proof verification and reconciliation must use the same kind.
 Reads and writes refuse an absent or different durable binding.
-`getVaultRecordsStore(provider)` without a kind retrieves registered storage without checking its durable operation-kind binding.
+`getVaultRecordsStore({ provider })` without a kind retrieves registered storage without checking its durable operation-kind binding.
 Records operations enforce that binding when they run.
 
 `records.apply(records, transportContext)` receives signed records through the [records engine](./records.md).
@@ -138,7 +138,7 @@ Payload codecs use canonical JSON with binary fields encoded as unpadded base64u
 | `vault.key-branch` | ID is payload digest. Payload embeds introducing key `opJWT`, `opHash`, author, HLC and suite. Metadata names key, version and branch | Immutable. Requires the same owner's key at least at that version. Both embedded introducing op and outer record receive authority checks |
 | `vault.wrapping` | Wrapping ID, descriptors, descriptor digest, IV and wrapped key. Metadata names recipient, key/version and exact branch | LWW. Live records require key at least at that version and exact owner/key/version/branch proof. Tombstones require the key |
 | `vault.entry` | Entry ID, IV and ciphertext. Metadata names key/version, `contentHLC`, public entry metadata and exact branch | Monotonic content HLC, then key version. Declares key and branch dependencies. Live entries require exact branch evidence |
-| `vault.revocation` | ID from `vaultRevocationRecordID(keyID, recipientDID)`. Empty payload, metadata names key and normalised revoked DID | LWW, dependent on key. Tombstones always refuse. Recipient denial remains permanent across versions |
+| `vault.revocation` | ID from `vaultRevocationRecordID({ keyID, recipientDID })`. Empty payload, metadata names key and normalised revoked DID | LWW, dependent on key. Tombstones always refuse. Recipient denial remains permanent across versions |
 
 Revocation IDs encode `${keyID.length}:${keyID}/${normalizeDID(recipientDID)}`.
 Revocations suppress wrappings naming the denied DID as explicit recipient or DID factor.

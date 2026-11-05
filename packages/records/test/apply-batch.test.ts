@@ -10,7 +10,7 @@ import type { SignedRecord } from '../src/record.js'
 import type { RecordStoreAdapter } from '../src/store.js'
 import { claimFixture } from './crypto-fixture.js'
 
-const identity = createSigningIdentity(new Uint8Array(32).fill(7))
+const identity = createSigningIdentity({ privateKey: new Uint8Array(32).fill(7) })
 
 async function records(prefix = ''): Promise<Array<SignedRecord>> {
   return Promise.all(
@@ -23,7 +23,7 @@ async function records(prefix = ''): Promise<Array<SignedRecord>> {
       return {
         ...claim,
         payload: new Uint8Array([1, 2, 3]),
-        ...(await signRecordOp({ identity: identity, claim: claim, opKind: 'test/op' })),
+        ...(await signRecordOp({ identity, claim, opKind: 'test/op' })),
       }
     }),
   )
@@ -128,7 +128,7 @@ test('the selected provider owns warm ops across chunks and direct callers', asy
   const p = countingProvider()
   for (const row of rows)
     expect(
-      await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, options: p }),
+      await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, ...p }),
     ).not.toBeNull()
   expect(p.singles()).toBe(3)
   await apply(rows, p.crypto).pending
@@ -150,7 +150,7 @@ test('the selected provider owns warm ops across chunks and direct callers', asy
         record: row,
         opKind: 'test/op',
         methods: undefined,
-        options: fresh,
+        ...fresh,
       }),
     ).not.toBeNull()
   expect(fresh.batches).toEqual([3])
@@ -238,7 +238,7 @@ test('token memo survives sequential chunks after the op memo is cleared', async
   clearRecordOpMemo()
   for (const row of rows) {
     expect(
-      await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, options: p }),
+      await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, ...p }),
     ).not.toBeNull()
   }
   expect({ batches: p.batches, singles: p.singles() }).toEqual({ batches: [3], singles: 0 })

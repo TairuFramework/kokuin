@@ -35,7 +35,7 @@ Postgres permits concurrent merges for other DIDs. SQLite reserves its single wr
 
 Obtain the store from `db.withTransaction`'s callback provider for a read followed by a dependent write.
 
-`markObserved(did, at = new Date()): Promise<void>` updates only the observation timestamp.
+`markObserved(params: ControllerStoreAPIMarkObservedParams): Promise<void>` updates only the observation timestamp.
 Use it after accepting an identical network presentation. It preserves the stored log bytes and returns no change signal.
 Unknown DIDs are a no-op. It joins host transactions and rolls back with them.
 Timestamp precision follows the adapter: SQLite stores whole seconds.
@@ -52,3 +52,15 @@ Only authoritative accepted logs belong in storage. Stored epoch authentication 
 Strict verification applies on reverification, without a historical rescan or version gate.
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+| Export | Named params type | Previous positional form |
+| --- | --- | --- |
+| `createControllerStore` | `CreateControllerStoreParams` | `createControllerStore(db: Kysely<ControllerStoreTables>, adapter: Adapter, context: StoreContext)` |
+
+Method and callback contracts follow the same convention.
+
+| API | Named params type | Previous form |
+| --- | --- | --- |
+| `ControllerStoreAPI.markObserved` | `ControllerStoreAPIMarkObservedParams` | `markObserved(did, at?)` |

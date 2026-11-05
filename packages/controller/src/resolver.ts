@@ -117,13 +117,16 @@ export function createControllerResolverWithin(
     // well as the loaded one, so a prefix memoized before a longer log was accepted is a different
     // entry from that prefix presented against the longer log, and the latter is folded and refused.
     let view: FoldedView | undefined
-    await history.merge(did, async (seen) => {
-      const settled = await memoizedAuthoritativeLog(
-        { did, loaded: log, seen, context: CONTEXT, crypto },
-        limits,
-      )
-      view = settled.result
-      return settled.log
+    await history.merge({
+      did,
+      update: async (seen) => {
+        const settled = await memoizedAuthoritativeLog(
+          { did, loaded: log, seen, context: CONTEXT, crypto },
+          limits,
+        )
+        view = settled.result
+        return settled.log
+      },
     })
     if (view === undefined) {
       throw new Error(`${CONTEXT}: the log store did not run the merge for ${did}`)

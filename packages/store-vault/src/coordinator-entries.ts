@@ -63,18 +63,18 @@ export function createEntryFunctions(
 
     const key = await ctx.key(row, store)
     const [branch, branches] = await settleAll([
-      ctx.branch({ address: key, version: key.version, store: store }),
+      ctx.branch({ address: key, version: key.version, store }),
       ctx.branches(key, key.version, store),
     ])
     const record = await records.entry({
-      row: row,
-      branch: branch,
+      row,
+      branch,
       contentHLC: row.hlc,
-      consumer: consumer,
+      consumer,
     })
 
     await ctx.write({
-      store: store,
+      store,
       output: [record],
       preconditions: {
         key: {
@@ -84,7 +84,7 @@ export function createEntryFunctions(
         },
         entry: { ...row, expectedHLC },
       },
-      call: call,
+      call,
     })
   }
 
@@ -98,7 +98,7 @@ export function createEntryFunctions(
       if (current !== undefined) throw new VaultWriteConflict()
 
       const [key, opened, hlc] = await settleAll(
-        [ctx.key(request, store), open.open({ address: request, store: store }), params.nextHLC()],
+        [ctx.key(request, store), open.open({ address: request, store }), params.nextHLC()],
         [undefined, zeroKey],
       )
 
@@ -118,8 +118,8 @@ export function createEntryFunctions(
         }
 
         await save({
-          row: row,
-          store: store,
+          row,
+          store,
           call: request,
           expectedHLC: null,
           consumer: request.consumer ?? null,
@@ -137,7 +137,7 @@ export function createEntryFunctions(
     operation: string,
   ): Promise<UpdateEntryResult> {
     const request = snapshotCall(input)
-    await ctx.authorize({ operation: operation, verb: 'administer', address: request })
+    await ctx.authorize({ operation, verb: 'administer', address: request })
 
     const observed = await params.store.getEntry(request)
 
@@ -154,15 +154,15 @@ export function createEntryFunctions(
         return 'superseded'
 
       await ctx.authorize({
-        operation: operation,
+        operation,
         verb: 'administer',
         address: { ...request, keyID: existing.keyID },
-        store: store,
+        store,
       })
 
       const [opened, hlc, info] = await settleAll(
         [
-          open.open({ address: { ...existing, inputs: request.inputs }, store: store }),
+          open.open({ address: { ...existing, inputs: request.inputs }, store }),
           params.nextHLC(),
           records.entryInfo(existing, store),
         ],
@@ -185,8 +185,8 @@ export function createEntryFunctions(
         }
 
         await save({
-          row: row,
-          store: store,
+          row,
+          store,
           call: request,
           expectedHLC: existing.hlc,
           consumer: request.consumer === undefined ? info.consumer : request.consumer,
@@ -214,22 +214,22 @@ export function createEntryFunctions(
         operation: 'refreshEntry',
         verb: 'administer',
         address: { ...request, keyID: existing.keyID },
-        store: store,
+        store,
       })
       const info = await records.entryInfo(existing, store)
       const key = await ctx.key(existing, store)
       const branches = await ctx.branches(key, key.version, store)
-      const branch = await ctx.branch({ address: key, version: key.version, store: store })
+      const branch = await ctx.branch({ address: key, version: key.version, store })
       const plaintext = await open.decrypt({
         row: existing,
         address: { ...existing, inputs: request.inputs },
-        store: store,
+        store,
         specific: true,
       })
       try {
         const opened = await open.open({
           address: { ...existing, inputs: request.inputs },
-          store: store,
+          store,
         })
         try {
           const row: EntryRow = {
@@ -254,13 +254,13 @@ export function createEntryFunctions(
             if (result !== 'updated') throw new VaultWriteConflict()
           } else {
             await ctx.write({
-              store: store,
+              store,
               output: [
                 await records.entry({
-                  row: row,
-                  branch: branch,
+                  row,
+                  branch,
                   contentHLC: info.contentHLC,
-                  consumer: consumer,
+                  consumer,
                 }),
               ],
               preconditions: {
@@ -306,7 +306,7 @@ export function createEntryFunctions(
         operation: 'deleteEntry',
         verb: 'administer',
         address: { ...request, keyID: existing.keyID },
-        store: store,
+        store,
       })
 
       if (params.mode === 'local') {
@@ -320,7 +320,7 @@ export function createEntryFunctions(
 
         return {
           key,
-          branch: await ctx.branch({ address: existing, version: key.version, store: store }),
+          branch: await ctx.branch({ address: existing, version: key.version, store }),
         }
       }
       const [{ key, branch }, info, hlc] = await settleAll([
@@ -330,15 +330,15 @@ export function createEntryFunctions(
       ])
       const row = { ...existing, hlc, keyVersion: key.version }
       const record = await records.entry({
-        row: row,
-        branch: branch,
+        row,
+        branch,
         contentHLC: row.hlc,
         consumer: request.consumer === undefined ? info.consumer : request.consumer,
         deleted: true,
       })
 
       await ctx.write({
-        store: store,
+        store,
         output: [record],
         preconditions: {
           key: { ...key, expectedVersion: key.version },
@@ -384,14 +384,14 @@ export function createEntryFunctions(
       const decrypting = open.decrypt({
         row: existing,
         address: { ...existing, inputs: request.inputs },
-        store: store,
+        store,
       })
       // A rejected source PIN must not also spend an attempt on the target key's throttle.
       const opening =
         request.inputs?.pin === undefined
-          ? open.open({ address: { ...target, inputs: request.inputs }, store: store })
+          ? open.open({ address: { ...target, inputs: request.inputs }, store })
           : decrypting.then(() => {
-              return open.open({ address: { ...target, inputs: request.inputs }, store: store })
+              return open.open({ address: { ...target, inputs: request.inputs }, store })
             })
       const [plaintext, opened, info, hlc] = await settleAll(
         [decrypting, opening, records.entryInfo(existing, store), params.nextHLC()],
@@ -418,8 +418,8 @@ export function createEntryFunctions(
         if (params.mode === 'local') await store.moveEntry(row)
         else
           await save({
-            row: row,
-            store: store,
+            row,
+            store,
             call: request,
             expectedHLC: existing.hlc,
             consumer: request.consumer === undefined ? info.consumer : request.consumer,

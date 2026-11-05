@@ -31,8 +31,8 @@ async function rejection(run: () => unknown): Promise<unknown> {
 
 describe('TokenRevokedError', () => {
   test('verified path: a revoked capability is refused with a branded error', async () => {
-    const issuer = createSigningIdentity(new Uint8Array(32).fill(7))
-    const holder = createSigningIdentity(new Uint8Array(32).fill(8))
+    const issuer = createSigningIdentity({ privateKey: new Uint8Array(32).fill(7) })
+    const holder = createSigningIdentity({ privateKey: new Uint8Array(32).fill(8) })
     const capability = await createCapability({
       signer: issuer,
       payload: {
@@ -45,10 +45,13 @@ describe('TokenRevokedError', () => {
       },
     })
     const backend = createMemoryRevocationBackend()
-    await backend.add(await createRevocationRecord(issuer, 'grant-1'))
+    await backend.add(await createRevocationRecord({ signer: issuer, jti: 'grant-1' }))
 
     const error = await rejection(() => {
-      return createRevocationChecker(backend)(capability, stringifyToken(capability))
+      return createRevocationChecker({ backend })({
+        token: capability,
+        raw: stringifyToken(capability),
+      })
     })
     expect(isTokenRevokedError(error)).toBe(true)
     expect(error).toBeInstanceOf(TokenRevokedError)
@@ -58,7 +61,7 @@ describe('TokenRevokedError', () => {
 
   test('denied-key path: the refusal is branded and carries the resolution failure as cause', async () => {
     const seed = new Uint8Array(32).fill(53)
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
     const rotate = await createRotate({
       seed,
@@ -98,7 +101,7 @@ describe('TokenRevokedError', () => {
       profile: 0,
       log: { chain: revoked, events: [] },
     })
-    const holder = createSigningIdentity(new Uint8Array(32).fill(61))
+    const holder = createSigningIdentity({ privateKey: new Uint8Array(32).fill(61) })
 
     const capability = await createCapability({
       signer: owner,
@@ -112,13 +115,13 @@ describe('TokenRevokedError', () => {
       },
     })
     const backend = createMemoryRevocationBackend({ methods: registry(rotated) })
-    await backend.add(await createRevocationRecord(thief, 'grant-1'))
+    await backend.add(await createRevocationRecord({ signer: thief, jti: 'grant-1' }))
 
     const error = await rejection(() => {
-      return createRevocationChecker(backend, { methods: registry(revoked) })(
-        capability,
-        stringifyToken(capability),
-      )
+      return createRevocationChecker({ backend, methods: registry(revoked) })({
+        token: capability,
+        raw: stringifyToken(capability),
+      })
     })
     expect(isTokenRevokedError(error)).toBe(true)
     expect((error as Error).message).toBe('Token revoked: grant-1')

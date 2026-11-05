@@ -89,15 +89,15 @@ function hash(input: Uint8Array, dkLen: number): Uint8Array {
 
 // Inputs are consumed synchronously before the Promise is returned.
 export const nobleCrypto: CryptoProvider = {
-  async sign(alg, seed, message) {
+  async sign({ alg, privateKey: seed, message }) {
     return sign(alg, seed, message)
   },
-  async signBatch(alg, items) {
+  async signBatch({ alg, items }) {
     if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
     return items.map((item) => sign(alg, item.privateKey, item.message))
   },
   async verify({ alg, signature, message, publicKey }: VerifyItem) {
-    return verify({ alg: alg, signature: signature, message: message, publicKey: publicKey })
+    return verify({ alg, signature, message, publicKey })
   },
   async verifyBatch(items) {
     return items.map((item) => {
@@ -109,10 +109,10 @@ export const nobleCrypto: CryptoProvider = {
       })
     })
   },
-  async blake3(input, dkLen) {
+  async blake3({ input, dkLen }) {
     return hash(input, dkLen)
   },
-  async blake3Batch(inputs, dkLen) {
+  async blake3Batch({ inputs, dkLen }) {
     assertOutputLength(dkLen)
     return inputs.map((input) => hash(input, dkLen))
   },

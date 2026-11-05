@@ -7,7 +7,7 @@ export function snapshotEntries(entries: Array<unknown>): Array<unknown> {
     if (entry === null || typeof entry !== 'object') return entry
     const { event, sigs, recoveryKey } = entry as Record<string, unknown>
     return {
-      event: isCanonicalizable(event) ? structuredClone(event) : undefined,
+      event: isCanonicalizable({ value: event }) ? structuredClone(event) : undefined,
       sigs: Array.isArray(sigs) ? [...sigs] : sigs,
       recoveryKey,
     }
@@ -37,7 +37,7 @@ export function unchangedEntries(owned: Array<unknown>, original: Array<unknown>
       Array.isArray(candidate.sigs) &&
       entry.sigs.length === candidate.sigs.length &&
       entry.sigs.every((sig, i) => sig === (candidate.sigs as Array<unknown>)[i]) &&
-      isCanonicalizable(candidate.event) &&
+      isCanonicalizable({ value: candidate.event }) &&
       digestOf(entry.event) === digestOf(candidate.event)
     )
   })

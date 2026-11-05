@@ -27,7 +27,9 @@ export function parseCanonicalHLC(hlc: string): HLCTimestamp | null {
 }
 
 /** Order signed decision stamps by the complete HLC, including the node ID. */
-export function compareRecordDecisionHLC(left: string, right: string): number {
+export type CompareRecordDecisionHLCParams = { left: string; right: string }
+
+export function compareRecordDecisionHLC({ right, left }: CompareRecordDecisionHLCParams): number {
   const leftStamp = parseCanonicalHLC(left)
   const rightStamp = parseCanonicalHLC(right)
   if (leftStamp === null || rightStamp === null)
@@ -45,11 +47,13 @@ export function compareRecordDecisionHLC(left: string, right: string): number {
  * negative or non-numeric drift limit, or a non-finite `nowMS`, rejects every stamp — every
  * comparison against `NaN` is false, so an unchecked one would admit any future.
  */
-export function parseBoundedHLC(
-  hlc: string,
-  nowMS: number,
-  maxDriftMS: number,
-): HLCTimestamp | null {
+export type ParseBoundedHLCParams = { hlc: string; nowMS: number; maxDriftMS: number }
+
+export function parseBoundedHLC({
+  maxDriftMS,
+  nowMS,
+  hlc,
+}: ParseBoundedHLCParams): HLCTimestamp | null {
   if (!Number.isFinite(nowMS) || !(maxDriftMS >= 0)) {
     return null
   }

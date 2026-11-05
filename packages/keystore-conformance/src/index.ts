@@ -10,7 +10,7 @@ export type KeyStoreConformanceHarness<PrivateKeyType> = {
   /** A store with no keys in it. Called once per case, so cases cannot leak into each other. */
   createStore(): KeyStore<PrivateKeyType> | Promise<KeyStore<PrivateKeyType>>
   /** Substrate-specific key equality — bytes, `CryptoKeyPair` identity, whatever applies. */
-  isSameKey(a: PrivateKeyType, b: PrivateKeyType): boolean
+  isSameKey(params: KeyStoreConformanceHarnessIsSameKeyParams<PrivateKeyType>): boolean
   /**
    * Set for a **derived** backend (HD), where `getAsync` can always produce a key and so
    * never returns `null`. Skips the absent-means-null case; every other invariant still holds.
@@ -88,7 +88,7 @@ export function keyStoreConformanceCases<PrivateKeyType>(
         const fetched = await entry.getAsync()
         assert(fetched != null, 'getAsync() returned null after provideAsync()')
         assert(
-          harness.isSameKey(provided, fetched as PrivateKeyType),
+          harness.isSameKey({ a: provided, b: fetched as PrivateKeyType }),
           'getAsync() returned a different key than provideAsync() did',
         )
       },
@@ -99,7 +99,10 @@ export function keyStoreConformanceCases<PrivateKeyType>(
         const entry = (await store()).entry(keyIDA)
         const first = await entry.provideAsync()
         const second = await entry.provideAsync()
-        assert(harness.isSameKey(first, second), 'two sequential provideAsync() calls differ')
+        assert(
+          harness.isSameKey({ a: first, b: second }),
+          'two sequential provideAsync() calls differ',
+        )
       },
     },
     {
@@ -114,14 +117,14 @@ export function keyStoreConformanceCases<PrivateKeyType>(
         ])
         for (const result of results) {
           assert(
-            harness.isSameKey(results[0], result),
+            harness.isSameKey({ a: results[0], b: result }),
             'concurrent provideAsync() calls resolved to different keys',
           )
         }
         const stored = await entry.getAsync()
         assert(stored != null, 'concurrent provideAsync() left no key stored')
         assert(
-          harness.isSameKey(results[0], stored as PrivateKeyType),
+          harness.isSameKey({ a: results[0], b: stored as PrivateKeyType }),
           'concurrent provideAsync() returned a key that is not the one left in storage — a lost key',
         )
       },
@@ -132,11 +135,14 @@ export function keyStoreConformanceCases<PrivateKeyType>(
         const created = await store()
         const keyA = await created.entry(keyIDA).provideAsync()
         const keyB = await created.entry(keyIDB).provideAsync()
-        assert(!harness.isSameKey(keyA, keyB), 'two different keyIDs resolved to the same key')
+        assert(
+          !harness.isSameKey({ a: keyA, b: keyB }),
+          'two different keyIDs resolved to the same key',
+        )
         const refetchedA = await created.entry(keyIDA).getAsync()
         assert(refetchedA != null, 'the first key vanished after providing the second')
         assert(
-          harness.isSameKey(keyA, refetchedA as PrivateKeyType),
+          harness.isSameKey({ a: keyA, b: refetchedA as PrivateKeyType }),
           'providing a second keyID overwrote the first keyID’s key',
         )
       },
@@ -177,7 +183,7 @@ export function mutableKeyStoreConformanceCases<PrivateKeyType>(
         const fetched = await entry.getAsync()
         assert(fetched != null, 'getAsync() returned null after setAsync()')
         assert(
-          harness.isSameKey(key, fetched as PrivateKeyType),
+          harness.isSameKey({ a: key, b: fetched as PrivateKeyType }),
           'getAsync() did not return the key that was set',
         )
       },
@@ -208,10 +214,15 @@ export function mutableKeyStoreConformanceCases<PrivateKeyType>(
         await entry.removeAsync()
         const second = await entry.provideAsync()
         assert(
-          !harness.isSameKey(first, second),
+          !harness.isSameKey({ a: first, b: second }),
           'provideAsync() after removeAsync() returned the removed key — a stale cache',
         )
       },
     },
   ]
+}
+
+export type KeyStoreConformanceHarnessIsSameKeyParams<PrivateKeyType> = {
+  a: PrivateKeyType
+  b: PrivateKeyType
 }

@@ -99,7 +99,7 @@ describe('decodePeer4', () => {
 
   it('decodes a long form back to the original doc', () => {
     const { longForm } = encodePeer4(doc)
-    const decoded = decodePeer4(longForm)
+    const decoded = decodePeer4({ longForm })
     expect(decoded.doc).toEqual(doc)
     expect(decoded.shortForm).toBe(longForm.split(':').slice(0, 3).join(':'))
   })
@@ -109,8 +109,8 @@ describe('decodePeer4', () => {
     const { longForm } = encodePeer4(doc)
     const decode = vi.spyOn(multibase, 'decodeMultibase')
 
-    const first = decodePeer4(longForm)
-    const second = decodePeer4(longForm)
+    const first = decodePeer4({ longForm })
+    const second = decodePeer4({ longForm })
 
     expect(second).toEqual(first)
     expect(decode).toHaveBeenCalledTimes(2)
@@ -121,9 +121,9 @@ describe('decodePeer4', () => {
     clearPeer4DecodeMemo()
     const { longForm } = encodePeer4(doc)
 
-    const first = decodePeer4(longForm)
+    const first = decodePeer4({ longForm })
     first.doc.authentication?.push('changed')
-    const second = decodePeer4(longForm)
+    const second = decodePeer4({ longForm })
 
     expect(second.doc).not.toBe(first.doc)
     expect(second.doc.authentication).toEqual(['#key-0'])
@@ -132,10 +132,10 @@ describe('decodePeer4', () => {
   it('rechecks maxDocSize on a cache hit', () => {
     clearPeer4DecodeMemo()
     const { longForm } = encodePeer4(doc)
-    decodePeer4(longForm)
+    decodePeer4({ longForm })
     const docSize = new TextEncoder().encode(JSON.stringify(doc)).length
 
-    expect(() => decodePeer4(longForm, { maxDocSize: docSize - 1 })).toThrow(
+    expect(() => decodePeer4({ longForm, maxDocSize: docSize - 1 })).toThrow(
       `did:peer:4 doc too large: ${docSize} > ${docSize - 1}`,
     )
   })
@@ -147,8 +147,8 @@ describe('decodePeer4', () => {
     const tampered = `${longForm.slice(0, idx)}A${longForm.slice(idx + 1)}`
     const decode = vi.spyOn(multibase, 'decodeMultibase')
 
-    expect(() => decodePeer4(tampered)).toThrow('did:peer:4 hash mismatch')
-    expect(() => decodePeer4(tampered)).toThrow('did:peer:4 hash mismatch')
+    expect(() => decodePeer4({ longForm: tampered })).toThrow('did:peer:4 hash mismatch')
+    expect(() => decodePeer4({ longForm: tampered })).toThrow('did:peer:4 hash mismatch')
     expect(decode).toHaveBeenCalledTimes(2)
     decode.mockRestore()
   })
@@ -161,11 +161,11 @@ describe('decodePeer4', () => {
     )
     const decode = vi.spyOn(multibase, 'decodeMultibase')
 
-    for (const longForm of longForms) decodePeer4(longForm)
+    for (const longForm of longForms) decodePeer4({ longForm })
     const firstCallCount = decode.mock.calls.length
     const [oldest] = longForms
     if (oldest == null) throw new Error('expected a long form')
-    decodePeer4(oldest)
+    decodePeer4({ longForm: oldest })
 
     expect(decode.mock.calls.length).toBe(firstCallCount + 2)
     decode.mockRestore()
@@ -175,22 +175,22 @@ describe('decodePeer4', () => {
     const { longForm } = encodePeer4(doc)
     const idx = longForm.indexOf(':z', 'did:peer:4'.length) + 2
     const tampered = `${longForm.slice(0, idx)}A${longForm.slice(idx + 1)}`
-    expect(() => decodePeer4(tampered)).toThrow(/hash mismatch/i)
+    expect(() => decodePeer4({ longForm: tampered })).toThrow(/hash mismatch/i)
   })
 
   it('rejects a short form passed to decodePeer4', () => {
     const { shortForm } = encodePeer4(doc)
-    expect(() => decodePeer4(shortForm)).toThrow(/long form/i)
+    expect(() => decodePeer4({ longForm: shortForm })).toThrow(/long form/i)
   })
 
   it('rejects a non-peer:4 DID', () => {
-    expect(() => decodePeer4('did:key:z6MkAbc')).toThrow(/Invalid did:peer:4/)
+    expect(() => decodePeer4({ longForm: 'did:key:z6MkAbc' })).toThrow(/Invalid did:peer:4/)
   })
 
   it('rejects an oversized doc', () => {
     const big = { ...doc, padding: 'x'.repeat(200) }
     const { longForm } = encodePeer4(big)
-    expect(() => decodePeer4(longForm, { maxDocSize: 100 })).toThrow(/doc too large/i)
+    expect(() => decodePeer4({ longForm, maxDocSize: 100 })).toThrow(/doc too large/i)
   })
 })
 
@@ -213,29 +213,29 @@ describe('decodePeer4 bounds', () => {
   it('rejects an oversized hash segment before decoding it', () => {
     // '0' is not in the base58 alphabet: without the length check, decodeMultibase throws.
     const longForm = `did:peer:4z${'0'.repeat(70)}:z6MkAbc`
-    expect(() => decodePeer4(longForm)).toThrow('did:peer:4 hash too large')
+    expect(() => decodePeer4({ longForm })).toThrow('did:peer:4 hash too large')
   })
 
   it('rejects an oversized encoded doc before decoding it', () => {
     const hash = `z${'1'.repeat(47)}`
     const encodedDoc = `z${'0'.repeat(maxEncoded)}`
     const longForm = `did:peer:4${hash}:${encodedDoc}`
-    expect(() => decodePeer4(longForm)).toThrow(/encoded doc too large/)
+    expect(() => decodePeer4({ longForm })).toThrow(/encoded doc too large/)
   })
 
   it('decodes a realistic three-key document', () => {
     const { longForm } = encodePeer4(validDoc)
-    expect(decodePeer4(longForm).doc).toEqual(validDoc)
+    expect(decodePeer4({ longForm }).doc).toEqual(validDoc)
   })
 
   it('honours a smaller maxDocSize override', () => {
     const { longForm } = encodePeer4(validDoc)
-    expect(() => decodePeer4(longForm, { maxDocSize: 64 })).toThrow(/too large/)
+    expect(() => decodePeer4({ longForm, maxDocSize: 64 })).toThrow(/too large/)
   })
 
   it('honours a larger maxDocSize override', () => {
     const { longForm } = encodePeer4(validDoc)
-    expect(decodePeer4(longForm, { maxDocSize: 8 * 1024 }).doc).toEqual(validDoc)
+    expect(decodePeer4({ longForm, maxDocSize: 8 * 1024 }).doc).toEqual(validDoc)
   })
 })
 

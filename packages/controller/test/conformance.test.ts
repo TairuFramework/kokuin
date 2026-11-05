@@ -37,6 +37,7 @@ import { enumerateProfiles } from '../src/profiles.js'
 import { resolveBranches } from '../src/supersede.js'
 
 type AuthorityPrivateKeyParams = { seed: Uint8Array; profile: number; gen: number; seq: number }
+type SignEventParams = { event: EventCommon; privateKeys: Array<Uint8Array> }
 type CreateRotateParams = {
   seed: Uint8Array
   profile: number
@@ -46,19 +47,23 @@ type CreateRotateParams = {
 }
 
 /** Test-support only: the recovery private key `createReset` derives internally. */
-function recoveryPrivateKey(seed: Uint8Array, profile: number): Uint8Array {
-  return deriveKeyPair(seed, recoveryPath(profile), 'EdDSA').privateKey
+function recoveryPrivateKey({ seed, profile }: { seed: Uint8Array; profile: number }): Uint8Array {
+  return deriveKeyPair({ seed, path: recoveryPath(profile), alg: 'EdDSA' }).privateKey
 }
 
 /** Test-support only: the authority (signing) private key `createInception`/`createRotate` derive internally. */
 function authorityPrivateKey({ seed, profile, gen, seq }: AuthorityPrivateKeyParams): Uint8Array {
-  return deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA').privateKey
+  return deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen, seq }),
+    alg: 'EdDSA',
+  }).privateKey
 }
 
 /** Test-support only: a fresh Ed25519 member key pair and the `did:key` that carries it. */
 function memberKeyPair(): { privateKey: Uint8Array; key: string; did: string } {
   const privateKey = ed25519.utils.randomSecretKey()
-  const key = encodeKey(ed25519.getPublicKey(privateKey), 'EdDSA')
+  const key = encodeKey({ publicKey: ed25519.getPublicKey(privateKey), alg: 'EdDSA' })
   return { privateKey, key, did: `did:key:${key}` }
 }
 
@@ -112,8 +117,6 @@ const suite: ConformanceSuite = {
   test,
 }
 
-// The conformance contract stays positional; the real `createRotate` takes a params object, so it
-// is bridged here. `createReset`/`createInception` are positional already and pass through.
 const implementation = {
   name: '@kokuin/controller',
   createInception,
@@ -131,7 +134,9 @@ const implementation = {
   createEpochEvent,
   memberKeyPair,
   memberPeerDID,
-  signEvent,
+  signEvent: async ({ event, privateKeys }: SignEventParams) => {
+    return await signEvent(event, privateKeys)
+  },
 }
 
 // `@kokuin/controller`'s events use a closed `EventType` union ('icp' | 'rot'), while the
@@ -140,4 +145,7 @@ const implementation = {
 // contravariantly incompatible with the suite's declared signatures — a genuine variance mismatch
 // between a closed wire format and an open contract type, not a loosened contract — so it is
 // bridged with a single cast here rather than by widening `@kokuin/controller`'s own types.
-runControllerConformance(suite, implementation as unknown as ControllerImplementation)
+runControllerConformance({
+  suite,
+  impl: implementation as unknown as ControllerImplementation,
+})

@@ -7,3 +7,5 @@ Pass crypto through identity and verification options. Identities capture signin
 Coalesce concurrent cold token verifications per provider across algorithms into verifyBatch calls. Preserve single verification calls for lone misses and success-only provider-isolated memoisation.
 
 Use named params objects for public signatures and constructors. Export their named types. Preserve behaviour and update migration references.
+
+All public APIs with two or more arguments now take one flat params object. Options fields sit at the top level.

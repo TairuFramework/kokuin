@@ -20,7 +20,7 @@ describe('resolveIssuer', () => {
   it('resolves a did:key issuer to alg + pubkey without a resolver', async () => {
     const priv = ed25519.utils.randomSecretKey()
     const pub = ed25519.getPublicKey(priv)
-    const did = getDID(CODECS.EdDSA, pub)
+    const did = getDID({ codec: CODECS.EdDSA, publicKey: pub })
     const [alg, key] = await resolveIssuer({ iss: did })
     expect(alg).toBe('EdDSA')
     expect(key).toEqual(pub)
@@ -40,7 +40,7 @@ describe('resolveIssuer', () => {
       authentication: ['#key-0'],
     })
     const cache = createInMemoryDIDCache()
-    await cache.set(shortForm, doc)
+    await cache.set({ shortForm, doc })
     const resolver = (did: string) => cache.get(did)
     const [alg, key] = await resolveIssuer({ iss: shortForm, header: { kid: '#key-0' }, resolver })
     expect(alg).toBe('EdDSA')
@@ -331,7 +331,7 @@ describe('resolveIssuerWithDoc', () => {
     const methods: Array<DIDMethodResolver> = [
       {
         method: 'kokuin',
-        resolve: async (_did: string, header: { kid?: string }) => {
+        resolve: async ({ did: _did, header }) => {
           if (header.kid != null) {
             throw new IssuerKeyNotFoundError({ message: `no such key: ${header.kid}` })
           }

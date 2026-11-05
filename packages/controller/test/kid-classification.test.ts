@@ -42,7 +42,7 @@ describe('classification of a kid naming a key the issuer does not have', () => 
     const { did, log } = await buildTwoKeyLog(seed)
     const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
     const kokuin = await thrownBy(
-      verifyToken(forgeToken(did, `#${strangerKey()}`), { methods: [resolver] }),
+      verifyToken({ token: forgeToken(did, `#${strangerKey()}`), methods: [resolver] }),
     )
 
     // did:peer:4 — the built-in method, same condition: a `kid` naming no verification method.
@@ -50,7 +50,7 @@ describe('classification of a kid naming a key the issuer does not have', () => 
       keys: [{ purpose: 'sig', alg: 'EdDSA' }],
       didMethod: 'peer:4',
     })
-    const peer4 = await thrownBy(verifyToken(forgeToken(peer.longForm, '#nope')))
+    const peer4 = await thrownBy(verifyToken({ token: forgeToken(peer.longForm, '#nope') }))
 
     // The property both must share: the issuer *was* resolved, so this is evidence about the
     // token, not a failure to check it. `@kokuin/capability`'s revocation checker denies on
@@ -72,7 +72,7 @@ describe('classification of a kid naming a key the issuer does not have', () => 
     // The bare key, no `#`. Also a rejection the forger controls, so it must not be a denial
     // switch either.
     const thrown = await thrownBy(
-      verifyToken(forgeToken(did, controllerKey), { methods: [resolver] }),
+      verifyToken({ token: forgeToken(did, controllerKey), methods: [resolver] }),
     )
     expect((thrown as Error).message).toMatch(/kid is not a key fragment/)
     expect(isUnresolvableIssuerError(thrown)).toBe(false)
@@ -87,12 +87,14 @@ describe('classification of a kid naming a key the issuer does not have', () => 
     const unknown = createControllerResolver({ loadLog: async () => undefined })
     expect(
       isUnresolvableIssuerError(
-        await thrownBy(verifyToken(forgeToken(did), { methods: [unknown] })),
+        await thrownBy(verifyToken({ token: forgeToken(did), methods: [unknown] })),
       ),
     ).toBe(true)
     expect(
       isUnresolvableIssuerError(
-        await thrownBy(verifyToken(forgeToken(did, '#z6Mkanything'), { methods: [unknown] })),
+        await thrownBy(
+          verifyToken({ token: forgeToken(did, '#z6Mkanything'), methods: [unknown] }),
+        ),
       ),
     ).toBe(true)
 
@@ -100,7 +102,9 @@ describe('classification of a kid naming a key the issuer does not have', () => 
     const wrongLog = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
     expect(
       isUnresolvableIssuerError(
-        await thrownBy(verifyToken(forgeToken('did:kokuin:zWRONG'), { methods: [wrongLog] })),
+        await thrownBy(
+          verifyToken({ token: forgeToken('did:kokuin:zWRONG'), methods: [wrongLog] }),
+        ),
       ),
     ).toBe(true)
   })

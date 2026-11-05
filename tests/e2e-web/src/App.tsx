@@ -33,7 +33,7 @@ export default function App() {
         title="Sign token"
         onPress={() => {
           identityPromise
-            .then((identity) => identity.signToken({ test: 'OK' }))
+            .then((identity) => identity.signToken({ payload: { test: 'OK' } }))
             .then(setSignedToken)
         }}
       />
@@ -43,7 +43,7 @@ export default function App() {
       <Button
         title="Verify token"
         onPress={() => {
-          verifyToken(signedToken).then(setVerifiedToken)
+          verifyToken({ token: signedToken }).then(setVerifiedToken)
         }}
       />
     )

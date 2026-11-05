@@ -1,11 +1,10 @@
-import type { CryptoOptions } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { digestOf } from '../src/canonical.js'
 import { TOO_MANY_FAILED_SIGNATURES } from '../src/epoch.js'
 import type * as epochEventsModule from '../src/epoch-events.js'
-import type { EpochSignatureSigner } from '../src/epoch-events.js'
+import type { VerifyEpochSignatureParams } from '../src/epoch-events.js'
 import { createRevoke, type EpochEvent } from '../src/epoch-events.js'
 import {
   createInception,
@@ -28,24 +27,20 @@ vi.mock('../src/epoch-events.js', async (importOriginal) => {
   const actual = await importOriginal<typeof epochEventsModule>()
   return {
     ...actual,
-    verifyEpochSignature: async (
-      signed: SignedEvent<EpochEvent>,
-      signer: EpochSignatureSigner,
-      options?: CryptoOptions,
-    ) => {
+    verifyEpochSignature: async (params: VerifyEpochSignatureParams) => {
       checks.count++
-      return await actual.verifyEpochSignature(signed, signer, options)
+      return await actual.verifyEpochSignature(params)
     },
   }
 })
 
 const seed = new Uint8Array(32).fill(5)
 const profile = 0
-const inception = await createInception(seed, profile)
+const inception = await createInception({ seed, profile })
 const did = didFromInception(inception.event)
 
 const memberSecret = new Uint8Array(32).fill(21)
-const memberKey = encodeKey(ed25519.getPublicKey(memberSecret), 'EdDSA')
+const memberKey = encodeKey({ publicKey: ed25519.getPublicKey(memberSecret), alg: 'EdDSA' })
 const member: MemberEntry = {
   did: `did:key:${memberKey}`,
   key: memberKey,
@@ -60,7 +55,7 @@ const rot = await createRotate({
   snapshot: { members: [member], deny: [] },
 })
 const chain: Array<SignedEvent> = [inception, rot]
-const folded = await foldLog(did, { chain, events: [] })
+const folded = await foldLog({ did, input: { chain, events: [] } })
 if (!folded.ok) {
   throw new Error(`fixture chain does not fold: ${folded.reason}`)
 }
@@ -111,7 +106,7 @@ describe('the failed-signature budget', () => {
     const forgeries = Array.from({ length: MAX_FAILED_SIGNATURES + 1 }, (_, i) => forged(i))
     for (const salt of [1, 2, 3, 4]) {
       const events = shuffled([...honest, ...forgeries], salt)
-      expect(await foldLog(did, { chain, events })).toEqual({
+      expect(await foldLog({ did, input: { chain, events } })).toEqual({
         ok: false,
         reason: TOO_MANY_FAILED_SIGNATURES,
         index: -1,
@@ -121,13 +116,16 @@ describe('the failed-signature budget', () => {
 
   test('the refusal stops checking once the budget is spent', async () => {
     const forgeries = Array.from({ length: 4 * MAX_FAILED_SIGNATURES }, (_, i) => forged(i))
-    expect((await foldLog(did, { chain, events: forgeries })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain, events: forgeries } })).ok).toBe(false)
     expect(checks.count).toBe(MAX_FAILED_SIGNATURES + 1)
   })
 
   test('forgeries up to the budget still fold, each refused', async () => {
     const forgeries = Array.from({ length: MAX_FAILED_SIGNATURES }, (_, i) => forged(i))
-    const result = await foldLog(did, { chain, events: shuffled([...honest, ...forgeries], 7) })
+    const result = await foldLog({
+      did,
+      input: { chain, events: shuffled([...honest, ...forgeries], 7) },
+    })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.applied).toHaveLength(honest.length)
@@ -140,15 +138,15 @@ describe('the failed-signature budget', () => {
     const bad = (i: number) => ({ event: one.event, sigs: [`!${String(i).padStart(4, '0')}`] })
     // Distinct forged lists sorting before the genuine one are each checked and charged.
     const distinct = Array.from({ length: MAX_FAILED_SIGNATURES + 1 }, (_, i) => bad(i))
-    expect((await foldLog(did, { chain, events: [one, ...distinct] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain, events: [one, ...distinct] } })).ok).toBe(false)
     // One forged list repeated is checked once.
     const repeated = Array.from({ length: 4 * MAX_FAILED_SIGNATURES }, () => bad(0))
-    expect((await foldLog(did, { chain, events: [one, ...repeated] })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain, events: [one, ...repeated] } })).ok).toBe(true)
     // A copy carrying several signatures is charged for each.
     const wide = (i: number) => ({ ...forged(i), sigs: Array.from({ length: 16 }, () => 'AAAA') })
     const few = Array.from({ length: MAX_FAILED_SIGNATURES / 16 }, (_, i) => wide(i))
-    expect((await foldLog(did, { chain, events: few })).ok).toBe(true)
-    expect((await foldLog(did, { chain, events: [...few, forged(999)] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain, events: few } })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain, events: [...few, forged(999)] } })).ok).toBe(false)
   })
 })
 
@@ -169,11 +167,11 @@ describe('held memory', async () => {
       loadLog: async () => loaded.log,
       history: store,
     })
-    await resolver.resolve(did, {})
+    await resolver.resolve({ did, header: {} })
     const before = await store.get(did)
     const forgeries = Array.from({ length: MAX_FAILED_SIGNATURES + 1 }, (_, i) => forged(i))
     loaded.log = { chain, events: [await revoke('did:key:zThree'), ...forgeries] }
-    await expect(resolver.resolve(did, {})).rejects.toThrow(TOO_MANY_FAILED_SIGNATURES)
+    await expect(resolver.resolve({ did, header: {} })).rejects.toThrow(TOO_MANY_FAILED_SIGNATURES)
     expect(await store.get(did)).toBe(before)
   })
 
@@ -276,8 +274,8 @@ describe('held memory', async () => {
 
   test('the memory store skips the write when the update returns the current log', async () => {
     const store = createMemoryLogStore()
-    const first = await store.merge(did, async () => stored)
-    const again = await store.merge(did, async (current) => current ?? stored)
+    const first = await store.merge({ did, update: async () => stored })
+    const again = await store.merge({ did, update: async (current) => current ?? stored })
     expect(again).toBe(first)
     expect(await store.get(did)).toBe(first)
   })

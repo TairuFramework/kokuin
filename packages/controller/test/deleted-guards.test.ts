@@ -17,8 +17,12 @@ import { type FoldResult, foldLog } from '../src/fold.js'
 // it rejects do arrive.
 
 const seed = new Uint8Array(32).fill(77)
-const icp = await createInception(seed, 0)
-const authority = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
+const icp = await createInception({ seed, profile: 0 })
+const authority = deriveKeyPair({
+  seed,
+  path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+  alg: 'EdDSA',
+})
 
 describe('kept: `isKeyList(event.k)` in verifyInception', () => {
   // Unkillable — `verifySignatures` rejects every shape below with the same `invalid inception` —
@@ -39,7 +43,7 @@ describe('kept: `isKeyList(event.k)` in verifyInception', () => {
       let result: FoldResult | undefined
       await expect(
         (async () => {
-          result = await foldLog(forgedDID, { chain: [forged], events: [] })
+          result = await foldLog({ did: forgedDID, input: { chain: [forged], events: [] } })
         })(),
       ).resolves.toBeUndefined()
       expect(result).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
@@ -48,6 +52,8 @@ describe('kept: `isKeyList(event.k)` in verifyInception', () => {
 
   test('control: an unmutated re-signed inception folds', async () => {
     const [forgedDID, forged] = await signedInception(icp.event.k)
-    expect((await foldLog(forgedDID, { chain: [forged], events: [] })).ok).toBe(true)
+    expect((await foldLog({ did: forgedDID, input: { chain: [forged], events: [] } })).ok).toBe(
+      true,
+    )
   })
 })

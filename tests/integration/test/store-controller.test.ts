@@ -28,7 +28,7 @@ describe.each(backendsNamed('postgres'))('$name jsonb log column', (b) => {
   // passing `get` alone would not show the column holds JSON with the chain as a JSON array.
   test('a stored log is a JSON object with a chain array and round-trips', async () => {
     const seed = new Uint8Array(32).fill(7)
-    const icp = await createInception(seed, 0)
+    const icp = await createInception({ seed, profile: 0 })
     const did = didFromInception(icp.event)
     const rot = await createRotate({
       seed,
@@ -45,7 +45,7 @@ describe.each(backendsNamed('postgres'))('$name jsonb log column', (b) => {
     try {
       const store = await getControllerStore(db)
       const raw = await db.getStore<RawDB>('raw')
-      await store.merge(did, async () => ({ chain: log, events: [] }))
+      await store.merge({ did, update: async () => ({ chain: log, events: [] }) })
       const { rows } = await sql<{ type: string; length: number }>`
         select jsonb_typeof(log) as type, jsonb_array_length(log->'chain') as length
         from hozon_controller_logs where did = ${did}`.execute(raw)

@@ -22,7 +22,7 @@ const seed = new Uint8Array(32).fill(1)
 
 describe('createControllerResolver().resolve() algorithm passthrough', () => {
   test('surfaces whatever algorithm the decoded key carries, not a hardcoded EdDSA', async () => {
-    const icp = await createInception(seed, 0)
+    const icp = await createInception({ seed, profile: 0 })
     const did = didFromInception(icp.event)
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp], events: [] }),
@@ -37,7 +37,7 @@ describe('createControllerResolver().resolve() algorithm passthrough', () => {
       publicKey: new Uint8Array(32).fill(7),
     })
 
-    const resolved = await resolver.resolve(did, {})
+    const resolved = await resolver.resolve({ did, header: {} })
     expect(resolved.alg).toBe('Ed448')
     expect(resolved.publicKey).toEqual(new Uint8Array(32).fill(7))
   })

@@ -73,7 +73,7 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
       name: 'batch array membership is captured before suspension',
       async run() {
         const signing = [{ privateKey: hexToBytes(SEED), message: new Uint8Array() }]
-        const signed = provider.signBatch('EdDSA', signing)
+        const signed = provider.signBatch({ alg: 'EdDSA', items: signing })
         signing.length = 0
         const signatures = await signed
         assert(signatures.length === 1, 'signing batch membership changed')
@@ -90,7 +90,7 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
         const results = await verified
         assert(results.length === 1 && results[0] === true, 'verification batch membership changed')
         const inputs = [new Uint8Array()]
-        const hashed = provider.blake3Batch(inputs, 16)
+        const hashed = provider.blake3Batch({ inputs, dkLen: 16 })
         inputs.pop()
         const hashes = await hashed
         assert(hashes.length === 1, 'hashing batch membership changed')
@@ -141,7 +141,11 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
       async run() {
         const seed = new Uint8Array(40)
         seed.set(hexToBytes(SEED), 4)
-        const signed = provider.sign('EdDSA', seed.subarray(4, 36), new Uint8Array())
+        const signed = provider.sign({
+          alg: 'EdDSA',
+          privateKey: seed.subarray(4, 36),
+          message: new Uint8Array(),
+        })
         seed.fill(0)
         equal(await signed, hexToBytes(SIGNATURE))
         const signature = new Uint8Array(72)
@@ -151,7 +155,7 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
         const verified = provider.verify({
           alg: 'ES256',
           signature: signature.subarray(4, 68),
-          message: message,
+          message,
           publicKey: key,
         })
         signature.fill(0)
@@ -159,7 +163,7 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
         key.fill(0)
         assert(await verified, 'verification read caller mutations')
         const input = new Uint8Array([0, 97, 98, 99, 0])
-        const hashed = provider.blake3(input.subarray(1, 4), 32)
+        const hashed = provider.blake3({ input: input.subarray(1, 4), dkLen: 32 })
         input.fill(0)
         equal(await hashed, hexToBytes(find(corpus.blake3, 'abc, 32 bytes').outputPrefix))
       },
@@ -168,10 +172,13 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
       name: 'signing batches snapshot inputs and own each output',
       async run() {
         const seed = hexToBytes(SEED)
-        const operation = provider.signBatch('EdDSA', [
-          { privateKey: seed, message: new Uint8Array() },
-          { privateKey: seed, message: new Uint8Array() },
-        ])
+        const operation = provider.signBatch({
+          alg: 'EdDSA',
+          items: [
+            { privateKey: seed, message: new Uint8Array() },
+            { privateKey: seed, message: new Uint8Array() },
+          ],
+        })
         seed.fill(0)
         const result = await operation
         assert(result.length === 2, 'missing signatures')
@@ -184,23 +191,32 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
       name: 'invalid signing batches reject',
       async run() {
         await rejects(
-          provider.signBatch('EdDSA', [
-            { privateKey: hexToBytes(SEED), message: new Uint8Array() },
-            { privateKey: new Uint8Array(31), message: new Uint8Array() },
-          ]),
+          provider.signBatch({
+            alg: 'EdDSA',
+            items: [
+              { privateKey: hexToBytes(SEED), message: new Uint8Array() },
+              { privateKey: new Uint8Array(31), message: new Uint8Array() },
+            ],
+          }),
           TypeError,
         )
-        await rejects(provider.signBatch('ES256' as 'EdDSA', []), TypeError)
+        await rejects(provider.signBatch({ alg: 'ES256' as 'EdDSA', items: [] }), TypeError)
       },
     },
     {
       name: 'empty batches preserve argument validation',
       async run() {
-        assert((await provider.signBatch('EdDSA', [])).length === 0, 'empty signing batch')
+        assert(
+          (await provider.signBatch({ alg: 'EdDSA', items: [] })).length === 0,
+          'empty signing batch',
+        )
         assert((await provider.verifyBatch([])).length === 0, 'empty verification batch')
-        assert((await provider.blake3Batch([], 32)).length === 0, 'empty hashing batch')
+        assert(
+          (await provider.blake3Batch({ inputs: [], dkLen: 32 })).length === 0,
+          'empty hashing batch',
+        )
         for (const length of [0, -1, 1.5, 65537, Number.NaN]) {
-          await rejects(provider.blake3Batch([], length), RangeError)
+          await rejects(provider.blake3Batch({ inputs: [], dkLen: length }), RangeError)
         }
       },
     },
@@ -209,11 +225,11 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
     cases.push({
       name: `sign: ${entry.name}`,
       async run() {
-        const signature = await provider.sign(
-          'EdDSA',
-          hexToBytes(entry.seed),
-          hexToBytes(entry.message),
-        )
+        const signature = await provider.sign({
+          alg: 'EdDSA',
+          privateKey: hexToBytes(entry.seed),
+          message: hexToBytes(entry.message),
+        })
         equal(signature, hexToBytes(entry.signature))
       },
     })
@@ -222,7 +238,14 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
     cases.push({
       name: `sign rejects: ${entry.name}`,
       async run() {
-        await rejects(provider.sign('EdDSA', hexToBytes(entry.seed), new Uint8Array()), TypeError)
+        await rejects(
+          provider.sign({
+            alg: 'EdDSA',
+            privateKey: hexToBytes(entry.seed),
+            message: new Uint8Array(),
+          }),
+          TypeError,
+        )
       },
     })
   }
@@ -256,11 +279,11 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
       name: `blake3: ${entry.name}`,
       async run() {
         const input = hexToBytes(entry.input)
-        const result = await provider.blake3(input, entry.length)
+        const result = await provider.blake3({ input, dkLen: entry.length })
         assert(result.length === entry.length, 'incorrect hash length')
         const prefix = hexToBytes(entry.outputPrefix)
         equal(result.subarray(0, prefix.length), prefix)
-        const batch = await provider.blake3Batch([input, input], entry.length)
+        const batch = await provider.blake3Batch({ inputs: [input, input], dkLen: entry.length })
         assert(batch.length === 2, 'missing hashes')
         equal(batch[0] as Uint8Array, result)
         batch[0]?.fill(0)
@@ -272,7 +295,7 @@ export function cryptoConformance(provider: CryptoProvider): Array<CryptoConform
     cases.push({
       name: `blake3 rejects output length ${length}`,
       async run() {
-        await rejects(provider.blake3(new Uint8Array(), length), RangeError)
+        await rejects(provider.blake3({ input: new Uint8Array(), dkLen: length }), RangeError)
       },
     })
   }

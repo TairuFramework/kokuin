@@ -27,19 +27,13 @@ export class HDKeyStore
   #crypto: CryptoProvider
   #entries: Record<string, HDKeyEntry> = Object.create(null)
 
-  static fromMnemonic(
-    mnemonic: string,
-    options?: { basePath?: string; crypto?: CryptoProvider },
-  ): HDKeyStore {
+  static fromMnemonic({ mnemonic, basePath, crypto }: HDKeyStoreFromMnemonicParams): HDKeyStore {
     const seed = mnemonicToSeedSync(mnemonic)
-    return new HDKeyStore({ seed, basePath: options?.basePath, crypto: options?.crypto })
+    return new HDKeyStore({ seed, basePath, crypto })
   }
 
-  static fromSeed(
-    seed: Uint8Array,
-    options?: { basePath?: string; crypto?: CryptoProvider },
-  ): HDKeyStore {
-    return new HDKeyStore({ seed, basePath: options?.basePath, crypto: options?.crypto })
+  static fromSeed({ seed, basePath, crypto }: HDKeyStoreFromSeedParams): HDKeyStore {
+    return new HDKeyStore({ seed, basePath, crypto })
   }
 
   constructor(params: HDKeyStoreParams) {
@@ -52,7 +46,7 @@ export class HDKeyStore
     this.#entries[keyID] ??= new HDKeyEntry({
       seed: this.#seed,
       keyID,
-      path: resolveDerivationPath(keyID, this.#basePath),
+      path: resolveDerivationPath({ keyID, basePath: this.#basePath }),
     })
     return this.#entries[keyID]
   }
@@ -65,11 +59,21 @@ export class HDKeyStore
       async (span) => {
         const entry = this.entry(keyID)
         const privateKey = await entry.provideAsync()
-        const identity = createFullIdentity(privateKey, { crypto: this.#crypto })
+        const identity = createFullIdentity({ privateKey, crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         logger.info('HD identity derived: {did}', { did: identity.id })
         return identity
       },
     )
   }
+}
+
+export type HDKeyStoreFromMnemonicParams = { mnemonic: string } & {
+  basePath?: string
+  crypto?: CryptoProvider
+}
+
+export type HDKeyStoreFromSeedParams = { seed: Uint8Array } & {
+  basePath?: string
+  crypto?: CryptoProvider
 }

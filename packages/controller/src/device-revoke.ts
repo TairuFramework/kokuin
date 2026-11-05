@@ -9,14 +9,12 @@ export type DeviceRevokeIndicesParams = {
   did: string
   chain: Array<SignedEvent>
   subject: string
-  options?: CryptoOptions
-}
+} & CryptoOptions
 export type DeviceRevokeIndexParams = {
   did: string
   chain: Array<SignedEvent>
   subject: string
-  options?: CryptoOptions
-}
+} & CryptoOptions
 
 async function foldDeviceChain(
   did: string,
@@ -24,7 +22,7 @@ async function foldDeviceChain(
   options: CryptoOptions = {},
 ): Promise<FoldResult> {
   const chain = snapshotLog({ chain: input, events: [] }).chain
-  const folded = await foldLog(did, { chain, events: [] }, options)
+  const folded = await foldLog({ ...options, did, input: { chain, events: [] } })
   if (!folded.ok) return folded
   // Only an inception at index zero advances state. Later non-critical inceptions are skipped.
   const index = chain.findIndex(({ event }, index) => event.t !== (index === 0 ? 'icp' : 'rot'))
@@ -46,7 +44,7 @@ export async function deviceRevokeIndices({
   did,
   chain: suppliedChain,
   subject,
-  options = {},
+  ...options
 }: DeviceRevokeIndicesParams): Promise<Array<number>> {
   const chain = snapshotLog({ chain: suppliedChain, events: [] }).chain
   const folded = await foldDeviceChain(did, chain, options)
@@ -74,11 +72,9 @@ export async function deviceRevokeIndex({
   did,
   chain,
   subject,
-  options = {},
+  ...options
 }: DeviceRevokeIndexParams): Promise<number | undefined> {
-  return (
-    await deviceRevokeIndices({ did: did, chain: chain, subject: subject, options: options })
-  )[0]
+  return (await deviceRevokeIndices({ ...options, did, chain, subject }))[0]
 }
 
 export type CreateDeviceRevokeParams = CryptoOptions & {
@@ -112,6 +108,6 @@ export async function createDeviceRevoke({
     profile,
     did,
     prior: prior.event,
-    snapshot: { ...snapshotOf(head), deny: [...head.deny, subject] },
+    snapshot: { ...snapshotOf({ state: head }), deny: [...head.deny, subject] },
   })
 }

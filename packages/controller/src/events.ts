@@ -11,15 +11,13 @@ export type VerifySignaturesParams = {
   event: EventCommon | EpochEventCommon
   sigs: Array<string>
   keys: Array<string>
-  options?: CryptoOptions
-}
+} & CryptoOptions
 export type CreateResetParams = {
   seed: Uint8Array
   profile: number
   gen: number
   snapshot?: StateSnapshot
-  options?: CryptoOptions
-}
+} & CryptoOptions
 
 export const DID_PREFIX = 'did:kokuin:'
 
@@ -105,7 +103,7 @@ export async function signEvent(
       message: bytes,
     }
   })
-  return (await (options.crypto ?? nobleCrypto).signBatch('EdDSA', items)).map((sig) => {
+  return (await (options.crypto ?? nobleCrypto).signBatch({ alg: 'EdDSA', items })).map((sig) => {
     return base64urlnopad.encode(sig)
   })
 }
@@ -160,7 +158,7 @@ export async function verifySignatures({
   event,
   sigs,
   keys,
-  options = {},
+  ...options
 }: VerifySignaturesParams): Promise<boolean> {
   if (!Array.isArray(sigs) || !Array.isArray(keys)) {
     return false
@@ -168,7 +166,7 @@ export async function verifySignatures({
   if (sigs.length !== keys.length || sigs.length === 0) {
     return false
   }
-  if (!isCanonicalizable(event)) {
+  if (!isCanonicalizable({ value: event })) {
     return false
   }
   const bytes = canonicalBytes(event)
@@ -207,13 +205,19 @@ export async function verifySignatures({
  * so the DID is a pure function of the seed and profile index. Never add a label: a mistyped one on
  * recovery would reproduce a different DID.
  */
-export async function createInception(
-  seed: Uint8Array,
-  profile: number,
-  options: CryptoOptions = {},
-): Promise<SignedEvent<InceptionEvent>> {
+export type CreateInceptionParams = { seed: Uint8Array; profile: number } & CryptoOptions
+
+export async function createInception({
+  profile,
+  seed,
+  ...options
+}: CreateInceptionParams): Promise<SignedEvent<InceptionEvent>> {
   const event = inceptionEvent(seed, profile)
-  const current = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
+  const current = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen: 0, seq: 0 }),
+    alg: 'EdDSA',
+  })
   return { event, sigs: await signEvent(event, [current.privateKey], options) }
 }
 
@@ -223,10 +227,22 @@ export async function createInception(
  * find out is the one expensive step.
  */
 function inceptionEvent(seed: Uint8Array, profile: number): InceptionEvent {
-  const current = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
-  const next = deriveKeyPair(seed, authorityPath(profile, 0, 1), 'EdDSA')
-  const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
-  const agreement = deriveKeyPair(seed, agreementPath(profile, 0, 0), 'X25519')
+  const current = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen: 0, seq: 0 }),
+    alg: 'EdDSA',
+  })
+  const next = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen: 0, seq: 1 }),
+    alg: 'EdDSA',
+  })
+  const recovery = deriveKeyPair({ seed, path: recoveryPath(profile), alg: 'EdDSA' })
+  const agreement = deriveKeyPair({
+    seed,
+    path: agreementPath({ profile, gen: 0, seq: 0 }),
+    alg: 'X25519',
+  })
 
   return {
     v: 1,
@@ -234,12 +250,12 @@ function inceptionEvent(seed: Uint8Array, profile: number): InceptionEvent {
     g: 0,
     s: 0,
     crit: true,
-    k: [encodeKey(current.publicKey, 'EdDSA')],
-    ka: [encodeKey(agreement.publicKey, 'X25519')],
-    n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
+    k: [encodeKey({ publicKey: current.publicKey, alg: 'EdDSA' })],
+    ka: [encodeKey({ publicKey: agreement.publicKey, alg: 'X25519' })],
+    n: [digestOf(encodeKey({ publicKey: next.publicKey, alg: 'EdDSA' }))],
     kt: 1,
     nt: 1,
-    r: digestOf(encodeKey(recovery.publicKey, 'EdDSA')),
+    r: digestOf(encodeKey({ publicKey: recovery.publicKey, alg: 'EdDSA' })),
   }
 }
 
@@ -248,15 +264,22 @@ export function didFromInception(event: InceptionEvent): DIDString {
 }
 
 /** The did:kokuin: identifier a seed and profile produce, without signing an inception. */
-export function didFor(seed: Uint8Array, profile: number): DIDString {
+export type DidForParams = { seed: Uint8Array; profile: number }
+
+export function didFor({ profile, seed }: DidForParams): DIDString {
   return didFromInception(inceptionEvent(seed, profile))
 }
 
-export async function verifyInception(
-  signed: SignedEvent<InceptionEvent>,
-  did: string,
-  options: CryptoOptions = {},
-): Promise<boolean> {
+export type VerifyInceptionParams = {
+  signed: SignedEvent<InceptionEvent>
+  did: string
+} & CryptoOptions
+
+export async function verifyInception({
+  did,
+  signed,
+  ...options
+}: VerifyInceptionParams): Promise<boolean> {
   if (signed.event.t !== 'icp' || signed.event.i !== undefined) {
     return false
   }
@@ -284,10 +307,10 @@ export async function verifyInception(
     return false
   }
   return await verifySignatures({
+    ...options,
     event: signed.event,
     sigs: signed.sigs,
     keys: signed.event.k,
-    options: options,
   })
 }
 
@@ -424,14 +447,26 @@ export async function createRotate({
   }
   // The agreement key lands at the same index as the authority key, so `KeyState.keyGen`/`keySeq`
   // names both for a recipient re-deriving from the seed.
-  const current = deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA')
-  const next = deriveKeyPair(seed, authorityPath(profile, gen, seq + 1), 'EdDSA')
-  const agreement = deriveKeyPair(seed, agreementPath(profile, gen, seq), 'X25519')
+  const current = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen, seq }),
+    alg: 'EdDSA',
+  })
+  const next = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen, seq: seq + 1 }),
+    alg: 'EdDSA',
+  })
+  const agreement = deriveKeyPair({
+    seed,
+    path: agreementPath({ profile, gen, seq }),
+    alg: 'X25519',
+  })
 
   if (root && committed != null) {
     // Exactly what `verifyRotate` checks, checked here where the caller can still act. Arity first:
     // this generator emits a single key, so a prior committing any other number has no rotate here.
-    const revealed = encodeKey(current.publicKey, 'EdDSA')
+    const revealed = encodeKey({ publicKey: current.publicKey, alg: 'EdDSA' })
     if (committed.length !== 1 || digestOf(revealed) !== committed[0]) {
       throw new Error(
         `createRotate: the key at (gen ${gen}, seq ${seq}) is not the one the prior event ` +
@@ -448,9 +483,9 @@ export async function createRotate({
     s: seq,
     p: digestOf(prior),
     crit: true,
-    k: [encodeKey(current.publicKey, 'EdDSA')],
-    ka: [encodeKey(agreement.publicKey, 'X25519')],
-    n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
+    k: [encodeKey({ publicKey: current.publicKey, alg: 'EdDSA' })],
+    ka: [encodeKey({ publicKey: agreement.publicKey, alg: 'X25519' })],
+    n: [digestOf(encodeKey({ publicKey: next.publicKey, alg: 'EdDSA' }))],
     kt: 1,
     nt: 1,
     a: seal,
@@ -494,11 +529,16 @@ function isPublishedRotate(event: RotateEvent): boolean {
  * A rotate is valid when it chains to the prior digest, its revealed keys match the prior event's
  * pre-rotation commitment, and its signatures verify against those keys.
  */
-export async function verifyRotate(
-  signed: SignedEvent<RotateEvent>,
-  prior: { digest: string; n: Array<string> },
-  options: CryptoOptions = {},
-): Promise<boolean> {
+export type VerifyRotateParams = {
+  signed: SignedEvent<RotateEvent>
+  prior: { digest: string; n: Array<string> }
+} & CryptoOptions
+
+export async function verifyRotate({
+  prior,
+  signed,
+  ...options
+}: VerifyRotateParams): Promise<boolean> {
   const { event, sigs } = signed
   if (event.t !== 'rot' || event.p !== prior.digest) {
     return false
@@ -517,7 +557,7 @@ export async function verifyRotate(
   if (!verifyAgreementKeys(event.ka)) {
     return false
   }
-  return await verifySignatures({ event: event, sigs: sigs, keys: event.k, options: options })
+  return await verifySignatures({ ...options, event, sigs, keys: event.k })
 }
 
 /**
@@ -550,7 +590,7 @@ export async function createReset({
   profile,
   gen,
   snapshot,
-  options = {},
+  ...options
 }: CreateResetParams): Promise<SignedEvent<RotateEvent>> {
   if (gen < 1) {
     throw new Error(`Reset: gen must be >= 1, got ${gen}`)
@@ -558,10 +598,22 @@ export async function createReset({
 
   const inception = inceptionEvent(seed, profile)
   const did = didFromInception(inception)
-  const current = deriveKeyPair(seed, authorityPath(profile, gen, 0), 'EdDSA')
-  const next = deriveKeyPair(seed, authorityPath(profile, gen, 1), 'EdDSA')
-  const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
-  const agreement = deriveKeyPair(seed, agreementPath(profile, gen, 0), 'X25519')
+  const current = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen, seq: 0 }),
+    alg: 'EdDSA',
+  })
+  const next = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen, seq: 1 }),
+    alg: 'EdDSA',
+  })
+  const recovery = deriveKeyPair({ seed, path: recoveryPath(profile), alg: 'EdDSA' })
+  const agreement = deriveKeyPair({
+    seed,
+    path: agreementPath({ profile, gen, seq: 0 }),
+    alg: 'X25519',
+  })
 
   const event: RotateEvent = {
     v: 1,
@@ -571,9 +623,9 @@ export async function createReset({
     s: 0,
     p: digestOf(inception),
     crit: true,
-    k: [encodeKey(current.publicKey, 'EdDSA')],
-    ka: [encodeKey(agreement.publicKey, 'X25519')],
-    n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
+    k: [encodeKey({ publicKey: current.publicKey, alg: 'EdDSA' })],
+    ka: [encodeKey({ publicKey: agreement.publicKey, alg: 'X25519' })],
+    n: [digestOf(encodeKey({ publicKey: next.publicKey, alg: 'EdDSA' }))],
     kt: 1,
     nt: 1,
   }
@@ -591,7 +643,7 @@ export async function createReset({
   return {
     event,
     sigs: await signEvent(event, [recovery.privateKey], options),
-    recoveryKey: encodeKey(recovery.publicKey, 'EdDSA'),
+    recoveryKey: encodeKey({ publicKey: recovery.publicKey, alg: 'EdDSA' }),
   }
 }
 
@@ -604,11 +656,16 @@ export async function createReset({
  * `recoveryPath(profile)` carries no index for the same reason — one recovery key per profile, for
  * its lifetime. See {@link RotateEvent} for what was removed.
  */
-export async function verifyReset(
-  signed: SignedEvent<RotateEvent>,
-  inception: InceptionEvent,
-  options: CryptoOptions = {},
-): Promise<boolean> {
+export type VerifyResetParams = {
+  signed: SignedEvent<RotateEvent>
+  inception: InceptionEvent
+} & CryptoOptions
+
+export async function verifyReset({
+  inception,
+  signed,
+  ...options
+}: VerifyResetParams): Promise<boolean> {
   const { event, sigs } = signed
   if (event.t !== 'rot' || event.p !== digestOf(inception) || event.s !== 0 || event.g < 1) {
     return false
@@ -648,7 +705,7 @@ export async function verifyReset(
   if (revealed == null || digestOf(revealed) !== inception.r) {
     return false
   }
-  return await verifySignatures({ event: event, sigs: sigs, keys: [revealed], options: options })
+  return await verifySignatures({ ...options, event, sigs, keys: [revealed] })
 }
 
 /**

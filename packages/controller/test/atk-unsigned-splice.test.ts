@@ -14,7 +14,7 @@ const seed = new Uint8Array(32).fill(1)
 const deviceX = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
 async function build() {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
   // The honest history: rotate once, then rotate again denying deviceX.
   const rot = await createRotate({
@@ -57,7 +57,7 @@ function forged(did: string, priorDigest: string, over: Record<string, unknown> 
 }
 
 async function digestOfPrefix(did: string, events: Array<SignedEvent>): Promise<string> {
-  const r = await foldLog(did, { chain: events, events: [] })
+  const r = await foldLog({ did, input: { chain: events, events: [] } })
   if (!r.ok) throw new Error(`prefix does not fold: ${r.reason}`)
   const head = r.states[r.states.length - 1]
   if (head === undefined) throw new Error('prefix has no states')
@@ -77,16 +77,16 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
     // the public log), truncate everything after it, and append one forged event.
     const attackBranch = [icp, forged(did, await digestOfPrefix(did, [icp]))]
 
-    const attackFolds = await foldLog(did, { chain: attackBranch, events: [] })
+    const attackFolds = await foldLog({ did, input: { chain: attackBranch, events: [] } })
 
-    const result = await resolveBranches(did, [honest, attackBranch])
+    const result = await resolveBranches({ did, chains: [honest, attackBranch] })
 
     // The fabricated position is now a `sequence gap`: a skipped event may only sit at the next
     // sequence position, so the branch does not fold at all and never reaches comparison.
     expect(attackFolds.ok).toBe(false)
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect((await foldLog(did, { chain: result.winner, events: [] })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: result.winner, events: [] } })).ok).toBe(true)
     expect(result.winner).toBe(honest)
     expect(result.superseded).toBe(0)
   })
@@ -94,9 +94,9 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
   test('ROW 2 (control: criticality is the lever): the same event with crit:true loses', async () => {
     const { icp, did, honest } = await build()
     const critBranch = [icp, forged(did, await digestOfPrefix(did, [icp]), { crit: true })]
-    const folds = await foldLog(did, { chain: critBranch, events: [] })
+    const folds = await foldLog({ did, input: { chain: critBranch, events: [] } })
 
-    const result = await resolveBranches(did, [honest, critBranch])
+    const result = await resolveBranches({ did, chains: [honest, critBranch] })
     expect(folds.ok).toBe(false)
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -107,9 +107,9 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
     const { icp, did, honest } = await build()
     // Byte-for-byte the same forged, unsigned, non-critical event — only `g`/`s` are truthful.
     const tameBranch = [icp, forged(did, await digestOfPrefix(did, [icp]), { g: 0, s: 1 })]
-    const folds = await foldLog(did, { chain: tameBranch, events: [] })
+    const folds = await foldLog({ did, input: { chain: tameBranch, events: [] } })
 
-    const result = await resolveBranches(did, [honest, tameBranch])
+    const result = await resolveBranches({ did, chains: [honest, tameBranch] })
     expect(folds.ok).toBe(true)
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -118,15 +118,24 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
 
   test('ROW 4 (control: chaining IS enforced): a wrong `p` is rejected', async () => {
     const { icp, did } = await build()
-    const bad = await foldLog(did, { chain: [icp, forged(did, 'zNotTheDigest')], events: [] })
+    const bad = await foldLog({
+      did,
+      input: { chain: [icp, forged(did, 'zNotTheDigest')], events: [] },
+    })
     expect(bad.ok).toBe(false)
   })
 
   test('ROW 5 (control: `i` IS enforced): a wrong controller is rejected', async () => {
     const { icp, did } = await build()
-    const bad = await foldLog(did, {
-      chain: [icp, forged(did, await digestOfPrefix(did, [icp]), { i: 'did:kokuin:zSomeoneElse' })],
-      events: [],
+    const bad = await foldLog({
+      did,
+      input: {
+        chain: [
+          icp,
+          forged(did, await digestOfPrefix(did, [icp]), { i: 'did:kokuin:zSomeoneElse' }),
+        ],
+        events: [],
+      },
     })
     expect(bad.ok).toBe(false)
   })
@@ -142,7 +151,7 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
       ...forged(did, await digestOfPrefix(did, [icp]), { g: 0, s: 1 }),
       sigs: ['AAAA', 'not-base64url-at-all', ''],
     } as unknown as SignedEvent
-    const r = await foldLog(did, { chain: [icp, junkSigs], events: [] })
+    const r = await foldLog({ did, input: { chain: [icp, junkSigs], events: [] } })
     expect(r.ok).toBe(true)
 
     // At the fabricated position the same blob is rejected — the position check, not a signature.
@@ -150,7 +159,10 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
       ...forged(did, await digestOfPrefix(did, [icp])),
       sigs: ['AAAA', 'not-base64url-at-all', ''],
     } as unknown as SignedEvent
-    const spoofed = await foldLog(did, { chain: [icp, atFabricatedPosition], events: [] })
+    const spoofed = await foldLog({
+      did,
+      input: { chain: [icp, atFabricatedPosition], events: [] },
+    })
     expect(spoofed.ok).toBe(false)
   })
 
@@ -164,8 +176,8 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
       rot,
       denying,
     ]
-    const a = await foldLog(did, { chain: honest, events: [] })
-    const b = await foldLog(did, { chain: spliced, events: [] })
+    const a = await foldLog({ did, input: { chain: honest, events: [] } })
+    const b = await foldLog({ did, input: { chain: spliced, events: [] } })
     if (a.ok && b.ok) {
     }
     expect(b.ok).toBe(true)
@@ -177,9 +189,9 @@ describe('ATTACK (closed): an unsigned, unknown, non-critical event carries an u
     // and `resolveBranches` orders by `(gen, seq)` — so no branch the root can ever author outranks
     // this one.
     const attackBranch = [icp, forged(did, await digestOfPrefix(did, [icp]))]
-    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
+    const reset = await createReset({ seed, profile: 0, gen: 1 })
     const recovered = [icp, reset]
-    const result = await resolveBranches(did, [recovered, attackBranch, honest])
+    const result = await resolveBranches({ did, chains: [recovered, attackBranch, honest] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.winner).toBe(recovered)

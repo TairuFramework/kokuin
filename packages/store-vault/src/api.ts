@@ -111,11 +111,13 @@ function wrappingRow(row: Selectable<VaultWrappingTable>): WrappingRow {
   }
 }
 
-export function createVaultStore(
-  db: Kysely<VaultStoreTables>,
-  adapter: Adapter,
-  context: StoreContext,
-): VaultStoreAPI {
+export type CreateVaultStoreParams = {
+  db: Kysely<VaultStoreTables>
+  adapter: Adapter
+  context: StoreContext
+}
+
+export function createVaultStore({ context, adapter, db }: CreateVaultStoreParams): VaultStoreAPI {
   const read = <Result>(
     fn: (trx: Kysely<VaultStoreTables>) => Promise<Result>,
   ): Promise<Result> => {
@@ -168,7 +170,7 @@ export function createVaultStore(
     if (rows.flat().some((row) => row.mode === 'replicated')) throw new VaultModeConflict()
 
     if (context.provider.hasStore('vault-records')) {
-      await getVaultRecordsStore(context.provider)
+      await getVaultRecordsStore({ provider: context.provider })
       await claimModes(
         trx as Kysely<VaultRecordsTables>,
         keys.map((key) => ({ type, owner: key.owner, id: key.id })),
@@ -255,7 +257,7 @@ export function createVaultStore(
   }
   const updateEntry = async (row: EntryRow, expectedHLC?: string): Promise<UpdateEntryResult> => {
     return locked([row], async (trx) => {
-      await localMode({ trx: trx, type: 'vault.entry', owner: row.ownerDID, id: row.entryID })
+      await localMode({ trx, type: 'vault.entry', owner: row.ownerDID, id: row.entryID })
 
       let update = trx
         .updateTable('vault_entries')
@@ -305,7 +307,7 @@ export function createVaultStore(
     async putKey(input) {
       const row = snapshotData(input)
       await locked([row], async (trx) => {
-        await localMode({ trx: trx, type: 'vault.key', owner: row.ownerDID, id: row.keyID })
+        await localMode({ trx, type: 'vault.key', owner: row.ownerDID, id: row.keyID })
 
         const values = {
           owner_did: row.ownerDID,
@@ -366,7 +368,7 @@ export function createVaultStore(
     async setKeyState(input) {
       const row = snapshotData(input)
       await locked([row], async (trx) => {
-        await localMode({ trx: trx, type: 'vault.key', owner: row.ownerDID, id: row.keyID })
+        await localMode({ trx, type: 'vault.key', owner: row.ownerDID, id: row.keyID })
         await trx
           .updateTable('vault_keys')
           .set({ state: row.state })
@@ -378,7 +380,7 @@ export function createVaultStore(
     async setKeyVersion(input) {
       const row = snapshotData(input)
       await locked([row], async (trx) => {
-        await localMode({ trx: trx, type: 'vault.key', owner: row.ownerDID, id: row.keyID })
+        await localMode({ trx, type: 'vault.key', owner: row.ownerDID, id: row.keyID })
         await trx
           .updateTable('vault_keys')
           .set({ version: row.version })
@@ -391,7 +393,7 @@ export function createVaultStore(
     async deleteKey(input) {
       const address = snapshotData(input)
       await locked([address], async (trx) => {
-        await localMode({ trx: trx, type: 'vault.key', owner: address.ownerDID, id: address.keyID })
+        await localMode({ trx, type: 'vault.key', owner: address.ownerDID, id: address.keyID })
         await trx
           .deleteFrom('vault_keys')
           .where('owner_did', '=', address.ownerDID)
@@ -596,7 +598,7 @@ export function createVaultStore(
       if (source == null) return
 
       await locked([source, row], async (trx) => {
-        await localMode({ trx: trx, type: 'vault.entry', owner: row.ownerDID, id: row.entryID })
+        await localMode({ trx, type: 'vault.entry', owner: row.ownerDID, id: row.entryID })
         // UPDATE-only plus the source predicate prevents resurrection and stale reassociation.
         await trx
           .updateTable('vault_entries')

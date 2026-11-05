@@ -42,10 +42,12 @@ export function encodeDerivationPath(path: string): Uint8Array {
   return buf
 }
 
-export function encodeSignMessageChunks(
-  pathBytes: Uint8Array,
-  message: Uint8Array,
-): Array<APDUChunk> {
+export type EncodeSignMessageChunksParams = { pathBytes: Uint8Array; message: Uint8Array }
+
+export function encodeSignMessageChunks({
+  message,
+  pathBytes,
+}: EncodeSignMessageChunksParams): Array<APDUChunk> {
   const chunks: Array<APDUChunk> = []
 
   // First chunk: derivation path + as much message as fits

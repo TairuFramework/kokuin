@@ -153,17 +153,20 @@ export type ConformanceEpochEventParams = {
  */
 export type ControllerImplementation = {
   name: string
-  createInception: (seed: Uint8Array, profile: number) => Promise<ConformanceSigned>
+  createInception: (
+    params: ControllerImplementationCreateInceptionParams,
+  ) => Promise<ConformanceSigned>
   createRotate: (params: CreateRotateParams) => Promise<ConformanceSigned>
   /** A blind reset without `snapshot`; with one, the reset carries the whole state. */
   createReset: (params: CreateResetParams) => Promise<ConformanceSigned>
   didFromInception: (event: ConformanceEvent) => string
-  foldLog: (did: string, log: ConformanceLog) => Promise<ConformanceFoldResult>
+  foldLog: (params: ControllerImplementationFoldLogParams) => Promise<ConformanceFoldResult>
   resolveBranches: (
-    did: string,
-    branches: Array<Array<ConformanceSigned>>,
+    params: ControllerImplementationResolveBranchesParams,
   ) => Promise<ConformanceResolveResult>
-  enumerateProfiles: (seed: Uint8Array, count: number) => Array<ConformanceProfileEntry>
+  enumerateProfiles: (
+    params: ControllerImplementationEnumerateProfilesParams,
+  ) => Array<ConformanceProfileEntry>
   /** Self-addressing digest of a canonicalized value. Several assertions need to compute one. */
   digestOf: (value: unknown) => string
   /**
@@ -171,7 +174,7 @@ export type ControllerImplementation = {
    * build a reset whose signature is genuinely valid but signed by a key the inception never
    * committed to — the only way to isolate the recovery digest check from signature verification.
    */
-  recoveryPrivateKey: (seed: Uint8Array, profile: number) => Uint8Array
+  recoveryPrivateKey: (params: ControllerImplementationRecoveryPrivateKeyParams) => Uint8Array
   /**
    * Test-support only, not the wire protocol: the authority signing private key at a position. Lets
    * the agreement-key group build an inception that genuinely verifies and matches its DID but
@@ -188,7 +191,7 @@ export type ControllerImplementation = {
    */
   memberPeerDID: (key: string) => string
   /** Test-support only: sign an event with arbitrary private keys. Used only for the forgeries above. */
-  signEvent: (event: ConformanceEvent, privateKeys: Array<Uint8Array>) => Promise<Array<string>>
+  signEvent: (params: ControllerImplementationSignEventParams) => Promise<Array<string>>
 }
 
 /**
@@ -227,10 +230,12 @@ function at<TValue>(items: ReadonlyArray<TValue>, index: number): TValue {
  * has state-machine properties a per-case `run(): Promise<void>` list cannot express as cleanly —
  * drives `describe`/`test`/`expect` directly instead of returning a case array.
  */
-export function runControllerConformance(
-  suite: ConformanceSuite,
-  impl: ControllerImplementation,
-): void {
+export type RunControllerConformanceParams = {
+  suite: ConformanceSuite
+  impl: ControllerImplementation
+}
+
+export function runControllerConformance({ impl, suite }: RunControllerConformanceParams): void {
   const { describe, test, expect } = suite
 
   const seedA = new Uint8Array(32).fill(1)
@@ -255,11 +260,11 @@ export function runControllerConformance(
     snapshot = { members: [], deny: [] },
   }: RotateParams): Promise<ConformanceSigned> {
     return await impl.createRotate({
-      seed: seed,
+      seed,
       profile: 0,
-      did: did,
-      prior: prior,
-      snapshot: snapshot,
+      did,
+      prior,
+      snapshot,
     })
   }
 
@@ -269,7 +274,7 @@ export function runControllerConformance(
     prior: ConformanceEvent,
     deny: Array<string>,
   ): Promise<ConformanceSigned> {
-    return await rotate({ seed: seedA, did: did, prior: prior, snapshot: { members: [], deny } })
+    return await rotate({ seed: seedA, did, prior, snapshot: { members: [], deny } })
   }
 
   describe(`${impl.name} controller conformance`, () => {
@@ -279,24 +284,38 @@ export function runControllerConformance(
     // output — closing the gap a constant-returning stub would otherwise slip through.
     describe('determinism', () => {
       test('same seed and profile index reproduce byte-identical inception', async () => {
-        expect(await impl.createInception(seedA, 0)).toEqual(await impl.createInception(seedA, 0))
+        expect(await impl.createInception({ seed: seedA, profile: 0 })).toEqual(
+          await impl.createInception({ seed: seedA, profile: 0 }),
+        )
       })
 
       test('same seed and profile index reproduce the same DID', async () => {
-        const first = impl.didFromInception((await impl.createInception(seedA, 0)).event)
-        const second = impl.didFromInception((await impl.createInception(seedA, 0)).event)
+        const first = impl.didFromInception(
+          (await impl.createInception({ seed: seedA, profile: 0 })).event,
+        )
+        const second = impl.didFromInception(
+          (await impl.createInception({ seed: seedA, profile: 0 })).event,
+        )
         expect(first).toBe(second)
       })
 
       test('a different seed produces a different DID', async () => {
-        const didA = impl.didFromInception((await impl.createInception(seedA, 0)).event)
-        const didB = impl.didFromInception((await impl.createInception(seedB, 0)).event)
+        const didA = impl.didFromInception(
+          (await impl.createInception({ seed: seedA, profile: 0 })).event,
+        )
+        const didB = impl.didFromInception(
+          (await impl.createInception({ seed: seedB, profile: 0 })).event,
+        )
         expect(didA).not.toBe(didB)
       })
 
       test('a different profile index produces a different DID for the same seed', async () => {
-        const did0 = impl.didFromInception((await impl.createInception(seedA, 0)).event)
-        const did1 = impl.didFromInception((await impl.createInception(seedA, 1)).event)
+        const did0 = impl.didFromInception(
+          (await impl.createInception({ seed: seedA, profile: 0 })).event,
+        )
+        const did1 = impl.didFromInception(
+          (await impl.createInception({ seed: seedA, profile: 1 })).event,
+        )
         expect(did0).not.toBe(did1)
       })
     })
@@ -307,13 +326,13 @@ export function runControllerConformance(
     // it, and the determinism group above already rules out a stub that ignores its input.
     describe('no ambient state', () => {
       test('an inception carries exactly the protocol fields', async () => {
-        const { event } = await impl.createInception(seedA, 0)
+        const { event } = await impl.createInception({ seed: seedA, profile: 0 })
         const keys = Object.keys(event).sort()
         expect(keys).toEqual(['crit', 'g', 'k', 'ka', 'kt', 'n', 'nt', 'r', 's', 't', 'v'])
       })
 
       test('the DID is absent from the inception body — it is the hash of the event', async () => {
-        expect((await impl.createInception(seedA, 0)).event.i).toBeUndefined()
+        expect((await impl.createInception({ seed: seedA, profile: 0 })).event.i).toBeUndefined()
       })
     })
 
@@ -322,20 +341,20 @@ export function runControllerConformance(
     // alongside an always-accept one.
     describe('pre-rotation', () => {
       test('a rotate signed by the pre-committed next keys folds successfully', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
-        const rot = await rotate({ seed: seedA, did: did, prior: icp.event })
-        const result = await impl.foldLog(did, { chain: [icp, rot], events: [] })
+        const rot = await rotate({ seed: seedA, did, prior: icp.event })
+        const result = await impl.foldLog({ did, input: { chain: [icp, rot], events: [] } })
         expect(result.ok).toBe(true)
       })
 
       test('a rotate not signed by the pre-committed keys is rejected', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         // seedC derives an unrelated key pair — the revealed keys will not match the digests the
         // inception pre-committed to.
-        const forged = await rotate({ seed: seedC, did: did, prior: icp.event })
-        const result = await impl.foldLog(did, { chain: [icp, forged], events: [] })
+        const forged = await rotate({ seed: seedC, did, prior: icp.event })
+        const result = await impl.foldLog({ did, input: { chain: [icp, forged], events: [] } })
         expect(result.ok).toBe(false)
       })
     })
@@ -352,28 +371,31 @@ export function runControllerConformance(
     // why `recoveryPrivateKey`/`signEvent` exist on the contract as test-support members.
     describe('root override', () => {
       test('a reset signed by the committed recovery key folds successfully', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         const reset = await impl.createReset({ seed: seedA, profile: 0, gen: 1 })
-        const result = await impl.foldLog(did, { chain: [icp, reset], events: [] })
+        const result = await impl.foldLog({ did, input: { chain: [icp, reset], events: [] } })
         expect(result.ok).toBe(true)
       })
 
       test('a reset with a genuinely valid signature from an uncommitted recovery key is rejected', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         // Correctly shaped and chained for the victim — everything but the signer.
         const legitimate = await impl.createReset({ seed: seedA, profile: 0, gen: 1 })
         // The thief's own reset reveals a genuinely valid recovery public key, just not the one
         // committed in the victim's inception.
         const thiefReset = await impl.createReset({ seed: seedC, profile: 0, gen: 1 })
-        const thiefRecoveryPrivateKey = impl.recoveryPrivateKey(seedC, 0)
+        const thiefRecoveryPrivateKey = impl.recoveryPrivateKey({ seed: seedC, profile: 0 })
         const forged: ConformanceSigned = {
           event: legitimate.event,
-          sigs: await impl.signEvent(legitimate.event, [thiefRecoveryPrivateKey]),
+          sigs: await impl.signEvent({
+            event: legitimate.event,
+            privateKeys: [thiefRecoveryPrivateKey],
+          }),
           recoveryKey: thiefReset.recoveryKey,
         }
-        const result = await impl.foldLog(did, { chain: [icp, forged], events: [] })
+        const result = await impl.foldLog({ did, input: { chain: [icp, forged], events: [] } })
         expect(result.ok).toBe(false)
       })
     })
@@ -383,11 +405,14 @@ export function runControllerConformance(
     // fold that (incorrectly) applied the deny set retroactively.
     describe('position-dependence', () => {
       test('a device denied at sequence N is not denied at N-1', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
-        const rot = await rotate({ seed: seedA, did: did, prior: icp.event })
+        const rot = await rotate({ seed: seedA, did, prior: icp.event })
         const denied = await denying(did, rot.event, [deviceA])
-        const result = await impl.foldLog(did, { chain: [icp, rot, denied], events: [] })
+        const result = await impl.foldLog({
+          did,
+          input: { chain: [icp, rot, denied], events: [] },
+        })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -403,17 +428,20 @@ export function runControllerConformance(
     // signature genuinely verifies and only the snapshot rule can reject it.
     describe('state snapshots', () => {
       test('the state after a rotate is its snapshot', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         const member = memberOf(deviceB, impl.digestOf('the add that admitted it'))
         const first = await rotate({
           seed: seedA,
-          did: did,
+          did,
           prior: icp.event,
           snapshot: { members: [member], deny: [deviceA] },
         })
-        const second = await rotate({ seed: seedA, did: did, prior: first.event })
-        const result = await impl.foldLog(did, { chain: [icp, first, second], events: [] })
+        const second = await rotate({ seed: seedA, did, prior: first.event })
+        const result = await impl.foldLog({
+          did,
+          input: { chain: [icp, first, second], events: [] },
+        })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -433,33 +461,40 @@ export function runControllerConformance(
       })
 
       test('a rotate carrying no snapshot does not fold', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
-        const valid = await rotate({ seed: seedA, did: did, prior: icp.event })
+        const valid = await rotate({ seed: seedA, did, prior: icp.event })
         const { m: _m, d: _d, ...bare } = valid.event
         const revealed = impl.authorityPrivateKey({ seed: seedA, profile: 0, gen: 0, seq: 1 })
         const resign = async (event: ConformanceEvent): Promise<ConformanceSigned> => {
           return {
             event,
-            sigs: await impl.signEvent(event, [revealed]),
+            sigs: await impl.signEvent({ event, privateKeys: [revealed] }),
           }
         }
         expect(
-          (await impl.foldLog(did, { chain: [icp, await resign({ ...valid.event })], events: [] }))
-            .ok,
+          (
+            await impl.foldLog({
+              did,
+              input: { chain: [icp, await resign({ ...valid.event })], events: [] },
+            })
+          ).ok,
         ).toBe(true)
         expect(
           (
-            await impl.foldLog(did, {
-              chain: [icp, await resign(bare as ConformanceEvent)],
-              events: [],
+            await impl.foldLog({
+              did,
+              input: {
+                chain: [icp, await resign(bare as ConformanceEvent)],
+                events: [],
+              },
             })
           ).ok,
         ).toBe(false)
       })
 
       test('a snapshot member may not pin a root key', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         // The inception's own key, as a `did:key` member: everything else about it is valid.
         const rootKey = at(icp.event.k as Array<string>, 0)
@@ -467,18 +502,22 @@ export function runControllerConformance(
         const other = memberOf(deviceB, impl.digestOf('root as a member'))
         const refused = await rotate({
           seed: seedA,
-          did: did,
+          did,
           prior: icp.event,
           snapshot: { members: [root], deny: [] },
         })
-        expect((await impl.foldLog(did, { chain: [icp, refused], events: [] })).ok).toBe(false)
+        expect((await impl.foldLog({ did, input: { chain: [icp, refused], events: [] } })).ok).toBe(
+          false,
+        )
         const control = await rotate({
           seed: seedA,
-          did: did,
+          did,
           prior: icp.event,
           snapshot: { members: [other], deny: [] },
         })
-        expect((await impl.foldLog(did, { chain: [icp, control], events: [] })).ok).toBe(true)
+        expect((await impl.foldLog({ did, input: { chain: [icp, control], events: [] } })).ok).toBe(
+          true,
+        )
       })
     })
 
@@ -493,13 +532,16 @@ export function runControllerConformance(
     // checkpointed retirement) no later rotate in the generation may drop it.
     describe('key denial', () => {
       test('a `#<key>` entry lands in the deny set under that spelling', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
-        const rot = await rotate({ seed: seedA, did: did, prior: icp.event })
+        const rot = await rotate({ seed: seedA, did, prior: icp.event })
         // The inception's key, which the rotate has since retired.
         const retired = `#${at(icp.event.k as Array<string>, 0)}`
         const denied = await denying(did, rot.event, [retired])
-        const result = await impl.foldLog(did, { chain: [icp, rot, denied], events: [] })
+        const result = await impl.foldLog({
+          did,
+          input: { chain: [icp, rot, denied], events: [] },
+        })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -509,47 +551,59 @@ export function runControllerConformance(
       })
 
       test('a rotate cannot establish a key its own snapshot denies', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         // The key this rotate reveals, read off an identical rotate with an empty snapshot.
-        const own = `#${at((await rotate({ seed: seedA, did: did, prior: icp.event })).event.k as Array<string>, 0)}`
+        const own = `#${at((await rotate({ seed: seedA, did, prior: icp.event })).event.k as Array<string>, 0)}`
         expect(
           (
-            await impl.foldLog(did, {
-              chain: [icp, await denying(did, icp.event, [own])],
-              events: [],
+            await impl.foldLog({
+              did,
+              input: {
+                chain: [icp, await denying(did, icp.event, [own])],
+                events: [],
+              },
             })
           ).ok,
         ).toBe(false)
         const retired = `#${at(icp.event.k as Array<string>, 0)}`
         expect(
           (
-            await impl.foldLog(did, {
-              chain: [icp, await denying(did, icp.event, [retired])],
-              events: [],
+            await impl.foldLog({
+              did,
+              input: {
+                chain: [icp, await denying(did, icp.event, [retired])],
+                events: [],
+              },
             })
           ).ok,
         ).toBe(true)
       })
 
       test('a later rotate may not drop a checkpointed retired key', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         const retired = `#${at(icp.event.k as Array<string>, 0)}`
         const first = await denying(did, icp.event, [retired])
         expect(
           (
-            await impl.foldLog(did, {
-              chain: [icp, first, await denying(did, first.event, [])],
-              events: [],
+            await impl.foldLog({
+              did,
+              input: {
+                chain: [icp, first, await denying(did, first.event, [])],
+                events: [],
+              },
             })
           ).ok,
         ).toBe(false)
         expect(
           (
-            await impl.foldLog(did, {
-              chain: [icp, first, await denying(did, first.event, [retired])],
-              events: [],
+            await impl.foldLog({
+              did,
+              input: {
+                chain: [icp, first, await denying(did, first.event, [retired])],
+                events: [],
+              },
             })
           ).ok,
         ).toBe(true)
@@ -557,9 +611,12 @@ export function runControllerConformance(
         const holder = await denying(did, icp.event, [deviceA])
         expect(
           (
-            await impl.foldLog(did, {
-              chain: [icp, holder, await denying(did, holder.event, [])],
-              events: [],
+            await impl.foldLog({
+              did,
+              input: {
+                chain: [icp, holder, await denying(did, holder.event, [])],
+                events: [],
+              },
             })
           ).ok,
         ).toBe(true)
@@ -570,12 +627,15 @@ export function runControllerConformance(
     // `(seed, profile, gen)`, and a reset carrying a snapshot folds to it.
     describe('reset', () => {
       test('clears the deny set and increments the generation', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
-        const rot = await rotate({ seed: seedA, did: did, prior: icp.event })
+        const rot = await rotate({ seed: seedA, did, prior: icp.event })
         const denied = await denying(did, rot.event, [deviceA])
         const reset = await impl.createReset({ seed: seedA, profile: 0, gen: 1 })
-        const result = await impl.foldLog(did, { chain: [icp, rot, denied, reset], events: [] })
+        const result = await impl.foldLog({
+          did,
+          input: { chain: [icp, rot, denied, reset], events: [] },
+        })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -596,7 +656,7 @@ export function runControllerConformance(
       })
 
       test('a reset with a snapshot folds to that snapshot', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         const member = memberOf(deviceB, impl.digestOf('carried across the reset'))
         const reset = await impl.createReset({
@@ -605,7 +665,7 @@ export function runControllerConformance(
           gen: 1,
           snapshot: { members: [member], deny: [deviceA] },
         })
-        const result = await impl.foldLog(did, { chain: [icp, reset], events: [] })
+        const result = await impl.foldLog({ did, input: { chain: [icp, reset], events: [] } })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -622,10 +682,10 @@ export function runControllerConformance(
     // so any two valid branches diverge on two rotates, neither superseding the other.
     describe('precedence', () => {
       test('a higher sequence at the same generation wins', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
-        const rot = await rotate({ seed: seedA, did: did, prior: icp.event })
-        const result = await impl.resolveBranches(did, [[icp], [icp, rot]])
+        const rot = await rotate({ seed: seedA, did, prior: icp.event })
+        const result = await impl.resolveBranches({ did, chains: [[icp], [icp, rot]] })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -634,7 +694,7 @@ export function runControllerConformance(
       })
 
       test('a longer branch does not outrank a rotate it contradicts', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         const first = await denying(did, icp.event, [deviceA])
         const longer = [icp, first, await denying(did, first.event, [deviceB])]
@@ -643,7 +703,7 @@ export function runControllerConformance(
           [longer, shorter],
           [shorter, longer],
         ]) {
-          const result = await impl.resolveBranches(did, order)
+          const result = await impl.resolveBranches({ did, chains: order })
           expect(result.ok).toBe(false)
           if (result.ok) {
             continue
@@ -653,18 +713,21 @@ export function runControllerConformance(
       })
 
       test('a three-way fork reports the same duplicity regardless of presentation order', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         const branchA = [icp, await denying(did, icp.event, [deviceA])]
         const branchB = [icp, await denying(did, icp.event, [deviceB])]
         const branchC = [icp, await denying(did, icp.event, [deviceC])]
-        const first = await impl.resolveBranches(did, [branchA, branchB, branchC])
+        const first = await impl.resolveBranches({
+          did,
+          chains: [branchA, branchB, branchC],
+        })
         expect(first.ok).toBe(false)
         for (const order of [
           [branchA, branchC, branchB],
           [branchC, branchA, branchB],
         ]) {
-          expect(await impl.resolveBranches(did, order)).toEqual(first)
+          expect(await impl.resolveBranches({ did, chains: order })).toEqual(first)
         }
       })
 
@@ -672,7 +735,7 @@ export function runControllerConformance(
       // generation-0 chain, or straight after the inception in a pruned copy carried further. What
       // precedes the top generation's reset cannot change the winner once both contain it.
       test('a reset re-parented onto a different prefix is one history, not a fork', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         for (const reset of [
           await impl.createReset({ seed: seedA, profile: 0, gen: 1 }),
@@ -683,13 +746,13 @@ export function runControllerConformance(
             snapshot: { members: [], deny: [deviceA] },
           }),
         ]) {
-          const appended = [icp, await rotate({ seed: seedA, did: did, prior: icp.event }), reset]
-          const carried = [icp, reset, await rotate({ seed: seedA, did: did, prior: reset.event })]
+          const appended = [icp, await rotate({ seed: seedA, did, prior: icp.event }), reset]
+          const carried = [icp, reset, await rotate({ seed: seedA, did, prior: reset.event })]
           for (const order of [
             [appended, carried],
             [carried, appended],
           ]) {
-            const result = await impl.resolveBranches(did, order)
+            const result = await impl.resolveBranches({ did, chains: order })
             expect(result.ok).toBe(true)
             if (!result.ok) {
               continue
@@ -698,7 +761,7 @@ export function runControllerConformance(
           }
           // CONTROL — a rival rotate after the shared reset is still a fork.
           const rival = [...appended, await denying(did, reset.event, [deviceB])]
-          const forked = await impl.resolveBranches(did, [rival, carried])
+          const forked = await impl.resolveBranches({ did, chains: [rival, carried] })
           expect(forked.ok).toBe(false)
           if (!forked.ok) {
             expect([forked.duplicity.gen, forked.duplicity.seq]).toEqual([1, 1])
@@ -713,9 +776,9 @@ export function runControllerConformance(
       // current-key event signed on the chain the rotate closes. A thief holding the current key can
       // sign such events without limit; none survives the owner's rotate, which does not carry them.
       test('a current-key root event has no effect once a cold rotate closes its epoch', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
-        const atInception = await impl.foldLog(did, { chain: [icp], events: [] })
+        const atInception = await impl.foldLog({ did, input: { chain: [icp], events: [] } })
         if (!atInception.ok) {
           throw new Error('inception does not fold')
         }
@@ -727,21 +790,24 @@ export function runControllerConformance(
           body: { t: 'rev', target: deviceA },
         })
         // CONTROL — on the chain it was signed against, the current-key event applies.
-        const before = await impl.foldLog(did, { chain: [icp], events: [hot] })
+        const before = await impl.foldLog({ did, input: { chain: [icp], events: [hot] } })
         expect(before.ok && before.head.deny.has(deviceA)).toBe(true)
 
-        const rot = await rotate({ seed: seedA, did: did, prior: icp.event })
+        const rot = await rotate({ seed: seedA, did, prior: icp.event })
         for (const order of [
           [[icp], [icp, rot]],
           [[icp, rot], [icp]],
         ]) {
-          const resolved = await impl.resolveBranches(did, order)
+          const resolved = await impl.resolveBranches({ did, chains: order })
           expect(resolved.ok).toBe(true)
           if (!resolved.ok) {
             continue
           }
           expect(resolved.winner).toEqual([icp, rot])
-          const after = await impl.foldLog(did, { chain: resolved.winner, events: [hot] })
+          const after = await impl.foldLog({
+            did,
+            input: { chain: resolved.winner, events: [hot] },
+          })
           expect(after.ok).toBe(true)
           if (!after.ok) {
             continue
@@ -755,14 +821,17 @@ export function runControllerConformance(
     // 8. Idempotence — identical re-derived branches are not duplicity.
     describe('idempotence', () => {
       test('identical re-derived branches are not duplicity', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
-        const a = await rotate({ seed: seedA, did: did, prior: icp.event })
-        const b = await rotate({ seed: seedA, did: did, prior: icp.event })
-        const result = await impl.resolveBranches(did, [
-          [icp, a],
-          [icp, b],
-        ])
+        const a = await rotate({ seed: seedA, did, prior: icp.event })
+        const b = await rotate({ seed: seedA, did, prior: icp.event })
+        const result = await impl.resolveBranches({
+          did,
+          chains: [
+            [icp, a],
+            [icp, b],
+          ],
+        })
         expect(result.ok).toBe(true)
       })
     })
@@ -771,12 +840,15 @@ export function runControllerConformance(
     // merged.
     describe('duplicity', () => {
       test('two distinct rotates at one position are surfaced', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
-        const result = await impl.resolveBranches(did, [
-          [icp, await denying(did, icp.event, [deviceA])],
-          [icp, await denying(did, icp.event, [deviceB])],
-        ])
+        const result = await impl.resolveBranches({
+          did,
+          chains: [
+            [icp, await denying(did, icp.event, [deviceA])],
+            [icp, await denying(did, icp.event, [deviceB])],
+          ],
+        })
         expect(result.ok).toBe(false)
         if (result.ok) {
           return
@@ -789,7 +861,7 @@ export function runControllerConformance(
       // snapshot reset, then a blind retry) are root's own fork — a relay can reveal both but forge
       // neither. Nothing at that generation settles it; a reset at a higher one does.
       test('two differing resets at one generation are duplicity, resolved by a higher one', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         const withSnapshot = [
           icp,
@@ -806,7 +878,7 @@ export function runControllerConformance(
           [withSnapshot, blind],
           [blind, withSnapshot],
         ]) {
-          const result = await impl.resolveBranches(did, order)
+          const result = await impl.resolveBranches({ did, chains: order })
           expect(result.ok).toBe(false)
           if (result.ok) {
             continue
@@ -820,7 +892,7 @@ export function runControllerConformance(
           [higher, blind, withSnapshot],
           [blind, higher, withSnapshot],
         ]) {
-          const result = await impl.resolveBranches(did, order)
+          const result = await impl.resolveBranches({ did, chains: order })
           expect(result.ok).toBe(true)
           if (!result.ok) {
             continue
@@ -842,24 +914,24 @@ export function runControllerConformance(
     // is a position comparison.
     describe('criticality', () => {
       test('an unknown critical event fails the fold closed', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         const unknown: ConformanceSigned = {
           event: { v: 1, t: 'xyz', i: did, g: 0, s: 1, p: impl.digestOf(icp.event), crit: true },
           sigs: [],
         }
-        const result = await impl.foldLog(did, { chain: [icp, unknown], events: [] })
+        const result = await impl.foldLog({ did, input: { chain: [icp, unknown], events: [] } })
         expect(result.ok).toBe(false)
       })
 
       test('an unknown non-critical event is skipped and the fold continues', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         const unknown: ConformanceSigned = {
           event: { v: 1, t: 'xyz', i: did, g: 0, s: 1, p: impl.digestOf(icp.event), crit: false },
           sigs: [],
         }
-        const result = await impl.foldLog(did, { chain: [icp, unknown], events: [] })
+        const result = await impl.foldLog({ did, input: { chain: [icp, unknown], events: [] } })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -873,7 +945,7 @@ export function runControllerConformance(
       test('a chain revoke is an unknown critical event', async () => {
         // Revokes live in epochs, never on the root chain: one there, from an older log, fails the
         // fold closed rather than being read as anything.
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         const revoke: ConformanceSigned = {
           event: {
@@ -888,22 +960,24 @@ export function runControllerConformance(
           },
           sigs: [],
         }
-        expect((await impl.foldLog(did, { chain: [icp, revoke], events: [] })).ok).toBe(false)
+        expect((await impl.foldLog({ did, input: { chain: [icp, revoke], events: [] } })).ok).toBe(
+          false,
+        )
       })
 
       test('an unknown event with no criticality flag fails closed', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         const unknown = {
           event: { v: 1, t: 'xyz', i: did, g: 0, s: 1, p: impl.digestOf(icp.event) },
           sigs: [],
         } as unknown as ConformanceSigned
-        const result = await impl.foldLog(did, { chain: [icp, unknown], events: [] })
+        const result = await impl.foldLog({ did, input: { chain: [icp, unknown], events: [] } })
         expect(result.ok).toBe(false)
       })
 
       test('a skipped event claiming a position it does not hold is rejected', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
         // The inception sits at (0, 0), so the only position this event may claim is (0, 1).
         for (const position of [
@@ -924,7 +998,9 @@ export function runControllerConformance(
             },
             sigs: [],
           }
-          expect((await impl.foldLog(did, { chain: [icp, unknown], events: [] })).ok).toBe(false)
+          expect(
+            (await impl.foldLog({ did, input: { chain: [icp, unknown], events: [] } })).ok,
+          ).toBe(false)
         }
       })
     })
@@ -932,23 +1008,27 @@ export function runControllerConformance(
     // 11. Enumeration — profiles are a pure function of the seed and handles are stable.
     describe('enumeration', () => {
       test('profiles are a pure function of the seed', () => {
-        expect(impl.enumerateProfiles(seedA, 3)).toEqual(impl.enumerateProfiles(seedA, 3))
+        expect(impl.enumerateProfiles({ seed: seedA, count: 3 })).toEqual(
+          impl.enumerateProfiles({ seed: seedA, count: 3 }),
+        )
       })
 
       test('DIDs match the inception-derived identifiers', async () => {
-        const first = at(impl.enumerateProfiles(seedA, 1), 0)
-        expect(first.did).toBe(impl.didFromInception((await impl.createInception(seedA, 0)).event))
+        const first = at(impl.enumerateProfiles({ seed: seedA, count: 1 }), 0)
+        expect(first.did).toBe(
+          impl.didFromInception((await impl.createInception({ seed: seedA, profile: 0 })).event),
+        )
       })
 
       test('different seeds produce different profiles', () => {
-        const fromA = at(impl.enumerateProfiles(seedA, 1), 0)
-        const fromB = at(impl.enumerateProfiles(seedB, 1), 0)
+        const fromA = at(impl.enumerateProfiles({ seed: seedA, count: 1 }), 0)
+        const fromB = at(impl.enumerateProfiles({ seed: seedB, count: 1 }), 0)
         expect(fromA.did).not.toBe(fromB.did)
       })
 
       test('handles are stable for the same DID', () => {
-        const first = at(impl.enumerateProfiles(seedA, 1), 0)
-        const again = at(impl.enumerateProfiles(seedA, 1), 0)
+        const first = at(impl.enumerateProfiles({ seed: seedA, count: 1 }), 0)
+        const again = at(impl.enumerateProfiles({ seed: seedA, count: 1 }), 0)
         expect(first.handle).toBe(again.handle)
       })
     })
@@ -972,9 +1052,9 @@ export function runControllerConformance(
     // left that can reject it.
     describe('agreement keys', () => {
       test('a folded inception exposes a non-empty agreement set', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
-        const result = await impl.foldLog(did, { chain: [icp], events: [] })
+        const result = await impl.foldLog({ did, input: { chain: [icp], events: [] } })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -984,10 +1064,10 @@ export function runControllerConformance(
       })
 
       test('a rotate replaces the agreement set', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const did = impl.didFromInception(icp.event)
-        const rot = await rotate({ seed: seedA, did: did, prior: icp.event })
-        const result = await impl.foldLog(did, { chain: [icp, rot], events: [] })
+        const rot = await rotate({ seed: seedA, did, prior: icp.event })
+        const result = await impl.foldLog({ did, input: { chain: [icp, rot], events: [] } })
         expect(result.ok).toBe(true)
         if (!result.ok) {
           return
@@ -997,7 +1077,7 @@ export function runControllerConformance(
       })
 
       test('an inception with a genuinely valid signature but an empty agreement set is rejected', async () => {
-        const icp = await impl.createInception(seedA, 0)
+        const icp = await impl.createInception({ seed: seedA, profile: 0 })
         const forgedEvent: ConformanceEvent = { ...icp.event, ka: [] }
         const did = impl.didFromInception(forgedEvent)
         const authorityPrivateKey = impl.authorityPrivateKey({
@@ -1008,9 +1088,9 @@ export function runControllerConformance(
         })
         const forged: ConformanceSigned = {
           event: forgedEvent,
-          sigs: await impl.signEvent(forgedEvent, [authorityPrivateKey]),
+          sigs: await impl.signEvent({ event: forgedEvent, privateKeys: [authorityPrivateKey] }),
         }
-        const result = await impl.foldLog(did, { chain: [forged], events: [] })
+        const result = await impl.foldLog({ did, input: { chain: [forged], events: [] } })
         expect(result.ok).toBe(false)
       })
     })
@@ -1019,7 +1099,7 @@ export function runControllerConformance(
     // be a function of the set alone. Each case below breaks a different way an implementation could
     // let presentation leak in: its order, a stale epoch, a parent it cannot see.
     describe('epoch merge', async () => {
-      const icp = await impl.createInception(seedA, 0)
+      const icp = await impl.createInception({ seed: seedA, profile: 0 })
       const did = impl.didFromInception(icp.event)
       const keyA = impl.memberKeyPair()
       const keyB = impl.memberKeyPair()
@@ -1043,7 +1123,7 @@ export function runControllerConformance(
       }
       const rot = await rotate({
         seed: seedA,
-        did: did,
+        did,
         prior: icp.event,
         snapshot: {
           members: [toEntry(entryA), toEntry(entryB)],
@@ -1051,7 +1131,7 @@ export function runControllerConformance(
         },
       })
       const chain = [icp, rot]
-      const settled = await impl.foldLog(did, { chain, events: [] })
+      const settled = await impl.foldLog({ did, input: { chain, events: [] } })
       if (!settled.ok) {
         throw new Error(`fixture chain does not fold: ${settled.reason}`)
       }
@@ -1095,7 +1175,7 @@ export function runControllerConformance(
       })
 
       async function summary(events: Array<ConformanceEpochSigned>, presented = chain) {
-        const result = await impl.foldLog(did, { chain: presented, events })
+        const result = await impl.foldLog({ did, input: { chain: presented, events } })
         if (!result.ok) {
           return { ok: false, deny: [], members: [], applied: [], pending: 0, rejected: 0 }
         }
@@ -1137,7 +1217,7 @@ export function runControllerConformance(
       })
 
       test('an event naming an older epoch has no effect', async () => {
-        const atInception = await impl.foldLog(did, { chain: [icp], events: [] })
+        const atInception = await impl.foldLog({ did, input: { chain: [icp], events: [] } })
         if (!atInception.ok) {
           throw new Error('inception does not fold')
         }
@@ -1192,7 +1272,7 @@ export function runControllerConformance(
     // hostile context, and a denial racing the add it denies. Rejections are read off the counts and
     // the head; which rule refused an event is the implementation's business.
     describe('management members', async () => {
-      const icp = await impl.createInception(seedA, 0)
+      const icp = await impl.createInception({ seed: seedA, profile: 0 })
       const did = impl.didFromInception(icp.event)
       const keys = [impl.memberKeyPair(), impl.memberKeyPair(), impl.memberKeyPair()]
       const entries = keys.map(({ did: memberDID, key }, i) => {
@@ -1207,12 +1287,12 @@ export function runControllerConformance(
         icp,
         await rotate({
           seed: seedA,
-          did: did,
+          did,
           prior: icp.event,
           snapshot: { members: entries, deny: [] },
         }),
       ]
-      const settled = await impl.foldLog(did, { chain, events: [] })
+      const settled = await impl.foldLog({ did, input: { chain, events: [] } })
       if (!settled.ok) {
         throw new Error(`fixture chain does not fold: ${settled.reason}`)
       }
@@ -1237,7 +1317,7 @@ export function runControllerConformance(
       const digest = (signed: ConformanceEpochSigned) => impl.digestOf(signed.event)
 
       async function folded(events: Array<ConformanceEpochSigned>) {
-        const result = await impl.foldLog(did, { chain, events })
+        const result = await impl.foldLog({ did, input: { chain, events } })
         if (!result.ok) {
           throw new Error(`log does not fold: ${result.reason}`)
         }
@@ -1326,9 +1406,10 @@ export function runControllerConformance(
         const claimed = { ...rootAdd.event, by: one.add }
         const memberAdd = {
           event: claimed,
-          sigs: await impl.signEvent(claimed as unknown as ConformanceEvent, [
-            at(keys, 0).privateKey,
-          ]),
+          sigs: await impl.signEvent({
+            event: claimed as unknown as ConformanceEvent,
+            privateKeys: [at(keys, 0).privateKey],
+          }),
         }
         const refused = await folded([memberAdd])
         expect(refused.rejected).toBe(1)
@@ -1450,7 +1531,10 @@ export function runControllerConformance(
         const recopied = { event: { ...honest.event }, sigs: [...honest.sigs] }
         const resigned = {
           event: honest.event,
-          sigs: await impl.signEvent(honest.event as ConformanceEvent, [at(keys, 1).privateKey]),
+          sigs: await impl.signEvent({
+            event: honest.event as ConformanceEvent,
+            privateKeys: [at(keys, 1).privateKey],
+          }),
         }
         for (const order of permutations([honest, hostile, recopied, resigned])) {
           expect(await summary(order)).toEqual(expected)
@@ -1483,4 +1567,22 @@ export function runControllerConformance(
       })
     })
   })
+}
+
+export type ControllerImplementationCreateInceptionParams = { seed: Uint8Array; profile: number }
+
+export type ControllerImplementationFoldLogParams = { did: string; input: ConformanceLog }
+
+export type ControllerImplementationResolveBranchesParams = {
+  did: string
+  chains: Array<Array<ConformanceSigned>>
+}
+
+export type ControllerImplementationEnumerateProfilesParams = { seed: Uint8Array; count: number }
+
+export type ControllerImplementationRecoveryPrivateKeyParams = { seed: Uint8Array; profile: number }
+
+export type ControllerImplementationSignEventParams = {
+  event: ConformanceEvent
+  privateKeys: Array<Uint8Array>
 }

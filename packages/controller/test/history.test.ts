@@ -51,11 +51,11 @@ async function detailOf(params: FoldEpochParams): Promise<FoldEpochDetail> {
 const seed = new Uint8Array(32).fill(3)
 const profile = 0
 const context = 'history test'
-const icp = await createInception(seed, profile)
+const icp = await createInception({ seed, profile })
 const did = didFromInception(icp.event)
 
 const memberPrivateKey = new Uint8Array(32).fill(21)
-const memberKey = encodeKey(ed25519.getPublicKey(memberPrivateKey), 'EdDSA')
+const memberKey = encodeKey({ publicKey: ed25519.getPublicKey(memberPrivateKey), alg: 'EdDSA' })
 const member: MemberEntry = {
   did: `did:key:${memberKey}`,
   key: memberKey,
@@ -74,7 +74,7 @@ async function settle(prior: EventCommon, deny: Array<string> = []): Promise<Sig
 }
 
 async function folded(log: ControllerLog): Promise<Extract<FoldResult, { ok: true }>> {
-  const result = await foldLog(did, log)
+  const result = await foldLog({ did, input: log })
   if (!result.ok) {
     throw new Error(`fixture does not fold: ${result.reason}`)
   }
@@ -133,11 +133,17 @@ function stored(log: ControllerLog): Array<string> {
 describe('authoritativeLog()', () => {
   test('a verifier never forgets an event it has seen', async () => {
     const store = createMemoryLogStore()
-    await store.merge(did, async (current) => {
-      return (await authoritativeLog({ did, loaded: withRevA, seen: current, context })).log
+    await store.merge({
+      did,
+      update: async (current) => {
+        return (await authoritativeLog({ did, loaded: withRevA, seen: current, context })).log
+      },
     })
-    await store.merge(did, async (current) => {
-      return (await authoritativeLog({ did, loaded: withRevB, seen: current, context })).log
+    await store.merge({
+      did,
+      update: async (current) => {
+        return (await authoritativeLog({ did, loaded: withRevB, seen: current, context })).log
+      },
     })
     const log = await store.get(did)
     if (log === undefined) {
@@ -301,10 +307,13 @@ describe('authoritativeLog()', () => {
   test('concurrent merges for one DID never lose an event', async () => {
     const store = createMemoryLogStore()
     const merge = (loaded: ControllerLog) => {
-      return store.merge(did, async (current) => {
-        // Yield inside the update, so an unserialised store would interleave the read and the write.
-        await Promise.resolve()
-        return (await authoritativeLog({ did, loaded, seen: current, context })).log
+      return store.merge({
+        did,
+        update: async (current) => {
+          // Yield inside the update, so an unserialised store would interleave the read and the write.
+          await Promise.resolve()
+          return (await authoritativeLog({ did, loaded, seen: current, context })).log
+        },
       })
     }
     await Promise.all([merge(withRevA), merge(withRevB)])
@@ -317,14 +326,17 @@ describe('authoritativeLog()', () => {
 
   test('a failed update leaves the stored log alone and does not wedge the next merge', async () => {
     const store = createMemoryLogStore()
-    await store.merge(did, async () => withRevA)
+    await store.merge({ did, update: async () => withRevA })
     await expect(
-      store.merge(did, async () => {
-        throw new Error('refused')
+      store.merge({
+        did,
+        update: async () => {
+          throw new Error('refused')
+        },
       }),
     ).rejects.toThrow('refused')
     expect(await store.get(did)).toEqual(withRevA)
-    await store.merge(did, async () => withRevB)
+    await store.merge({ did, update: async () => withRevB })
     expect(await store.get(did)).toEqual(withRevB)
   })
 
@@ -385,7 +397,7 @@ describe('authoritativeLog()', () => {
     // as small as pruning would make it.
     expect(flooded.log.events).toHaveLength(limits.MAX_EPOCH_EVENTS + 1)
     expect(log.events).toEqual([next])
-    expect(await pruneLog(did, log)).toEqual(log)
+    expect(await pruneLog({ did, input: log })).toEqual(log)
     expect(await deny(loaded)).toEqual(await deny(log))
 
     // Dropping the old epoch is not forgetting the current one: a presentation withholding `next`
@@ -414,7 +426,7 @@ describe('authoritativeLog()', () => {
             target: `did:key:${name}${round}`,
             parents: [on.epoch],
             signer: root,
-            on: on,
+            on,
           })
         }),
       )
@@ -440,17 +452,13 @@ describe('mergeLogs()', () => {
   test('a chain that extends the other wins, whichever side it is on', async () => {
     const longer = { chain: [icp, rot, await settle(rot.event)], events: [] }
     const shorter = { chain: [icp, rot], events: [] }
-    expect((await mergeLogs({ did: did, left: shorter, right: longer })).chain).toEqual(
-      longer.chain,
-    )
-    expect((await mergeLogs({ did: did, left: longer, right: shorter })).chain).toEqual(
-      longer.chain,
-    )
+    expect((await mergeLogs({ did, left: shorter, right: longer })).chain).toEqual(longer.chain)
+    expect((await mergeLogs({ did, left: longer, right: shorter })).chain).toEqual(longer.chain)
   })
 
   test('events are a union, deduplicated by digest', async () => {
     const merged = await mergeLogs({
-      did: did,
+      did,
       left: { chain, events: [revA, revB] },
       right: { chain, events: [revB, child] },
     })
@@ -461,7 +469,7 @@ describe('mergeLogs()', () => {
     const early = { chain, events: [child] }
     expect((await folded(early)).pending).toBe(1)
     const merged = await mergeLogs({
-      did: did,
+      did,
       left: early,
       right: { chain, events: [revA, revB] },
     })
@@ -471,24 +479,24 @@ describe('mergeLogs()', () => {
 
   test('a forged copy merged first does not shadow the genuine one', async () => {
     const forged = { event: revA.event, sigs: [revB.sigs[0] as string] }
-    const merged = await mergeLogs({ did: did, left: { chain, events: [forged] }, right: withRevA })
+    const merged = await mergeLogs({ did, left: { chain, events: [forged] }, right: withRevA })
     expect((await folded(merged)).head.deny.has('did:key:zA')).toBe(true)
   })
 
   test('a fork does not merge', async () => {
     const one = { chain: [icp, rot, await settle(rot.event, ['did:key:zOne'])], events: [] }
     const two = { chain: [icp, rot, await settle(rot.event, ['did:key:zTwo'])], events: [] }
-    await expect(async () => await mergeLogs({ did: did, left: one, right: two })).rejects.toThrow(
+    await expect(async () => await mergeLogs({ did, left: one, right: two })).rejects.toThrow(
       LOG_FORKED,
     )
   })
 
   test('a higher-generation reset wins over a longer lower generation', async () => {
-    const reset = await createReset({ seed: seed, profile: profile, gen: 1 })
+    const reset = await createReset({ seed, profile, gen: 1 })
     const lower = { chain: [icp, rot, await settle(rot.event)], events: [revA] }
     const higher = { chain: [icp, reset], events: [] }
-    expect((await mergeLogs({ did: did, left: lower, right: higher })).chain).toEqual(higher.chain)
-    expect((await mergeLogs({ did: did, left: higher, right: lower })).chain).toEqual(higher.chain)
+    expect((await mergeLogs({ did, left: lower, right: higher })).chain).toEqual(higher.chain)
+    expect((await mergeLogs({ did, left: higher, right: lower })).chain).toEqual(higher.chain)
   })
 })
 
@@ -500,7 +508,7 @@ describe('the copy the fold verifies', async () => {
   const secondKey = new Uint8Array(32).fill(31)
   const anchor = {
     ...head,
-    keys: [...head.keys, encodeKey(ed25519.getPublicKey(secondKey), 'EdDSA')],
+    keys: [...head.keys, encodeKey({ publicKey: ed25519.getPublicKey(secondKey), alg: 'EdDSA' })],
   }
   const once = await revoke({ target: 'did:key:zTwoKeys' })
   const genuine = {
@@ -532,7 +540,7 @@ describe('the copy the fold verifies', async () => {
 describe('a reset re-parented onto a different prefix', async () => {
   // The verifier appended the reset to the generation-0 chain it held; a pruned peer carries the same
   // reset straight after the inception and further. One history, whichever side holds which.
-  const reset = await createReset({ seed: seed, profile: profile, gen: 1 })
+  const reset = await createReset({ seed, profile, gen: 1 })
   const appended = { chain: [icp, rot, reset], events: [] }
   const carried = {
     chain: [
@@ -550,12 +558,8 @@ describe('a reset re-parented onto a different prefix', async () => {
   }
 
   test('mergeLogs keeps the history carried further, in either order', async () => {
-    expect((await mergeLogs({ did: did, left: appended, right: carried })).chain).toEqual(
-      carried.chain,
-    )
-    expect((await mergeLogs({ did: did, left: carried, right: appended })).chain).toEqual(
-      carried.chain,
-    )
+    expect((await mergeLogs({ did, left: appended, right: carried })).chain).toEqual(carried.chain)
+    expect((await mergeLogs({ did, left: carried, right: appended })).chain).toEqual(carried.chain)
   })
 
   test('authoritativeLog accepts it carried further and refuses it served behind', async () => {
@@ -573,8 +577,8 @@ describe('pruneLog()', () => {
     // Generation 0 with an epoch of its own, a reset, then a settled generation 1 with live events.
     const oldEvent = revA
     const reset = await createReset({
-      seed: seed,
-      profile: profile,
+      seed,
+      profile,
       gen: 1,
       snapshot: {
         members: [member],
@@ -617,7 +621,7 @@ describe('pruneLog()', () => {
       events: [oldEvent, stale, live, liveMember, unsignedRevoke(1)],
     }
 
-    const pruned = await pruneLog(did, full)
+    const pruned = await pruneLog({ did, input: full })
     expect(pruned.chain).toEqual([icp, reset, genOneRot])
     expect(stored(pruned)).toEqual([live, liveMember].map(digest).sort())
 
@@ -629,6 +633,6 @@ describe('pruneLog()', () => {
 
   test('generation 0 keeps its whole chain', async () => {
     const longer = [icp, rot, await settle(rot.event)]
-    expect((await pruneLog(did, { chain: longer, events: [] })).chain).toEqual(longer)
+    expect((await pruneLog({ did, input: { chain: longer, events: [] } })).chain).toEqual(longer)
   })
 })

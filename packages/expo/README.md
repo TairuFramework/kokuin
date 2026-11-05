@@ -22,3 +22,5 @@ See [provider adoption](../../docs/reference/crypto-provider.md) for selection, 
 `ExpoKeyStoreParams` names the existing optional constructor options. Its object shape and defaults are unchanged.
 
 These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.
+
+`ExpoKeyEntryParams` carries SecureStore entry fields at the top level.

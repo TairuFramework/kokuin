@@ -1,3 +1,4 @@
+import type { CryptoProviderBlake3Params } from '@kokuin/crypto'
 import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import { recordPayloadDigest } from '@kokuin/records'
 import { createFullIdentity } from '@kokuin/token'
@@ -31,9 +32,9 @@ function delayed() {
   const gate = new Promise<void>((resolve) => {
     release = resolve
   })
-  const blake3 = vi.fn(async (input: Uint8Array, length: number) => {
+  const blake3 = vi.fn(async ({ input, dkLen: length }: CryptoProviderBlake3Params) => {
     await gate
-    return nobleCrypto.blake3(input, length)
+    return nobleCrypto.blake3({ input, dkLen: length })
   })
   return { crypto: { ...nobleCrypto, blake3 }, release }
 }
@@ -42,42 +43,55 @@ test('all vault hashes and key references retain literal golden bytes through si
   const blake3 = vi.fn(nobleCrypto.blake3)
   const blake3Batch = vi.fn(nobleCrypto.blake3Batch)
   const options = { crypto: { ...nobleCrypto, blake3, blake3Batch } }
-  expect(await digestParts(['刻印', 'a:b', ''], options)).toBe(
+  expect(await digestParts({ parts: ['刻印', 'a:b', ''], ...options })).toBe(
     'yWcBbIRt_app6n7bWIo8Xv9zV90bCuQ0l8U5eZvCyRg',
   )
   expect(
-    await vaultKeyDigest(
-      { ownerDID: 'did:example:owner', suite: 1, version: 2, state: 'active' },
-      options,
-    ),
+    await vaultKeyDigest({
+      key: { ownerDID: 'did:example:owner', suite: 1, version: 2, state: 'active' },
+      ...options,
+    }),
   ).toBe('gqV1hD957QHJe3QMr3CxQr3nxPIh3cPrRdgPvu1aIRw')
   expect(
-    await vaultWrappingDigest(
-      {
+    await vaultWrappingDigest({
+      wrapping: {
         wrappingID: 'wrap',
         recipientDID: null,
         iv: 'iv',
         wrappedKey: 'key',
         factors: descriptors(),
       },
-      options,
-    ),
+      ...options,
+    }),
   ).toBe('WjxStCLpem46tNYAc7nEMu13Tc1KTVpnOfU9mT_TGXw')
   expect(
-    await vaultEntriesDigest([entry, { entryID: 'a', iv: '', ciphertext: '', hlc: 'x' }], options),
+    await vaultEntriesDigest({
+      entries: [entry, { entryID: 'a', iv: '', ciphertext: '', hlc: 'x' }],
+      ...options,
+    }),
   ).toBe('YRhXviKAqoARg43-a_t_lAyaCPYAJpjdFbLHwP8YyZw')
-  expect(await vaultEntryDigest(entry, options)).toBe('Sjp4M5xFUE2SrzytuadB0n1fQ1cJugC7GRnDStzaT_I')
-  expect(await descriptorDigest(descriptors(), options)).toBe(DESCRIPTOR)
+  expect(await vaultEntryDigest({ entry, ...options })).toBe(
+    'Sjp4M5xFUE2SrzytuadB0n1fQ1cJugC7GRnDStzaT_I',
+  )
+  expect(await descriptorDigest({ descriptors: descriptors(), ...options })).toBe(DESCRIPTOR)
   await checkDescriptorDigest({
     descriptors: descriptors(),
     expectedDescriptorDigest: DESCRIPTOR,
     ...options,
   })
-  expect(await createVaultKeyID('did:example:owner', new Uint8Array(16).fill(7), options)).toBe(
-    KEY_ID,
-  )
   expect(
-    await createVaultKeyReference('did:example:owner', new Uint8Array(16).fill(7), options),
+    await createVaultKeyID({
+      owner: 'did:example:owner',
+      unique: new Uint8Array(16).fill(7),
+      ...options,
+    }),
+  ).toBe(KEY_ID)
+  expect(
+    await createVaultKeyReference({
+      owner: 'did:example:owner',
+      unique: new Uint8Array(16).fill(7),
+      ...options,
+    }),
   ).toEqual({ keyID: KEY_ID, keyUnique: 'BwcHBwcHBwcHBwcHBwcHBw' })
   expect(blake3).toHaveBeenCalledTimes(9)
   expect(blake3Batch).not.toHaveBeenCalled()
@@ -88,8 +102,12 @@ test('key reference snapshots Buffer subviews and unique encoding before suspens
   const owner = Buffer.from('did:example:owner')
   const backing = Buffer.alloc(18, 7)
   const unique = backing.subarray(1, 17)
-  const id = createVaultKeyID(owner, unique, { crypto })
-  const reference = createVaultKeyReference('did:example:owner', unique, { crypto })
+  const id = createVaultKeyID({ owner, unique, crypto })
+  const reference = createVaultKeyReference({
+    owner: 'did:example:owner',
+    unique,
+    crypto,
+  })
   owner.fill(0)
   unique.fill(0)
   release()
@@ -110,10 +128,13 @@ test('descriptor validation captures both descriptors and expected digest before
 })
 
 async function keyFixture() {
-  const owner = createFullIdentity(new Uint8Array(32).fill(9)).id
+  const owner = createFullIdentity({ privateKey: new Uint8Array(32).fill(9) }).id
   const unique = new Uint8Array(16).fill(7)
-  const id = await createVaultKeyID(owner, unique)
-  const payload = encodeVaultRecordPayload('vault.key', { suite: 1, state: 'active' })
+  const id = await createVaultKeyID({ owner, unique })
+  const payload = encodeVaultRecordPayload({
+    type: 'vault.key',
+    payload: { suite: 1, state: 'active' },
+  })
   const meta = {
     keyID: id,
     keyUnique: toB64U(unique),
@@ -132,7 +153,7 @@ async function keyFixture() {
     ...record,
     deleted: false,
     meta,
-    payloadDigest: await recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest({ payload }),
   }
   return { record, claim, meta }
 }
@@ -140,7 +161,7 @@ async function keyFixture() {
 test('public metadata validation captures commitment and nested metadata before provider suspension', async () => {
   const fixture = await keyFixture()
   const { crypto, release } = delayed()
-  const result = vaultRecordMeta('vault.key', fixture.claim, { crypto })
+  const result = vaultRecordMeta({ type: 'vault.key', claim: fixture.claim, crypto })
   fixture.meta.consumer.name = 'changed'
   fixture.meta.keyUnique = toB64U(new Uint8Array(16))
   fixture.claim.id = KEY_ID
@@ -156,7 +177,11 @@ test('public metadata validation captures commitment and nested metadata before 
 test('decoding snapshots payload and metadata and forwards provider to both hashes', async () => {
   const fixture = await keyFixture()
   const { crypto, release } = delayed()
-  const result = decodeVaultRecord(fixture.record, fixture.meta, { crypto })
+  const result = decodeVaultRecord({
+    record: fixture.record,
+    recordMeta: fixture.meta,
+    crypto,
+  })
   fixture.record.payload.fill(0)
   fixture.meta.consumer.name = 'changed'
   release()
@@ -175,7 +200,9 @@ test('provider rejection escapes decoding unchanged', async () => {
       throw sentinel
     },
   }
-  await expect(decodeVaultRecord(fixture.record, fixture.meta, { crypto })).rejects.toBe(sentinel)
+  await expect(
+    decodeVaultRecord({ record: fixture.record, recordMeta: fixture.meta, crypto }),
+  ).rejects.toBe(sentinel)
 })
 
 test.each(['cyclic', 'bigint'])('decoding wraps %s metadata snapshot failures', async (kind) => {
@@ -183,7 +210,9 @@ test.each(['cyclic', 'bigint'])('decoding wraps %s metadata snapshot failures', 
   const meta: Record<string, unknown> = { ...fixture.meta }
   meta.consumer = kind === 'cyclic' ? meta : { value: 1n }
   const blake3 = vi.fn(nobleCrypto.blake3)
-  const outcome = await decodeVaultRecord(fixture.record, meta, {
+  const outcome = await decodeVaultRecord({
+    record: fixture.record,
+    recordMeta: meta,
     crypto: { ...nobleCrypto, blake3 },
   }).catch((error: unknown) => error)
 
@@ -194,16 +223,16 @@ test.each(['cyclic', 'bigint'])('decoding wraps %s metadata snapshot failures', 
 
 test('wrong owner commitment refuses metadata', async () => {
   const fixture = await keyFixture()
-  fixture.claim.owner = createFullIdentity(new Uint8Array(32).fill(8)).id
-  expect(await vaultRecordMeta('vault.key', fixture.claim)).toBeNull()
+  fixture.claim.owner = createFullIdentity({ privateKey: new Uint8Array(32).fill(8) }).id
+  expect(await vaultRecordMeta({ type: 'vault.key', claim: fixture.claim })).toBeNull()
 })
 
 test('every provider rejection escapes vault record authorisation and proof decoding', async () => {
   const { chain, dependent, memoryStore, verified } = await import('./record-fixture.js')
   const { vaultRecordTypes, vaultProofAuthorizer } = await import('../src/record-types.js')
-  const signer = createFullIdentity(new Uint8Array(32).fill(12))
+  const signer = createFullIdentity({ privateKey: new Uint8Array(32).fill(12) })
   const source = await chain(signer)
-  const record = await dependent({ signer: signer, source: source, type: 'vault.wrapping' })
+  const record = await dependent({ signer, source, type: 'vault.wrapping' })
   const op = await verified(record)
   const peer = memoryStore()
   await peer.apply([source.key, source.branch])
@@ -213,9 +242,9 @@ test('every provider rejection escapes vault record authorisation and proof deco
     let calls = 0
     const crypto = {
       ...nobleCrypto,
-      blake3: async (input: Uint8Array, length: number) => {
+      blake3: async ({ input, dkLen: length }: CryptoProviderBlake3Params) => {
         if (++calls === rejectAt) throw sentinel
-        return nobleCrypto.blake3(input, length)
+        return nobleCrypto.blake3({ input, dkLen: length })
       },
     }
     const params = {
@@ -232,13 +261,16 @@ test('every provider rejection escapes vault record authorisation and proof deco
     }
     const definition = vaultRecordTypes(params).get('vault.wrapping')
     if (definition === undefined) throw new Error('Missing wrapping definition')
-    const authorise = definition.authorize(op, {
-      record,
-      stored: null,
-      store: peer.store,
-      transportContext: undefined,
-      resolveController: async () => null,
-      verifyCapability: async () => false,
+    const authorise = definition.authorize({
+      op,
+      ctx: {
+        record,
+        stored: null,
+        store: peer.store,
+        transportContext: undefined,
+        resolveController: async () => null,
+        verifyCapability: async () => false,
+      },
     })
     const [outcome] = await Promise.allSettled([authorise])
     if (outcome === undefined) throw new Error('Missing authorisation outcome')
@@ -259,11 +291,13 @@ test('every provider rejection escapes vault record authorisation and proof deco
       throw sentinel
     },
   }
-  const proof = vaultProofAuthorizer(
-    { ...peer.hooks, opKind: 'kokuin/vault-op/v1', crypto },
-    peer.store,
-  )
-  await expect(proof(record, null)).rejects.toBe(sentinel)
+  const proof = vaultProofAuthorizer({
+    ...peer.hooks,
+    opKind: 'kokuin/vault-op/v1',
+    crypto,
+    store: peer.store,
+  })
+  await expect(proof({ record, stored: null })).rejects.toBe(sentinel)
 })
 
 test('record factories capture ordinary resolver options at construction', async () => {
@@ -271,7 +305,10 @@ test('record factories capture ordinary resolver options at construction', async
   const { chain } = await import('./record-fixture.js')
   const { verifySignedRecord } = await import('@kokuin/records')
   const { vaultRecordTypes } = await import('../src/record-types.js')
-  const signer = createSigningIdentityForDID('did:test:owner', new Uint8Array(32).fill(23))
+  const signer = createSigningIdentityForDID({
+    id: 'did:test:owner',
+    privateKey: new Uint8Array(32).fill(23),
+  })
   const source = await chain(signer)
   const method = {
     method: 'test',
@@ -310,13 +347,16 @@ test('record factories capture ordinary resolver options at construction', async
     pruneCopy: async () => {},
   }
   await expect(
-    definition.authorize(op, {
-      record: source.key,
-      stored: null,
-      store,
-      transportContext: undefined,
-      resolveController: async () => null,
-      verifyCapability: async () => false,
+    definition.authorize({
+      op,
+      ctx: {
+        record: source.key,
+        stored: null,
+        store,
+        transportContext: undefined,
+        resolveController: async () => null,
+        verifyCapability: async () => false,
+      },
     }),
   ).resolves.toBe(true)
 })

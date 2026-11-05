@@ -21,7 +21,12 @@ export const NAPI_ABI_VERSION = 1
 
 /** The shape of the native module built from `crates/kokuin-crypto-napi`. */
 // napi-rs fixes these positional calls at the binary boundary.
-type NativeNapiBinding = Omit<NapiBinding, 'verify' | 'verifyBatch'> & {
+type NativeNapiBinding = {
+  ABI_VERSION: number
+  sign(seed: Uint8Array, message: Uint8Array): Uint8Array
+  signBatch(seeds: Array<Uint8Array>, messages: Array<Uint8Array>): Promise<Array<Uint8Array>>
+  blake3(input: Uint8Array, length: number): Uint8Array
+  blake3Batch(inputs: Array<Uint8Array>, length: number): Promise<Array<Uint8Array>>
   verify(es256: boolean, signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array): boolean
   verifyBatch(
     es256: Array<boolean>,
@@ -34,10 +39,10 @@ type NativeNapiBinding = Omit<NapiBinding, 'verify' | 'verifyBatch'> & {
 function adaptBinding(native: NativeNapiBinding): NapiBinding {
   return {
     ABI_VERSION: native.ABI_VERSION,
-    sign: (seed, message) => native.sign(seed, message),
-    signBatch: (seeds, messages) => native.signBatch(seeds, messages),
-    blake3: (input, length) => native.blake3(input, length),
-    blake3Batch: (inputs, length) => native.blake3Batch(inputs, length),
+    sign: ({ seed, message }) => native.sign(seed, message),
+    signBatch: ({ seeds, messages }) => native.signBatch(seeds, messages),
+    blake3: ({ input, length }) => native.blake3(input, length),
+    blake3Batch: ({ inputs, length }) => native.blake3Batch(inputs, length),
     verify: ({ es256, signature, message, publicKey }) => {
       return native.verify(es256, signature, message, publicKey)
     },
@@ -47,14 +52,19 @@ function adaptBinding(native: NativeNapiBinding): NapiBinding {
   }
 }
 
+export type NapiBindingSignParams = { seed: Uint8Array; message: Uint8Array }
+export type NapiBindingSignBatchParams = { seeds: Array<Uint8Array>; messages: Array<Uint8Array> }
+export type NapiBindingBlake3Params = { input: Uint8Array; length: number }
+export type NapiBindingBlake3BatchParams = { inputs: Array<Uint8Array>; length: number }
+
 export type NapiBinding = {
   ABI_VERSION: number
-  sign(seed: Uint8Array, message: Uint8Array): Uint8Array
+  sign(params: NapiBindingSignParams): Uint8Array
   verify(params: NapiVerifyParams): boolean
-  blake3(input: Uint8Array, length: number): Uint8Array
-  signBatch(seeds: Array<Uint8Array>, messages: Array<Uint8Array>): Promise<Array<Uint8Array>>
+  blake3(params: NapiBindingBlake3Params): Uint8Array
+  signBatch(params: NapiBindingSignBatchParams): Promise<Array<Uint8Array>>
   verifyBatch(params: NapiVerifyBatchParams): Promise<Array<boolean>>
-  blake3Batch(inputs: Array<Uint8Array>, length: number): Promise<Array<Uint8Array>>
+  blake3Batch(params: NapiBindingBlake3BatchParams): Promise<Array<Uint8Array>>
 }
 
 /** Why no native binding loaded, or `undefined` when one did. */

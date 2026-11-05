@@ -20,7 +20,7 @@ import { describe, expect, test } from 'vitest'
 import { checkCapability, createCapability, now } from '../src/index.js'
 
 const seed = new Uint8Array(32).fill(31)
-const inception = await createInception(seed, 0)
+const inception = await createInception({ seed, profile: 0 })
 const did = didFromInception(inception.event)
 const controller = await createControllerIdentity({
   seed,
@@ -51,21 +51,21 @@ async function mintFor(audienceID: string): Promise<string> {
     signer: controller,
     payload: { sub: did, aud: audienceID, act: 'write', res: 'doc/1', exp: now() + 3600 },
     header: undefined,
-    options: { methods },
+    methods,
   })
   return stringifyToken(capability)
 }
 
 async function invoke(holder: SigningIdentity, cap: string): Promise<void> {
-  await checkCapability(
-    { act: 'write', res: 'doc/1' },
-    { iss: holder.id, sub: did, cap: [cap] },
-    { methods },
-  )
+  await checkCapability({
+    permission: { act: 'write', res: 'doc/1' },
+    payload: { iss: holder.id, sub: did, cap: [cap] },
+    methods,
+  })
 }
 
-const delegate = createSigningIdentity(new Uint8Array(32).fill(41))
-const bystander = createSigningIdentity(new Uint8Array(32).fill(43))
+const delegate = createSigningIdentity({ privateKey: new Uint8Array(32).fill(41) })
+const bystander = createSigningIdentity({ privateKey: new Uint8Array(32).fill(43) })
 
 describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => {
   test('ROW 1 (attack): a revoked device presents its still-unexpired capability', async () => {
@@ -80,7 +80,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     expect(before).toBe('accepted')
 
     log = [inception, await revokeOf(delegate.id)]
-    expect((await foldLog(did, { chain: log, events: [] })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: log, events: [] } })).ok).toBe(true)
     let after: unknown = 'accepted'
     await invoke(delegate, cap).catch((e) => {
       after = e
@@ -110,7 +110,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     log = [inception]
     const cap = await mintFor(delegate.id)
     const revoke = await revokeOf(delegate.id)
-    const base = await foldLog(did, { chain: [inception, revoke], events: [] })
+    const base = await foldLog({ did, input: { chain: [inception, revoke], events: [] } })
     if (!base.ok) throw new Error('fixture')
     const priorState = base.states[1]
     if (priorState === undefined) throw new Error('fixture')
@@ -128,7 +128,7 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
       sigs: [],
     } as unknown as SignedEvent
     log = [inception, revoke, forged]
-    const folded = await foldLog(did, { chain: log, events: [] })
+    const folded = await foldLog({ did, input: { chain: log, events: [] } })
     let outcome: unknown = 'accepted'
     await invoke(delegate, cap).catch((e) => {
       outcome = e
@@ -153,11 +153,11 @@ describe('deny-set enforcement: is a revoked audience actually REFUSED?', () => 
     const cap = await mintFor(delegate.id)
     const broken: MethodRegistry = [createControllerResolver({ loadLog: async () => undefined })]
     let outcome: unknown = 'accepted'
-    await checkCapability(
-      { act: 'write', res: 'doc/1' },
-      { iss: delegate.id, sub: did, cap: [cap] },
-      { methods: broken },
-    ).catch((e) => {
+    await checkCapability({
+      permission: { act: 'write', res: 'doc/1' },
+      payload: { iss: delegate.id, sub: did, cap: [cap] },
+      methods: broken,
+    }).catch((e) => {
       outcome = e
     })
     expect(outcome).not.toBe('accepted')

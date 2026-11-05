@@ -97,7 +97,7 @@ describe.each(postgresBackends)('$name', (b) => {
         }
       }
       await race(round, (store, counter) => stores[store].addRevocation(revocation(counter)))
-      const row = await stores[0].getRevocationByIssuer(jti, revokerDID)
+      const row = await stores[0].getRevocationByIssuer({ jti, issuer: revokerDID })
       expect([row?.revocation_token, row?.hlc]).toEqual([`revocation-${round}-2`, hlc(2)])
     }
   })
@@ -140,8 +140,10 @@ describe.each(postgresBackends)('$name controller log merges', (b) => {
   test('concurrent merges on an existing row from two connections both land', async () => {
     for (let round = 0; round < ROUNDS; round++) {
       const did = `did:kokuin:merge-race-${round}`
-      await stores[0].merge(did, async () => ({ chain: [], events: [] }))
-      await race(round, (store, counter) => stores[store].merge(did, append(`event-${counter}`)))
+      await stores[0].merge({ did, update: async () => ({ chain: [], events: [] }) })
+      await race(round, (store, counter) =>
+        stores[store].merge({ did, update: append(`event-${counter}`) }),
+      )
       const names = (await stores[0].get(did))?.events.map(
         (signed) => (signed.event as unknown as { name: string }).name,
       )

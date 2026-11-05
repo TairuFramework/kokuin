@@ -45,8 +45,7 @@ type DecodedAsParams<Type extends VaultRecordType> = {
   record: SignedRecord
   op: VerifiedRecordOp
   type: Type
-  options: CryptoOptions
-}
+} & CryptoOptions
 type RevokedParams = {
   params: VaultRecordTypeParams
   op: VerifiedRecordOp
@@ -82,7 +81,7 @@ export type VaultRecordPorts = {
 
 export type VaultRecordHooks = {
   authority: CredentialAuthority
-  validateConsumerMetadata(value: unknown, request: CredentialAuthorityRequest): Promise<boolean>
+  validateConsumerMetadata(params: VaultRecordHooksValidateConsumerMetadataParams): Promise<boolean>
   /** Must resolve ports bound to this adapter's transaction, including routed adapters. */
   portsFor(store: RecordStoreAdapter): VaultRecordPorts
 }
@@ -130,8 +129,10 @@ async function authorized(
   request: CredentialAuthorityRequest,
 ): Promise<boolean> {
   return (
-    (await params.validateConsumerMetadata(request.op.claim.meta.consumer, request)) &&
-    (await params.authority.authorize(request))
+    (await params.validateConsumerMetadata({
+      value: request.op.claim.meta.consumer,
+      request,
+    })) && (await params.authority.authorize(request))
   )
 }
 
@@ -160,7 +161,7 @@ async function validStructure(
   op: VerifiedRecordOp,
   options: CryptoOptions,
 ): Promise<boolean> {
-  const meta = await vaultRecordMeta(type, op.claim, options)
+  const meta = await vaultRecordMeta({ ...options, type, claim: op.claim })
 
   if (meta === null) return false
 
@@ -170,7 +171,7 @@ async function validStructure(
     return (
       entry !== null &&
       parseCanonicalHLC(op.claim.hlc) !== null &&
-      compareRecordDecisionHLC(entry.contentHLC, op.claim.hlc) <= 0
+      compareRecordDecisionHLC({ left: entry.contentHLC, right: op.claim.hlc }) <= 0
     )
   }
 
@@ -181,12 +182,17 @@ async function decodedAs<Type extends VaultRecordType>({
   record,
   op,
   type,
-  options,
+  ...options
 }: DecodedAsParams<Type>): Promise<Extract<DecodedVaultRecord, { type: Type }> | null> {
-  if (op.claim.deleted || !(await recordPayloadMatches(record, op.claim, options))) return null
+  if (op.claim.deleted || !(await recordPayloadMatches({ ...options, record, claim: op.claim })))
+    return null
 
   try {
-    const decoded = await decodeVaultRecord(record, op.claim.meta, options)
+    const decoded = await decodeVaultRecord({
+      ...options,
+      record,
+      recordMeta: op.claim.meta,
+    })
 
     return decoded.type === type ? (decoded as Extract<DecodedVaultRecord, { type: Type }>) : null
   } catch (error) {
@@ -283,10 +289,10 @@ async function keyOwnerMatches(
   const keys = await Promise.all(
     decision.copies.map((record) => {
       return verifySignedRecord({
-        record: record,
+        record,
         opKind: params.opKind,
         methods: params.methods,
-        options: params,
+        crypto: params?.crypto,
       })
     }),
   )
@@ -295,7 +301,7 @@ async function keyOwnerMatches(
     if (
       key !== null &&
       key.claim.owner === op.claim.owner &&
-      (await vaultRecordMeta(KEY, key.claim, params)) !== null
+      (await vaultRecordMeta({ ...params, type: KEY, claim: key.claim })) !== null
     )
       return true
   }
@@ -335,8 +341,8 @@ async function authorizeBranch(
   op: VerifiedRecordOp,
   ctx: RecordAuthorizeContext,
 ): Promise<boolean> {
-  const meta = await vaultRecordMeta(BRANCH, op.claim, params)
-  const decoded = await decodedAs({ record: ctx.record, op: op, type: BRANCH, options: params })
+  const meta = await vaultRecordMeta({ ...params, type: BRANCH, claim: op.claim })
+  const decoded = await decodedAs({ ...params, record: ctx.record, op, type: BRANCH })
 
   if (meta === null || decoded === null) return false
 
@@ -345,9 +351,12 @@ async function authorizeBranch(
     opJWT: payload.opJWT,
     opKind: params.opKind,
     methods: params.methods,
-    options: params,
+    crypto: params?.crypto,
   })
-  const key = introducing === null ? null : await vaultRecordMeta(KEY, introducing.claim, params)
+  const key =
+    introducing === null
+      ? null
+      : await vaultRecordMeta({ ...params, type: KEY, claim: introducing.claim })
 
   if (
     introducing === null ||
@@ -363,12 +372,18 @@ async function authorizeBranch(
   )
     return false
 
-  const keyPayload = encodeVaultRecordPayload(KEY, {
-    suite: payload.suite,
-    state: key.state as 'active' | 'retired',
+  const keyPayload = encodeVaultRecordPayload({
+    type: KEY,
+    payload: {
+      suite: payload.suite,
+      state: key.state as 'active' | 'retired',
+    },
   })
 
-  if (introducing.claim.payloadDigest !== (await recordPayloadDigest(keyPayload, params)))
+  if (
+    introducing.claim.payloadDigest !==
+    (await recordPayloadDigest({ ...params, payload: keyPayload }))
+  )
     return false
 
   // The embedded op is independent authenticated evidence and gets its own consumer decision.
@@ -396,7 +411,7 @@ async function authorizeBranch(
     (await authorized(
       params,
       requestFor({
-        op: op,
+        op,
         record: ctx.record,
         store: ctx.store,
         transportContext: ctx.transportContext,
@@ -422,22 +437,22 @@ function createType(
             ? { kind: 'immutable' }
             : { kind: 'lww' },
     dependsOn: type === KEY ? [] : type === ENTRY || type === WRAPPING ? [KEY, BRANCH] : [KEY],
-    precheck: async (op) => await validStructure(type, op, params),
-    dependencies: (_record, op) => dependencies(type, op),
-    async authorize(op, ctx) {
+    precheck: async ({ op }) => await validStructure(type, op, params),
+    dependencies: ({ record: _record, op }) => dependencies(type, op),
+    async authorize({ op, ctx }) {
       // Enforce the factory's replay domain even when the engine is misconfigured.
       const checked = await verifySignedRecord({
         record: ctx.record,
         opKind: params.opKind,
         methods: params.methods,
-        options: params,
+        crypto: params?.crypto,
       })
 
       if (checked === null || checked.opHash !== op.opHash) return false
 
       if (
         !(await validStructure(type, op, params)) ||
-        !(await recordPayloadMatches(ctx.record, op.claim, params))
+        !(await recordPayloadMatches({ ...params, record: ctx.record, claim: op.claim }))
       )
         return false
 
@@ -446,7 +461,7 @@ function createType(
       if (type === BRANCH) return await authorizeBranch(params, op, ctx)
 
       if (!op.claim.deleted) {
-        const decoded = await decodedAs({ record: ctx.record, op: op, type: type, options: params })
+        const decoded = await decodedAs({ ...params, record: ctx.record, op, type })
 
         if (decoded === null) return false
 
@@ -455,8 +470,8 @@ function createType(
         if (
           decoded.type === WRAPPING &&
           (await revoked({
-            params: params,
-            op: op,
+            params,
+            op,
             store: ctx.store,
             descriptors: decoded.payload.descriptors,
           }))
@@ -468,7 +483,7 @@ function createType(
         !(await authorized(
           params,
           requestFor({
-            op: op,
+            op,
             record: ctx.record,
             store: ctx.store,
             transportContext: ctx.transportContext,
@@ -484,7 +499,7 @@ function createType(
         (await authorized(
           params,
           requestFor({
-            op: op,
+            op,
             record: ctx.record,
             store: ctx.store,
             transportContext: ctx.transportContext,
@@ -493,33 +508,33 @@ function createType(
         ))
       )
     },
-    async visibleTo(record, ctx) {
+    async visibleTo({ record, ctx }) {
       if (ctx.opKind !== params.opKind) return false
 
       const op = await verifySignedRecord({
-        record: record,
+        record,
         opKind: params.opKind,
         methods: params.methods,
-        options: params,
+        crypto: params?.crypto,
       })
 
       if (
         op === null ||
         !(await validStructure(type, op, params)) ||
-        !(await recordPayloadMatches(record, op.claim, params))
+        !(await recordPayloadMatches({ ...params, record, claim: op.claim }))
       )
         return false
 
       if (!op.claim.deleted) {
-        const decoded = await decodedAs({ record: record, op: op, type: type, options: params })
+        const decoded = await decodedAs({ ...params, record, op, type })
 
         if (decoded === null) return false
 
         if (
           decoded.type === WRAPPING &&
           (await revoked({
-            params: params,
-            op: op,
+            params,
+            op,
             store: ctx.store,
             descriptors: decoded.payload.descriptors,
           }))
@@ -530,24 +545,24 @@ function createType(
       return await authorized(
         params,
         requestFor({
-          op: op,
-          record: record,
+          op,
+          record,
           store: ctx.store,
           transportContext: ctx.transportContext,
           verb: 'read',
         }),
       )
     },
-    async lockKeys(incoming, stored) {
+    async lockKeys({ incoming, stored }) {
       const keys = new Map<string, RecordLockKey>()
       const records = [incoming, ...(stored?.copies ?? [])]
       const ops = await Promise.all(
         records.map((record) => {
           return verifySignedRecord({
-            record: record,
+            record,
             opKind: params.opKind,
             methods: params.methods,
-            options: params,
+            crypto: params?.crypto,
           })
         }),
       )
@@ -574,18 +589,18 @@ function createType(
   }
 
   if (type === ENTRY) {
-    definition.afterAuthorize = async (record, store) => {
+    definition.afterAuthorize = async ({ record, store }) => {
       await params.portsFor(store).retainEntryCandidate(record)
     }
   }
 
   if (type === WRAPPING || type === REVOCATION) {
-    definition.afterApply = async (record, store) => {
+    definition.afterApply = async ({ record, store }) => {
       const op = await verifySignedRecord({
-        record: record,
+        record,
         opKind: params.opKind,
         methods: params.methods,
-        options: params,
+        crypto: params?.crypto,
       })
 
       if (op === null) throw new Error('Applied record signature is invalid')
@@ -642,12 +657,16 @@ export function vaultHolderTypes(
 }
 
 /** Read a live, owner-qualified key version in the explicit replay domain. */
+export type VaultKeyVersionReaderParams = {
+  store: RecordStoreAdapter
+} & Pick<VaultRecordTypeParams, 'opKind' | 'methods' | 'crypto'>
+
 export function vaultKeyVersionReader(
-  store: RecordStoreAdapter,
-  input: Pick<VaultRecordTypeParams, 'opKind' | 'methods' | 'crypto'>,
+  input: VaultKeyVersionReaderParams,
 ): VisibilityContext['currentKeyVersion'] {
+  const { store } = input
   const params = captureParams(input)
-  return async (owner, keyID) => {
+  return async ({ owner, keyID }) => {
     const stored = await store.get({ type: KEY, owner, id: keyID })
     const copy = stored?.copies[0]
     const op =
@@ -657,9 +676,10 @@ export function vaultKeyVersionReader(
             record: copy,
             opKind: params.opKind,
             methods: params.methods,
-            options: params,
+            crypto: params?.crypto,
           })
-    const meta = op === null ? null : await vaultRecordMeta(KEY, op.claim, params)
+    const meta =
+      op === null ? null : await vaultRecordMeta({ ...params, type: KEY, claim: op.claim })
 
     return op === null || meta === null || op.claim.deleted || op.claim.owner !== owner
       ? null
@@ -668,34 +688,46 @@ export function vaultKeyVersionReader(
 }
 
 /** Proofs retain consumer authority checks but are never addressed to the local receiver. */
+export type VaultProofAuthorizerParams = {
+  store: RecordStoreAdapter
+  transportContext?: unknown
+} & VaultRecordTypeParams
+
 export function vaultProofAuthorizer(
-  input: VaultRecordTypeParams,
-  store: RecordStoreAdapter,
-  transportContext?: unknown,
+  input: VaultProofAuthorizerParams,
 ): VisibilityContext['authorizeProof'] {
+  const { transportContext, store } = input
   const params = captureParams(input)
   const wrapping = createType(WRAPPING, params, false)
 
-  return async (record, stored) => {
+  return async ({ record, stored }) => {
     if (record.type !== WRAPPING) return false
 
     const op = await verifySignedRecord({
-      record: record,
+      record,
       opKind: params.opKind,
       methods: params.methods,
-      options: params,
+      crypto: params?.crypto,
     })
 
     if (op === null) return false
 
-    return await wrapping.authorize(op, {
-      record,
-      stored,
-      store,
-      transportContext,
-      // Generic vault policy delegates all authority to the consumer callback.
-      resolveController: async () => null,
-      verifyCapability: async () => false,
+    return await wrapping.authorize({
+      op,
+      ctx: {
+        record,
+        stored,
+        store,
+        transportContext,
+        // Generic vault policy delegates all authority to the consumer callback.
+        resolveController: async () => null,
+        verifyCapability: async () => false,
+      },
     })
   }
+}
+
+export type VaultRecordHooksValidateConsumerMetadataParams = {
+  value: unknown
+  request: CredentialAuthorityRequest
 }

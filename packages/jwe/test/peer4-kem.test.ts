@@ -32,11 +32,18 @@ describe('did:peer:4 keyAgreement', () => {
 
   test('encrypting to the long form uses the published keyAgreement key', async () => {
     const identity = await createPeer4Identity()
-    const encrypter = createTokenEncrypter(identity.longForm)
+    const encrypter = createTokenEncrypter({ recipient: identity.longForm })
     expect(encrypter.recipientID).toBe(identity.id)
 
-    const jwe = await encryptToken(encrypter, encoder.encode('hello'))
-    expect(decoder.decode(await decryptToken(identity, jwe))).toBe('hello')
+    const jwe = await encryptToken({ encrypter, plaintext: encoder.encode('hello') })
+    expect(
+      decoder.decode(
+        await decryptToken({
+          decrypter: identity,
+          jwe,
+        }),
+      ),
+    ).toBe('hello')
   })
 
   test('the published key is used, NOT the montgomery-derived signing key', async () => {
@@ -50,19 +57,34 @@ describe('did:peer:4 keyAgreement', () => {
     expect(derived).not.toEqual(kem.publicKey)
 
     // A JWE built from the published key decrypts; one built from the derived key does not.
-    const good = await encryptToken(createTokenEncrypter(identity.longForm), encoder.encode('ok'))
-    expect(decoder.decode(await decryptToken(identity, good))).toBe('ok')
+    const good = await encryptToken({
+      encrypter: createTokenEncrypter({ recipient: identity.longForm }),
+      plaintext: encoder.encode('ok'),
+    })
+    expect(
+      decoder.decode(
+        await decryptToken({
+          decrypter: identity,
+          jwe: good,
+        }),
+      ),
+    ).toBe('ok')
 
-    const bad = await encryptToken(
-      createTokenEncrypter(derived, { algorithm: 'X25519' }),
-      encoder.encode('ok'),
-    )
-    await expect(decryptToken(identity, bad)).rejects.toThrow()
+    const bad = await encryptToken({
+      encrypter: createTokenEncrypter({ recipient: derived, algorithm: 'X25519' }),
+      plaintext: encoder.encode('ok'),
+    })
+    await expect(
+      decryptToken({
+        decrypter: identity,
+        jwe: bad,
+      }),
+    ).rejects.toThrow()
   })
 
   test('a short form throws — it carries no document to read the key from', async () => {
     const identity = await createPeer4Identity()
-    expect(() => createTokenEncrypter(identity.id)).toThrow(/short form/)
+    expect(() => createTokenEncrypter({ recipient: identity.id })).toThrow(/short form/)
   })
 
   test('a peer:4 identity with no keyAgreement key throws a specific error', async () => {
@@ -73,7 +95,9 @@ describe('did:peer:4 keyAgreement', () => {
       ],
     })
     expect(isPeer4(identity.id)).toBe(true)
-    expect(() => createTokenEncrypter(identity.longForm)).toThrow(/no X25519 keyAgreement key/)
+    expect(() => createTokenEncrypter({ recipient: identity.longForm })).toThrow(
+      /no X25519 keyAgreement key/,
+    )
   })
 })
 
@@ -83,8 +107,18 @@ describe('did:key EdDSA identities are decryptable', () => {
     expect(isPeer4(identity.id)).toBe(false)
 
     // A sender knows only the DID, from which it montgomery-derives the agreement key.
-    const jwe = await encryptToken(createTokenEncrypter(identity.id), encoder.encode('hello'))
-    expect(decoder.decode(await decryptToken(identity, jwe))).toBe('hello')
+    const jwe = await encryptToken({
+      encrypter: createTokenEncrypter({ recipient: identity.id }),
+      plaintext: encoder.encode('hello'),
+    })
+    expect(
+      decoder.decode(
+        await decryptToken({
+          decrypter: identity,
+          jwe,
+        }),
+      ),
+    ).toBe('hello')
   })
 })
 
@@ -166,6 +200,8 @@ describe('getAgreementKey() bounds and skips bad entries', () => {
       keyAgreement: ['#key-0'],
     })
 
-    expect(() => createTokenEncrypter(longForm)).toThrow(/no X25519 keyAgreement key/)
+    expect(() => createTokenEncrypter({ recipient: longForm })).toThrow(
+      /no X25519 keyAgreement key/,
+    )
   })
 })

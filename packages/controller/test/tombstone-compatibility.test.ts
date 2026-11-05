@@ -13,12 +13,12 @@ import { createControllerResolver } from '../src/resolver.js'
 import { MEMBER_NOT_HISTORIC, resolverOver } from '../src/state-resolver.js'
 
 const seed = new Uint8Array(32).fill(7)
-const icp = await createInception(seed, 0)
+const icp = await createInception({ seed, profile: 0 })
 const did = didFromInception(icp.event)
 const root: EpochSigner = { root: { seed, profile: 0 } }
 function member(fill: number, add: string) {
   const privateKey = new Uint8Array(32).fill(fill)
-  const key = encodeKey(ed25519.getPublicKey(privateKey), 'EdDSA')
+  const key = encodeKey({ publicKey: ed25519.getPublicKey(privateKey), alg: 'EdDSA' })
   return { privateKey, entry: { did: `did:key:${key}`, key, add, lease: 100 } }
 }
 const old = member(31, 'old-add')
@@ -32,7 +32,7 @@ const settled = await createRotate({
 })
 const chain = [icp, settled]
 async function folded(log: ControllerLog) {
-  const result = await foldLog(did, log)
+  const result = await foldLog({ did, input: log })
   if (!result.ok) throw new Error(result.reason)
   return result
 }
@@ -57,13 +57,16 @@ describe('settled tombstones and epoch compatibility', () => {
       profile: 0,
       did,
       prior: settled.event,
-      snapshot: snapshotOf(result.head),
+      snapshot: snapshotOf({ state: result.head }),
     })
     for (const presented of [log, { chain: [...chain, checkpoint], events: [] }]) {
       const resolver = createControllerResolver({ loadLog: async () => presented })
       for (const view of [resolver, resolver.frozen()]) {
         await expect(
-          view.resolveMemberHistoric?.(did, { did: old.entry.did, add: old.entry.add, gen: 0 }),
+          view.resolveMemberHistoric?.({
+            subject: did,
+            member: { did: old.entry.did, add: old.entry.add, gen: 0 },
+          }),
         ).resolves.toEqual({
           key: { alg: 'EdDSA', publicKey: ed25519.getPublicKey(old.privateKey) },
           lease: 100,
@@ -119,7 +122,7 @@ describe('caller-built states without tombstones', () => {
   const callerBase = { ...base, head }
 
   test('snapshotOf preserves the old snapshot output', () => {
-    expect(snapshotOf(head)).toEqual({ members: [live.entry], deny: [] })
+    expect(snapshotOf({ state: head })).toEqual({ members: [live.entry], deny: [] })
   })
 
   test('every epoch builder preserves its event and signature output', async () => {
@@ -141,10 +144,16 @@ describe('caller-built states without tombstones', () => {
   test('historic resolution treats missing head and chain maps as empty', async () => {
     const resolver = resolverOver(async () => ({ states: [head], head }))
     await expect(
-      resolver.resolveMemberHistoric?.(did, { did: live.entry.did, add: live.entry.add, gen: 0 }),
+      resolver.resolveMemberHistoric?.({
+        subject: did,
+        member: { did: live.entry.did, add: live.entry.add, gen: 0 },
+      }),
     ).resolves.toMatchObject({ lease: 100, removed: false })
     await expect(
-      resolver.resolveMemberHistoric?.(did, { did: old.entry.did, add: old.entry.add, gen: 0 }),
+      resolver.resolveMemberHistoric?.({
+        subject: did,
+        member: { did: old.entry.did, add: old.entry.add, gen: 0 },
+      }),
     ).rejects.toThrow(MEMBER_NOT_HISTORIC)
   })
 })

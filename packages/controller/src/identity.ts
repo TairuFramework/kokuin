@@ -1,11 +1,10 @@
-import type { CryptoOptions } from '@kokuin/token'
+import type { CryptoOptions, SigningIdentitySignTokenParams } from '@kokuin/token'
 import {
   createKeyAgreementIdentityForDID,
   createSigningIdentityForDID,
   type DIDString,
   type FullIdentity,
   type SigningIdentity,
-  type SignTokenOptions,
 } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 
@@ -46,10 +45,10 @@ function didFromLog(log: ControllerLog): DIDString {
 function withKid(identity: SigningIdentity, kid: string): SigningIdentity {
   return {
     ...identity,
-    async signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
-      payload: Payload,
-      options: SignTokenOptions = {},
-    ) {
+    async signToken<Payload extends Record<string, unknown> = Record<string, unknown>>({
+      payload,
+      ...options
+    }: SigningIdentitySignTokenParams<Payload>) {
       for (const supplied of [options.kid, options.header?.kid]) {
         if (supplied != null && supplied !== kid) {
           throw new Error(
@@ -57,7 +56,11 @@ function withKid(identity: SigningIdentity, kid: string): SigningIdentity {
           )
         }
       }
-      return await identity.signToken(payload, { ...options, header: { ...options.header, kid } })
+      return await identity.signToken({
+        ...options,
+        payload,
+        header: { ...options.header, kid },
+      })
     },
   }
 }
@@ -91,14 +94,14 @@ function identityForKey({
     throw new Error(`Controller ${did} has no signing key`)
   }
 
-  const key = encodeKey(publicKey, 'EdDSA')
+  const key = encodeKey({ publicKey, alg: 'EdDSA' })
   if (!state.keys.includes(key)) {
     throw new Error(`${CONTEXT}: ${mismatch} of ${did}`)
   }
 
   // The resolver picks by `kid` and defaults to `keys[0]`, so a token whose key is not first is
   // unverifiable unless the header names the key that signed it.
-  return withKid(createSigningIdentityForDID(did, privateKey, { crypto }), `#${key}`)
+  return withKid(createSigningIdentityForDID({ id: did, privateKey, crypto }), `#${key}`)
 }
 
 /**
@@ -117,7 +120,11 @@ function identityForState({
   did: DIDString
   state: KeyState
 } & CryptoOptions): FullIdentity {
-  const authority = deriveKeyPair(seed, authorityPath(profile, state.keyGen, state.keySeq), 'EdDSA')
+  const authority = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile, gen: state.keyGen, seq: state.keySeq }),
+    alg: 'EdDSA',
+  })
   const signing = identityForKey({
     privateKey: authority.privateKey,
     publicKey: authority.publicKey,
@@ -129,18 +136,21 @@ function identityForState({
   // The agreement key sits at the same (keyGen, keySeq) as the authority key — both icp and rot
   // derive them at matching indices — so one position locates both. Verified against the folded
   // set, failing closed like the authority membership check.
-  const agreement = deriveKeyPair(
+  const agreement = deriveKeyPair({
     seed,
-    agreementPath(profile, state.keyGen, state.keySeq),
-    'X25519',
-  )
-  const encoded = encodeKey(agreement.publicKey, 'X25519')
+    path: agreementPath({ profile, gen: state.keyGen, seq: state.keySeq }),
+    alg: 'X25519',
+  })
+  const encoded = encodeKey({ publicKey: agreement.publicKey, alg: 'X25519' })
   if (!state.agreement.includes(encoded)) {
     throw new Error(
       `${CONTEXT}: derived agreement key is not one of the current agreement keys of ${did}`,
     )
   }
-  return { ...signing, ...createKeyAgreementIdentityForDID(did, agreement.privateKey) }
+  return {
+    ...signing,
+    ...createKeyAgreementIdentityForDID({ id: did, x25519PrivateKey: agreement.privateKey }),
+  }
 }
 
 export type CreateControllerIdentityParams = CryptoOptions & {
@@ -180,7 +190,7 @@ export async function createControllerIdentity({
     profile,
     did,
     crypto,
-    state: await currentState({ did: did, log: log, context: CONTEXT, options: { crypto } }),
+    state: await currentState({ did, log, context: CONTEXT, crypto }),
   })
 }
 
@@ -218,7 +228,7 @@ export async function createControllerIdentityWithKey({
     privateKey,
     publicKey: ed25519.getPublicKey(privateKey),
     did,
-    state: await currentState({ did: did, log: log, context: CONTEXT, options: { crypto } }),
+    state: await currentState({ did, log, context: CONTEXT, crypto }),
     crypto,
     mismatch: 'the supplied key is not one of the current authority keys',
   })

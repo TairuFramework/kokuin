@@ -124,7 +124,7 @@ export class ElectronKeyStore
         const entry = this.entry(keyID)
         const existing = await entry.getAsync()
         const privateKey = existing ?? (await entry.provideAsync())
-        const identity = createFullIdentity(privateKey, { crypto: this.#crypto })
+        const identity = createFullIdentity({ privateKey, crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, existing == null)
         if (existing == null) {
@@ -145,7 +145,7 @@ export class ElectronKeyStore
         const entry = this.entry(keyID)
         const existing = entry.get()
         const privateKey = existing ?? entry.provide()
-        const identity = createFullIdentity(privateKey, { crypto: this.#crypto })
+        const identity = createFullIdentity({ privateKey, crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, existing == null)
         if (existing == null) {

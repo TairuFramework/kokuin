@@ -59,21 +59,21 @@ describe('getSignatureInfo()', () => {
   test('throws for EdDSA key with wrong size', () => {
     const codec = CODECS.EdDSA
     const shortKey = new Uint8Array(16)
-    const did = getDID(codec, shortKey)
+    const did = getDID({ codec, publicKey: shortKey })
     expect(() => getSignatureInfo(did)).toThrow('Invalid public key size')
   })
 
   test('throws for ES256 key with wrong size', () => {
     const codec = CODECS.ES256
     const wrongKey = new Uint8Array(32)
-    const did = getDID(codec, wrongKey)
+    const did = getDID({ codec, publicKey: wrongKey })
     expect(() => getSignatureInfo(did)).toThrow('Invalid public key size')
   })
 
   test('accepts EdDSA key with correct size (32 bytes)', () => {
     const codec = CODECS.EdDSA
     const key = new Uint8Array(32).fill(1)
-    const did = getDID(codec, key)
+    const did = getDID({ codec, publicKey: key })
     const [alg, extractedKey] = getSignatureInfo(did)
     expect(alg).toBe('EdDSA')
     expect(extractedKey.length).toBe(32)
@@ -82,7 +82,7 @@ describe('getSignatureInfo()', () => {
   test('accepts ES256 key with correct size (33 bytes)', () => {
     const codec = CODECS.ES256
     const key = new Uint8Array(33).fill(2)
-    const did = getDID(codec, key)
+    const did = getDID({ codec, publicKey: key })
     const [alg, extractedKey] = getSignatureInfo(did)
     expect(alg).toBe('ES256')
     expect(extractedKey.length).toBe(33)
@@ -96,7 +96,7 @@ describe('getSignatureInfo()', () => {
   test('accepts a maximum-size legitimate did:key', () => {
     // ES256 is the largest supported: 2-byte codec + 33-byte key = 48 base58 chars.
     const publicKey = new Uint8Array(33).fill(0xff)
-    const did = getDID(CODECS.ES256, publicKey)
+    const did = getDID({ codec: CODECS.ES256, publicKey })
     expect(did.length - 'did:key:z'.length).toBe(48)
     expect(() => getSignatureInfo(did)).not.toThrow()
   })
@@ -106,14 +106,14 @@ describe('getDID()', () => {
   test('creates a DID string with did:key:z prefix', () => {
     const codec = CODECS.EdDSA
     const publicKey = new Uint8Array([1, 2, 3])
-    const did = getDID(codec, publicKey)
+    const did = getDID({ codec, publicKey })
     expect(did.startsWith('did:key:z')).toBe(true)
   })
 
   test('round-trips through getSignatureInfo', () => {
     const codec = CODECS.EdDSA
     const publicKey = new Uint8Array(32).fill(42)
-    const did = getDID(codec, publicKey)
+    const did = getDID({ codec, publicKey })
     const [alg, extractedKey] = getSignatureInfo(did)
     expect(alg).toBe('EdDSA')
     expect(extractedKey).toEqual(publicKey)

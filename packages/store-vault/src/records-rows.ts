@@ -155,22 +155,22 @@ export async function checked(row: VaultRecordTable, bound: Bound): Promise<Chec
     record: copy,
     opKind: bound.opKind,
     methods: bound.methods,
-    options: bound.params,
+    crypto: bound.params?.crypto,
   })
   if (op === null) return null
   if (
-    !(await recordPayloadMatches(copy, op.claim, bound.params)) ||
+    !(await recordPayloadMatches({ record: copy, claim: op.claim, ...bound.params })) ||
     row.payload_digest !== op.claim.payloadDigest ||
     row.deleted !== Number(op.claim.deleted) ||
-    (await recordClaimDigest(
-      { ...op.claim, meta: meta as Record<string, unknown> },
-      bound.params,
-    )) !== op.contentDigest
+    (await recordClaimDigest({
+      claim: { ...op.claim, meta: meta as Record<string, unknown> },
+      ...bound.params,
+    })) !== op.contentDigest
   )
     throw new VaultRecordRowError(key)
   if (!op.claim.deleted) {
     try {
-      await decodeVaultRecord(copy, op.claim.meta, bound.params)
+      await decodeVaultRecord({ record: copy, recordMeta: op.claim.meta, ...bound.params })
     } catch (cause) {
       if (!(cause instanceof VaultRecordPayloadError)) throw cause
       // biome-ignore lint/style/useErrorCause: the constructor forwards cause

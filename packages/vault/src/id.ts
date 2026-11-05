@@ -7,13 +7,21 @@ import { fromUTF, toB64U } from '@sozai/codec'
 const KEY_ID_PREFIX = new Uint8Array([0xb6, 0x01, 31, 32])
 
 /** Owner binding uses the exact owner bytes; callers normalise equality DIDs before minting. */
-export async function createVaultKeyID(
-  owner: string | Uint8Array,
-  unique: Uint8Array,
-  options?: CryptoOptions,
-): Promise<string> {
+export type CreateVaultKeyIDParams = {
+  owner: string | Uint8Array
+  unique: Uint8Array
+} & CryptoOptions
+
+export async function createVaultKeyID({
+  unique,
+  owner,
+  ...options
+}: CreateVaultKeyIDParams): Promise<string> {
   const ownerBytes = typeof owner === 'string' ? fromUTF(owner) : owner
-  const digest = await (options?.crypto ?? nobleCrypto).blake3(concatBytes(ownerBytes, unique), 32)
+  const digest = await (options.crypto ?? nobleCrypto).blake3({
+    input: concatBytes(ownerBytes, unique),
+    dkLen: 32,
+  })
   const bytes = concatBytes(KEY_ID_PREFIX, digest)
   let value = 0n
 
@@ -23,11 +31,13 @@ export async function createVaultKeyID(
 }
 
 /** Pair the owner commitment with the canonical unique bytes used by signed key metadata. */
-export async function createVaultKeyReference(
-  owner: string,
-  unique: Uint8Array,
-  options?: CryptoOptions,
-): Promise<{ keyID: string; keyUnique: string }> {
+export type CreateVaultKeyReferenceParams = { owner: string; unique: Uint8Array } & CryptoOptions
+
+export async function createVaultKeyReference({
+  unique,
+  owner,
+  ...options
+}: CreateVaultKeyReferenceParams): Promise<{ keyID: string; keyUnique: string }> {
   const keyUnique = toB64U(unique)
-  return { keyID: await createVaultKeyID(owner, unique, options), keyUnique }
+  return { keyID: await createVaultKeyID({ ...options, owner, unique }), keyUnique }
 }

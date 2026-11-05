@@ -14,7 +14,7 @@ const seed = new Uint8Array(32).fill(1)
 const stolen = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
 async function build() {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   return { icp, did: didFromInception(icp.event) }
 }
 
@@ -28,7 +28,7 @@ async function unknownEvent(did: string, prior: SignedEvent<InceptionEvent>, cri
       s: 1,
       p: at(
         (
-          (await foldLog(did, { chain: [prior], events: [] })) as {
+          (await foldLog({ did, input: { chain: [prior], events: [] } })) as {
             ok: true
             states: Array<{ digest: string }>
           }
@@ -44,9 +44,12 @@ async function unknownEvent(did: string, prior: SignedEvent<InceptionEvent>, cri
 describe('criticality', () => {
   test('an unknown critical event fails the fold closed', async () => {
     const { icp, did } = await build()
-    const result = await foldLog(did, {
-      chain: [icp, await unknownEvent(did, icp, true)],
-      events: [],
+    const result = await foldLog({
+      did,
+      input: {
+        chain: [icp, await unknownEvent(did, icp, true)],
+        events: [],
+      },
     })
     expect(result.ok).toBe(false)
     if (result.ok) return
@@ -55,9 +58,12 @@ describe('criticality', () => {
 
   test('an unknown non-critical event is skipped and the fold continues', async () => {
     const { icp, did } = await build()
-    const result = await foldLog(did, {
-      chain: [icp, await unknownEvent(did, icp, false)],
-      events: [],
+    const result = await foldLog({
+      did,
+      input: {
+        chain: [icp, await unknownEvent(did, icp, false)],
+        events: [],
+      },
     })
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -72,9 +78,12 @@ describe('criticality', () => {
     const { icp, did } = await build()
     const { event } = await unknownEvent(did, icp, false)
     const { crit: _crit, ...withoutCrit } = event
-    const result = await foldLog(did, {
-      chain: [icp, { event: withoutCrit as unknown as SignedEvent['event'], sigs: [] }],
-      events: [],
+    const result = await foldLog({
+      did,
+      input: {
+        chain: [icp, { event: withoutCrit as unknown as SignedEvent['event'], sigs: [] }],
+        events: [],
+      },
     })
     expect(result.ok).toBe(false)
     if (result.ok) return
@@ -95,14 +104,17 @@ describe('criticality', () => {
       [0, 2],
     ]
     for (const [g, s] of positions) {
-      const result = await foldLog(did, {
-        chain: [icp, { ...skipped, event: { ...skipped.event, g, s } }],
-        events: [],
+      const result = await foldLog({
+        did,
+        input: {
+          chain: [icp, { ...skipped, event: { ...skipped.event, g, s } }],
+          events: [],
+        },
       })
       expect(result).toEqual({ ok: false, reason: 'sequence gap', index: 1 })
     }
     // The truthful position still folds.
-    expect((await foldLog(did, { chain: [icp, skipped], events: [] })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: [icp, skipped], events: [] } })).ok).toBe(true)
   })
 
   test('a revoke is critical, so a verifier that cannot read it never accepts the device', async () => {
@@ -111,6 +123,6 @@ describe('criticality', () => {
       event: { ...(await unknownEvent(did, icp, true)).event, t: 'rev' as never, x: stolen },
       sigs: [],
     }
-    expect((await foldLog(did, { chain: [icp, forged], events: [] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain: [icp, forged], events: [] } })).ok).toBe(false)
   })
 })

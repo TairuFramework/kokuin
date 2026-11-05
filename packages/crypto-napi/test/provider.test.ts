@@ -39,7 +39,7 @@ function recordingBinding() {
   const calls: Array<string> = []
   const binding: NapiBinding = {
     ABI_VERSION: NAPI_ABI_VERSION,
-    sign(seed, message) {
+    sign({ seed, message }) {
       calls.push('sign')
       return noble.sign(seed, message)
     },
@@ -47,16 +47,16 @@ function recordingBinding() {
       calls.push(`verify:${es256 ? 'ES256' : 'EdDSA'}`)
       return noble.verify({
         alg: es256 ? 'ES256' : 'EdDSA',
-        signature: signature,
-        message: message,
+        signature,
+        message,
         key: publicKey,
       })
     },
-    blake3(input, length) {
+    blake3({ input, length }) {
       calls.push('blake3')
       return noble.blake3(input, length)
     },
-    async signBatch(seeds, messages) {
+    async signBatch({ seeds, messages }) {
       calls.push(`signBatch:${seeds.length}`)
       return seeds.map((seed, index) => noble.sign(seed, messages[index] as Uint8Array))
     },
@@ -71,7 +71,7 @@ function recordingBinding() {
         })
       })
     },
-    async blake3Batch(inputs, length) {
+    async blake3Batch({ inputs, length }) {
       calls.push(`blake3Batch:${inputs.length}`)
       return inputs.map((input) => noble.blake3(input, length))
     },
@@ -133,19 +133,19 @@ test('single Ed25519 and blake3 calls run natively and synchronously', async () 
   const { binding, calls } = recordingBinding()
   const provider = createNapiCrypto({ binding })
   expect(provider.backend).toBe('napi')
-  const signing = provider.sign('EdDSA', seed, message)
+  const signing = provider.sign({ alg: 'EdDSA', privateKey: seed, message })
   expect(calls).toEqual(['sign'])
   const signature = await signing
   const publicKey = ed25519.getPublicKey(seed)
   expect(
     await provider.verify({
       alg: 'EdDSA',
-      signature: signature,
-      message: message,
-      publicKey: publicKey,
+      signature,
+      message,
+      publicKey,
     }),
   ).toBe(true)
-  await provider.blake3(message, 32)
+  await provider.blake3({ input: message, dkLen: 32 })
   expect(calls).toEqual(['sign', 'verify:EdDSA', 'blake3'])
 })
 
@@ -158,9 +158,9 @@ test('single ES256 verification stays on nodeCrypto', async () => {
   expect(
     await provider.verify({
       alg: 'ES256',
-      signature: signature,
-      message: message,
-      publicKey: publicKey,
+      signature,
+      message,
+      publicKey,
     }),
   ).toBe(true)
   expect(calls).toEqual([])
@@ -169,23 +169,26 @@ test('single ES256 verification stays on nodeCrypto', async () => {
 test('verify batches of two or more and large sign batches use the pool; smaller ones stay on the calling thread', async () => {
   const { binding, calls } = recordingBinding()
   const provider = createNapiCrypto({ binding })
-  const [signature] = await provider.signBatch('EdDSA', [{ privateKey: seed, message }])
+  const [signature] = await provider.signBatch({
+    alg: 'EdDSA',
+    items: [{ privateKey: seed, message }],
+  })
   const publicKey = ed25519.getPublicKey(seed)
   expect(
     await provider.verifyBatch([
       { alg: 'EdDSA', signature: signature as Uint8Array, message, publicKey },
     ]),
   ).toEqual([true])
-  expect(await provider.signBatch('EdDSA', [])).toEqual([])
+  expect(await provider.signBatch({ alg: 'EdDSA', items: [] })).toEqual([])
   expect(await provider.verifyBatch([])).toEqual([])
-  expect(await provider.blake3Batch([], 16)).toEqual([])
+  expect(await provider.blake3Batch({ inputs: [], dkLen: 16 })).toEqual([])
   expect(calls).toEqual(['sign', 'verify:EdDSA'])
   calls.length = 0
   const pair = [
     { privateKey: seed, message },
     { privateKey: seed, message },
   ]
-  const [first, second] = await provider.signBatch('EdDSA', pair)
+  const [first, second] = await provider.signBatch({ alg: 'EdDSA', items: pair })
   expect(first).toEqual(signature)
   await provider.verifyBatch([
     { alg: 'EdDSA', signature: first as Uint8Array, message, publicKey },
@@ -199,7 +202,7 @@ test('verify batches of two or more and large sign batches use the pool; smaller
       message,
     }
   })
-  await provider.signBatch('EdDSA', many)
+  await provider.signBatch({ alg: 'EdDSA', items: many })
   expect(calls).toEqual([`signBatch:${SIGN_SYNC_BATCH_ITEMS + 1}`])
 })
 
@@ -233,11 +236,11 @@ test('blake3 batches hash on the calling thread up to the threshold, then on the
   const { binding, calls } = recordingBinding()
   const provider = createNapiCrypto({ binding })
   const half = new Uint8Array(BLAKE3_SYNC_BATCH_BYTES / 2)
-  const small = provider.blake3Batch([half, half], 16)
+  const small = provider.blake3Batch({ inputs: [half, half], dkLen: 16 })
   expect(calls).toEqual(['blake3', 'blake3'])
   expect((await small).map((hash) => hash.length)).toEqual([16, 16])
   calls.length = 0
-  await provider.blake3Batch([half, half, Uint8Array.of(1)], 16)
+  await provider.blake3Batch({ inputs: [half, half, Uint8Array.of(1)], dkLen: 16 })
   expect(calls).toEqual(['blake3Batch:3'])
 })
 
@@ -247,36 +250,42 @@ test('invalid arguments reject like noble without reaching the binding', async (
   const shared = new Uint8Array(new SharedArrayBuffer(32))
   const cases: Array<[Promise<unknown>, Promise<unknown>]> = [
     [
-      provider.sign('EdDSA', new Uint8Array(31), message),
-      nobleCrypto.sign('EdDSA', new Uint8Array(31), message),
+      provider.sign({ alg: 'EdDSA', privateKey: new Uint8Array(31), message }),
+      nobleCrypto.sign({ alg: 'EdDSA', privateKey: new Uint8Array(31), message }),
     ],
     [
-      provider.sign('ES256' as 'EdDSA', seed, message),
-      nobleCrypto.sign('ES256' as 'EdDSA', seed, message),
+      provider.sign({ alg: 'ES256' as 'EdDSA', privateKey: seed, message }),
+      nobleCrypto.sign({ alg: 'ES256' as 'EdDSA', privateKey: seed, message }),
     ],
     [
       provider.verify({
         alg: 'RS256' as 'EdDSA',
         signature: seed,
-        message: message,
+        message,
         publicKey: seed,
       }),
       nobleCrypto.verify({
         alg: 'RS256' as 'EdDSA',
         signature: seed,
-        message: message,
+        message,
         publicKey: seed,
       }),
     ],
     [
-      provider.verify({ alg: 'EdDSA', signature: shared, message: message, publicKey: seed }),
-      nobleCrypto.verify({ alg: 'EdDSA', signature: shared, message: message, publicKey: seed }),
+      provider.verify({ alg: 'EdDSA', signature: shared, message, publicKey: seed }),
+      nobleCrypto.verify({ alg: 'EdDSA', signature: shared, message, publicKey: seed }),
     ],
-    [provider.blake3(message, 0), nobleCrypto.blake3(message, 0)],
-    [provider.blake3(shared, 32), nobleCrypto.blake3(shared, 32)],
     [
-      provider.signBatch('EdDSA', [{ privateKey: new Uint8Array(8), message }]),
-      nobleCrypto.signBatch('EdDSA', [{ privateKey: new Uint8Array(8), message }]),
+      provider.blake3({ input: message, dkLen: 0 }),
+      nobleCrypto.blake3({ input: message, dkLen: 0 }),
+    ],
+    [
+      provider.blake3({ input: shared, dkLen: 32 }),
+      nobleCrypto.blake3({ input: shared, dkLen: 32 }),
+    ],
+    [
+      provider.signBatch({ alg: 'EdDSA', items: [{ privateKey: new Uint8Array(8), message }] }),
+      nobleCrypto.signBatch({ alg: 'EdDSA', items: [{ privateKey: new Uint8Array(8), message }] }),
     ],
     [
       provider.verifyBatch([
@@ -286,7 +295,10 @@ test('invalid arguments reject like noble without reaching the binding', async (
         { alg: 'RS256' as 'EdDSA', signature: seed, message, publicKey: seed },
       ]),
     ],
-    [provider.blake3Batch([message], 65537), nobleCrypto.blake3Batch([message], 65537)],
+    [
+      provider.blake3Batch({ inputs: [message], dkLen: 65537 }),
+      nobleCrypto.blake3Batch({ inputs: [message], dkLen: 65537 }),
+    ],
   ]
   for (const [ours, theirs] of cases) {
     const [mine, reference] = await Promise.allSettled([ours, theirs])
@@ -308,5 +320,7 @@ test('a native failure after construction rejects instead of falling back', asyn
       },
     },
   })
-  await expect(provider.sign('EdDSA', seed, message)).rejects.toThrow('native failure')
+  await expect(provider.sign({ alg: 'EdDSA', privateKey: seed, message })).rejects.toThrow(
+    'native failure',
+  )
 })

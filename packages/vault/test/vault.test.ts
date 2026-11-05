@@ -102,7 +102,9 @@ describe('vault crypto', () => {
   test('opens did, passphrase and pin in their authenticated order', async () => {
     const { identity, contentKey, wrapped } = await multifactor()
     expect(wrapped.descriptors.map((factor) => factor.kind)).toEqual(['did', 'passphrase', 'pin'])
-    expect(wrapped.descriptorDigest).toBe(await descriptorDigest(wrapped.descriptors))
+    expect(wrapped.descriptorDigest).toBe(
+      await descriptorDigest({ descriptors: wrapped.descriptors }),
+    )
     expect(
       await suite.unwrap({
         ...openParams(wrapped),
@@ -187,7 +189,7 @@ describe('vault crypto', () => {
         suite.unwrap({
           ...openParams(wrapped),
           descriptors,
-          descriptorDigest: await descriptorDigest(descriptors),
+          descriptorDigest: await descriptorDigest({ descriptors }),
           identity: { id: identity.id, agreeKey },
           inputs: { passphrase, pin },
         }),
@@ -216,12 +218,19 @@ describe('vault crypto', () => {
       contentKey,
       factors: [{ kind: 'did', recipientDID }],
     })
-    expect(await suite.unwrap({ ...openParams(wrapped), identity })).toEqual(contentKey)
+    expect(
+      await suite.unwrap({
+        ...openParams(wrapped),
+        identity,
+      }),
+    ).toEqual(contentKey)
     const epk = wrapped.descriptors[0]?.params.epk
     if (typeof epk !== 'string') throw new Error('missing ephemeral public key')
-    expect(await identity.agreeKey(fromB64(epk))).toHaveLength(32)
-    const shared = await deriveSharedSecretAsync(recipientDID, { methods: [] })
-    expect(await identity.agreeKey(shared.ephemeralPublicKey)).toEqual(shared.sharedSecret)
+    expect(await identity.agreeKey({ ephemeralPublicKey: fromB64(epk) })).toHaveLength(32)
+    const shared = await deriveSharedSecretAsync({ recipient: recipientDID, methods: [] })
+    expect(await identity.agreeKey({ ephemeralPublicKey: shared.ephemeralPublicKey })).toEqual(
+      shared.sharedSecret,
+    )
     if (didMethod === 'peer:4') {
       expect(identity.longForm).not.toBe(identity.id)
       expect(recipientDID).toBe(identity.longForm)
@@ -284,7 +293,7 @@ describe('vault crypto', () => {
     const prompt = vi.fn(() => {
       throw new Error('message-path identity attempted to prompt')
     })
-    const agreeKey = vi.fn(async (epk: Uint8Array) => await device.agreeKey(epk))
+    const agreeKey = vi.fn(device.agreeKey)
     const identity = { id: device.id, agreeKey, prompt }
     const contentKey = suite.generateContentKey(runtime)
     const wrapped = await suite.wrap({

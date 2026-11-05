@@ -47,7 +47,7 @@ const NOW = Date.now()
 const registry: MethodRegistry = [
   {
     method: 'key',
-    resolve: async (did, header) => await resolveIssuerWithDoc({ iss: did, header }),
+    resolve: async ({ did, header }) => await resolveIssuerWithDoc({ iss: did, header }),
   },
 ]
 
@@ -62,11 +62,11 @@ async function makeRecord(
     id,
     owner: options.owner ?? normalizeDID(identity.id),
     hlc: HLC.serialize({ wallTime: options.wallTime ?? NOW, counter: 0, nodeID: identity.id }),
-    payloadDigest: await recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest({ payload }),
     deleted: false,
     meta: { label: id },
   }
-  const signed = await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })
+  const signed = await signRecordOp({ identity, claim, opKind: TEST_OP_KIND })
   return { type: claim.type, id, owner: claim.owner, hlc: claim.hlc, payload, ...signed }
 }
 
@@ -132,7 +132,7 @@ describe('record op verification memo', () => {
 
   test('a scoped verifier checks each token once, whatever the issuer, and binds the record', async () => {
     const record = await makeRecord(randomIdentity(), 'a')
-    const verify = createRecordVerifier(TEST_OP_KIND, registry)
+    const verify = createRecordVerifier({ opKind: TEST_OP_KIND, methods: registry })
 
     expect(await verify(record)).not.toBeNull()
     expect(await verify(record)).not.toBeNull()
@@ -184,7 +184,7 @@ describe('record op verification memo', () => {
     const rotating: MethodRegistry = [
       {
         method: 'key',
-        resolve: async (did, header) => {
+        resolve: async ({ did, header }) => {
           if (removed.has(did)) throw new Error(`Key removed: ${did}`)
           return await resolveIssuerWithDoc({ iss: did, header })
         },
@@ -213,7 +213,7 @@ describe('record op verification memo', () => {
             dependsOn: [],
             authorize: async () => true,
             dependencies: () => [],
-            lockKeys: (record) => [{ type: record.type, key: record.id }],
+            lockKeys: ({ incoming: record }) => [{ type: record.type, key: record.id }],
           },
         ],
       ]),

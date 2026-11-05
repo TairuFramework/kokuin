@@ -33,11 +33,11 @@ const folds = vi.mocked(history.authoritativeLogWithin)
 
 const seed = new Uint8Array(32).fill(7)
 const profile = 0
-const icp = await createInception(seed, profile)
+const icp = await createInception({ seed, profile })
 const did = didFromInception(icp.event)
 
 const memberPrivateKey = new Uint8Array(32).fill(23)
-const memberKey = encodeKey(ed25519.getPublicKey(memberPrivateKey), 'EdDSA')
+const memberKey = encodeKey({ publicKey: ed25519.getPublicKey(memberPrivateKey), alg: 'EdDSA' })
 const member: MemberEntry = {
   did: `did:key:${memberKey}`,
   key: memberKey,
@@ -51,7 +51,7 @@ async function settle(prior: EventCommon, deny: Array<string> = []): Promise<Sig
 
 const rot = await settle(icp.event)
 const chain = [icp, rot]
-const folded = await foldLog(did, { chain, events: [] })
+const folded = await foldLog({ did, input: { chain, events: [] } })
 if (!folded.ok) throw new Error(`fixture does not fold: ${folded.reason}`)
 const head: KeyState = folded.head
 
@@ -92,7 +92,7 @@ describe('the fold memo', () => {
     // A resolver per resolution, as kubun's engine builds them: still one fold.
     const second = createControllerResolver({ loadLog: async () => copy(log) })
     const deniedSecond = await denied(second)
-    await second.resolve(did, {})
+    await second.resolve({ did, header: {} })
     expect(folds).toHaveBeenCalledTimes(1)
     expect(deniedFirst.has('did:key:zA')).toBe(true)
     expect([...deniedSecond]).toEqual([...deniedFirst])
@@ -129,8 +129,8 @@ describe('the fold memo', () => {
 
     // Memoize the prefix's fold against no memory.
     const plain = createControllerResolver({ loadLog: async () => copy(prefix) })
-    await plain.resolve(did, {})
-    await plain.resolve(did, {})
+    await plain.resolve({ did, header: {} })
+    await plain.resolve({ did, header: {} })
     expect(folds).toHaveBeenCalledTimes(1)
 
     let served = prefix
@@ -139,19 +139,22 @@ describe('the fold memo', () => {
       history: createMemoryLogStore(),
     })
     // First encounter: nothing seen, so the memoized fold answers.
-    await resolver.resolve(did, {})
+    await resolver.resolve({ did, header: {} })
     expect(folds).toHaveBeenCalledTimes(1)
     served = longer
     expect((await denied(resolver)).has('did:key:zLater')).toBe(true)
     // The prefix again: the memo holds a fold of it, but not against the longer log now seen.
     served = prefix
-    await expect(resolver.resolve(did, {})).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
-    await expect(resolver.resolve(did, {})).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
+    await expect(resolver.resolve({ did, header: {} })).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
+    await expect(resolver.resolve({ did, header: {} })).rejects.toThrow(LOG_NOT_AUTHORITATIVE)
   })
 
   test('a memoized presentation withholding a seen revoke still answers with the revoke', async () => {
     const withheld: ControllerLog = { chain, events: [] }
-    await createControllerResolver({ loadLog: async () => copy(withheld) }).resolve(did, {})
+    await createControllerResolver({ loadLog: async () => copy(withheld) }).resolve({
+      did,
+      header: {},
+    })
 
     let served: ControllerLog = { chain, events: [revA] }
     const resolver = createControllerResolver({
@@ -172,18 +175,21 @@ describe('the fold memo', () => {
       loadLog: async () => copy(log),
       history: {
         get: (key) => store.get(key),
-        merge: (key, update) => {
-          return store.merge(key, async (current) => {
-            const next = await update(current)
-            writes.push(next !== current)
-            return next
+        merge: ({ did: key, update }) => {
+          return store.merge({
+            did: key,
+            update: async (current) => {
+              const next = await update(current)
+              writes.push(next !== current)
+              return next
+            },
           })
         },
       },
     })
-    await resolver.resolve(did, {})
-    await resolver.resolve(did, {})
-    await resolver.resolve(did, {})
+    await resolver.resolve({ did, header: {} })
+    await resolver.resolve({ did, header: {} })
+    await resolver.resolve({ did, header: {} })
     expect(writes).toEqual([true, false, false])
     // The first against no memory, the second against the log it stored; the third is a hit.
     expect(folds).toHaveBeenCalledTimes(2)
@@ -197,11 +203,11 @@ describe('the fold memo', () => {
       { loadLog: async () => copy(log) },
       { MAX_EPOCH_EVENTS: 1 },
     )
-    await expect(lowered.resolve(did, {})).rejects.toThrow(EPOCH_SATURATED)
-    await expect(lowered.resolve(did, {})).rejects.toThrow(EPOCH_SATURATED)
+    await expect(lowered.resolve({ did, header: {} })).rejects.toThrow(EPOCH_SATURATED)
+    await expect(lowered.resolve({ did, header: {} })).rejects.toThrow(EPOCH_SATURATED)
     expect(folds).toHaveBeenCalledTimes(3)
     // And the default entry is untouched by the lowered folds.
-    await plain.resolve(did, {})
+    await plain.resolve({ did, header: {} })
     expect(folds).toHaveBeenCalledTimes(3)
   })
 
@@ -210,8 +216,8 @@ describe('the fold memo', () => {
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp, { ...rot, sigs: ['AA'] }], events: [forged] }),
     })
-    await expect(resolver.resolve(did, {})).rejects.toThrow()
-    await expect(resolver.resolve(did, {})).rejects.toThrow()
+    await expect(resolver.resolve({ did, header: {} })).rejects.toThrow()
+    await expect(resolver.resolve({ did, header: {} })).rejects.toThrow()
     expect(folds).toHaveBeenCalledTimes(2)
   })
 })

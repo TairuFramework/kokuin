@@ -37,7 +37,7 @@ describe('createInMemoryDIDCache', () => {
   it('stores and retrieves a doc by short form', async () => {
     const cache = createInMemoryDIDCache()
     const { shortForm, doc } = encodePeer4(docA)
-    await cache.set(shortForm, doc)
+    await cache.set({ shortForm, doc })
     expect(await cache.get(shortForm)).toEqual(doc)
   })
 
@@ -49,19 +49,19 @@ describe('createInMemoryDIDCache', () => {
   it('rejects set when short form does not match the doc hash', async () => {
     const cache = createInMemoryDIDCache()
     const { shortForm: shortA } = encodePeer4(docA)
-    await expect(cache.set(shortA, docB)).rejects.toThrow(/hash mismatch/i)
+    await expect(cache.set({ shortForm: shortA, doc: docB })).rejects.toThrow(/hash mismatch/i)
   })
 
   it('rejects set for non-peer:4 short form', async () => {
     const cache = createInMemoryDIDCache()
-    await expect(cache.set('did:key:z6Mk', docA)).rejects.toThrow(/did:peer:4/)
+    await expect(cache.set({ shortForm: 'did:key:z6Mk', doc: docA })).rejects.toThrow(/did:peer:4/)
   })
 
   it('is idempotent — repeated set with same doc is fine', async () => {
     const cache = createInMemoryDIDCache()
     const { shortForm } = encodePeer4(docA)
-    await cache.set(shortForm, docA)
-    await cache.set(shortForm, docA)
+    await cache.set({ shortForm, doc: docA })
+    await cache.set({ shortForm, doc: docA })
     expect(await cache.get(shortForm)).toEqual(docA)
   })
 
@@ -79,7 +79,9 @@ describe('createInMemoryDIDCache', () => {
     // `bigDoc` itself to derive a matching form is impossible — it exceeds base58btc's input limit,
     // which is the very reason the size guard has to precede the encode.
     const { shortForm } = encodePeer4(docA)
-    await expect(cache.set(shortForm, bigDoc)).rejects.toThrow(/did:peer:4 resolver doc too large/)
+    await expect(cache.set({ shortForm, doc: bigDoc })).rejects.toThrow(
+      /did:peer:4 resolver doc too large/,
+    )
   })
 })
 
@@ -89,9 +91,9 @@ describe('createInMemoryDIDCache LRU', () => {
     const a = encodePeer4(makeDoc(1))
     const b = encodePeer4(makeDoc(2))
     const c = encodePeer4(makeDoc(3))
-    await cache.set(a.shortForm, a.doc)
-    await cache.set(b.shortForm, b.doc)
-    await cache.set(c.shortForm, c.doc)
+    await cache.set({ shortForm: a.shortForm, doc: a.doc })
+    await cache.set({ shortForm: b.shortForm, doc: b.doc })
+    await cache.set({ shortForm: c.shortForm, doc: c.doc })
     expect(await cache.get(a.shortForm)).toBeUndefined()
     expect(await cache.get(b.shortForm)).toEqual(b.doc)
     expect(await cache.get(c.shortForm)).toEqual(c.doc)
@@ -102,10 +104,10 @@ describe('createInMemoryDIDCache LRU', () => {
     const a = encodePeer4(makeDoc(4))
     const b = encodePeer4(makeDoc(5))
     const c = encodePeer4(makeDoc(6))
-    await cache.set(a.shortForm, a.doc)
-    await cache.set(b.shortForm, b.doc)
+    await cache.set({ shortForm: a.shortForm, doc: a.doc })
+    await cache.set({ shortForm: b.shortForm, doc: b.doc })
     await cache.get(a.shortForm) // bumps a
-    await cache.set(c.shortForm, c.doc)
+    await cache.set({ shortForm: c.shortForm, doc: c.doc })
     expect(await cache.get(a.shortForm)).toEqual(a.doc) // survives
     expect(await cache.get(b.shortForm)).toBeUndefined() // evicted
     expect(await cache.get(c.shortForm)).toEqual(c.doc)
@@ -117,7 +119,7 @@ describe('createInMemoryDIDCache LRU', () => {
     for (let i = 0; i < 100; i++) {
       const d = encodePeer4(makeDoc(i + 10))
       docs.push(d)
-      await cache.set(d.shortForm, d.doc)
+      await cache.set({ shortForm: d.shortForm, doc: d.doc })
     }
     const first = docs[0]
     const last = docs[99]

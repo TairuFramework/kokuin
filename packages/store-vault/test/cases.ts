@@ -89,7 +89,7 @@ export async function openVaultTestDB(
   } satisfies StoreDefinition<Record<string, never>, Kysely<Record<string, never>>>)
   if (replicated) {
     db.register(vaultRecordsStoreDefinition)
-    await getVaultRecordsStore(db, VAULT_OP_KIND)
+    await getVaultRecordsStore({ provider: db, opKind: VAULT_OP_KIND })
   }
   return {
     db,
@@ -467,7 +467,7 @@ export function storeVaultCases(harness: StoreHarness): void {
         },
       }
       await expectWriterBlocked({
-        db: db,
+        db,
         held: address,
         write: writers[method],
         addresses: [address],
@@ -512,7 +512,7 @@ export function storeVaultCases(harness: StoreHarness): void {
         await store.putEntry(entry)
         await store.putKey({ ...target, suite: 1, version: 1, state: 'active' })
         await expectWriterBlocked({
-          db: db,
+          db,
           held: held === 'source' ? address : target,
           write: (tx) => tx.moveEntry(moved),
           addresses: [address, target],

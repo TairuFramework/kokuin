@@ -55,9 +55,9 @@ export function createDelegationRevocationBackend(api: DelegationStoreAPI): Revo
       // (hlc, capability cross-check). The checker only consumes `get`, so this stub satisfies the
       // interface without offering a second, lossy write path.
     },
-    async get(jti, issuer) {
+    async get({ jti, issuer }) {
       // Store errors propagate: a lookup that failed is not "no record".
-      const row = await api.getRevocationByIssuer(jti, issuer)
+      const row = await api.getRevocationByIssuer({ jti, issuer })
       if (row == null) {
         return undefined
       }
@@ -81,7 +81,9 @@ function isPlainObject(value: unknown): boolean {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-type Verdict = (token: CapabilityToken, raw: string) => Promise<boolean>
+export type DelegationRevocationVerdictParams = { token: CapabilityToken; raw: string }
+
+type Verdict = (params: DelegationRevocationVerdictParams) => Promise<boolean>
 
 function createDelegationRevocationVerdict(
   api: DelegationStoreAPI,
@@ -89,17 +91,18 @@ function createDelegationRevocationVerdict(
 ): Verdict {
   const options = input === undefined ? undefined : { ...input, methods: input.methods?.slice() }
   const backend = createDelegationRevocationBackend(api)
-  return async (token, raw) => {
+  return async ({ token, raw }) => {
     // Capability's checker reads an unresolvable or failing dependency in several ways, some of
     // which end in a normal return. Recording the first fault at its source keeps a resolver or
     // store that could not answer from ever reading as "not revoked".
     //
     // Resolver faults count only for this token's own issuer. A record naming another issuer
     // cannot revoke this capability, so a fault resolving it hides nothing, and recording it would
-    // let a planted record deny the check. Every resolver method takes the subject DID first.
+    // let a planted record deny the check. Resolver methods name the subject in their first argument.
     const ownIssuer = normalizeDID(token.payload.iss)
     const isOwnIssuer = (args: Array<unknown>): boolean => {
-      const did = args[0]
+      const first = args[0]
+      const did = typeof first === 'object' && first !== null && 'did' in first ? first.did : first
       return typeof did === 'string' && normalizeDID(did.split('#')[0] ?? did) === ownIssuer
     }
     let dependencyFault: unknown
@@ -152,10 +155,11 @@ function createDelegationRevocationVerdict(
       get: wrap(backend.get, () => true),
     }
     try {
-      await createRevocationChecker(trackedBackend, { ...options, methods: trackedMethods })(
-        token,
-        raw,
-      )
+      await createRevocationChecker({
+        ...options,
+        backend: trackedBackend,
+        methods: trackedMethods,
+      })({ token, raw })
     } catch (error) {
       if (hadDependencyFault) throw dependencyFault
       if (isTokenRevokedError(error)) return true
@@ -169,13 +173,17 @@ function createDelegationRevocationVerdict(
 }
 
 /** Adapt the revocation verdict to the throwing `VerifyTokenHook` contract. */
-export function createDelegationRevocationChecker(
-  api: DelegationStoreAPI,
-  options?: RevocationOptions,
-): VerifyTokenHook & { verdict: Verdict } {
+export type CreateDelegationRevocationCheckerParams = {
+  api: DelegationStoreAPI
+} & RevocationOptions
+
+export function createDelegationRevocationChecker({
+  api,
+  ...options
+}: CreateDelegationRevocationCheckerParams): VerifyTokenHook & { verdict: Verdict } {
   const verdict = createDelegationRevocationVerdict(api, options)
-  const checker: VerifyTokenHook = async (token, raw) => {
-    if (await verdict(token, raw)) {
+  const checker: VerifyTokenHook = async ({ token, raw }) => {
+    if (await verdict({ token, raw })) {
       throw new VerifiedRevocationError({ message: `Token revoked: ${token.payload.jti}` })
     }
   }

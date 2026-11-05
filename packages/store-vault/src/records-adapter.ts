@@ -39,7 +39,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
     isTransaction: db.isTransaction,
     async transaction(fn) {
       return bound.context.provider.withTransaction(async (provider) => {
-        const storage = await getVaultRecordsStore(provider)
+        const storage = await getVaultRecordsStore({ provider })
         const innerBound: Bound = {
           ...bound,
           ...storage,
@@ -185,22 +185,22 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
       await assertDomain(bound)
 
       const op = await verifySignedRecord({
-        record: record,
+        record,
         opKind: bound.opKind,
         methods: bound.methods,
-        options: bound.params,
+        crypto: bound.params?.crypto,
       })
 
       if (
         op === null ||
         !supported(record.type) ||
-        !(await recordPayloadMatches(record, op.claim, bound.params))
+        !(await recordPayloadMatches({ record, claim: op.claim, ...bound.params }))
       )
         throw new Error('Invalid vault record copy')
 
       const type = record.type as VaultRecordType
 
-      if ((await vaultRecordMeta(type, op.claim, bound.params)) === null)
+      if ((await vaultRecordMeta({ type, claim: op.claim, ...bound.params })) === null)
         throw new Error('Invalid vault record metadata')
 
       const previousRows = await whereKey(db, record).orderBy('op_hash').execute()
@@ -209,7 +209,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
       const decisionHLC =
         typeof op.claim.meta.version === 'string' ? op.claim.meta.version : op.claim.hlc
       const same = previous?.contentDigest === contentDigest && previous.decisionHLC === decisionHLC
-      const incomingSigner = recordSignerKey(op.issuer, record.opJWT)
+      const incomingSigner = recordSignerKey({ issuer: op.issuer, opJWT: record.opJWT })
       // One check per prior row, shared by both passes. The first failure in row order wins.
       const priors = await settleAll(previousRows.map((row) => checked(row, bound)))
       let keepHash = record.opHash
@@ -220,7 +220,8 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         if (
           same &&
           prior !== null &&
-          recordSignerKey(prior.op.issuer, prior.copy.opJWT) === incomingSigner &&
+          recordSignerKey({ issuer: prior.op.issuer, opJWT: prior.copy.opJWT }) ===
+            incomingSigner &&
           row.op_hash < keepHash
         )
           keepHash = row.op_hash
@@ -230,7 +231,11 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         const decoded =
           record.payload === null
             ? null
-            : await decodeVaultRecord(record, op.claim.meta, bound.params)
+            : await decodeVaultRecord({
+                record,
+                recordMeta: op.claim.meta,
+                ...bound.params,
+              })
         await db
           .deleteFrom('vault_records')
           .where('type', '=', record.type)
@@ -246,7 +251,8 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
 
             return (
               prior === null ||
-              (recordSignerKey(prior.op.issuer, prior.copy.opJWT) === incomingSigner &&
+              (recordSignerKey({ issuer: prior.op.issuer, opJWT: prior.copy.opJWT }) ===
+                incomingSigner &&
                 row.op_hash !== keepHash)
             )
           })
@@ -274,7 +280,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
 
       if (claimed.numInsertedOrUpdatedRows === 0n) throw new VaultModeConflict()
     },
-    async pruneCopy(input, signerDID) {
+    async pruneCopy({ key: input, signerDID }) {
       const key = { ...input }
       if (!db.isTransaction) throw new Error('Copy pruning requires the apply transaction')
 
@@ -290,7 +296,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
               record: copy,
               opKind: bound.opKind,
               methods: bound.methods,
-              options: bound.params,
+              crypto: bound.params?.crypto,
             }),
           }
         }),

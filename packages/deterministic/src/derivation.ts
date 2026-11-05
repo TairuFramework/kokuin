@@ -24,7 +24,12 @@ function assertHardened(path: string): void {
   }
 }
 
-export function resolveDerivationPath(keyID: string, basePath: string = DEFAULT_BASE_PATH): string {
+export type ResolveDerivationPathParams = { keyID: string; basePath?: string }
+
+export function resolveDerivationPath({
+  basePath = DEFAULT_BASE_PATH,
+  keyID,
+}: ResolveDerivationPathParams): string {
   if (keyID.startsWith('m/') || keyID === 'm') {
     assertHardened(keyID)
     return keyID
@@ -37,7 +42,9 @@ export function resolveDerivationPath(keyID: string, basePath: string = DEFAULT_
   throw new Error(`Invalid keyID: "${keyID}" — expected a numeric index or full derivation path`)
 }
 
-export function derivePrivateKey(seed: Uint8Array, path: string): Uint8Array {
+export type DerivePrivateKeyParams = { seed: Uint8Array; path: string }
+
+export function derivePrivateKey({ path, seed }: DerivePrivateKeyParams): Uint8Array {
   const root = HDKey.fromMasterSeed(seed)
   if (path === 'm') {
     return root.privateKey

@@ -6,4 +6,6 @@ Add crypto to capability, delegation-chain and revocation options. Forward provi
 
 Use named params objects for public signatures and constructors. Export their named types. Preserve behaviour and update migration references.
 
-`createCapability` takes `{ signer, payload, header?, options? }`.
+`createCapability` takes `{ signer, payload, header?, crypto? }`.
+
+All public APIs with two or more arguments now take one flat params object. Options fields sit at the top level.

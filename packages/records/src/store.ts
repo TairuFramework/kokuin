@@ -36,9 +36,9 @@ export type RecordStoreAdapter = {
   getMany?(keys: ReadonlyArray<RecordKey>): Promise<RecordDecisionMap>
   list(types: ReadonlyArray<string>): Promise<Array<RecordDecision>>
   /** Indexed lookup of records whose signed metadata names one transport group. */
-  listByGroup?(type: string, groupID: string): Promise<Array<RecordDecision>>
+  listByGroup?(params: RecordStoreAdapterListByGroupParams): Promise<Array<RecordDecision>>
   putCopy(record: SignedRecord): Promise<void>
-  pruneCopy(key: RecordKey, signerDID: string): Promise<void>
+  pruneCopy(params: RecordStoreAdapterPruneCopyParams): Promise<void>
   /** Acquire all transaction-scoped key locks together, before authoritative reads. */
   lock?(keys: ReadonlyArray<RecordLockKey>): Promise<void>
   adapterForType?(type: string): RecordStoreAdapter | null
@@ -55,10 +55,12 @@ export function recordKeyText(key: RecordKey): string {
  * The fallback waits for every `get`, so none is left running in the caller's transaction, then
  * throws the first failure in key order.
  */
-export async function getRecordDecisions(
-  store: RecordStoreAdapter,
-  keys: ReadonlyArray<RecordKey>,
-): Promise<RecordDecisionMap> {
+export type GetRecordDecisionsParams = { store: RecordStoreAdapter; keys: ReadonlyArray<RecordKey> }
+
+export async function getRecordDecisions({
+  keys,
+  store,
+}: GetRecordDecisionsParams): Promise<RecordDecisionMap> {
   const unique = new Map<string, RecordKey>()
   for (const key of keys) {
     const text = recordKeyText(key)
@@ -77,3 +79,7 @@ export async function getRecordDecisions(
   }
   return decisions
 }
+
+export type RecordStoreAdapterListByGroupParams = { type: string; groupID: string }
+
+export type RecordStoreAdapterPruneCopyParams = { key: RecordKey; signerDID: string }

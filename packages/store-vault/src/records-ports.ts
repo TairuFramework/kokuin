@@ -25,16 +25,16 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
       if (!db.isTransaction) throw new Error('Candidate retention requires the apply transaction')
 
       const op = await verifySignedRecord({
-        record: record,
+        record,
         opKind: bound.opKind,
         methods: bound.methods,
-        options: bound.params,
+        crypto: bound.params?.crypto,
       })
 
       if (
         op === null ||
-        !(await recordPayloadMatches(record, op.claim, bound.params)) ||
-        (await vaultRecordMeta('vault.entry', op.claim, bound.params)) === null
+        !(await recordPayloadMatches({ record, claim: op.claim, ...bound.params })) ||
+        (await vaultRecordMeta({ type: 'vault.entry', claim: op.claim, ...bound.params })) === null
       )
         throw new Error('Invalid entry candidate')
 
@@ -72,7 +72,11 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
         this.listRevocations(address),
         bound.store.listWrappings(address),
       ])
-      const denied = new Set(revocations.map((did) => vaultRevocationRecordID(address.keyID, did)))
+      const denied = new Set(
+        revocations.map((did) =>
+          vaultRevocationRecordID({ keyID: address.keyID, recipientDID: did }),
+        ),
+      )
       const revoked = wrappings
         .filter((row) => {
           const recipients = [
@@ -83,7 +87,7 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
           return recipients.some((recipient) => {
             return (
               typeof recipient === 'string' &&
-              denied.has(vaultRevocationRecordID(address.keyID, recipient))
+              denied.has(vaultRevocationRecordID({ keyID: address.keyID, recipientDID: recipient }))
             )
           })
         })

@@ -43,34 +43,41 @@ describe('child expiry attenuation during verification', () => {
       const expiry = now() + 3600
       const parent = stringifyToken(
         await root.signToken({
-          sub: root.id,
-          aud: manager.id,
-          act: 'write',
-          res: '*',
-          exp: bounded ? expiry : undefined,
+          payload: {
+            sub: root.id,
+            aud: manager.id,
+            act: 'write',
+            res: '*',
+            exp: bounded ? expiry : undefined,
+          },
         }),
       )
       const child = await manager.signToken({
-        sub: root.id,
-        aud: device.id,
-        act: 'write',
-        res: 'doc/1',
-        exp: offset == null ? undefined : expiry + offset,
-        cap: [parent],
+        payload: {
+          sub: root.id,
+          aud: device.id,
+          act: 'write',
+          res: 'doc/1',
+          exp: offset == null ? undefined : expiry + offset,
+          cap: [parent],
+        },
       })
       const result =
         path === 'presented capability'
-          ? checkCapability({ act: 'write', res: 'doc/1' }, child.payload)
+          ? checkCapability({ permission: { act: 'write', res: 'doc/1' }, payload: child.payload })
           : path === 'delegation chain'
-            ? checkDelegationChain(child.payload as CapabilityPayload, [parent])
-            : checkCapability(
-                { act: 'write', res: 'doc/1' },
-                {
+            ? checkDelegationChain({
+                payload: child.payload as CapabilityPayload,
+                capabilities: [parent],
+              })
+            : checkCapability({
+                permission: { act: 'write', res: 'doc/1' },
+                payload: {
                   iss: device.id,
                   sub: root.id,
                   cap: [stringifyToken(child), parent],
                 },
-              )
+              })
       if (accepted) {
         await expect(result).resolves.toBeUndefined()
       } else {
@@ -85,14 +92,14 @@ describe('child expiry attenuation during verification', () => {
     const device = randomIdentity()
     const parent = await delegate(root, device, { exp: now() + 3600 })
     await expect(
-      checkCapability(
-        { act: 'write', res: 'doc/1' },
-        {
+      checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: {
           iss: device.id,
           sub: root.id,
           cap: [parent],
         },
-      ),
+      }),
     ).resolves.toBeUndefined()
   })
 
@@ -104,32 +111,39 @@ describe('child expiry attenuation during verification', () => {
     const parent = await delegate(root, manager, { exp: expiry })
     const intermediate = stringifyToken(
       await manager.signToken({
-        sub: root.id,
-        aud: device.id,
-        act: 'write',
-        res: '*',
-        exp: name === 'later expiry' ? expiry + 1 : undefined,
+        payload: {
+          sub: root.id,
+          aud: device.id,
+          act: 'write',
+          res: '*',
+          exp: name === 'later expiry' ? expiry + 1 : undefined,
+        },
       }),
     )
     const leaf = await device.signToken({
-      sub: root.id,
-      aud: connector.id,
-      act: 'write',
-      res: 'doc/1',
-      exp: expiry - 1,
+      payload: {
+        sub: root.id,
+        aud: connector.id,
+        act: 'write',
+        res: 'doc/1',
+        exp: expiry - 1,
+      },
     })
     await expect(
-      checkCapability(
-        { act: 'write', res: 'doc/1' },
-        {
+      checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: {
           iss: connector.id,
           sub: root.id,
           cap: [stringifyToken(leaf), intermediate, parent],
         },
-      ),
+      }),
     ).rejects.toThrow('Invalid capability: child expiry exceeds parent capability')
     await expect(
-      checkDelegationChain(leaf.payload as CapabilityPayload, [intermediate, parent]),
+      checkDelegationChain({
+        payload: leaf.payload as CapabilityPayload,
+        capabilities: [intermediate, parent],
+      }),
     ).rejects.toThrow('Invalid capability: child expiry exceeds parent capability')
   })
 })
@@ -150,7 +164,7 @@ async function delegate(
       cap: fields.parent == null ? undefined : [fields.parent],
     },
     header: undefined,
-    options: { parentCapability: fields.parent },
+    parentCapability: fields.parent,
   })
   return stringifyToken(token)
 }
@@ -174,7 +188,10 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
     // ATTACK: ask for a resource the presented capability does not name.
     let outcome = 'ACCEPTED'
     try {
-      await checkCapability({ act: 'write', res: 'doc/999' }, leaf as never)
+      await checkCapability({
+        permission: { act: 'write', res: 'doc/999' },
+        payload: leaf as never,
+      })
     } catch (error) {
       outcome = (error as Error).message
     }
@@ -182,7 +199,7 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
     // CONTROL Ia — the same call for what the leaf DOES grant.
     let control = 'ACCEPTED'
     try {
-      await checkCapability({ act: 'write', res: 'doc/1' }, leaf as never)
+      await checkCapability({ permission: { act: 'write', res: 'doc/1' }, payload: leaf as never })
     } catch (error) {
       control = (error as Error).message
     }
@@ -191,7 +208,7 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
     // CONTROL Ib — a request the PARENT does not grant is refused, so the chain check is live.
     let beyondParent = 'ACCEPTED'
     try {
-      await checkCapability({ act: 'delete', res: 'doc/1' }, leaf as never)
+      await checkCapability({ permission: { act: 'delete', res: 'doc/1' }, payload: leaf as never })
     } catch (error) {
       beyondParent = (error as Error).message
     }
@@ -220,7 +237,11 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
 
     let outcome = 'ACCEPTED'
     try {
-      await checkCapability({ act: 'write', res: 'doc/1' }, expired as never, { atTime: later })
+      await checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: expired as never,
+        atTime: later,
+      })
     } catch (error) {
       outcome = (error as Error).message
     }
@@ -229,17 +250,23 @@ describe('ATTACK: a delegated capability presented directly to checkCapability',
     // expiry is enforced on this exact path and the only difference is which link expired.
     const shortParent = await delegate(root, manager, { act: 'write', res: '*', exp: now() + 60 })
     const childToken = await manager.signToken({
-      sub: root.id,
-      aud: device.id,
-      act: 'write',
-      res: '*',
-      exp: now() + 3600,
-      cap: [shortParent],
+      payload: {
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: '*',
+        exp: now() + 3600,
+        cap: [shortParent],
+      },
     })
     const child = childToken.payload
     let control = 'ACCEPTED'
     try {
-      await checkCapability({ act: 'write', res: 'doc/1' }, child as never, { atTime: later })
+      await checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: child as never,
+        atTime: later,
+      })
     } catch (error) {
       control = (error as Error).message
     }
@@ -277,7 +304,10 @@ describe('ATTACK: the depth cap', () => {
       }
       let outcome = 'ACCEPTED'
       try {
-        await checkCapability({ act: 'write', res: 'doc/1' }, invocation as never)
+        await checkCapability({
+          permission: { act: 'write', res: 'doc/1' },
+          payload: invocation as never,
+        })
       } catch (error) {
         outcome = (error as Error).message
       }
@@ -297,7 +327,9 @@ describe('ATTACK: a capability with no expiry at all', () => {
 
     let outcome = 'ACCEPTED'
     try {
-      await checkCapability({ act: 'write', res: 'doc/1' }, invocation as never, {
+      await checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: invocation as never,
         atTime: farFuture,
       })
     } catch (error) {
@@ -307,13 +339,11 @@ describe('ATTACK: a capability with no expiry at all', () => {
     const bounded = await delegate(root, device, { act: 'write', res: '*', exp: now() + 3600 })
     let control = 'ACCEPTED'
     try {
-      await checkCapability(
-        { act: 'write', res: 'doc/1' },
-        { iss: device.id, sub: root.id, cap: [bounded] } as never,
-        {
-          atTime: farFuture,
-        },
-      )
+      await checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: { iss: device.id, sub: root.id, cap: [bounded] } as never,
+        atTime: farFuture,
+      })
     } catch (error) {
       control = (error as Error).message
     }
@@ -330,8 +360,12 @@ describe('ATTACK: the permission matcher itself', () => {
   test('a grant does not match a request at a different depth in either direction', async () => {
     // No implicit descent: a grant of `a` does not cover `a/b`. And no ascent: a grant deeper than
     // the request (`a/b`) does not cover the broader `a` — the privilege-escalation direction.
-    expect(hasPermission({ act: 'x', res: 'a/b' }, { act: 'x', res: 'a' })).toBe(false)
-    expect(hasPermission({ act: 'x', res: 'a' }, { act: 'x', res: 'a/b' })).toBe(false)
+    expect(
+      hasPermission({ expected: { act: 'x', res: 'a/b' }, granted: { act: 'x', res: 'a' } }),
+    ).toBe(false)
+    expect(
+      hasPermission({ expected: { act: 'x', res: 'a' }, granted: { act: 'x', res: 'a/b' } }),
+    ).toBe(false)
   })
 })
 
@@ -345,19 +379,24 @@ describe('ATTACK: nbf and iat on the presented capability', () => {
     // Hand-signed by the manager so the mint path cannot normalise the claims away. The only
     // thing wrong with it is the time claim under test.
     const leaf = await manager.signToken({
-      sub: root.id,
-      aud: device.id,
-      act: 'write',
-      res: '*',
-      exp: now() + 3600,
-      nbf: future,
-      iat: future,
-      cap: [parent],
+      payload: {
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: '*',
+        exp: now() + 3600,
+        nbf: future,
+        iat: future,
+        cap: [parent],
+      },
     })
 
     let outcome = 'ACCEPTED'
     try {
-      await checkCapability({ act: 'write', res: 'doc/1' }, leaf.payload as never)
+      await checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: leaf.payload as never,
+      })
     } catch (error) {
       outcome = (error as Error).message
     }
@@ -365,25 +404,32 @@ describe('ATTACK: nbf and iat on the presented capability', () => {
     // CONTROL — the same two claims on the PARENT instead: refused, so both are enforced on this
     // path and the only difference is which link carries them.
     const badParent = await root.signToken({
-      sub: root.id,
-      aud: manager.id,
-      act: 'write',
-      res: '*',
-      exp: now() + 3600,
-      nbf: future,
-      iat: future,
+      payload: {
+        sub: root.id,
+        aud: manager.id,
+        act: 'write',
+        res: '*',
+        exp: now() + 3600,
+        nbf: future,
+        iat: future,
+      },
     })
     const childOfBad = await manager.signToken({
-      sub: root.id,
-      aud: device.id,
-      act: 'write',
-      res: '*',
-      exp: now() + 3600,
-      cap: [stringifyToken(badParent)],
+      payload: {
+        sub: root.id,
+        aud: device.id,
+        act: 'write',
+        res: '*',
+        exp: now() + 3600,
+        cap: [stringifyToken(badParent)],
+      },
     })
     let control = 'ACCEPTED'
     try {
-      await checkCapability({ act: 'write', res: 'doc/1' }, childOfBad.payload as never)
+      await checkCapability({
+        permission: { act: 'write', res: 'doc/1' },
+        payload: childOfBad.payload as never,
+      })
     } catch (error) {
       control = (error as Error).message
     }

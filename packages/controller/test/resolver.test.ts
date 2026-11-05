@@ -24,7 +24,7 @@ const seed = new Uint8Array(32).fill(1)
 const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
 async function build() {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   return { icp, did: didFromInception(icp.event) }
 }
 
@@ -39,7 +39,7 @@ describe('createControllerResolver()', () => {
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp], events: [] }),
     })
-    const resolved = await resolver.resolve(did, {})
+    const resolved = await resolver.resolve({ did, header: {} })
     expect(resolved.alg).toBe('EdDSA')
     expect(resolved.publicKey).toEqual(decodeKey(at(icp.event.k, 0)).publicKey)
   })
@@ -47,7 +47,7 @@ describe('createControllerResolver()', () => {
   test('rejects a DID with no log rather than returning a guess', async () => {
     const { did } = await build()
     const resolver = createControllerResolver({ loadLog: async () => undefined })
-    await expect(resolver.resolve(did, {})).rejects.toThrow(/Unknown DID/)
+    await expect(resolver.resolve({ did, header: {} })).rejects.toThrow(/Unknown DID/)
   })
 
   test('rejects a log that does not fold to the requested DID', async () => {
@@ -55,7 +55,7 @@ describe('createControllerResolver()', () => {
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp], events: [] }),
     })
-    await expect(resolver.resolve('did:kokuin:zWRONG', {})).rejects.toThrow()
+    await expect(resolver.resolve({ did: 'did:kokuin:zWRONG', header: {} })).rejects.toThrow()
   })
 
   test('resolves the rotated key after a rotation, not the original', async () => {
@@ -70,7 +70,7 @@ describe('createControllerResolver()', () => {
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp, rot], events: [] }),
     })
-    const resolved = await resolver.resolve(did, {})
+    const resolved = await resolver.resolve({ did, header: {} })
     expect(resolved.publicKey).toEqual(decodeKey(at(rot.event.k, 0)).publicKey)
     expect(resolved.publicKey).not.toEqual(decodeKey(at(icp.event.k, 0)).publicKey)
   })
@@ -81,7 +81,7 @@ describe('createControllerResolver().resolve() with a kid', () => {
     const { did, log, cosignerKey, controllerKey } = await buildTwoKeyLog(seed)
     const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
 
-    const resolved = await resolver.resolve(did, { kid: `#${controllerKey}` })
+    const resolved = await resolver.resolve({ did, header: { kid: `#${controllerKey}` } })
     expect(resolved.alg).toBe('EdDSA')
     expect(resolved.publicKey).toEqual(decodeKey(controllerKey).publicKey)
     // Without this second assertion an implementation that ignores `kid` entirely would pass:
@@ -93,7 +93,7 @@ describe('createControllerResolver().resolve() with a kid', () => {
     const { did, log, cosignerKey } = await buildTwoKeyLog(seed)
     const resolver = createControllerResolver({ loadLog: async () => ({ chain: log, events: [] }) })
 
-    const resolved = await resolver.resolve(did, {})
+    const resolved = await resolver.resolve({ did, header: {} })
     expect(resolved.publicKey).toEqual(decodeKey(cosignerKey).publicKey)
   })
 
@@ -105,10 +105,12 @@ describe('createControllerResolver().resolve() with a kid', () => {
     // Rejected, never answered with `keys[0]`: a verifier told which key signed must not fall
     // back to a different one, which would accept a signature the token never claimed. Both
     // members refuse it — the key is in no key set this profile ever published.
-    await expect(resolver.resolve(did, { kid: `#${stranger}` })).rejects.toThrow(
+    await expect(resolver.resolve({ did, header: { kid: `#${stranger}` } })).rejects.toThrow(
       `Controller ${did} kid names a key that is not current: #${stranger}`,
     )
-    await expect(resolver.resolveHistoric?.(did, { kid: `#${stranger}` })).rejects.toThrow(
+    await expect(
+      resolver.resolveHistoric?.({ did, header: { kid: `#${stranger}` } }),
+    ).rejects.toThrow(
       `Controller ${did} kid names a key outside the current generation: #${stranger}`,
     )
   })
@@ -130,35 +132,35 @@ describe('createControllerResolver().resolve() with a kid', () => {
     // A rotate is routine hygiene, so it must not invalidate what the profile signed before it —
     // see `generation-lifecycle.test.ts` for the token-level consequence. That is the historic
     // question, and it has to be asked explicitly.
-    const resolved = await resolver.resolveHistoric?.(did, { kid: `#${retired}` })
+    const resolved = await resolver.resolveHistoric?.({ did, header: { kid: `#${retired}` } })
     expect(resolved?.publicKey).toEqual(decodeKey(retired).publicKey)
     // `resolve` answers the other question — can the profile sign with it now — and the answer is
     // no, which is what makes a rotate retire a leaked key for new issuance.
-    await expect(resolver.resolve(did, { kid: `#${retired}` })).rejects.toThrow(
+    await expect(resolver.resolve({ did, header: { kid: `#${retired}` } })).rejects.toThrow(
       /kid names a key that is not current/,
     )
     // The head answer is still the rotated key, so the historic resolution really did reach back.
-    const head = await resolver.resolve(did, {})
+    const head = await resolver.resolve({ did, header: {} })
     expect(head.publicKey).toEqual(decodeKey(at(rot.event.k, 0)).publicKey)
   })
 
   test('a kid naming a key from a superseded generation is rejected', async () => {
     const { icp, did } = await build()
-    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
+    const reset = await createReset({ seed, profile: 0, gen: 1 })
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [icp, reset], events: [] }),
     })
     const retired = at(icp.event.k, 0)
 
-    await expect(resolver.resolveHistoric?.(did, { kid: `#${retired}` })).rejects.toThrow(
-      /kid names a key outside the current generation/,
-    )
+    await expect(
+      resolver.resolveHistoric?.({ did, header: { kid: `#${retired}` } }),
+    ).rejects.toThrow(/kid names a key outside the current generation/)
     // Control: the same kid resolves against a resolver whose log stops before the reset, so the
     // rejection is the generation bump and not the kid form being unusable.
     const preReset = createControllerResolver({
       loadLog: async () => ({ chain: [icp], events: [] }),
     })
-    const resolved = await preReset.resolveHistoric?.(did, { kid: `#${retired}` })
+    const resolved = await preReset.resolveHistoric?.({ did, header: { kid: `#${retired}` } })
     expect(resolved?.publicKey).toEqual(decodeKey(retired).publicKey)
   })
 
@@ -168,7 +170,7 @@ describe('createControllerResolver().resolve() with a kid', () => {
 
     // The format is `#<the multibase key exactly as it appears in `k`>`. Accepting the bare key
     // as well would make two spellings valid forever on a wire-visible format.
-    await expect(resolver.resolve(did, { kid: controllerKey })).rejects.toThrow(
+    await expect(resolver.resolve({ did, header: { kid: controllerKey } })).rejects.toThrow(
       `Controller ${did} kid is not a key fragment: ${controllerKey}`,
     )
   })
@@ -206,7 +208,9 @@ describe('createControllerResolver() and a revoked key', () => {
     const afterRotate = createControllerResolver({
       loadLog: async () => ({ chain: rotated, events: [] }),
     })
-    await expect(afterRotate.resolveHistoric?.(did, { kid: `#${leaked}` })).resolves.toEqual({
+    await expect(
+      afterRotate.resolveHistoric?.({ did, header: { kid: `#${leaked}` } }),
+    ).resolves.toEqual({
       alg: 'EdDSA',
       publicKey: decodeKey(leaked).publicKey,
     })
@@ -215,9 +219,9 @@ describe('createControllerResolver() and a revoked key', () => {
     const afterRevoke = createControllerResolver({
       loadLog: async () => ({ chain: revoked, events: [] }),
     })
-    await expect(afterRevoke.resolveHistoric?.(did, { kid: `#${leaked}` })).rejects.toThrow(
-      `Controller ${did} kid names a key the controller has revoked: #${leaked}`,
-    )
+    await expect(
+      afterRevoke.resolveHistoric?.({ did, header: { kid: `#${leaked}` } }),
+    ).rejects.toThrow(`Controller ${did} kid names a key the controller has revoked: #${leaked}`)
   })
 
   test('the denial is evaluated at the head, not at the position the key was found at', async () => {
@@ -228,14 +232,14 @@ describe('createControllerResolver() and a revoked key', () => {
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: revoked, events: [] }),
     })
-    const folded = await foldLog(did, { chain: revoked, events: [] })
+    const folded = await foldLog({ did, input: { chain: revoked, events: [] } })
     if (!folded.ok) throw new Error('did not fold')
     expect(at(folded.states, 0).keys).toContain(leaked)
     expect(at(folded.states, 0).deny.size).toBe(0)
 
-    await expect(resolver.resolveHistoric?.(did, { kid: `#${leaked}` })).rejects.toThrow(
-      /has revoked/,
-    )
+    await expect(
+      resolver.resolveHistoric?.({ did, header: { kid: `#${leaked}` } }),
+    ).rejects.toThrow(/has revoked/)
   })
 
   test('the rest of the profile keeps resolving', async () => {
@@ -247,14 +251,16 @@ describe('createControllerResolver() and a revoked key', () => {
     })
     const current = at(rev.event.k, 0)
 
-    await expect(resolver.resolve(did, {})).resolves.toEqual({
+    await expect(resolver.resolve({ did, header: {} })).resolves.toEqual({
       alg: 'EdDSA',
       publicKey: decodeKey(current).publicKey,
     })
-    await expect(resolver.resolveHistoric?.(did, { kid: `#${current}` })).resolves.toBeDefined()
+    await expect(
+      resolver.resolveHistoric?.({ did, header: { kid: `#${current}` } }),
+    ).resolves.toBeDefined()
     // The key the first rotate established, retired since but never denied, still answers.
     await expect(
-      resolver.resolveHistoric?.(did, { kid: `#${at(rot.event.k, 0)}` }),
+      resolver.resolveHistoric?.({ did, header: { kid: `#${at(rot.event.k, 0)}` } }),
     ).resolves.toBeDefined()
     await expect(resolver.resolveAgreementKey?.(did)).resolves.toHaveLength(1)
   })
@@ -275,9 +281,9 @@ describe('createControllerResolver() and a revoked key', () => {
       loadLog: async () => ({ chain: [...revoked, cleared], events: [] }),
     })
 
-    await expect(resolver.resolveHistoric?.(did, { kid: `#${leaked}` })).rejects.toThrow(
-      /snapshot drops a retired key denial/,
-    )
+    await expect(
+      resolver.resolveHistoric?.({ did, header: { kid: `#${leaked}` } }),
+    ).rejects.toThrow(/snapshot drops a retired key denial/)
   })
 })
 
@@ -305,8 +311,8 @@ describe('createControllerResolver() shared folds', () => {
     })
 
     const [first, second] = await Promise.all([
-      resolver.resolve(did, {}),
-      resolver.resolve(did, {}),
+      resolver.resolve({ did, header: {} }),
+      resolver.resolve({ did, header: {} }),
     ])
     // One fold, not two: the second resolution joined the first rather than starting its own.
     expect(entered).toBe(1)
@@ -329,7 +335,7 @@ describe('createControllerResolver() shared folds', () => {
       },
     })
 
-    const before = await resolver.resolve(did, {})
+    const before = await resolver.resolve({ did, header: {} })
     expect(before.publicKey).toEqual(decodeKey(at(icp.event.k, 0)).publicKey)
 
     // The log grows between two sequential resolutions.
@@ -341,7 +347,7 @@ describe('createControllerResolver() shared folds', () => {
       snapshot: { members: [], deny: [] },
     })
     log = [icp, rot]
-    const after = await resolver.resolve(did, {})
+    const after = await resolver.resolve({ did, header: {} })
 
     expect(calls).toBe(2)
     expect(after.publicKey).toEqual(decodeKey(at(rot.event.k, 0)).publicKey)
@@ -360,8 +366,8 @@ describe('createControllerResolver() shared folds', () => {
       },
     })
 
-    await expect(resolver.resolve(did, {})).rejects.toThrow('store unavailable')
-    const resolved = await resolver.resolve(did, {})
+    await expect(resolver.resolve({ did, header: {} })).rejects.toThrow('store unavailable')
+    const resolved = await resolver.resolve({ did, header: {} })
     expect(calls).toBe(2)
     expect(resolved.publicKey).toEqual(decodeKey(at(icp.event.k, 0)).publicKey)
   })
@@ -376,13 +382,13 @@ describe('createControllerResolver() shared folds', () => {
       loadLog: async () => {
         calls++
         // Synchronous re-entry: no await before this line.
-        void resolver.resolve(did, {}).catch(() => undefined)
+        void resolver.resolve({ did, header: {} }).catch(() => undefined)
         return { chain: [icp], events: [] }
       },
     })
 
     const outcome = await Promise.race([
-      resolver.resolve(did, {}).then(() => 'resolved'),
+      resolver.resolve({ did, header: {} }).then(() => 'resolved'),
       new Promise((resolve) => setTimeout(() => resolve('timer fired'), 50)),
     ])
     // Joining the in-flight fold, so the re-entrant call adds no work of its own.
@@ -443,29 +449,33 @@ describe('a resolver over a fixed view', () => {
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const result = await foldLog(did, { chain: [icp, rot], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp, rot], events: [] } })
     if (!result.ok) throw new Error('did not fold')
     const resolver = fixedViewResolver(did, result.states, result.head)
 
     expect(resolver.method).toBe('kokuin')
-    await expect(resolver.resolve(did, {})).resolves.toEqual({
+    await expect(resolver.resolve({ did, header: {} })).resolves.toEqual({
       alg: 'EdDSA',
       publicKey: decodeKey(at(rot.event.k, 0)).publicKey,
     })
     // A key from an earlier position of the same generation, exactly as the live resolver does:
     // historic only, and refused by `resolve`.
     await expect(
-      resolver.resolveHistoric?.(did, { kid: `#${icp.event.k[0]}` }),
+      resolver.resolveHistoric?.({ did, header: { kid: `#${icp.event.k[0]}` } }),
     ).resolves.toBeDefined()
-    await expect(resolver.resolve(did, { kid: `#${icp.event.k[0]}` })).rejects.toThrow(
+    await expect(resolver.resolve({ did, header: { kid: `#${icp.event.k[0]}` } })).rejects.toThrow(
       /not current/,
     )
     await expect(resolver.resolveDenySet?.(did)).resolves.toEqual(new Set())
     await expect(resolver.resolveAgreementKey?.(did)).resolves.toHaveLength(1)
 
     const stranger = 'did:kokuin:zStranger'
-    await expect(resolver.resolve(stranger, {})).rejects.toThrow(`Unknown DID: ${stranger}`)
-    await expect(resolver.resolveHistoric?.(stranger, {})).rejects.toThrow(/Unknown DID/)
+    await expect(resolver.resolve({ did: stranger, header: {} })).rejects.toThrow(
+      `Unknown DID: ${stranger}`,
+    )
+    await expect(resolver.resolveHistoric?.({ did: stranger, header: {} })).rejects.toThrow(
+      /Unknown DID/,
+    )
     await expect(resolver.resolveDenySet?.(stranger)).rejects.toThrow(/Unknown DID/)
     await expect(resolver.resolveAgreementKey?.(stranger)).rejects.toThrow(/Unknown DID/)
   })
@@ -476,7 +486,7 @@ describe('a resolver over a fixed view', () => {
   // party's fold, or a cached snapshot, can produce one.
   test('refuses a head key the state it was handed also denies', async () => {
     const { icp, did } = await build()
-    const result = await foldLog(did, { chain: [icp], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp], events: [] } })
     if (!result.ok) throw new Error('did not fold')
     const head = at(result.states, 0)
     const target = `#${at(head.keys, 0)}`
@@ -484,7 +494,7 @@ describe('a resolver over a fixed view', () => {
     // Control: the identical state, identical key, and an empty deny set — so what refuses below
     // is the denial and not the hand-built state.
     await expect(
-      fixedViewResolver(did, [head], head).resolve(did, { kid: target }),
+      fixedViewResolver(did, [head], head).resolve({ did, header: { kid: target } }),
     ).resolves.toEqual({
       alg: 'EdDSA',
       publicKey: decodeKey(at(head.keys, 0)).publicKey,
@@ -492,14 +502,14 @@ describe('a resolver over a fixed view', () => {
 
     const denied = { ...head, deny: new Set([target]) }
     const denying = fixedViewResolver(did, [denied], denied)
-    await expect(denying.resolve(did, { kid: target })).rejects.toThrow(/has revoked/)
+    await expect(denying.resolve({ did, header: { kid: target } })).rejects.toThrow(/has revoked/)
     // And with no `kid` at all, where the answer is volunteered rather than asked for.
-    await expect(denying.resolve(did, {})).rejects.toThrow(/has revoked/)
+    await expect(denying.resolve({ did, header: {} })).rejects.toThrow(/has revoked/)
   })
 
   test('drops an agreement key the state it was handed denies', async () => {
     const { icp, did } = await build()
-    const result = await foldLog(did, { chain: [icp], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp], events: [] } })
     if (!result.ok) throw new Error('did not fold')
     const head = at(result.states, 0)
 
@@ -520,7 +530,7 @@ describe('a resolver over a fixed view', () => {
       prior: icp.event,
       snapshot: { members: [], deny: [device] },
     })
-    const result = await foldLog(did, { chain: [icp, rev], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp, rev], events: [] } })
     if (!result.ok) throw new Error('did not fold')
 
     // Position 0 — before the denying rotate — and position 1, from the same fold.
@@ -555,7 +565,7 @@ describe('canonical peer:4 deny sets', () => {
         snapshot: { members: [], deny: targets },
       })
       const log = { chain: [icp, rot], events: [] }
-      const folded = await foldLog(did, log)
+      const folded = await foldLog({ did, input: log })
       if (!folded.ok) throw new Error(folded.reason)
       const resolver = createControllerResolver({ loadLog: async () => log })
       for (const view of [

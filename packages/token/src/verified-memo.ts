@@ -87,7 +87,7 @@ export function memoizeVerifier(alg: SignatureAlgorithm, verify: Verifier): Veri
     scope = nextScope++
     scopes.set(verify, scope)
   }
-  return (inputSignature, inputMessage, inputPublicKey) => {
+  return ({ signature: inputSignature, message: inputMessage, publicKey: inputPublicKey }) => {
     const signature = new Uint8Array(inputSignature)
     const message = new Uint8Array(inputMessage)
     const publicKey = new Uint8Array(inputPublicKey)
@@ -102,7 +102,7 @@ export function memoizeVerifier(alg: SignatureAlgorithm, verify: Verifier): Veri
         return true
       }
     }
-    const result = verify(signature, message, publicKey)
+    const result = verify({ signature, message, publicKey })
     if (key === undefined) return result
     // Copied now: the caller may mutate `message` before an async verifier settles.
     if (result instanceof Promise) {

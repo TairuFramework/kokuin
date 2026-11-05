@@ -33,15 +33,15 @@ A member may not revoke a member, and may not renew or remove itself. Members le
 The single most important distinction on this method.
 
 ```typescript
-resolve(did, header) // "can this profile sign with this key NOW?"
-resolveHistoric(did, header) // "did this profile sign with this key at some point?"
+resolve({ did, header }) // "can this profile sign with this key NOW?"
+resolveHistoric({ did, header }) // "did this profile sign with this key at some point?"
 ```
 
 `resolve` answers from the **head's key set alone**. A key the profile has rotated away answers no, whatever the reason for the rotation was — and the reason that matters is compromise. This is what makes `rotate` genuinely retire a leaked key for new issuance, and it is the only question that authenticating a live signer may ask.
 
 `resolveHistoric` accepts any key that was authoritative at some position **within the current generation**. What it establishes is "this profile did once hold this key", never "this profile holds this key". Use it only where the artefact was minted in the past and must survive the subject's routine key hygiene — an already-issued capability, a revocation record, an archived grant. A `reset` still invalidates: the scan stops dead at the generation boundary.
 
-Callers opt in explicitly with `verifyToken({ historic: true })`. `@kokuin/capability` uses it unconditionally, and has to: head-only resolution there would invalidate every outstanding capability on a routine rotate, and would make a revocation record signed by a since-rotated key raise an error the revocation checker swallows — silently un-revoking, on the one path that must never fail open.
+Callers opt in explicitly with `verifyToken({ token, historic: true })`. `@kokuin/capability` uses it unconditionally, and has to: head-only resolution there would invalidate every outstanding capability on a routine rotate, and would make a revocation record signed by a since-rotated key raise an error the revocation checker swallows — silently un-revoking, on the one path that must never fail open.
 
 The cost of that, stated plainly: a leaked, since-rotated authority key can still mint a capability that verifies. Rotation cannot be the fix without breaking the promise that a rotate does not invalidate already-issued material. **Retirement is explicit** — that is what a revoke naming `#<key>` is for, and it is enforced where every `did:kokuin:` signature check reaches a resolved key, so it covers both settings of `historic` and everything the capability package verifies.
 

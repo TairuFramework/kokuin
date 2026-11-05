@@ -13,6 +13,7 @@ import {
   VERIFIED_MEMO_SIZE,
   verifiedSignatureMemoSize,
 } from '../src/verified-memo.js'
+import type { VerifierParams } from '../src/verifier.js'
 import { getVerifier } from '../src/verifier.js'
 
 // noble's curve objects are frozen, so `vi.spyOn` cannot wrap `verify`: replace them with
@@ -64,40 +65,50 @@ describe('memoizeVerifier()', () => {
     const verify = memoizeVerifier('EdDSA', underlying)
     const { publicKey, signature, message } = signed()
 
-    expect(verify(signature, message, publicKey)).toBe(true)
+    expect(verify({ signature, message, publicKey })).toBe(true)
     // Equal bytes, different objects: still a hit.
-    expect(verify(signature.slice(), message.slice(), publicKey.slice())).toBe(true)
+    expect(
+      verify({
+        signature: signature.slice(),
+        message: message.slice(),
+        publicKey: publicKey.slice(),
+      }),
+    ).toBe(true)
     expect(underlying).toHaveBeenCalledTimes(1)
   })
 
   test('a different message under the same signature and key is re-verified and rejected', () => {
-    const verify = memoizeVerifier('EdDSA', ed25519.verify)
+    const verify = memoizeVerifier('EdDSA', ({ signature, message, publicKey }) =>
+      ed25519.verify(signature, message, publicKey),
+    )
     const { publicKey, signature, message } = signed()
 
-    expect(verify(signature, message, publicKey)).toBe(true)
+    expect(verify({ signature, message, publicKey })).toBe(true)
     const tampered = message.slice()
     tampered.set([(tampered[0] ?? 0) ^ 1])
-    expect(verify(signature, tampered, publicKey)).toBe(false)
+    expect(verify({ signature, message: tampered, publicKey })).toBe(false)
     // The rejection did not displace or poison the remembered success.
-    expect(verify(signature, message, publicKey)).toBe(true)
+    expect(verify({ signature, message, publicKey })).toBe(true)
   })
 
   test('a message mutated after it was verified does not hit', () => {
-    const underlying = vi.fn(ed25519.verify)
+    const underlying = vi.fn(({ signature, message, publicKey }: VerifierParams) =>
+      ed25519.verify(signature, message, publicKey),
+    )
     const verify = memoizeVerifier('EdDSA', underlying)
     const { publicKey, signature, message } = signed()
 
-    expect(verify(signature, message, publicKey)).toBe(true)
+    expect(verify({ signature, message, publicKey })).toBe(true)
     message.set([(message[0] ?? 0) ^ 1])
-    expect(verify(signature, message, publicKey)).toBe(false)
+    expect(verify({ signature, message, publicKey })).toBe(false)
     expect(underlying).toHaveBeenCalledTimes(2)
   })
 
   test('the algorithm is part of the key', () => {
     const underlying = vi.fn(() => true)
     const { publicKey, signature, message } = signed()
-    memoizeVerifier('EdDSA', underlying)(signature, message, publicKey)
-    memoizeVerifier('ES256', underlying)(signature, message, publicKey)
+    memoizeVerifier('EdDSA', underlying)({ signature, message, publicKey })
+    memoizeVerifier('ES256', underlying)({ signature, message, publicKey })
     expect(underlying).toHaveBeenCalledTimes(2)
   })
 
@@ -105,9 +116,17 @@ describe('memoizeVerifier()', () => {
     const underlying = vi.fn(() => true)
     const verify = memoizeVerifier('ES256', underlying)
     const message = new Uint8Array([1])
-    verify(new Uint8Array([3, 4]), message, new Uint8Array([1, 2]))
+    verify({
+      signature: new Uint8Array([3, 4]),
+      message,
+      publicKey: new Uint8Array([1, 2]),
+    })
     // Same concatenated bytes, split differently.
-    verify(new Uint8Array([2, 3, 4]), message, new Uint8Array([1]))
+    verify({
+      signature: new Uint8Array([2, 3, 4]),
+      message,
+      publicKey: new Uint8Array([1]),
+    })
     expect(underlying).toHaveBeenCalledTimes(2)
   })
 
@@ -116,8 +135,8 @@ describe('memoizeVerifier()', () => {
     const verify = memoizeVerifier('EdDSA', underlying)
     const { publicKey, signature, message } = signed()
 
-    expect(verify(signature, message, publicKey)).toBe(false)
-    expect(verify(signature, message, publicKey)).toBe(false)
+    expect(verify({ signature, message, publicKey })).toBe(false)
+    expect(verify({ signature, message, publicKey })).toBe(false)
     expect(underlying).toHaveBeenCalledTimes(2)
     expect(verifiedSignatureMemoSize()).toBe(0)
   })
@@ -129,8 +148,8 @@ describe('memoizeVerifier()', () => {
     const verify = memoizeVerifier('EdDSA', underlying)
     const { publicKey, signature, message } = signed()
 
-    expect(() => verify(signature, message, publicKey)).toThrow('boom')
-    expect(() => verify(signature, message, publicKey)).toThrow('boom')
+    expect(() => verify({ signature, message, publicKey })).toThrow('boom')
+    expect(() => verify({ signature, message, publicKey })).toThrow('boom')
     expect(underlying).toHaveBeenCalledTimes(2)
     expect(verifiedSignatureMemoSize()).toBe(0)
   })
@@ -140,16 +159,16 @@ describe('memoizeVerifier()', () => {
     const verify = memoizeVerifier('EdDSA', underlying)
     const { publicKey, signature, message } = signed()
 
-    await expect(verify(signature, message, publicKey)).resolves.toBe(true)
-    expect(await verify(signature, message, publicKey)).toBe(true)
+    await expect(verify({ signature, message, publicKey })).resolves.toBe(true)
+    expect(await verify({ signature, message, publicKey })).toBe(true)
     expect(underlying).toHaveBeenCalledTimes(1)
 
     const rejecting = vi.fn(async () => {
       throw new Error('nope')
     })
     const failing = memoizeVerifier('ES256', rejecting)
-    await expect(failing(signature, message, publicKey)).rejects.toThrow('nope')
-    await expect(failing(signature, message, publicKey)).rejects.toThrow('nope')
+    await expect(failing({ signature, message, publicKey })).rejects.toThrow('nope')
+    await expect(failing({ signature, message, publicKey })).rejects.toThrow('nope')
     expect(rejecting).toHaveBeenCalledTimes(2)
   })
 
@@ -157,7 +176,7 @@ describe('memoizeVerifier()', () => {
     const underlying = vi.fn(() => 1 as unknown as boolean)
     const verify = memoizeVerifier('EdDSA', underlying)
     const { publicKey, signature, message } = signed()
-    verify(signature, message, publicKey)
+    verify({ signature, message, publicKey })
     expect(verifiedSignatureMemoSize()).toBe(0)
   })
 
@@ -167,13 +186,13 @@ describe('memoizeVerifier()', () => {
     const { publicKey, signature } = signed()
     const large = new Uint8Array(VERIFIED_MEMO_MAX_MESSAGE_BYTES + 1)
 
-    verify(signature, large, publicKey)
-    verify(signature, large, publicKey)
+    verify({ signature, message: large, publicKey })
+    verify({ signature, message: large, publicKey })
     expect(underlying).toHaveBeenCalledTimes(2)
     expect(verifiedSignatureMemoSize()).toBe(0)
 
     const atLimit = new Uint8Array(VERIFIED_MEMO_MAX_MESSAGE_BYTES)
-    verify(signature, atLimit, publicKey)
+    verify({ signature, message: atLimit, publicKey })
     expect(verifiedSignatureMemoSize()).toBe(1)
   })
 
@@ -189,31 +208,31 @@ describe('memoizeVerifier()', () => {
     }
 
     for (let i = 0; i < VERIFIED_MEMO_SIZE; i++) {
-      verify(sig(i), message, publicKey)
+      verify({ signature: sig(i), message, publicKey })
     }
     expect(verifiedSignatureMemoSize()).toBe(VERIFIED_MEMO_SIZE)
     // Touch the oldest so it is no longer the least recently used.
-    verify(sig(0), message, publicKey)
+    verify({ signature: sig(0), message, publicKey })
     expect(underlying).toHaveBeenCalledTimes(VERIFIED_MEMO_SIZE)
 
-    verify(sig(VERIFIED_MEMO_SIZE), message, publicKey)
+    verify({ signature: sig(VERIFIED_MEMO_SIZE), message, publicKey })
     expect(verifiedSignatureMemoSize()).toBe(VERIFIED_MEMO_SIZE)
 
     underlying.mockClear()
-    verify(sig(0), message, publicKey) // kept: recently used
+    verify({ signature: sig(0), message, publicKey }) // kept: recently used
     expect(underlying).toHaveBeenCalledTimes(0)
-    verify(sig(1), message, publicKey) // evicted
+    verify({ signature: sig(1), message, publicKey }) // evicted
     expect(underlying).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('getVerifier()', () => {
   test('default EdDSA verifier is memoized', async () => {
-    const verify = getVerifier('EdDSA')
+    const verify = getVerifier({ algorithm: 'EdDSA' })
     const { publicKey, signature, message } = signed()
     // A miss yields to the event loop first, so it is asynchronous; a hit answers synchronously.
-    await expect(verify(signature, message, publicKey)).resolves.toBe(true)
-    expect(verify(signature, message, publicKey)).toBe(true)
+    await expect(verify({ signature, message, publicKey })).resolves.toBe(true)
+    expect(verify({ signature, message, publicKey })).toBe(true)
     expect(ed25519Verify).toHaveBeenCalledTimes(1)
   })
 
@@ -222,30 +241,30 @@ describe('getVerifier()', () => {
     const publicKey = p256.getPublicKey(privateKey)
     const message = new TextEncoder().encode('hello')
     const signature = p256.sign(message, privateKey, { lowS: true })
-    const verify = getVerifier('ES256')
-    await expect(verify(signature, message, publicKey)).resolves.toBe(true)
-    expect(verify(signature, message, publicKey)).toBe(true)
+    const verify = getVerifier({ algorithm: 'ES256' })
+    await expect(verify({ signature, message, publicKey })).resolves.toBe(true)
+    expect(verify({ signature, message, publicKey })).toBe(true)
     expect(p256Verify).toHaveBeenCalledTimes(1)
   })
 
   test('a caller-supplied verifier bypasses the memo', () => {
     const custom = vi.fn(() => true)
-    const verify = getVerifier('EdDSA', { EdDSA: custom })
+    const verify = getVerifier({ algorithm: 'EdDSA', verifiers: { EdDSA: custom } })
     const { publicKey, signature, message } = signed()
-    verify(signature, message, publicKey)
-    verify(signature, message, publicKey)
+    verify({ signature, message, publicKey })
+    verify({ signature, message, publicKey })
     expect(custom).toHaveBeenCalledTimes(2)
     expect(verifiedSignatureMemoSize()).toBe(0)
   })
 
   test('a memoized default success does not answer for a caller-supplied verifier', async () => {
     const identity = randomIdentity()
-    const token = await identity.signToken({ test: true })
-    await verifyToken(token)
+    const token = await identity.signToken({ payload: { test: true } })
+    await verifyToken({ token })
     expect(verifiedSignatureMemoSize()).toBe(1)
 
     const rejecting = vi.fn(() => false)
-    await expect(verifyToken(token, { verifiers: { EdDSA: rejecting } })).rejects.toThrow(
+    await expect(verifyToken({ token, verifiers: { EdDSA: rejecting } })).rejects.toThrow(
       'Invalid signature',
     )
     expect(rejecting).toHaveBeenCalledTimes(1)
@@ -255,12 +274,12 @@ describe('getVerifier()', () => {
 describe('verifyToken() with the memo', () => {
   test('re-verifying the same serialized token verifies its signature once', async () => {
     const identity = randomIdentity()
-    const token = await identity.signToken({ test: true })
+    const token = await identity.signToken({ payload: { test: true } })
     // Fresh objects each time, as a caller re-parsing a stored copy would have.
     const copy = () => JSON.parse(JSON.stringify(token))
-    await verifyToken(copy())
-    await verifyToken(copy())
-    await verifyToken(copy())
+    await verifyToken({ token: copy() })
+    await verifyToken({ token: copy() })
+    await verifyToken({ token: copy() })
     expect(ed25519Verify).toHaveBeenCalledTimes(1)
   })
 })
@@ -276,7 +295,7 @@ describe('cooperative yields', () => {
   test('a run of verifications lets a timer scheduled before it fire', async () => {
     const identity = randomIdentity()
     const tokens = await Promise.all(
-      Array.from({ length: 20 }, (_, i) => identity.signToken({ i })),
+      Array.from({ length: 20 }, (_, i) => identity.signToken({ payload: { i } })),
     )
     ed25519Verify.mockImplementation((signature, message, publicKey) => {
       busy(2)
@@ -289,7 +308,7 @@ describe('cooperative yields', () => {
         firedAfter = done
       }, 0)
       for (const token of tokens) {
-        await verifyToken(JSON.parse(JSON.stringify(token)))
+        await verifyToken({ token: JSON.parse(JSON.stringify(token)) })
         done++
       }
       expect(ed25519Verify).toHaveBeenCalledTimes(tokens.length)
@@ -314,7 +333,7 @@ describe('cooperative yields', () => {
         firedAfter = done
       }, 0)
       for (let i = 0; i < count; i++) {
-        await identity.signToken({ i })
+        await identity.signToken({ payload: { i } })
         done++
       }
       expect(ed25519Sign).toHaveBeenCalledTimes(count)

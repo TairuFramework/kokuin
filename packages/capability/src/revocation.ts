@@ -16,7 +16,7 @@ import {
 } from '@kokuin/token'
 
 import { now } from './time.js'
-import type { CapabilityToken, VerifyTokenHook } from './types.js'
+import type { VerifyTokenHook } from './types.js'
 
 export type TokenRevokedErrorParams = { jti: string; options?: ErrorOptions }
 
@@ -79,7 +79,7 @@ export type RevocationBackend = {
    * overwrite it (last write wins) or pre-empt it (first write wins) — and the checker, which only
    * honours the token's own issuer, then lets the revoked token through.
    */
-  get(jti: string, issuer: string): Promise<RevocationRecord | undefined>
+  get(params: RevocationBackendGetParams): Promise<RevocationRecord | undefined>
 }
 
 /**
@@ -161,11 +161,12 @@ export function createMemoryRevocationBackend(options?: RevocationOptions): Revo
     async add(record: RevocationRecord): Promise<void> {
       // Verify the record's signature before trusting it. Without this, a forged record could
       // be stored and later used to revoke another issuer's token.
-      const verified = await verifyToken<RevocationClaims>(record, verifyOptions(captured)).catch(
-        (error: unknown) => {
-          throw error instanceof ProviderFailure ? error.cause : error
-        },
-      )
+      const verified = await verifyToken<RevocationClaims>({
+        ...verifyOptions(captured),
+        token: record,
+      }).catch((error: unknown) => {
+        throw error instanceof ProviderFailure ? error.cause : error
+      })
       if (verified.payload.rev !== true || typeof verified.payload.jti !== 'string') {
         throw new Error('Invalid revocation record')
       }
@@ -177,7 +178,7 @@ export function createMemoryRevocationBackend(options?: RevocationOptions): Revo
       }
       records.set(verified.payload.jti, record)
     },
-    async get(jti: string, issuer: string): Promise<RevocationRecord | undefined> {
+    async get({ jti, issuer }): Promise<RevocationRecord | undefined> {
       return revoked.get(issuer)?.get(jti)
     },
   }
@@ -209,7 +210,7 @@ async function namesADeniedKey(
   if (typeof kid !== 'string' || typeof iss !== 'string' || options?.methods == null) {
     return false
   }
-  const resolveDenySet = findMethodResolver(options.methods, iss)?.resolveDenySet
+  const resolveDenySet = findMethodResolver({ registry: options.methods, did: iss })?.resolveDenySet
   if (resolveDenySet == null) {
     return false
   }
@@ -229,19 +230,21 @@ function revokesJTI(payload: unknown, jti: string): boolean {
   return claims?.rev === true && claims.jti === jti
 }
 
-export function createRevocationChecker(
-  backend: RevocationBackend,
-  options?: RevocationOptions,
-): VerifyTokenHook {
+export type CreateRevocationCheckerParams = { backend: RevocationBackend } & RevocationOptions
+
+export function createRevocationChecker({
+  backend,
+  ...options
+}: CreateRevocationCheckerParams): VerifyTokenHook {
   const captured = captureOptions(options)
-  return async (token: CapabilityToken, _raw: string): Promise<void> => {
+  return async ({ token, raw: _raw }): Promise<void> => {
     const jti = token.payload.jti
     if (jti == null) {
       return
     }
     // Ask for this token's issuer only: a record any other identity signed could not revoke it, and
     // a store keyed by `jti` alone would let such a record hide the real one.
-    const record = await backend.get(jti, normalizeDID(token.payload.iss))
+    const record = await backend.get({ jti, issuer: normalizeDID(token.payload.iss) })
     if (record == null) {
       return
     }
@@ -249,7 +252,7 @@ export function createRevocationChecker(
     // unverified record. A record with an invalid signature does not revoke anything.
     let verified: RevocationRecord
     try {
-      verified = await verifyToken<RevocationClaims>(record, verifyOptions(captured))
+      verified = await verifyToken<RevocationClaims>({ ...verifyOptions(captured), token: record })
     } catch (error) {
       if (error instanceof ProviderFailure) throw error.cause
       // The two failures are not symmetric; collapsing them fails open. An *invalidly signed* record
@@ -286,7 +289,7 @@ export function createRevocationChecker(
       ) {
         // Same error as the verified path below; the resolution failure rides along as `cause`.
         // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
-        throw new TokenRevokedError({ jti: jti, options: { cause: error } })
+        throw new TokenRevokedError({ jti, options: { cause: error } })
       }
       return
     }
@@ -297,17 +300,21 @@ export function createRevocationChecker(
       revokesJTI(verified.payload, jti) &&
       normalizeDID(verified.payload.iss) === normalizeDID(token.payload.iss)
     ) {
-      throw new TokenRevokedError({ jti: jti })
+      throw new TokenRevokedError({ jti })
     }
   }
 }
 
-export async function createRevocationRecord(
-  signer: SigningIdentity,
-  jti: string,
-): Promise<RevocationRecord> {
+export type CreateRevocationRecordParams = { signer: SigningIdentity; jti: string }
+
+export async function createRevocationRecord({
+  jti,
+  signer,
+}: CreateRevocationRecordParams): Promise<RevocationRecord> {
   // `signToken` injects the signer's own DID as `iss`, so a caller cannot mint a record for
   // another issuer. The record names no audience, so a `did:peer:4` signer embeds its long form
   // there — the checker above normalizes both sides before comparing, so either form matches.
-  return (await signer.signToken({ jti, rev: true, iat: now() })) as RevocationRecord
+  return (await signer.signToken({ payload: { jti, rev: true, iat: now() } })) as RevocationRecord
 }
+
+export type RevocationBackendGetParams = { jti: string; issuer: string }

@@ -11,7 +11,7 @@ export const controllerStoreDefinition: StoreDefinition<ControllerStoreTables, C
   {
     name: CONTROLLER_STORE,
     migrations: getControllerMigrations,
-    createAPI: createControllerStore,
+    createAPI: (db, adapter, context) => createControllerStore({ db, adapter, context }),
   }
 
 export async function getControllerStore(provider: StoreProvider): Promise<ControllerStoreAPI> {

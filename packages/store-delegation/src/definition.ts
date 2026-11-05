@@ -11,7 +11,7 @@ export const delegationStoreDefinition: StoreDefinition<DelegationStoreTables, D
   {
     name: DELEGATION_STORE,
     migrations: getDelegationMigrations,
-    createAPI: createDelegationStore,
+    createAPI: (db, adapter, context) => createDelegationStore({ db, adapter, context }),
   }
 
 export async function getDelegationStore(provider: StoreProvider): Promise<DelegationStoreAPI> {

@@ -182,9 +182,7 @@ function createSpeculosTransport(): LedgerTransport {
       p2: number,
       data?: Uint8Array,
     ): Promise<Uint8Array> {
-      const { data: responseData, sw } = await exchangeAPDU(
-        encodeAPDU({ cla: cla, ins: ins, p1: p1, p2: p2, data: data }),
-      )
+      const { data: responseData, sw } = await exchangeAPDU(encodeAPDU({ cla, ins, p1, p2, data }))
       if (sw !== SW_OK) {
         throw new Error(`APDU error: status word 0x${sw.toString(16)}`)
       }
@@ -251,7 +249,7 @@ describe.skipIf(!SPECULOS_AVAILABLE)('Ledger app: review rejection and guards', 
     data.set(message, pathBytes.length)
 
     const { data: responseData, sw } = await exchangeAPDU(
-      encodeAPDU({ cla: CLA, ins: INS.SIGN_MESSAGE, p1: 0x00, p2: 0x00, data: data }),
+      encodeAPDU({ cla: CLA, ins: INS.SIGN_MESSAGE, p1: 0x00, p2: 0x00, data }),
     )
     expect(sw).toBe(SW_USER_REJECTED)
     expect(responseData.length).toBe(0)
@@ -267,7 +265,7 @@ describe.skipIf(!SPECULOS_AVAILABLE)('Ledger app: review rejection and guards', 
     data.set(ephPub, pathBytes.length)
 
     const { data: responseData, sw } = await exchangeAPDU(
-      encodeAPDU({ cla: CLA, ins: INS.ECDH_X25519, p1: 0x00, p2: 0x00, data: data }),
+      encodeAPDU({ cla: CLA, ins: INS.ECDH_X25519, p1: 0x00, p2: 0x00, data }),
     )
     expect(sw).toBe(SW_USER_REJECTED)
     expect(responseData.length).toBe(0)
@@ -306,38 +304,38 @@ describe.skipIf(!SPECULOS_AVAILABLE)('Ledger app: review rejection and guards', 
 
 describe.skipIf(!SPECULOS_AVAILABLE)('Ledger app + ledger-identity integration', () => {
   test('provideIdentity() returns FullIdentity with valid DID', async () => {
-    const provider = createLedgerIdentityProvider(createSpeculosTransport())
+    const provider = createLedgerIdentityProvider({ transport: createSpeculosTransport() })
     const identity = await provider.provideIdentity('0')
     expect(identity.id).toMatch(/^did:key:z/)
     expect(isFullIdentity(identity)).toBe(true)
   })
 
   test('signToken() produces verifiable JWT', async () => {
-    const provider = createLedgerIdentityProvider(createSpeculosTransport())
+    const provider = createLedgerIdentityProvider({ transport: createSpeculosTransport() })
     const identity = await provider.provideIdentity('0')
-    const token = await identity.signToken({ data: 'speculos-test' })
+    const token = await identity.signToken({ payload: { data: 'speculos-test' } })
     expect(token.payload.iss).toBe(identity.id)
-    const verified = await verifyToken(`${token.data}.${token.signature}`)
+    const verified = await verifyToken({ token: `${token.data}.${token.signature}` })
     expect(verified.payload.data).toBe('speculos-test')
   })
 
   test('agreeKey() returns 32-byte shared secret', async () => {
-    const provider = createLedgerIdentityProvider(createSpeculosTransport())
+    const provider = createLedgerIdentityProvider({ transport: createSpeculosTransport() })
     const identity = await provider.provideIdentity('0')
     const ephPriv = x25519.utils.randomSecretKey()
     const ephPub = x25519.getPublicKey(ephPriv)
-    const shared = await identity.agreeKey(ephPub)
+    const shared = await identity.agreeKey({ ephemeralPublicKey: ephPub })
     expect(shared).toBeInstanceOf(Uint8Array)
     expect(shared.length).toBe(32)
   })
 
   test('decrypt() decrypts JWE encrypted to ledger identity', async () => {
-    const provider = createLedgerIdentityProvider(createSpeculosTransport())
+    const provider = createLedgerIdentityProvider({ transport: createSpeculosTransport() })
     const identity = await provider.provideIdentity('0')
-    const encrypter = createTokenEncrypter(identity.id)
+    const encrypter = createTokenEncrypter({ recipient: identity.id })
     const plaintext = new TextEncoder().encode('secret message')
     const jwe = await encrypter.encrypt(plaintext)
-    const decrypted = await decryptToken(identity, jwe)
+    const decrypted = await decryptToken({ decrypter: identity, jwe })
     expect(decrypted).toEqual(plaintext)
   })
 })
@@ -346,61 +344,63 @@ describe.skipIf(!SPECULOS_AVAILABLE)('Ledger app + ledger-identity integration',
 
 describe.skipIf(!SPECULOS_AVAILABLE)('Ledger app + hd-keystore cross-compatibility', () => {
   test('same mnemonic produces same DID', async () => {
-    const provider = createLedgerIdentityProvider(createSpeculosTransport())
+    const provider = createLedgerIdentityProvider({ transport: createSpeculosTransport() })
     const ledgerIdentity = await provider.provideIdentity('0')
 
-    const hdStore = HDKeyStore.fromMnemonic(MNEMONIC)
+    const hdStore = HDKeyStore.fromMnemonic({ mnemonic: MNEMONIC })
     const hdIdentity = await hdStore.provideIdentity('0')
 
     expect(ledgerIdentity.id).toBe(hdIdentity.id)
   })
 
   test('tokens from both sources are verifiable and share same issuer', async () => {
-    const provider = createLedgerIdentityProvider(createSpeculosTransport())
+    const provider = createLedgerIdentityProvider({ transport: createSpeculosTransport() })
     const ledgerIdentity = await provider.provideIdentity('0')
 
-    const hdStore = HDKeyStore.fromMnemonic(MNEMONIC)
+    const hdStore = HDKeyStore.fromMnemonic({ mnemonic: MNEMONIC })
     const hdIdentity = await hdStore.provideIdentity('0')
 
-    const ledgerToken = await ledgerIdentity.signToken({ source: 'ledger' })
-    const hdToken = await hdIdentity.signToken({ source: 'hd' })
+    const ledgerToken = await ledgerIdentity.signToken({ payload: { source: 'ledger' } })
+    const hdToken = await hdIdentity.signToken({ payload: { source: 'hd' } })
 
-    const ledgerVerified = await verifyToken(`${ledgerToken.data}.${ledgerToken.signature}`)
-    const hdVerified = await verifyToken(`${hdToken.data}.${hdToken.signature}`)
+    const ledgerVerified = await verifyToken({
+      token: `${ledgerToken.data}.${ledgerToken.signature}`,
+    })
+    const hdVerified = await verifyToken({ token: `${hdToken.data}.${hdToken.signature}` })
 
     expect(ledgerVerified.payload.iss).toBe(hdVerified.payload.iss)
   })
 
   test('ECDH produces same shared secret from both sources', async () => {
-    const provider = createLedgerIdentityProvider(createSpeculosTransport())
+    const provider = createLedgerIdentityProvider({ transport: createSpeculosTransport() })
     const ledgerIdentity = await provider.provideIdentity('0')
 
-    const hdStore = HDKeyStore.fromMnemonic(MNEMONIC)
+    const hdStore = HDKeyStore.fromMnemonic({ mnemonic: MNEMONIC })
     const hdIdentity = await hdStore.provideIdentity('0')
 
     const ephPriv = x25519.utils.randomSecretKey()
     const ephPub = x25519.getPublicKey(ephPriv)
 
-    const ledgerShared = await ledgerIdentity.agreeKey(ephPub)
-    const hdShared = await hdIdentity.agreeKey(ephPub)
+    const ledgerShared = await ledgerIdentity.agreeKey({ ephemeralPublicKey: ephPub })
+    const hdShared = await hdIdentity.agreeKey({ ephemeralPublicKey: ephPub })
 
     expect(ledgerShared).toEqual(hdShared)
   })
 
   test('JWE encrypted by HD identity is decryptable by Ledger identity', async () => {
-    const provider = createLedgerIdentityProvider(createSpeculosTransport())
+    const provider = createLedgerIdentityProvider({ transport: createSpeculosTransport() })
     const ledgerIdentity = await provider.provideIdentity('0')
 
-    const hdStore = HDKeyStore.fromMnemonic(MNEMONIC)
+    const hdStore = HDKeyStore.fromMnemonic({ mnemonic: MNEMONIC })
     const hdIdentity = await hdStore.provideIdentity('0')
 
     // Encrypt with HD identity's DID
-    const encrypter = createTokenEncrypter(hdIdentity.id)
+    const encrypter = createTokenEncrypter({ recipient: hdIdentity.id })
     const plaintext = new TextEncoder().encode('cross-compat secret')
     const jwe = await encrypter.encrypt(plaintext)
 
     // Decrypt with Ledger identity (same underlying key)
-    const decrypted = await decryptToken(ledgerIdentity, jwe)
+    const decrypted = await decryptToken({ decrypter: ledgerIdentity, jwe })
     expect(decrypted).toEqual(plaintext)
   })
 })

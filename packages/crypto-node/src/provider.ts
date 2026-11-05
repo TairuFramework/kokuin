@@ -104,10 +104,10 @@ function verifyOne({ alg, signature, message, publicKey }: VerifyOneParams): Pro
     }
     if (alg === 'ES256') return Promise.resolve(verifyES256(signature, message, publicKey))
     return nobleCrypto.verify({
-      alg: alg,
-      signature: signature,
-      message: message,
-      publicKey: publicKey,
+      alg,
+      signature,
+      message,
+      publicKey,
     })
   } catch (error) {
     return Promise.reject(error)
@@ -123,19 +123,19 @@ function verifyOne({ alg, signature, message, publicKey }: VerifyOneParams): Pro
  * methods do the same, so delegating to them preserves that.
  */
 export const nodeCrypto: CryptoProvider = {
-  async sign(alg, seed, message) {
+  async sign({ alg, privateKey: seed, message }) {
     return sign(alg, seed, message)
   },
-  async signBatch(alg, items) {
+  async signBatch({ alg, items }) {
     if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
     return items.map((item) => sign(alg, item.privateKey, item.message))
   },
   async verify({ alg, signature, message, publicKey }: VerifyItem) {
     return await verifyOne({
-      alg: alg,
-      signature: signature,
-      message: message,
-      publicKey: publicKey,
+      alg,
+      signature,
+      message,
+      publicKey,
     })
   },
   async verifyBatch(items) {
@@ -150,10 +150,10 @@ export const nodeCrypto: CryptoProvider = {
       }),
     )
   },
-  blake3(input, dkLen) {
-    return nobleCrypto.blake3(input, dkLen)
+  blake3({ input, dkLen }) {
+    return nobleCrypto.blake3({ input, dkLen })
   },
-  blake3Batch(inputs, dkLen) {
-    return nobleCrypto.blake3Batch(inputs, dkLen)
+  blake3Batch({ inputs, dkLen }) {
+    return nobleCrypto.blake3Batch({ inputs, dkLen })
   },
 }

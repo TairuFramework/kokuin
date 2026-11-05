@@ -7,7 +7,7 @@ It needs no native addon, no Rust toolchain and no install scripts.
 ```ts
 import { nodeCrypto } from '@kokuin/crypto-node'
 
-const signature = await nodeCrypto.sign('EdDSA', seed, message)
+const signature = await nodeCrypto.sign({ alg: 'EdDSA', privateKey: seed, message })
 ```
 
 | Operation | Backend | Why |
@@ -33,6 +33,14 @@ Existing kokuin identity, token, controller and records APIs do not yet accept a
 ## Named params migration
 
 `CryptoProvider.verify` now accepts one `VerifyItem`: `{ alg, signature, message, publicKey }`.
-`sign` keeps its three positional arguments. Batch methods retain their existing signatures.
+`sign`, `signBatch`, `blake3` and `blake3Batch` take flat params objects.
+`verifyBatch` retains its single array argument.
 
 These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.
+
+| API | Named params type | Previous positional form |
+| --- | --- | --- |
+| `CryptoProvider.sign` | `CryptoProviderSignParams` | `sign(alg, privateKey, message)` |
+| `CryptoProvider.signBatch` | `CryptoProviderSignBatchParams` | `signBatch(alg, items)` |
+| `CryptoProvider.blake3` | `CryptoProviderBlake3Params` | `blake3(input, dkLen)` |
+| `CryptoProvider.blake3Batch` | `CryptoProviderBlake3BatchParams` | `blake3Batch(inputs, dkLen)` |

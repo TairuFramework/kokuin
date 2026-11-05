@@ -53,7 +53,7 @@ async function detailOf(params: FoldEpochParams): Promise<FoldEpochDetail> {
 
 const seed = new Uint8Array(32).fill(1)
 const profile = 0
-const inception = await createInception(seed, profile)
+const inception = await createInception({ seed, profile })
 const did = didFromInception(inception.event)
 
 type KeyPair = { privateKey: Uint8Array; key: string; did: string }
@@ -61,7 +61,7 @@ type KeyPair = { privateKey: Uint8Array; key: string; did: string }
 /** A member key pair from a fixed secret, so every run builds the same events and digests. */
 function memberKeyPair(fill: number): KeyPair {
   const privateKey = new Uint8Array(32).fill(fill)
-  const key = encodeKey(ed25519.getPublicKey(privateKey), 'EdDSA')
+  const key = encodeKey({ publicKey: ed25519.getPublicKey(privateKey), alg: 'EdDSA' })
   return { privateKey, key, did: `did:key:${key}` }
 }
 
@@ -77,10 +77,14 @@ function peerDID(key: string): string {
 
 /** The authority key this seed establishes at `(gen, seq)`, in the spelling `k` carries. */
 function rootKeyAt(gen: number, seq: number): string {
-  return encodeKey(
-    deriveKeyPair(seed, authorityPath(profile, gen, seq), 'EdDSA').publicKey,
-    'EdDSA',
-  )
+  return encodeKey({
+    publicKey: deriveKeyPair({
+      seed,
+      path: authorityPath({ profile, gen, seq }),
+      alg: 'EdDSA',
+    }).publicKey,
+    alg: 'EdDSA',
+  })
 }
 
 const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
@@ -112,7 +116,7 @@ const rot = await createRotate({
 })
 const chain: Array<SignedEvent> = [inception, rot]
 
-const settled = await foldLog(did, { chain, events: [] })
+const settled = await foldLog({ did, input: { chain, events: [] } })
 if (!settled.ok) {
   throw new Error(`fixture chain does not fold: ${settled.reason}`)
 }
@@ -177,7 +181,7 @@ async function signedBy(
 
 /** Why each event of `log` was refused, by digest: what the head alone cannot say. */
 async function rejectionsOf(controller: string, log: ControllerLog): Promise<Map<string, string>> {
-  const folded = await foldLog(controller, { chain: log.chain, events: [] })
+  const folded = await foldLog({ did: controller, input: { chain: log.chain, events: [] } })
   if (!folded.ok) {
     throw new Error(`chain does not fold: ${folded.reason}`)
   }
@@ -190,7 +194,10 @@ async function reasonsFor(events: Array<SignedEvent<EpochEvent>>): Promise<Map<s
 }
 
 async function folded(events: Array<unknown>): Promise<Extract<FoldResult, { ok: true }>> {
-  const result = await foldLog(did, { chain, events: events as ControllerLog['events'] })
+  const result = await foldLog({
+    did,
+    input: { chain, events: events as ControllerLog['events'] },
+  })
   if (!result.ok) {
     throw new Error(`log does not fold: ${result.reason}`)
   }
@@ -281,10 +288,10 @@ describe('adding a member', () => {
   })
 
   test('an add pinning a root key, a committed next key or the recovery key is refused', async () => {
-    const recovery = encodeKey(
-      deriveKeyPair(seed, recoveryPath(profile), 'EdDSA').publicKey,
-      'EdDSA',
-    )
+    const recovery = encodeKey({
+      publicKey: deriveKeyPair({ seed, path: recoveryPath(profile), alg: 'EdDSA' }).publicKey,
+      alg: 'EdDSA',
+    })
     const cases: Array<[string, string]> = [
       ['the head key', rootKeyAt(0, 1)],
       ['a retired key of this generation', rootKeyAt(0, 0)],
@@ -340,7 +347,11 @@ describe('adding a member', () => {
       const malformed = {
         event,
         sigs: await signEvent(event, [
-          deriveKeyPair(seed, authorityPath(profile, 0, 1), 'EdDSA').privateKey,
+          deriveKeyPair({
+            seed,
+            path: authorityPath({ profile, gen: 0, seq: 1 }),
+            alg: 'EdDSA',
+          }).privateKey,
         ]),
       }
       expect(await summary([malformed])).toMatchObject({ applied: [], rejected: 1 })
@@ -392,13 +403,13 @@ describe('renewing a member', () => {
     const added = await add(d)
     for (const signer of [root, signerB]) {
       const concurrent = await renew({
-        signer: signer,
+        signer,
         target: digest(added),
         lease: 2_000_000_000,
       })
       expect((await reasonsFor([added, concurrent])).get(digest(concurrent))).toBe(UNKNOWN_MEMBER)
       const later = await renew({
-        signer: signer,
+        signer,
         target: digest(added),
         lease: 2_000_000_000,
         parents: [digest(added)],

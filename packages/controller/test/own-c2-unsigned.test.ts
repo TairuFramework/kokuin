@@ -8,7 +8,7 @@ import { resolveBranches } from '../src/supersede.js'
 describe('keyless branch hijack, independent reproduction', () => {
   test('an unsigned unknown non-critical event with a spoofed position wins branch selection', async () => {
     const seed = new Uint8Array(32).fill(11)
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
 
     // The honest history: rotate, then rotate again denying a device.
@@ -45,14 +45,14 @@ describe('keyless branch hijack, independent reproduction', () => {
     } as unknown as SignedEvent
     const attack = [inception, forged]
 
-    const resolved = await resolveBranches(did, [honest, attack])
+    const resolved = await resolveBranches({ did, chains: [honest, attack] })
     // The honest branch must win, and its winner folds.
     expect(resolved.ok).toBe(true)
     if (resolved.ok) {
       const head = resolved.winner[resolved.winner.length - 1]
       if (head === undefined) throw new Error('expected a winning event')
       expect(head).toBe(denying)
-      expect((await foldLog(did, { chain: resolved.winner, events: [] })).ok).toBe(true)
+      expect((await foldLog({ did, input: { chain: resolved.winner, events: [] } })).ok).toBe(true)
     }
   })
 })

@@ -45,7 +45,9 @@ export type SignedRecord = {
 export type RecordKey = { type: string; owner: string; id: string }
 
 /** A verified copy's issuer and the key selected by its signed token header. */
-export function recordSignerKey(issuer: string, opJWT: string): string | null {
+export type RecordSignerKeyParams = { issuer: string; opJWT: string }
+
+export function recordSignerKey({ opJWT, issuer }: RecordSignerKeyParams): string | null {
   try {
     const header = JSON.parse(toUTF(fromB64U(opJWT.split('.')[0] as string))) as {
       kid?: unknown
@@ -60,13 +62,15 @@ export function recordSignerKey(issuer: string, opJWT: string): string | null {
   }
 }
 
-export async function recordClaimDigest(
-  claim: RecordClaim,
-  options?: CryptoOptions,
-): Promise<string> {
+export type RecordClaimDigestParams = { claim: RecordClaim } & CryptoOptions
+
+export async function recordClaimDigest({
+  claim,
+  ...options
+}: RecordClaimDigestParams): Promise<string> {
   const decisionHLC = typeof claim.meta.version === 'string' ? claim.meta.version : claim.hlc
   const bytes = canonicalRecordClaim({ ...claim, hlc: decisionHLC })
-  return toB64U(await (options?.crypto ?? nobleCrypto).blake3(bytes, 32))
+  return toB64U(await (options.crypto ?? nobleCrypto).blake3({ input: bytes, dkLen: 32 }))
 }
 
 /** Thrown when a claim cannot be signed as given. */
@@ -172,23 +176,35 @@ export function canonicalRecordClaim(claim: RecordClaim): Uint8Array {
  * Digest of the exact payload bytes — never of a parsed form, since the primitive does not
  * know whether the payload is ciphertext or JSON. `null` for a tombstone's absent payload.
  */
-export async function recordPayloadDigest(
-  payload: Uint8Array | null,
-  options?: CryptoOptions,
-): Promise<string | null> {
+export type RecordPayloadDigestParams = { payload: Uint8Array | null } & CryptoOptions
+
+export async function recordPayloadDigest({
+  payload,
+  ...options
+}: RecordPayloadDigestParams): Promise<string | null> {
   return payload === null
     ? null
-    : toB64U(await (options?.crypto ?? nobleCrypto).blake3(new Uint8Array(payload), 32))
+    : toB64U(
+        await (options.crypto ?? nobleCrypto).blake3({
+          input: new Uint8Array(payload),
+          dkLen: 32,
+        }),
+      )
 }
 
 /** Whether a record's payload is the one its claim signed for. */
-export async function recordPayloadMatches(
-  record: SignedRecord,
-  claim: RecordClaim,
-  options?: CryptoOptions,
-): Promise<boolean> {
+export type RecordPayloadMatchesParams = {
+  record: SignedRecord
+  claim: RecordClaim
+} & CryptoOptions
+
+export async function recordPayloadMatches({
+  claim,
+  record,
+  ...options
+}: RecordPayloadMatchesParams): Promise<boolean> {
   const expected = claim.payloadDigest
-  return (await recordPayloadDigest(record.payload, options)) === expected
+  return (await recordPayloadDigest({ ...options, payload: record.payload })) === expected
 }
 
 /** Own payload views as well as indexed bindings before verification yields. */

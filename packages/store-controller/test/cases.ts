@@ -40,7 +40,7 @@ const seed = new Uint8Array(32).fill(1)
 // resolving to the head is then observably different from resolving to `keys[0]`
 // of the first event.
 async function buildRotatedLog(logSeed: Uint8Array = seed) {
-  const icp = await createInception(logSeed, 0)
+  const icp = await createInception({ seed: logSeed, profile: 0 })
   const did = didFromInception(icp.event)
   const rot = await createRotate({
     seed: logSeed,
@@ -78,7 +78,7 @@ async function denySet(
 // matches rather than enumerates. The truncated prefix `[icp, rot]` folds cleanly and its deny set is
 // missing exactly that entry.
 async function buildRevokedLog(revokedSeed: Uint8Array) {
-  const icp = await createInception(revokedSeed, 0)
+  const icp = await createInception({ seed: revokedSeed, profile: 0 })
   const did = didFromInception(icp.event)
   const rot = await createRotate({
     seed: revokedSeed,
@@ -113,7 +113,7 @@ function chainOnly(chain: Array<SignedEvent>): ControllerLog {
 }
 
 async function headDeny(did: string, log: Array<SignedEvent>): Promise<ReadonlySet<string>> {
-  const folded = await foldLog(did, { chain: log, events: [] })
+  const folded = await foldLog({ did, input: { chain: log, events: [] } })
   if (!folded.ok) {
     throw new Error(`log did not fold: ${folded.reason}`)
   }
@@ -140,7 +140,7 @@ const TRANSACTION_FIRST_RACE_SEED = new Uint8Array(32).fill(19)
 // An epoch event admitting a member named `name`, rooted at the log's head. The store never verifies
 // events, so these only need to be distinct, well-formed entries.
 async function buildAdd({ did, log, logSeed, name }: BuildAddParams) {
-  const folded = await foldLog(did, { chain: log, events: [] })
+  const folded = await foldLog({ did, input: { chain: log, events: [] } })
   if (!folded.ok) throw new Error(`log did not fold: ${folded.reason}`)
   const head = folded.states[folded.states.length - 1]
   const key = head?.keys[0]
@@ -192,7 +192,7 @@ export function controllerStoreCases(
 
   // Write a chain as the whole stored log, bypassing arbitration: the store writes what `update` returns.
   async function put(did: string, chain: Array<SignedEvent>): Promise<void> {
-    await store.merge(did, async () => chainOnly(chain))
+    await store.merge({ did, update: async () => chainOnly(chain) })
   }
 
   beforeAll(async () => {
@@ -232,7 +232,7 @@ export function controllerStoreCases(
       loadLog: async (loadDID) => await store.get(loadDID),
       history: store,
     })
-    const resolved = await resolver.resolve(did, {})
+    const resolved = await resolver.resolve({ did, header: {} })
 
     expect(resolved.alg).toBe('EdDSA')
     expect(resolved.publicKey).toEqual(headKey)
@@ -278,9 +278,12 @@ export function controllerStoreCases(
             // Retry SQLite's writer reservation without blocking the host's event loop.
             for (;;) {
               try {
-                return await competingStore.merge(did, async () => {
-                  entered = true
-                  return chainOnly(log.slice(0, 1))
+                return await competingStore.merge({
+                  did,
+                  update: async () => {
+                    entered = true
+                    return chainOnly(log.slice(0, 1))
+                  },
                 })
               } catch (error) {
                 if (
@@ -332,7 +335,7 @@ export function controllerStoreCases(
           return current
         })
         try {
-          await locked.merge(other.did, async () => chainOnly(other.log))
+          await locked.merge({ did: other.did, update: async () => chainOnly(other.log) })
           await new Promise((resolve) => setTimeout(resolve, 50))
           expect(read).toBe(false)
           expect(await locked.get(other.did)).toEqual(chainOnly(other.log))
@@ -360,7 +363,7 @@ export function controllerStoreCases(
     await db.withTransaction(async (tx) => {
       const locked = await getControllerStore(tx)
       await locked.getForUpdate(did)
-      await store.merge(other.did, async () => chainOnly(other.log))
+      await store.merge({ did: other.did, update: async () => chainOnly(other.log) })
       expect(await locked.get(did)).toEqual(chainOnly(log))
     })
     expect(await store.get(other.did)).toEqual(chainOnly(other.log))
@@ -392,20 +395,25 @@ export function controllerStoreCases(
       await db.withTransaction(async (tx) => {
         const logs = await getControllerStore(tx)
         let changed = true
-        await logs.merge(did, async (current) => {
-          const next = (
-            await authoritativeLog({
-              did,
-              loaded: chainOnly(log),
-              seen: current,
-              context: 'sync',
-            })
-          ).log
-          changed = next !== current
-          return next
+        await logs.merge({
+          did,
+          update: async (current) => {
+            const next = (
+              await authoritativeLog({
+                did,
+                loaded: chainOnly(log),
+                seen: current,
+                context: 'sync',
+              })
+            ).log
+            changed = next !== current
+            return next
+          },
         })
         expect(changed).toBe(false)
-        expect(await logs.markObserved(did, time === 'explicit' ? at : undefined)).toBeUndefined()
+        expect(
+          await logs.markObserved({ did, at: time === 'explicit' ? at : undefined }),
+        ).toBeUndefined()
       })
       const observed = (await store.getObservedAt(did))?.getTime()
       if (time === 'explicit') expect(observed).toBe(at.getTime())
@@ -430,7 +438,7 @@ export function controllerStoreCases(
     }
     const before = await snapshot()
     const at = new Date('2030-02-03T04:05:06.000Z')
-    await store.markObserved(did, at)
+    await store.markObserved({ did, at })
     expect(await store.getObservedAt(did)).toEqual(at)
     expect(await snapshot()).toEqual(before)
     expect(await store.get(did)).toEqual(chainOnly(log))
@@ -438,7 +446,7 @@ export function controllerStoreCases(
 
   test('markObserved on an unknown DID is a no-op', async () => {
     const did = 'did:kokuin:unobserved'
-    expect(await store.markObserved(did)).toBeUndefined()
+    expect(await store.markObserved({ did })).toBeUndefined()
     expect(await store.get(did)).toBeUndefined()
     expect(await store.getObservedAt(did)).toBeUndefined()
   })
@@ -451,7 +459,7 @@ export function controllerStoreCases(
     await expect(
       db.withTransaction(async (tx) => {
         const logs = await getControllerStore(tx)
-        await logs.markObserved(did, at)
+        await logs.markObserved({ did, at })
         expect(await logs.getObservedAt(did)).toEqual(at)
         throw new Error('rollback observation')
       }),
@@ -462,7 +470,7 @@ export function controllerStoreCases(
   test('merge writes what the update returns: a shorter later log overwrites a longer stored one', async () => {
     // Distinct seed so this DID does not collide with the other tests in the
     // shared store.
-    const icp = await createInception(OVERWRITE_SEED, 0)
+    const icp = await createInception({ seed: OVERWRITE_SEED, profile: 0 })
     const did = didFromInception(icp.event)
     const rot = await createRotate({
       seed: OVERWRITE_SEED,
@@ -487,19 +495,25 @@ export function controllerStoreCases(
 
   test('merge applies the update to the stored log and returns it', async () => {
     const { did, log } = await buildRotatedLog(RACE_SEED)
-    const added = await buildAdd({ did: did, log: log, logSeed: RACE_SEED, name: 'one' })
+    const added = await buildAdd({ did, log, logSeed: RACE_SEED, name: 'one' })
     let seen: ControllerLog | undefined = chainOnly([])
 
-    const first = await store.merge(did, async (current) => {
-      seen = current
-      return chainOnly(log)
+    const first = await store.merge({
+      did,
+      update: async (current) => {
+        seen = current
+        return chainOnly(log)
+      },
     })
     expect(seen).toBeUndefined()
     expect(first).toEqual(chainOnly(log))
 
-    const second = await store.merge(did, async (current) => {
-      seen = current
-      return { chain: log, events: [added] }
+    const second = await store.merge({
+      did,
+      update: async (current) => {
+        seen = current
+        return { chain: log, events: [added] }
+      },
     })
     expect(seen).toEqual(chainOnly(log))
     expect(second).toEqual({ chain: log, events: [added] })
@@ -511,8 +525,11 @@ export function controllerStoreCases(
     await put(did, log)
     const before = await store.get(did)
     await expect(
-      store.merge(did, async () => {
-        throw new Error('refused')
+      store.merge({
+        did,
+        update: async () => {
+          throw new Error('refused')
+        },
       }),
     ).rejects.toThrow('refused')
     expect(await store.get(did)).toEqual(before)
@@ -522,8 +539,8 @@ export function controllerStoreCases(
   test('two concurrent merges for one stored DID both land', async () => {
     const { did, log } = await buildRotatedLog(RACE_SEED)
     await put(did, log)
-    const a = await buildAdd({ did: did, log: log, logSeed: RACE_SEED, name: 'a' })
-    const b = await buildAdd({ did: did, log: log, logSeed: RACE_SEED, name: 'b' })
+    const a = await buildAdd({ did, log, logSeed: RACE_SEED, name: 'a' })
+    const b = await buildAdd({ did, log, logSeed: RACE_SEED, name: 'b' })
     // The first update waits until the second merge has been issued, so an unlocked store lets both
     // read the same row.
     let issued: () => void = () => {}
@@ -531,11 +548,14 @@ export function controllerStoreCases(
       issued = resolve
     })
     const slow = appendEvent(log, a)
-    const first = store.merge(did, async (current) => {
-      await secondIssued
-      return await slow(current)
+    const first = store.merge({
+      did,
+      update: async (current) => {
+        await secondIssued
+        return await slow(current)
+      },
     })
-    const second = store.merge(did, appendEvent(log, b))
+    const second = store.merge({ did, update: appendEvent(log, b) })
     issued()
     await Promise.all([first, second])
     expect(memberNames(await store.get(did))).toEqual(['did:key:a', 'did:key:b'])
@@ -550,8 +570,8 @@ export function controllerStoreCases(
       const { did, log } = await buildRotatedLog(logSeed)
       if (state === 'stored') await put(did, log)
       else expect(await store.get(did)).toBeUndefined()
-      const a = await buildAdd({ did: did, log: log, logSeed: logSeed, name: 'a' })
-      const b = await buildAdd({ did: did, log: log, logSeed: logSeed, name: 'b' })
+      const a = await buildAdd({ did, log, logSeed, name: 'a' })
+      const b = await buildAdd({ did, log, logSeed, name: 'b' })
 
       await db.withTransaction(async (tx) => {
         const logs = await getControllerStore(tx)
@@ -561,14 +581,20 @@ export function controllerStoreCases(
         })
         const slow = appendEvent(log, a)
         let secondCurrent: ControllerLog | undefined
-        const first = logs.merge(did, async (current) => {
-          await secondIssued
-          return await slow(current)
+        const first = logs.merge({
+          did,
+          update: async (current) => {
+            await secondIssued
+            return await slow(current)
+          },
         })
         const appendSecond = appendEvent(log, b)
-        const second = logs.merge(did, async (current) => {
-          secondCurrent = current
-          return await appendSecond(current)
+        const second = logs.merge({
+          did,
+          update: async (current) => {
+            secondCurrent = current
+            return await appendSecond(current)
+          },
         })
         issued()
         const [firstResult] = await Promise.all([first, second])
@@ -581,12 +607,12 @@ export function controllerStoreCases(
 
   test('two concurrent first merges for a new DID both land', async () => {
     const { did, log } = await buildRotatedLog(FIRST_RACE_SEED)
-    const a = await buildAdd({ did: did, log: log, logSeed: FIRST_RACE_SEED, name: 'a' })
-    const b = await buildAdd({ did: did, log: log, logSeed: FIRST_RACE_SEED, name: 'b' })
+    const a = await buildAdd({ did, log, logSeed: FIRST_RACE_SEED, name: 'a' })
+    const b = await buildAdd({ did, log, logSeed: FIRST_RACE_SEED, name: 'b' })
     expect(await store.get(did)).toBeUndefined()
     await Promise.all([
-      store.merge(did, appendEvent(log, a)),
-      store.merge(did, appendEvent(log, b)),
+      store.merge({ did, update: appendEvent(log, a) }),
+      store.merge({ did, update: appendEvent(log, b) }),
     ])
     expect(memberNames(await store.get(did))).toEqual(['did:key:a', 'did:key:b'])
   })
@@ -600,14 +626,17 @@ export function controllerStoreCases(
     expect(await store.get(did)).toEqual(chainOnly(log))
 
     let seen: ControllerLog | undefined
-    await store.merge(did, async (current) => {
-      seen = current
-      return current as ControllerLog
+    await store.merge({
+      did,
+      update: async (current) => {
+        seen = current
+        return current as ControllerLog
+      },
     })
     expect(seen).toEqual(chainOnly(log))
     // Handing back `current` is "nothing changed": the row is not rewritten, and still decodes.
     expect(await store.get(did)).toEqual(chainOnly(log))
-    await store.merge(did, async (current) => ({ ...(current as ControllerLog) }))
+    await store.merge({ did, update: async (current) => ({ ...(current as ControllerLog) }) })
     // A new log, even an equal one, is written, in the current shape.
     expect(await store.get(did)).toEqual(chainOnly(log))
   })
@@ -632,7 +661,10 @@ export function controllerStoreCases(
   test('an update returning the current log writes nothing', async () => {
     const { did, log } = await buildRotatedLog(UNCHANGED_SEED)
     await insertUnstamped(did, chainOnly(log))
-    const returned = await store.merge(did, async (current) => current as ControllerLog)
+    const returned = await store.merge({
+      did,
+      update: async (current) => current as ControllerLog,
+    })
     expect(returned).toEqual(chainOnly(log))
     expect(await stampOf(did)).toBeNull()
     expect(await store.getObservedAt(did)).toBeInstanceOf(Date)
@@ -645,8 +677,8 @@ export function controllerStoreCases(
       loadLog: async () => chainOnly(log),
       history: store,
     })
-    await resolver.resolve(did, {})
-    await resolver.resolve(did, {})
+    await resolver.resolve({ did, header: {} })
+    await resolver.resolve({ did, header: {} })
     expect(await stampOf(did)).toBeNull()
   })
 
@@ -660,9 +692,12 @@ export function controllerStoreCases(
       .execute()
     expect(await store.get(did)).toBeUndefined()
     let seen: ControllerLog | undefined = chainOnly(log)
-    await store.merge(did, async (current) => {
-      seen = current
-      return chainOnly(log)
+    await store.merge({
+      did,
+      update: async (current) => {
+        seen = current
+        return chainOnly(log)
+      },
     })
     expect(seen).toBeUndefined()
     expect(await store.get(did)).toEqual(chainOnly(log))
@@ -682,7 +717,9 @@ export function controllerStoreCases(
       loadLog: async (loadDID) => await store.get(loadDID),
       history: store,
     })
-    await expect(resolver.resolve('did:kokuin:unknown', {})).rejects.toThrow(/Unknown DID/)
+    await expect(resolver.resolve({ did: 'did:kokuin:unknown', header: {} })).rejects.toThrow(
+      /Unknown DID/,
+    )
   })
 
   test('getObservedAt returns a Date after insert and after update', async () => {

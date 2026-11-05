@@ -1,3 +1,7 @@
+import type {
+  DIDMethodResolverResolveHistoricParams,
+  DIDMethodResolverResolveParams,
+} from '@kokuin/token'
 import {
   createSigningIdentityForDID,
   type DIDMethodResolver,
@@ -17,10 +21,10 @@ import { checkCapability, checkDelegationChain } from '../src/index.js'
 const profileDID = 'did:kokuin:zTestProfile' as DIDString
 
 function buildProfile(): { identity: SigningIdentity; resolver: DIDMethodResolver } {
-  const identity = createSigningIdentityForDID(profileDID, randomPrivateKey())
+  const identity = createSigningIdentityForDID({ id: profileDID, privateKey: randomPrivateKey() })
   const resolver: DIDMethodResolver = {
     method: 'kokuin',
-    resolve: async (did: string) => {
+    resolve: async ({ did }: DIDMethodResolverResolveParams) => {
       if (did !== profileDID) {
         throw new Error(`Unknown DID: ${did}`)
       }
@@ -30,7 +34,7 @@ function buildProfile(): { identity: SigningIdentity; resolver: DIDMethodResolve
     // `DIDMethodResolver.resolveHistoric` documents for a method whose key set never changes. It
     // has to be published all the same: `checkCapability` verifies archived material and asks for
     // it, and its absence is refused rather than answered from `resolve`.
-    resolveHistoric: async (did: string) => {
+    resolveHistoric: async ({ did }: DIDMethodResolverResolveHistoricParams) => {
       if (did !== profileDID) {
         throw new Error(`Unknown DID: ${did}`)
       }
@@ -48,25 +52,33 @@ describe('DelegationChainOptions.methods', () => {
     const device = randomIdentity()
 
     const rootToDevice = await root.signToken({
-      sub: profileDID,
-      aud: device.id,
-      act: 'foo',
-      res: 'bar',
+      payload: {
+        sub: profileDID,
+        aud: device.id,
+        act: 'foo',
+        res: 'bar',
+      },
     })
     const leaf = await device.signToken({
-      sub: profileDID,
-      prc: 'foo',
-      cap: [stringifyToken(rootToDevice)],
+      payload: {
+        sub: profileDID,
+        prc: 'foo',
+        cap: [stringifyToken(rootToDevice)],
+      },
     })
 
     await expect(
-      checkCapability({ act: 'foo', res: 'bar' }, leaf.payload, { methods: [resolver] }),
+      checkCapability({
+        permission: { act: 'foo', res: 'bar' },
+        payload: leaf.payload,
+        methods: [resolver],
+      }),
     ).resolves.toBeUndefined()
 
     // Without the registry the chain cannot be walked at all.
-    await expect(checkCapability({ act: 'foo', res: 'bar' }, leaf.payload)).rejects.toThrow(
-      `Unknown DID: ${profileDID}`,
-    )
+    await expect(
+      checkCapability({ permission: { act: 'foo', res: 'bar' }, payload: leaf.payload }),
+    ).rejects.toThrow(`Unknown DID: ${profileDID}`)
   })
 
   test('checkDelegationChain resolves a registry-only DID deeper in the chain', async () => {
@@ -77,26 +89,35 @@ describe('DelegationChainOptions.methods', () => {
     const device = randomIdentity()
 
     const rootToManager = await root.signToken({
-      sub: profileDID,
-      aud: manager.id,
-      act: 'foo',
-      res: 'bar',
+      payload: {
+        sub: profileDID,
+        aud: manager.id,
+        act: 'foo',
+        res: 'bar',
+      },
     })
     const managerToDevice = await manager.signToken({
-      sub: profileDID,
-      aud: device.id,
-      act: 'foo',
-      res: 'bar',
+      payload: {
+        sub: profileDID,
+        aud: device.id,
+        act: 'foo',
+        res: 'bar',
+      },
     })
 
     await expect(
-      checkDelegationChain(managerToDevice.payload, [stringifyToken(rootToManager)], {
+      checkDelegationChain({
+        payload: managerToDevice.payload,
+        capabilities: [stringifyToken(rootToManager)],
         methods: [resolver],
       }),
     ).resolves.toBeUndefined()
 
     await expect(
-      checkDelegationChain(managerToDevice.payload, [stringifyToken(rootToManager)]),
+      checkDelegationChain({
+        payload: managerToDevice.payload,
+        capabilities: [stringifyToken(rootToManager)],
+      }),
     ).rejects.toThrow(profileDID)
   })
 
@@ -109,32 +130,42 @@ describe('DelegationChainOptions.methods', () => {
     const device = randomIdentity()
 
     const rootToManager = await root.signToken({
-      sub: profileDID,
-      aud: manager.id,
-      act: 'foo',
-      res: 'bar',
+      payload: {
+        sub: profileDID,
+        aud: manager.id,
+        act: 'foo',
+        res: 'bar',
+      },
     })
     const managerToDevice = await manager.signToken({
-      sub: profileDID,
-      aud: device.id,
-      act: 'foo',
-      res: 'bar',
+      payload: {
+        sub: profileDID,
+        aud: device.id,
+        act: 'foo',
+        res: 'bar',
+      },
     })
     const leaf = await device.signToken({
-      sub: profileDID,
-      prc: 'foo',
-      cap: [stringifyToken(managerToDevice), stringifyToken(rootToManager)],
+      payload: {
+        sub: profileDID,
+        prc: 'foo',
+        cap: [stringifyToken(managerToDevice), stringifyToken(rootToManager)],
+      },
     })
 
     await expect(
-      checkCapability({ act: 'foo', res: 'bar' }, leaf.payload, { methods: [resolver] }),
+      checkCapability({
+        permission: { act: 'foo', res: 'bar' },
+        payload: leaf.payload,
+        methods: [resolver],
+      }),
     ).resolves.toBeUndefined()
 
     // Without the registry it fails closed. Which guard says so is deliberately not pinned: the
     // deny-set check now refuses a subject no registry can answer for, and it sits ahead of the
     // resolution that used to be the first thing to fail.
-    await expect(checkCapability({ act: 'foo', res: 'bar' }, leaf.payload)).rejects.toThrow(
-      profileDID,
-    )
+    await expect(
+      checkCapability({ permission: { act: 'foo', res: 'bar' }, payload: leaf.payload }),
+    ).rejects.toThrow(profileDID)
   })
 })

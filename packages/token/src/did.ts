@@ -62,7 +62,9 @@ export function getAlgorithmAndPublicKey(
 }
 
 /** @internal */
-export function getDID(codec: Uint8Array, publicKey: Uint8Array): DIDString {
+export type GetDIDParams = { codec: Uint8Array; publicKey: Uint8Array }
+
+export function getDID({ publicKey, codec }: GetDIDParams): DIDString {
   const bytes = new Uint8Array(codec.length + publicKey.length)
   codec.forEach((v, i) => {
     bytes[i] = v
@@ -233,7 +235,7 @@ export async function resolveIssuerWithDoc({
   historic = false,
 }: ResolveIssuerParams): Promise<ResolveIssuerWithDocResult> {
   if (methods != null) {
-    const methodResolver = findMethodResolver(methods, iss)
+    const methodResolver = findMethodResolver({ registry: methods, did: iss })
     if (methodResolver != null) {
       // The historic question is answered only by `resolveHistoric`; a resolver without one is not
       // asked `resolve` instead, which would substitute a different question. `UnresolvableIssuerError`
@@ -252,8 +254,8 @@ export async function resolveIssuerWithDoc({
         // private state.
         resolved =
           historic && methodResolver.resolveHistoric != null
-            ? await methodResolver.resolveHistoric(iss, header)
-            : await methodResolver.resolve(iss, header)
+            ? await methodResolver.resolveHistoric({ did: iss, header })
+            : await methodResolver.resolve({ did: iss, header })
       } catch (cause) {
         // Except the one failure that is not a failure to resolve: "I have this issuer, it has no such
         // key" is what the `kid` branches below report for `did:peer:4` (ordinary errors — see
@@ -276,7 +278,7 @@ export async function resolveIssuerWithDoc({
     const shortForm = getPeer4ShortForm(iss)
 
     if (iss !== shortForm) {
-      const { doc } = decodePeer4(iss)
+      const { doc } = decodePeer4({ longForm: iss })
       const [alg, publicKey] = resolveKidOrAuth(doc, header.kid)
       return { alg, publicKey, peer4Doc: { shortForm, doc } }
     }
@@ -472,7 +474,7 @@ export function signingKeysOf(did: string): Array<ResolvedSigningKey> | null {
   if (!isPeer4(did) || did === getPeer4ShortForm(did)) {
     return null
   }
-  const { doc } = decodePeer4(did)
+  const { doc } = decodePeer4({ longForm: did })
   const keys: Array<ResolvedSigningKey> = []
   for (const id of doc.authentication ?? []) {
     const method = doc.verificationMethod.find((entry) => entry.id === id)

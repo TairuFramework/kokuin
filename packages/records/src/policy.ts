@@ -6,15 +6,13 @@ type CompareMonotonicParams = {
   incoming: VerifiedRecordOp
   stored: VerifiedRecordOp
   policy: Extract<MergePolicy, { kind: 'monotonic' }>
-  onEqual:
-    | ((incoming: VerifiedRecordOp, stored: VerifiedRecordOp) => EqualVersionDecision)
-    | undefined
+  onEqual: ((params: CompareRecordOpsParamsOnEqualParams) => EqualVersionDecision) | undefined
 }
 export type CompareRecordOpsParams = {
   incoming: VerifiedRecordOp
   stored: VerifiedRecordOp | null
   policy: MergePolicy
-  onEqual?: (incoming: VerifiedRecordOp, stored: VerifiedRecordOp) => EqualVersionDecision
+  onEqual?: (params: CompareRecordOpsParamsOnEqualParams) => EqualVersionDecision
 }
 
 /**
@@ -82,7 +80,7 @@ function compareLWW(incoming: VerifiedRecordOp, stored: VerifiedRecordOp): Merge
   if (storedStamp === null) {
     return { status: 'apply', reason: 'stored-hlc-not-canonical' }
   }
-  const order = compareRecordDecisionHLC(incoming.claim.hlc, stored.claim.hlc)
+  const order = compareRecordDecisionHLC({ left: incoming.claim.hlc, right: stored.claim.hlc })
   if (order !== 0) {
     return { status: order > 0 ? 'apply' : 'noop' }
   }
@@ -152,10 +150,10 @@ function compareMonotonic({
   }
   const order =
     policy.versionOrder === 'hlc'
-      ? compareRecordDecisionHLC(
-          incoming.claim.meta.version as string,
-          stored.claim.meta.version as string,
-        )
+      ? compareRecordDecisionHLC({
+          left: incoming.claim.meta.version as string,
+          right: stored.claim.meta.version as string,
+        })
       : compareTuples(incomingVersion, storedVersion)
   if (order !== 0) {
     return { status: order > 0 ? 'apply' : 'noop' }
@@ -164,7 +162,7 @@ function compareMonotonic({
   // The hook sees the pair in arrival order, so it must answer the same for (a, b) as for
   // (b, a): a hook that forks one way and resolves the other leaves one peer with both
   // branches and another with one.
-  if (onEqual?.(incoming, stored) === 'fork') {
+  if (onEqual?.({ incoming, stored }) === 'fork') {
     return { status: 'fork', reason: 'equal-version-fork', conflict }
   }
   return { status: byContentDigest(incoming, stored), reason: 'equal-version-conflict', conflict }
@@ -234,12 +232,17 @@ export function compareRecordOps({
       return compareLWW(incoming, stored)
     case 'monotonic':
       return compareMonotonic({
-        incoming: incoming,
-        stored: stored,
-        policy: policy,
-        onEqual: onEqual,
+        incoming,
+        stored,
+        policy,
+        onEqual,
       })
     case 'immutable':
       return compareImmutable(incoming, stored)
   }
+}
+
+export type CompareRecordOpsParamsOnEqualParams = {
+  incoming: VerifiedRecordOp
+  stored: VerifiedRecordOp
 }

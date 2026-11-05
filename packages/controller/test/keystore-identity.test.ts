@@ -37,7 +37,7 @@ describe('provideControllerIdentity', () => {
       logStore,
     })
 
-    const expectedDID = didFromInception((await createInception(seed, 0)).event)
+    const expectedDID = didFromInception((await createInception({ seed, profile: 0 })).event)
     expect(identity.id).toBe(expectedDID)
     expect(isFullIdentity(identity)).toBe(true)
     // The generate path persisted the inception.
@@ -72,7 +72,7 @@ describe('provideControllerIdentity', () => {
   test('resolves the current key after a rotate', async () => {
     const seed = new Uint8Array(32).fill(7)
     const logStore = createMemoryLogStore()
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
     const rot = await createRotate({
       seed,
@@ -81,7 +81,10 @@ describe('provideControllerIdentity', () => {
       prior: inception.event,
       snapshot: { members: [], deny: [] },
     })
-    await logStore.merge(did, async () => ({ chain: [inception, rot], events: [] }))
+    await logStore.merge({
+      did,
+      update: async () => ({ chain: [inception, rot], events: [] }),
+    })
 
     const identity = await provideControllerIdentity({
       entry: memoryEntry(seed),
@@ -89,7 +92,7 @@ describe('provideControllerIdentity', () => {
       logStore,
     })
     expect(identity.id).toBe(did)
-    const token = await identity.signToken({ sub: 'x' })
+    const token = await identity.signToken({ payload: { sub: 'x' } })
     // After a rotate the authority key is the rotate's revealed key, so the kid names it.
     expect(token.header.kid).toBe(`#${rot.event.k[0]}`)
   })
@@ -97,9 +100,9 @@ describe('provideControllerIdentity', () => {
   test('restores from a stored log carrying epoch events, and keeps them', async () => {
     const seed = new Uint8Array(32).fill(7)
     const logStore = createMemoryLogStore()
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
-    const folded = await foldLog(did, { chain: [inception], events: [] })
+    const folded = await foldLog({ did, input: { chain: [inception], events: [] } })
     if (!folded.ok) throw new Error('did not fold')
     const revoke = await createRevoke({
       signer: { root: { seed, profile: 0 } },
@@ -108,7 +111,10 @@ describe('provideControllerIdentity', () => {
       parents: [folded.head.epoch],
       target: 'did:key:zDevice',
     })
-    await logStore.merge(did, async () => ({ chain: [inception], events: [revoke] }))
+    await logStore.merge({
+      did,
+      update: async () => ({ chain: [inception], events: [revoke] }),
+    })
 
     const identity = await provideControllerIdentity({
       entry: memoryEntry(seed),
@@ -131,21 +137,28 @@ test('the resolved FullIdentity decrypts a JWE encrypted to its agreement key', 
   })
 
   // The agreement key at the inception position (gen 0, seq 0) is the current one for a fresh log.
-  const agreementPublicKey = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519').publicKey
-  const encrypter = createTokenEncrypter(agreementPublicKey, { algorithm: 'X25519' })
+  const agreementPublicKey = deriveKeyPair({
+    seed,
+    path: agreementPath({ profile: 0, gen: 0, seq: 0 }),
+    alg: 'X25519',
+  }).publicKey
+  const encrypter = createTokenEncrypter({
+    recipient: agreementPublicKey,
+    algorithm: 'X25519',
+  })
   const plaintext = new TextEncoder().encode('sealed to the controller')
-  const jwe = await encryptToken(encrypter, plaintext)
+  const jwe = await encryptToken({ encrypter, plaintext })
 
-  const decrypted = await decryptToken(identity, jwe)
+  const decrypted = await decryptToken({ decrypter: identity, jwe })
   expect(decrypted).toEqual(plaintext)
 })
 
 test('drives end to end from a real @kokuin/deterministic KeyStore', async () => {
   // mnemonicToSeedSync runs PBKDF2 over the phrase without checking a BIP39 checksum, so this
   // placeholder phrase derives fine; the entry hands back raw bytes the utility uses as seed.
-  const keyStore = HDKeyStore.fromMnemonic(
-    'test test test test test test test test test test test junk',
-  )
+  const keyStore = HDKeyStore.fromMnemonic({
+    mnemonic: 'test test test test test test test test test test test junk',
+  })
   const logStore = createMemoryLogStore()
 
   const identity = await provideControllerIdentity({

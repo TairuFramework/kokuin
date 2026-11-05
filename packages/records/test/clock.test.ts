@@ -14,24 +14,30 @@ test('decision comparison refuses a non-canonical HLC instead of ordering its te
   const loose = '2026-09-26T12:00:00.000Z:1:z'
   const canonical = stamp(NOW, 2, 'a')
   expect(HLC.tryParse(loose)).not.toBeNull()
-  expect(() => compareRecordDecisionHLC(loose, canonical)).toThrow()
-  expect(compareRecordDecisionHLC(stamp(NOW, 10), stamp(NOW, 2))).toBeGreaterThan(0)
+  expect(() => compareRecordDecisionHLC({ left: loose, right: canonical })).toThrow()
+  expect(compareRecordDecisionHLC({ left: stamp(NOW, 10), right: stamp(NOW, 2) })).toBeGreaterThan(
+    0,
+  )
 })
 
 describe('parseBoundedHLC', () => {
   test('a stamp as HLC.serialize spells it parses to the same timestamp', () => {
     const ts = { wallTime: NOW - 5, counter: 42, nodeID: 'did:key:z6Mk:node' }
-    expect(parseBoundedHLC(HLC.serialize(ts), NOW, DRIFT)).toEqual(ts)
+    expect(parseBoundedHLC({ hlc: HLC.serialize(ts), nowMS: NOW, maxDriftMS: DRIFT })).toEqual(ts)
   })
 
   test('an old but valid stamp is accepted: the past is unbounded', () => {
     const ts = { wallTime: 0, counter: 0, nodeID: 'node-a' }
-    expect(parseBoundedHLC(HLC.serialize(ts), NOW, DRIFT)).toEqual(ts)
+    expect(parseBoundedHLC({ hlc: HLC.serialize(ts), nowMS: NOW, maxDriftMS: DRIFT })).toEqual(ts)
   })
 
   test('a stamp exactly at the drift bound is accepted, one millisecond past it is not', () => {
-    expect(parseBoundedHLC(stamp(NOW + DRIFT), NOW, DRIFT)).not.toBeNull()
-    expect(parseBoundedHLC(stamp(NOW + DRIFT + 1), NOW, DRIFT)).toBeNull()
+    expect(
+      parseBoundedHLC({ hlc: stamp(NOW + DRIFT), nowMS: NOW, maxDriftMS: DRIFT }),
+    ).not.toBeNull()
+    expect(
+      parseBoundedHLC({ hlc: stamp(NOW + DRIFT + 1), nowMS: NOW, maxDriftMS: DRIFT }),
+    ).toBeNull()
   })
 
   test.each([
@@ -51,7 +57,7 @@ describe('parseBoundedHLC', () => {
     ['empty node', '2026-09-26T12:00:00.000Z:00000000:'],
     ['missing node separator', '2026-09-26T12:00:00.000Z:00000000'],
   ])('rejects %s', (_label, hlc) => {
-    expect(parseBoundedHLC(hlc, NOW, DRIFT)).toBeNull()
+    expect(parseBoundedHLC({ hlc, nowMS: NOW, maxDriftMS: DRIFT })).toBeNull()
   })
 
   // Each of these parses to finite fields with a wall time inside the drift bound, so only
@@ -67,40 +73,48 @@ describe('parseBoundedHLC', () => {
     const loose = HLC.tryParse(hlc)
     expect(loose).not.toBeNull()
     expect(loose?.wallTime).toBeLessThanOrEqual(NOW + DRIFT)
-    expect(parseBoundedHLC(hlc, NOW, DRIFT)).toBeNull()
+    expect(parseBoundedHLC({ hlc, nowMS: NOW, maxDriftMS: DRIFT })).toBeNull()
   })
 
   test('a canonical far-future stamp is rejected on the drift bound alone', () => {
     const hlc = stamp(NOW + 365 * 24 * 3600 * 1000)
     expect(HLC.serialize(HLC.parse(hlc))).toBe(hlc)
-    expect(parseBoundedHLC(hlc, NOW, DRIFT)).toBeNull()
+    expect(parseBoundedHLC({ hlc, nowMS: NOW, maxDriftMS: DRIFT })).toBeNull()
   })
 
   test('an unparseable stamp answers null rather than throwing', () => {
     // Serializing a NaN wall time throws, so the finite-field check has to run before the
     // round trip.
-    expect(() => parseBoundedHLC('Z', NOW, DRIFT)).not.toThrow()
-    expect(parseBoundedHLC('Z', NOW, DRIFT)).toBeNull()
-    expect(() => parseBoundedHLC('2026-13-01T00:00:00.000Z:00000000:n', NOW, DRIFT)).not.toThrow()
+    expect(() => parseBoundedHLC({ hlc: 'Z', nowMS: NOW, maxDriftMS: DRIFT })).not.toThrow()
+    expect(parseBoundedHLC({ hlc: 'Z', nowMS: NOW, maxDriftMS: DRIFT })).toBeNull()
+    expect(() =>
+      parseBoundedHLC({
+        hlc: '2026-13-01T00:00:00.000Z:00000000:n',
+        nowMS: NOW,
+        maxDriftMS: DRIFT,
+      }),
+    ).not.toThrow()
   })
 
   test.each([
     ['negative', -1],
     ['NaN', Number.NaN],
   ])('a %s drift limit rejects every stamp', (_label, maxDriftMS) => {
-    expect(parseBoundedHLC(stamp(NOW - 1000), NOW, maxDriftMS)).toBeNull()
+    expect(parseBoundedHLC({ hlc: stamp(NOW - 1000), nowMS: NOW, maxDriftMS })).toBeNull()
   })
 
   test('a zero drift limit admits the present and the past only', () => {
-    expect(parseBoundedHLC(stamp(NOW), NOW, 0)).not.toBeNull()
-    expect(parseBoundedHLC(stamp(NOW - 1), NOW, 0)).not.toBeNull()
-    expect(parseBoundedHLC(stamp(NOW + 1), NOW, 0)).toBeNull()
+    expect(parseBoundedHLC({ hlc: stamp(NOW), nowMS: NOW, maxDriftMS: 0 })).not.toBeNull()
+    expect(parseBoundedHLC({ hlc: stamp(NOW - 1), nowMS: NOW, maxDriftMS: 0 })).not.toBeNull()
+    expect(parseBoundedHLC({ hlc: stamp(NOW + 1), nowMS: NOW, maxDriftMS: 0 })).toBeNull()
   })
 
   test('a non-finite now rejects every stamp, since no bound can be measured from it', () => {
     // Every comparison against NaN is false, so an unchecked NaN now would admit any future.
     const future = stamp(NOW + 365 * 24 * 3600 * 1000)
-    expect(parseBoundedHLC(future, Number.NaN, DRIFT)).toBeNull()
-    expect(parseBoundedHLC(stamp(NOW), Number.POSITIVE_INFINITY, DRIFT)).toBeNull()
+    expect(parseBoundedHLC({ hlc: future, nowMS: Number.NaN, maxDriftMS: DRIFT })).toBeNull()
+    expect(
+      parseBoundedHLC({ hlc: stamp(NOW), nowMS: Number.POSITIVE_INFINITY, maxDriftMS: DRIFT }),
+    ).toBeNull()
   })
 })

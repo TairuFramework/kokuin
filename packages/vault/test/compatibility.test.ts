@@ -74,7 +74,10 @@ describe('byte compatibility', () => {
     const ephemeral = privateKey(new Uint8Array(32).fill(44))
     const epk = createPublicKey(ephemeral).export({ format: 'der', type: 'spki' }).subarray(-32)
     const recipientDID = 'did:kokuin:zKnownAnswerRecipient'
-    const identity = createKeyAgreementIdentityForDID(recipientDID, recipientPrivate)
+    const identity = createKeyAgreementIdentityForDID({
+      id: recipientDID,
+      x25519PrivateKey: recipientPrivate,
+    })
     const pin = fromUTF('2468')
     const pinSalt = new Uint8Array(16).fill(12)
     const descriptors = [
@@ -143,10 +146,10 @@ describe('byte compatibility', () => {
   test('descriptor digest uses the existing canonical JSON and length-framed BLAKE3', async () => {
     const descriptors = [{ kind: 'did', params: { recipient: 'did:example:owner', epk: 'AAAA' } }]
     const json = canonicalStringify(descriptors)
-    expect(await descriptorDigest(descriptors)).toBe(
+    expect(await descriptorDigest({ descriptors })).toBe(
       toB64U(blake3(fromUTF(`${json.length}:${json}`))),
     )
-    expect(await descriptorDigest(descriptors)).toBe(await digestParts([json]))
+    expect(await descriptorDigest({ descriptors })).toBe(await digestParts({ parts: [json] }))
   })
 
   test('key IDs keep owner-plus-unique BLAKE3 and varint/base36 framing under a generic namespace', async () => {
@@ -157,9 +160,9 @@ describe('byte compatibility', () => {
     let value = 0n
     for (const byte of framed) value = value * 256n + BigInt(byte)
     const expected = `k${value.toString(36)}`
-    expect(await createVaultKeyID(owner, unique)).toBe(expected)
-    expect(await createVaultKeyID('did:example:other', unique)).not.toBe(expected)
-    expect(await createVaultKeyID(owner, new Uint8Array(16).fill(8))).not.toBe(expected)
+    expect(await createVaultKeyID({ owner, unique })).toBe(expected)
+    expect(await createVaultKeyID({ owner: 'did:example:other', unique })).not.toBe(expected)
+    expect(await createVaultKeyID({ owner, unique: new Uint8Array(16).fill(8) })).not.toBe(expected)
   })
 
   test.each([false, true])(

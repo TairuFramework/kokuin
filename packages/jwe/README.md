@@ -16,3 +16,15 @@ Strict default verification rejects crafted ZIP-215-only signatures on reverific
 Provider operational errors reject without dynamic fallback.
 
 See [provider adoption](../../docs/reference/crypto-provider.md) for selection, migration and verification policy.
+
+## Named params migration
+
+| Export | Named params type | Previous positional form |
+| --- | --- | --- |
+| `createTokenEncrypter` | `CreateTokenEncrypterParams` | `createTokenEncrypter(recipient: Uint8Array, options: EncryptOptions)` |
+| `deriveSharedSecretAsync` | `DeriveSharedSecretAsyncParams` | `deriveSharedSecretAsync(recipient: string, options: ResolveRecipientOptions)` |
+| `createTokenEncrypterAsync` | `CreateTokenEncrypterAsyncParams` | `createTokenEncrypterAsync(recipient: string, options: ResolveRecipientOptions)` |
+| `encryptToken` | `EncryptTokenParams` | `encryptToken(encrypter: TokenEncrypter, plaintext: Uint8Array)` |
+| `decryptToken` | `DecryptTokenParams` | `decryptToken(decrypter: KeyAgreementIdentity, jwe: string)` |
+| `wrapEnvelope` | `WrapEnvelopeParams` | `wrapEnvelope(mode: EnvelopeMode, payload: Record<string, unknown>, options: WrapOptions)` |
+| `unwrapEnvelope` | `UnwrapEnvelopeParams` | `unwrapEnvelope(message: string, options: UnwrapOptions)` |

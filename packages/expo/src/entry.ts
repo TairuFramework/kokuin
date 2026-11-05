@@ -11,8 +11,7 @@ export type StoreEntryOptions = SecureStore.SecureStoreOptions
 
 export type ExpoKeyEntryParams = {
   keyID: string
-  options?: StoreEntryOptions
-}
+} & StoreEntryOptions
 
 export class ExpoKeyEntry implements MutableKeyEntry<Uint8Array> {
   #keyID: string
@@ -22,8 +21,9 @@ export class ExpoKeyEntry implements MutableKeyEntry<Uint8Array> {
   #provideLock: Promise<unknown> = Promise.resolve()
 
   constructor(params: ExpoKeyEntryParams) {
-    this.#keyID = params.keyID
-    this.#options = params.options
+    const { keyID, ...options } = params
+    this.#keyID = keyID
+    this.#options = options
   }
 
   get keyID(): string {

@@ -16,10 +16,15 @@ export function isSecretFactorKind(kind: string): kind is SecretFactorKind {
   return SECRET_FACTOR_KINDS.includes(kind as SecretFactorKind)
 }
 
-export function wrappingNamesExcludedRecipient(
-  wrapping: { recipientDID: string | null; factors: ReadonlyArray<FactorDescriptor> },
-  excluded: ReadonlySet<string>,
-): boolean {
+export type WrappingNamesExcludedRecipientParams = {
+  wrapping: { recipientDID: string | null; factors: ReadonlyArray<FactorDescriptor> }
+  excluded: ReadonlySet<string>
+}
+
+export function wrappingNamesExcludedRecipient({
+  excluded,
+  wrapping,
+}: WrappingNamesExcludedRecipientParams): boolean {
   return [
     wrapping.recipientDID,
     ...wrapping.factors
@@ -28,10 +33,15 @@ export function wrappingNamesExcludedRecipient(
   ].some((recipient) => typeof recipient === 'string' && excluded.has(normalizeDID(recipient)))
 }
 
-export function satisfiableFactors(
-  descriptors: Array<FactorDescriptor>,
-  identity: KeyAgreementIdentity | null,
-): Array<SecretFactorKind> | null {
+export type SatisfiableFactorsParams = {
+  descriptors: Array<FactorDescriptor>
+  identity: KeyAgreementIdentity | null
+}
+
+export function satisfiableFactors({
+  identity,
+  descriptors,
+}: SatisfiableFactorsParams): Array<SecretFactorKind> | null {
   const needed: Array<SecretFactorKind> = []
 
   for (const descriptor of descriptors) {
@@ -52,10 +62,15 @@ export function satisfiableFactors(
   return needed
 }
 
-export function factorsFromDescriptors(
-  descriptors: Array<FactorDescriptor>,
-  inputs?: FactorInputs,
-): Array<FactorInput> {
+export type FactorsFromDescriptorsParams = {
+  descriptors: Array<FactorDescriptor>
+  inputs?: FactorInputs
+}
+
+export function factorsFromDescriptors({
+  inputs,
+  descriptors,
+}: FactorsFromDescriptorsParams): Array<FactorInput> {
   return descriptors.map((descriptor) => {
     if (descriptor.kind === 'did') {
       const recipient = descriptor.params.recipient

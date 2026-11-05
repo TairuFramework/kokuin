@@ -1,4 +1,8 @@
-export type { ControllerStoreAPI } from './api.js'
+export type {
+  ControllerStoreAPI,
+  ControllerStoreAPIMarkObservedParams,
+  CreateControllerStoreParams,
+} from './api.js'
 export { createControllerStore } from './api.js'
 export {
   CONTROLLER_STORE,

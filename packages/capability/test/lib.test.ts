@@ -1,5 +1,9 @@
 import { encodeKey } from '@kokuin/controller'
-import type { OwnIdentity } from '@kokuin/token'
+import type {
+  DIDMethodResolverResolveHistoricParams,
+  DIDMethodResolverResolveParams,
+  OwnIdentity,
+} from '@kokuin/token'
 import {
   createIdentity,
   createInMemoryDIDCache,
@@ -70,7 +74,7 @@ describe('createCapability() - child expiry attenuation', () => {
         exp: offset == null ? undefined : expiry + offset,
       },
       header: undefined,
-      options: { parentCapability: stringifyToken(parent) },
+      parentCapability: stringifyToken(parent),
     })
     if (accepted) {
       await expect(result).resolves.toMatchObject({ payload: { aud: device.id } })
@@ -86,352 +90,403 @@ describe('hasPermission()', () => {
   test('with single action and resource', () => {
     // Same action, different resources
     expect(
-      hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: 'test/read', res: 'foo/bar' }),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: 'foo/bar' },
+      }),
     ).toBe(true)
     expect(
-      hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: 'test/read', res: 'foo/baz' }),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: 'foo/baz' },
+      }),
     ).toBe(false)
     expect(
-      hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: 'test/read', res: 'foo/*' }),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: 'foo/*' },
+      }),
     ).toBe(true)
     expect(
-      hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: 'test/read', res: '*' }),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: '*' },
+      }),
     ).toBe(true)
-    expect(hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: 'test/read', res: '' })).toBe(
-      false,
-    )
+    expect(
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: '' },
+      }),
+    ).toBe(false)
     // Same resource, different actions
     expect(
-      hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: 'test/read', res: 'foo/bar' }),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: 'foo/bar' },
+      }),
     ).toBe(true)
 
     expect(
-      hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: 'test/write', res: 'foo/bar' }),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/write', res: 'foo/bar' },
+      }),
     ).toBe(false)
     expect(
-      hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: 'test/*', res: 'foo/bar' }),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/*', res: 'foo/bar' },
+      }),
     ).toBe(true)
-    expect(hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: '*', res: 'foo/bar' })).toBe(
-      true,
-    )
-    expect(hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: '', res: 'foo/bar' })).toBe(
-      false,
-    )
+    expect(
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: '*', res: 'foo/bar' },
+      }),
+    ).toBe(true)
+    expect(
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: '', res: 'foo/bar' },
+      }),
+    ).toBe(false)
   })
 
   test('with multiple actions or resources granted, check for any match', () => {
     // Same action, different resources
     expect(
-      hasPermission(
-        { act: 'test/read', res: 'foo/bar' },
-        { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: 'test/read', res: 'foo/bar' },
-        { act: 'test/read', res: ['foo/foo', 'foo/baz'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: ['foo/foo', 'foo/baz'] },
+      }),
     ).toBe(false)
     expect(
-      hasPermission(
-        { act: 'test/read', res: 'foo/bar' },
-        { act: 'test/read', res: ['foo/foo', 'foo/*'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: ['foo/foo', 'foo/*'] },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: 'test/read', res: 'foo/bar' },
-        { act: 'test/read', res: ['foo/foo', '*'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: ['foo/foo', '*'] },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: 'test/read', res: 'foo/bar' },
-        { act: 'test/read', res: ['foo/foo', ''] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: ['foo/foo', ''] },
+      }),
     ).toBe(false)
     // Same resource, different actions
     expect(
-      hasPermission(
-        { act: 'test/read', res: 'foo/bar' },
-        { act: ['test/other', 'test/read'], res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: ['test/other', 'test/read'], res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: 'test/read', res: 'foo/bar' },
-        { act: ['test/other', 'test/write'], res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: ['test/other', 'test/write'], res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(false)
     expect(
-      hasPermission(
-        { act: 'test/read', res: 'foo/bar' },
-        { act: ['test/other', 'test/*'], res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: ['test/other', 'test/*'], res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: 'test/read', res: 'foo/bar' },
-        { act: ['test/other', '*'], res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: ['test/other', '*'], res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: 'test/read', res: 'foo/bar' },
-        { act: ['test/other', ''], res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: ['test/other', ''], res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(false)
   })
 
   test('with multiple actions or resources expected, check for every match', () => {
     // Same action, different resources
     expect(
-      hasPermission(
-        { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
-        { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
+        granted: { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
-        { act: 'test/read', res: ['foo/foo', 'foo/baz'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
+        granted: { act: 'test/read', res: ['foo/foo', 'foo/baz'] },
+      }),
     ).toBe(false)
     expect(
-      hasPermission(
-        { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
-        { act: 'test/read', res: ['foo/foo', 'foo/*'] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
+        granted: { act: 'test/read', res: ['foo/foo', 'foo/*'] },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
-        { act: 'test/read', res: ['foo/foo', ''] },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
+        granted: { act: 'test/read', res: ['foo/foo', ''] },
+      }),
     ).toBe(false)
     expect(
-      hasPermission(
-        { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
-        { act: 'test/read', res: 'foo/*' },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
+        granted: { act: 'test/read', res: 'foo/*' },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
-        { act: 'test/read', res: '*' },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
+        granted: { act: 'test/read', res: '*' },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
-        { act: 'test/read', res: '' },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: ['foo/foo', 'foo/bar'] },
+        granted: { act: 'test/read', res: '' },
+      }),
     ).toBe(false)
     // Same resource, different actions
     expect(
-      hasPermission(
-        { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
-        { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
+        granted: { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: ['test/read', 'test/delete'], res: ['foo/foo', 'foo/bar'] },
-        { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: ['test/read', 'test/delete'], res: ['foo/foo', 'foo/bar'] },
+        granted: { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(false)
     expect(
-      hasPermission(
-        { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
-        { act: ['test/read'], res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
+        granted: { act: ['test/read'], res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(false)
     expect(
-      hasPermission(
-        { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
-        { act: ['test/read', 'test/*'], res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
+        granted: { act: ['test/read', 'test/*'], res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
-        { act: ['test/read', '*'], res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
+        granted: { act: ['test/read', '*'], res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
-        { act: ['test/read', ''], res: ['foo/foo', 'foo/bar'] },
-      ),
+      hasPermission({
+        expected: { act: ['test/read', 'test/write'], res: ['foo/foo', 'foo/bar'] },
+        granted: { act: ['test/read', ''], res: ['foo/foo', 'foo/bar'] },
+      }),
     ).toBe(false)
   })
 
   test('does not grant ancestor resources or actions (prefix escalation)', () => {
     // A grant more specific than the request must NOT authorize the broader request.
     expect(
-      hasPermission({ act: 'test/read', res: 'foo/bar' }, { act: 'test/read', res: 'foo/bar/baz' }),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar' },
+        granted: { act: 'test/read', res: 'foo/bar/baz' },
+      }),
     ).toBe(false)
     expect(
-      hasPermission({ act: 'test/read', res: 'foo' }, { act: 'test/read', res: 'foo/bar/baz' }),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo' },
+        granted: { act: 'test/read', res: 'foo/bar/baz' },
+      }),
     ).toBe(false)
     expect(
-      hasPermission({ act: 'test', res: 'foo/bar' }, { act: 'test/read', res: 'foo/bar' }),
+      hasPermission({
+        expected: { act: 'test', res: 'foo/bar' },
+        granted: { act: 'test/read', res: 'foo/bar' },
+      }),
     ).toBe(false)
 
     // No implicit descent: a shorter grant does not cover a deeper request without `*`.
     expect(
-      hasPermission({ act: 'test/read', res: 'foo/bar/baz' }, { act: 'test/read', res: 'foo/bar' }),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar/baz' },
+        granted: { act: 'test/read', res: 'foo/bar' },
+      }),
     ).toBe(false)
     expect(
-      hasPermission(
-        { act: 'test/read/extra', res: 'foo/bar' },
-        { act: 'test/read', res: 'foo/bar' },
-      ),
+      hasPermission({
+        expected: { act: 'test/read/extra', res: 'foo/bar' },
+        granted: { act: 'test/read', res: 'foo/bar' },
+      }),
     ).toBe(false)
 
     // Explicit trailing `*` is still required to authorize deeper requests.
     expect(
-      hasPermission({ act: 'test/read', res: 'foo/bar/baz' }, { act: 'test/read', res: 'foo/*' }),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar/baz' },
+        granted: { act: 'test/read', res: 'foo/*' },
+      }),
     ).toBe(true)
     expect(
-      hasPermission(
-        { act: 'test/read', res: 'foo/bar/baz' },
-        { act: 'test/read', res: 'foo/bar/*' },
-      ),
+      hasPermission({
+        expected: { act: 'test/read', res: 'foo/bar/baz' },
+        granted: { act: 'test/read', res: 'foo/bar/*' },
+      }),
     ).toBe(true)
   })
 })
 
 describe('assertNonExpired()', () => {
   test('with no expiration', () => {
-    expect(() => assertNonExpired({})).not.toThrow()
-    expect(() => assertNonExpired({ exp: undefined })).not.toThrow()
+    expect(() => assertNonExpired({ payload: {} })).not.toThrow()
+    expect(() => assertNonExpired({ payload: { exp: undefined } })).not.toThrow()
   })
 
   test('with valid expiration', () => {
     const exp = now() + 1000
-    expect(() => assertNonExpired({ exp })).not.toThrow()
-    expect(() => assertNonExpired({ exp }, exp - 100)).not.toThrow()
+    expect(() => assertNonExpired({ payload: { exp } })).not.toThrow()
+    expect(() => assertNonExpired({ payload: { exp }, atTime: exp - 100 })).not.toThrow()
   })
 
   test('with invalid expiration', () => {
     const exp = now() - 1000
-    expect(() => assertNonExpired({ exp })).toThrow('Invalid token: expired')
-    expect(() => assertNonExpired({ exp: exp - 1000 }, exp)).toThrow('Invalid token: expired')
+    expect(() => assertNonExpired({ payload: { exp } })).toThrow('Invalid token: expired')
+    expect(() => assertNonExpired({ payload: { exp: exp - 1000 }, atTime: exp })).toThrow(
+      'Invalid token: expired',
+    )
   })
 })
 
 describe('assertValidIssuedAt()', () => {
   test('accepts payload without iat', () => {
-    expect(() => assertValidIssuedAt({})).not.toThrow()
-    expect(() => assertValidIssuedAt({ iat: undefined })).not.toThrow()
+    expect(() => assertValidIssuedAt({ payload: {} })).not.toThrow()
+    expect(() => assertValidIssuedAt({ payload: { iat: undefined } })).not.toThrow()
   })
 
   test('accepts payload with past iat', () => {
     const iat = now() - 1000
-    expect(() => assertValidIssuedAt({ iat })).not.toThrow()
+    expect(() => assertValidIssuedAt({ payload: { iat } })).not.toThrow()
   })
 
   test('accepts payload with current iat', () => {
     const iat = now()
-    expect(() => assertValidIssuedAt({ iat })).not.toThrow()
+    expect(() => assertValidIssuedAt({ payload: { iat } })).not.toThrow()
   })
 
   test('rejects payload with future iat', () => {
     const iat = now() + 1000
-    expect(() => assertValidIssuedAt({ iat })).toThrow('Invalid token: issued in the future')
+    expect(() => assertValidIssuedAt({ payload: { iat } })).toThrow(
+      'Invalid token: issued in the future',
+    )
   })
 
   test('respects atTime parameter', () => {
     const fixedTime = 1700000000
     // iat is before atTime — OK
-    expect(() => assertValidIssuedAt({ iat: fixedTime - 100 }, fixedTime)).not.toThrow()
+    expect(() =>
+      assertValidIssuedAt({ payload: { iat: fixedTime - 100 }, atTime: fixedTime }),
+    ).not.toThrow()
     // iat is after atTime — rejected
-    expect(() => assertValidIssuedAt({ iat: fixedTime + 100 }, fixedTime)).toThrow(
-      'Invalid token: issued in the future',
-    )
+    expect(() =>
+      assertValidIssuedAt({ payload: { iat: fixedTime + 100 }, atTime: fixedTime }),
+    ).toThrow('Invalid token: issued in the future')
   })
 })
 
 describe('assertValidDelegation()', () => {
   test('checks matching issuer and audience', () => {
     expect(() => {
-      assertValidDelegation(
-        { aud: 'did:test:123' } as CapabilityPayload,
-        { iss: 'did:test:123' } as CapabilityPayload,
-      )
+      assertValidDelegation({
+        from: { aud: 'did:test:123' } as CapabilityPayload,
+        to: { iss: 'did:test:123' } as CapabilityPayload,
+      })
     }).not.toThrow()
     expect(() => {
-      assertValidDelegation(
-        { aud: 'did:test:456' } as CapabilityPayload,
-        { iss: 'did:test:123' } as CapabilityPayload,
-      )
+      assertValidDelegation({
+        from: { aud: 'did:test:456' } as CapabilityPayload,
+        to: { iss: 'did:test:123' } as CapabilityPayload,
+      })
     }).toThrow('Invalid capability: audience mismatch')
   })
 
   test('checks matching subject', () => {
     expect(() => {
-      assertValidDelegation(
-        { aud: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
-        { iss: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
-      )
+      assertValidDelegation({
+        from: { aud: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
+        to: { iss: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
+      })
     }).not.toThrow()
     expect(() => {
-      assertValidDelegation(
-        { aud: 'did:test:123', sub: 'did:test:789' } as CapabilityPayload,
-        { iss: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
-      )
+      assertValidDelegation({
+        from: { aud: 'did:test:123', sub: 'did:test:789' } as CapabilityPayload,
+        to: { iss: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
+      })
     }).toThrow('Invalid capability: subject mismatch')
   })
 
   test('checks expired parent', () => {
     expect(() => {
-      assertValidDelegation(
-        { aud: 'did:test:123', sub: 'did:test:456', exp: now() + 1000 } as CapabilityPayload,
-        { iss: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
-      )
+      assertValidDelegation({
+        from: { aud: 'did:test:123', sub: 'did:test:456', exp: now() + 1000 } as CapabilityPayload,
+        to: { iss: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
+      })
     }).not.toThrow()
     expect(() => {
-      assertValidDelegation(
-        { aud: 'did:test:123', sub: 'did:test:456', exp: now() - 1000 } as CapabilityPayload,
-        { iss: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
-      )
+      assertValidDelegation({
+        from: { aud: 'did:test:123', sub: 'did:test:456', exp: now() - 1000 } as CapabilityPayload,
+        to: { iss: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
+      })
     }).toThrow('Invalid token: expired')
   })
 
   test('checks matching actions and resources', () => {
     expect(() => {
-      assertValidDelegation(
-        {
+      assertValidDelegation({
+        from: {
           aud: 'did:test:123',
           sub: 'did:test:456',
           act: 'test',
           res: 'foo/*',
         } as CapabilityPayload,
-        {
+        to: {
           iss: 'did:test:123',
           sub: 'did:test:456',
           act: 'test',
           res: ['foo/bar', 'foo/baz'],
         } as CapabilityPayload,
-      )
+      })
     }).not.toThrow()
     expect(() => {
-      assertValidDelegation(
-        {
+      assertValidDelegation({
+        from: {
           aud: 'did:test:123',
           sub: 'did:test:456',
           act: 'test',
           res: ['foo/bar', 'foo/foo'],
         } as CapabilityPayload,
-        {
+        to: {
           iss: 'did:test:123',
           sub: 'did:test:456',
           act: 'test',
           res: ['foo/bar', 'foo/baz'],
         } as CapabilityPayload,
-      )
+      })
     }).toThrow('Invalid capability: permission mismatch')
   })
 })
@@ -439,31 +494,37 @@ describe('assertValidDelegation()', () => {
 describe('checkDelegationChain()', () => {
   test('last payload should be issued by subject and not expired', async () => {
     await expect(
-      checkDelegationChain({ iss: 'did:test:123', sub: 'did:test:123' } as CapabilityPayload, []),
+      checkDelegationChain({
+        payload: { iss: 'did:test:123', sub: 'did:test:123' } as CapabilityPayload,
+        capabilities: [],
+      }),
     ).resolves.toBeUndefined()
     await expect(async () => {
-      await checkDelegationChain(
-        { iss: 'did:test:123', sub: 'did:test:123', exp: now() - 1000 } as CapabilityPayload,
-        [],
-      )
+      await checkDelegationChain({
+        payload: {
+          iss: 'did:test:123',
+          sub: 'did:test:123',
+          exp: now() - 1000,
+        } as CapabilityPayload,
+        capabilities: [],
+      })
     }).rejects.toThrow('Invalid token: expired')
     // Same three time claims as the member arm beside it and the subject arm of `checkCapability`.
     await expect(
-      checkDelegationChain(
-        // `CapabilityPayload` does not declare `nbf`; the source reads it the same way.
-        {
+      checkDelegationChain({
+        payload: {
           iss: 'did:test:123',
           sub: 'did:test:123',
           nbf: now() + 1000,
         } as unknown as CapabilityPayload,
-        [],
-      ),
+        capabilities: [],
+      }),
     ).rejects.toThrow('Invalid token: not yet valid')
     await expect(async () => {
-      await checkDelegationChain(
-        { iss: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
-        [],
-      )
+      await checkDelegationChain({
+        payload: { iss: 'did:test:123', sub: 'did:test:456' } as CapabilityPayload,
+        capabilities: [],
+      })
     }).rejects.toThrow('Invalid capability: issuer should be subject')
   })
 
@@ -490,7 +551,7 @@ describe('checkDelegationChain()', () => {
         res: ['foo/bar', 'foo/baz'],
       },
       header: undefined,
-      options: { parentCapability: stringifyToken(delegateToB) },
+      parentCapability: stringifyToken(delegateToB),
     })
     const delegateToD = await createCapability({
       signer: signerC,
@@ -501,13 +562,13 @@ describe('checkDelegationChain()', () => {
         res: 'foo/baz',
       },
       header: undefined,
-      options: { parentCapability: stringifyToken(delegateToC) },
+      parentCapability: stringifyToken(delegateToC),
     })
     await expect(
-      checkDelegationChain(delegateToD.payload, [
-        stringifyToken(delegateToC),
-        stringifyToken(delegateToB),
-      ]),
+      checkDelegationChain({
+        payload: delegateToD.payload,
+        capabilities: [stringifyToken(delegateToC), stringifyToken(delegateToB)],
+      }),
     ).resolves.not.toThrow()
   })
 })
@@ -536,7 +597,7 @@ describe('checkCapability()', () => {
         res: ['foo/bar', 'foo/baz'],
       },
       header: undefined,
-      options: { parentCapability: stringifyToken(delegateToB) },
+      parentCapability: stringifyToken(delegateToB),
     })
     const delegateToD = await createCapability({
       signer: signerC,
@@ -547,15 +608,21 @@ describe('checkCapability()', () => {
         res: ['foo/baz'],
       },
       header: undefined,
-      options: { parentCapability: stringifyToken(delegateToC) },
+      parentCapability: stringifyToken(delegateToC),
     })
     const token = await signerD.signToken({
-      sub: signerA.id,
-      prc: 'test/call',
-      cap: [stringifyToken(delegateToD), stringifyToken(delegateToC), stringifyToken(delegateToB)],
+      payload: {
+        sub: signerA.id,
+        prc: 'test/call',
+        cap: [
+          stringifyToken(delegateToD),
+          stringifyToken(delegateToC),
+          stringifyToken(delegateToB),
+        ],
+      },
     })
     await expect(
-      checkCapability({ act: 'test/call', res: 'foo/baz' }, token.payload),
+      checkCapability({ permission: { act: 'test/call', res: 'foo/baz' }, payload: token.payload }),
     ).resolves.not.toThrow()
   })
 
@@ -576,14 +643,18 @@ describe('checkCapability()', () => {
     })
 
     const bobToken = await bob.signToken({
-      sub: alice.id,
-      act: 'test/read',
-      res: 'foo/bar',
-      cap: stringifyToken(capability),
+      payload: {
+        sub: alice.id,
+        act: 'test/read',
+        res: 'foo/bar',
+        cap: stringifyToken(capability),
+      },
     })
 
     await expect(
-      checkCapability({ act: 'test/read', res: 'foo/bar' }, bobToken.payload, {
+      checkCapability({
+        permission: { act: 'test/read', res: 'foo/bar' },
+        payload: bobToken.payload,
         atTime: fixedTime,
       }),
     ).rejects.toThrow('Token expired')
@@ -609,15 +680,19 @@ describe('checkCapability()', () => {
     })
 
     const bobToken = await bob.signToken({
-      sub: alice.id,
-      act: 'test/read',
-      res: 'foo/bar',
-      exp: referenceTime + 100,
-      cap: stringifyToken(capability),
+      payload: {
+        sub: alice.id,
+        act: 'test/read',
+        res: 'foo/bar',
+        exp: referenceTime + 100,
+        cap: stringifyToken(capability),
+      },
     })
 
     await expect(
-      checkCapability({ act: 'test/read', res: 'foo/bar' }, bobToken.payload, {
+      checkCapability({
+        permission: { act: 'test/read', res: 'foo/bar' },
+        payload: bobToken.payload,
         atTime: referenceTime,
       }),
     ).resolves.not.toThrow()
@@ -636,17 +711,25 @@ describe('checkCapability()', () => {
       },
     })
     const bobToken = await bob.signToken({
-      sub: alice.id,
-      act: 'test/read',
-      res: 'foo/bar',
-      cap: stringifyToken(capability),
+      payload: {
+        sub: alice.id,
+        act: 'test/read',
+        res: 'foo/bar',
+        cap: stringifyToken(capability),
+      },
     })
     const permission = { act: 'test/read', res: 'foo/bar' }
 
-    await expect(checkCapability(permission, bobToken.payload)).resolves.toBeUndefined()
+    await expect(
+      checkCapability({ permission, payload: bobToken.payload }),
+    ).resolves.toBeUndefined()
     const EdDSA = vi.fn(() => false)
     await expect(
-      checkCapability(permission, bobToken.payload, { verifiers: { EdDSA } }),
+      checkCapability({
+        permission,
+        payload: bobToken.payload,
+        verifiers: { EdDSA },
+      }),
     ).rejects.toThrow()
     expect(EdDSA).toHaveBeenCalled()
   })
@@ -658,20 +741,25 @@ describe('checkCapability() - self-issued tokens (C-02)', () => {
 
     // Alice creates a self-issued token claiming only 'read' permission
     const token = await alice.signToken({
-      sub: alice.id,
-      act: 'test/read',
-      res: 'foo/bar',
+      payload: {
+        sub: alice.id,
+        act: 'test/read',
+        res: 'foo/bar',
+      },
     })
 
     // Should succeed: requesting exactly what was granted
     await expect(
-      checkCapability({ act: 'test/read', res: 'foo/bar' }, token.payload),
+      checkCapability({ permission: { act: 'test/read', res: 'foo/bar' }, payload: token.payload }),
     ).resolves.not.toThrow()
 
     // Should FAIL: requesting 'write' when only 'read' was granted
     // BUG: Currently passes because iss === sub bypasses permission check
     await expect(
-      checkCapability({ act: 'test/write', res: 'foo/bar' }, token.payload),
+      checkCapability({
+        permission: { act: 'test/write', res: 'foo/bar' },
+        payload: token.payload,
+      }),
     ).rejects.toThrow()
   })
 
@@ -679,14 +767,16 @@ describe('checkCapability() - self-issued tokens (C-02)', () => {
     const alice = randomIdentity()
 
     const token = await alice.signToken({
-      sub: alice.id,
-      act: 'test/read',
-      res: 'foo/bar',
+      payload: {
+        sub: alice.id,
+        act: 'test/read',
+        res: 'foo/bar',
+      },
     })
 
     // Should FAIL: requesting different resource
     await expect(
-      checkCapability({ act: 'test/read', res: 'foo/baz' }, token.payload),
+      checkCapability({ permission: { act: 'test/read', res: 'foo/baz' }, payload: token.payload }),
     ).rejects.toThrow()
   })
 
@@ -694,19 +784,21 @@ describe('checkCapability() - self-issued tokens (C-02)', () => {
     const alice = randomIdentity()
 
     const token = await alice.signToken({
-      sub: alice.id,
-      act: '*',
-      res: 'foo/*',
+      payload: {
+        sub: alice.id,
+        act: '*',
+        res: 'foo/*',
+      },
     })
 
     // Should succeed: wildcard covers this
     await expect(
-      checkCapability({ act: 'test/read', res: 'foo/bar' }, token.payload),
+      checkCapability({ permission: { act: 'test/read', res: 'foo/bar' }, payload: token.payload }),
     ).resolves.not.toThrow()
 
     // Should fail: resource doesn't match wildcard
     await expect(
-      checkCapability({ act: 'test/read', res: 'bar/baz' }, token.payload),
+      checkCapability({ permission: { act: 'test/read', res: 'bar/baz' }, payload: token.payload }),
     ).rejects.toThrow()
   })
 
@@ -715,11 +807,13 @@ describe('checkCapability() - self-issued tokens (C-02)', () => {
 
     // Token without act/res claims
     const token = await alice.signToken({
-      sub: alice.id,
+      payload: {
+        sub: alice.id,
+      },
     })
 
     await expect(
-      checkCapability({ act: 'test/read', res: 'foo/bar' }, token.payload),
+      checkCapability({ permission: { act: 'test/read', res: 'foo/bar' }, payload: token.payload }),
     ).rejects.toThrow()
   })
 })
@@ -738,7 +832,7 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
           res: '*',
         },
         header: undefined,
-        options: parentOption,
+        ...parentOption,
       })
       capabilities.push(stringifyToken(cap))
     }
@@ -758,9 +852,9 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
     } as CapabilityPayload
 
     // Should reject: chain depth exceeds limit
-    await expect(checkDelegationChain(finalPayload, [...capabilities].reverse())).rejects.toThrow(
-      'delegation chain exceeds maximum depth',
-    )
+    await expect(
+      checkDelegationChain({ payload: finalPayload, capabilities: [...capabilities].reverse() }),
+    ).rejects.toThrow('delegation chain exceeds maximum depth')
   })
 
   test('accepts delegation chains within max depth', async () => {
@@ -777,7 +871,7 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
 
     // Should succeed: chain depth within limit
     await expect(
-      checkDelegationChain(finalPayload, [...capabilities].reverse()),
+      checkDelegationChain({ payload: finalPayload, capabilities: [...capabilities].reverse() }),
     ).resolves.not.toThrow()
   })
 
@@ -793,18 +887,24 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
     } as CapabilityPayload
 
     await expect(
-      checkCapability({ act: 'test', res: 'foo' }, {
-        ...invocation,
-        cap: [...capabilities].reverse(),
-      } as CapabilityPayload),
+      checkCapability({
+        permission: { act: 'test', res: 'foo' },
+        payload: {
+          ...invocation,
+          cap: [...capabilities].reverse(),
+        } as CapabilityPayload,
+      }),
     ).rejects.toThrow('delegation chain exceeds maximum depth of 4')
 
     await expect(
-      checkCapability({ act: 'test', res: 'foo' }, {
-        ...invocation,
-        iss: at(signers, 4).id,
-        cap: [...capabilities.slice(0, 4)].reverse(),
-      } as CapabilityPayload),
+      checkCapability({
+        permission: { act: 'test', res: 'foo' },
+        payload: {
+          ...invocation,
+          iss: at(signers, 4).id,
+          cap: [...capabilities.slice(0, 4)].reverse(),
+        } as CapabilityPayload,
+      }),
     ).resolves.not.toThrow()
   })
 
@@ -823,13 +923,13 @@ describe('checkDelegationChain() - depth limits (H-04)', () => {
     const reversed = [...capabilities].reverse()
 
     // Should reject: custom limit of 2
-    await expect(checkDelegationChain(finalPayload, reversed, { maxDepth: 2 })).rejects.toThrow(
-      'delegation chain exceeds maximum depth',
-    )
+    await expect(
+      checkDelegationChain({ payload: finalPayload, capabilities: reversed, maxDepth: 2 }),
+    ).rejects.toThrow('delegation chain exceeds maximum depth')
 
     // Should succeed: custom limit of 10
     await expect(
-      checkDelegationChain(finalPayload, reversed, { maxDepth: 10 }),
+      checkDelegationChain({ payload: finalPayload, capabilities: reversed, maxDepth: 10 }),
     ).resolves.not.toThrow()
   })
 })
@@ -842,12 +942,14 @@ describe('isCapabilityToken() - type validation (M-04)', () => {
   // identity) survives the override.
   async function makeToken(payload: Record<string, unknown>) {
     const signed = await identity.signToken({
-      sub: identity.id,
-      aud: 'did:test:789',
-      act: 'test',
-      res: 'foo',
-    } as Record<string, unknown>)
-    const branded = await verifyToken(signed)
+      payload: {
+        sub: identity.id,
+        aud: 'did:test:789',
+        act: 'test',
+        res: 'foo',
+      } as Record<string, unknown>,
+    })
+    const branded = await verifyToken({ token: signed })
     Object.assign(branded.payload, payload)
     return branded
   }
@@ -961,7 +1063,7 @@ describe('TOCTOU time consistency (M-05)', () => {
     } as CapabilityPayload
 
     // Should pass with explicit atTime
-    expect(() => assertValidDelegation(from, to, fixedTime)).not.toThrow()
+    expect(() => assertValidDelegation({ from, to, atTime: fixedTime })).not.toThrow()
   })
 
   test('checkDelegationChain captures time once when atTime not provided', async () => {
@@ -975,7 +1077,7 @@ describe('TOCTOU time consistency (M-05)', () => {
     } as CapabilityPayload
 
     // Should pass: iat is in the past, no expiration
-    await expect(checkDelegationChain(payload, [])).resolves.not.toThrow()
+    await expect(checkDelegationChain({ payload, capabilities: [] })).resolves.not.toThrow()
   })
 })
 
@@ -1053,11 +1155,31 @@ describe('assertValidPattern() (M-06)', () => {
     // because widening the character class is only safe if it adds no matching behaviour.
     const key = '#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
     const other = '#z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
-    expect(hasPermission({ act: 'revoke', res: key }, { act: 'revoke', res: key })).toBe(true)
-    expect(hasPermission({ act: 'revoke', res: key }, { act: 'revoke', res: other })).toBe(false)
+    expect(
+      hasPermission({
+        expected: { act: 'revoke', res: key },
+        granted: { act: 'revoke', res: key },
+      }),
+    ).toBe(true)
+    expect(
+      hasPermission({
+        expected: { act: 'revoke', res: key },
+        granted: { act: 'revoke', res: other },
+      }),
+    ).toBe(false)
     // A wildcard still covers it, and the fragment does not become one.
-    expect(hasPermission({ act: 'revoke', res: key }, { act: 'revoke', res: '*' })).toBe(true)
-    expect(hasPermission({ act: 'revoke', res: other }, { act: 'revoke', res: key })).toBe(false)
+    expect(
+      hasPermission({
+        expected: { act: 'revoke', res: key },
+        granted: { act: 'revoke', res: '*' },
+      }),
+    ).toBe(true)
+    expect(
+      hasPermission({
+        expected: { act: 'revoke', res: other },
+        granted: { act: 'revoke', res: key },
+      }),
+    ).toBe(false)
   })
 })
 
@@ -1106,7 +1228,7 @@ describe('createCapability() - delegation validation (C-03)', () => {
         res: 'foo/bar',
       },
       header: undefined,
-      options: { parentCapability: stringifyToken(rootCap) },
+      parentCapability: stringifyToken(rootCap),
     })
 
     expect(delegatedCap.payload.iss).toBe(bob.id)
@@ -1140,7 +1262,7 @@ describe('createCapability() - delegation validation (C-03)', () => {
           res: 'foo/bar',
         },
         header: undefined,
-        options: { parentCapability: stringifyToken(rootCap) },
+        parentCapability: stringifyToken(rootCap),
       }),
     ).rejects.toThrow('permission')
   })
@@ -1189,7 +1311,7 @@ describe('createCapability() - delegation validation (C-03)', () => {
           res: '*',
         },
         header: undefined,
-        options: { parentCapability: stringifyToken(rootCap) },
+        parentCapability: stringifyToken(rootCap),
       }),
     ).rejects.toThrow('audience')
   })
@@ -1200,10 +1322,10 @@ describe('createCapability() - delegation validation (C-03)', () => {
     // `@kokuin/controller`, and a real folded log would prove nothing extra about the option
     // threading. Mirrors the idiom in `test/method-registry.test.ts`.
     const profileDID = 'did:kokuin:zTestProfile' as DIDString
-    const root = createSigningIdentityForDID(profileDID, randomPrivateKey())
+    const root = createSigningIdentityForDID({ id: profileDID, privateKey: randomPrivateKey() })
     const resolver: DIDMethodResolver = {
       method: 'kokuin',
-      resolve: async (did: string) => {
+      resolve: async ({ did }: DIDMethodResolverResolveParams) => {
         if (did !== profileDID) {
           throw new Error(`Unknown DID: ${did}`)
         }
@@ -1211,7 +1333,7 @@ describe('createCapability() - delegation validation (C-03)', () => {
       },
       // One fixed key, so historic and current coincide — but it still has to be published, since
       // a capability is archived material and `verifyToken` asks for it.
-      resolveHistoric: async (did: string) => {
+      resolveHistoric: async ({ did }: DIDMethodResolverResolveHistoricParams) => {
         if (did !== profileDID) {
           throw new Error(`Unknown DID: ${did}`)
         }
@@ -1240,7 +1362,8 @@ describe('createCapability() - delegation validation (C-03)', () => {
         res: 'foo/bar',
       },
       header: undefined,
-      options: { parentCapability: stringifyToken(rootCap), methods: [resolver] },
+      parentCapability: stringifyToken(rootCap),
+      methods: [resolver],
     })
     expect(delegated.payload.iss).toBe(bob.id)
     expect(delegated.payload.sub).toBe(profileDID)
@@ -1257,7 +1380,7 @@ describe('createCapability() - delegation validation (C-03)', () => {
           res: 'foo/bar',
         },
         header: undefined,
-        options: { parentCapability: stringifyToken(rootCap) },
+        parentCapability: stringifyToken(rootCap),
       }),
     ).rejects.toThrow(`Unknown DID: ${profileDID}`)
   })
@@ -1278,12 +1401,12 @@ describe('createCapability() - delegation validation (C-03)', () => {
 
     // Alice signs with her short form: without a cache entry or resolver, nothing can turn that
     // short form back into her signing key.
-    const rootCap = await alice.signToken(
-      { sub: alice.id, aud: bob.id, act: '*', res: 'foo/*' },
-      { embedLongForm: false },
-    )
+    const rootCap = await alice.signToken({
+      payload: { sub: alice.id, aud: bob.id, act: '*', res: 'foo/*' },
+      embedLongForm: false,
+    })
     const cache = createInMemoryDIDCache()
-    await cache.set(alice.id, alice.doc)
+    await cache.set({ shortForm: alice.id, doc: alice.doc })
 
     // Note: no `resolver` anywhere in this test -- this isolates `cache` from `resolver`, so a
     // future implementation that forwards `resolver` but not `cache` cannot pass this test by
@@ -1292,7 +1415,8 @@ describe('createCapability() - delegation validation (C-03)', () => {
       signer: bob,
       payload: { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
       header: undefined,
-      options: { parentCapability: stringifyToken(rootCap), cache },
+      parentCapability: stringifyToken(rootCap),
+      cache,
     })
     // First contact with carol: bob's own signer embeds his long form, unrelated to the option
     // under test.
@@ -1306,7 +1430,7 @@ describe('createCapability() - delegation validation (C-03)', () => {
         signer: bob,
         payload: { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
         header: undefined,
-        options: { parentCapability: stringifyToken(rootCap) },
+        parentCapability: stringifyToken(rootCap),
       }),
     ).rejects.toThrow(`Unknown DID: ${alice.id}`)
   })
@@ -1324,18 +1448,19 @@ describe('createCapability() - delegation validation (C-03)', () => {
 
     // Alice signs with her short form: without a resolver (or a cache entry), nothing can turn
     // that short form back into her signing key.
-    const rootCap = await alice.signToken(
-      { sub: alice.id, aud: bob.id, act: '*', res: 'foo/*' },
-      { embedLongForm: false },
-    )
-    const doc = decodePeer4(alice.longForm).doc
+    const rootCap = await alice.signToken({
+      payload: { sub: alice.id, aud: bob.id, act: '*', res: 'foo/*' },
+      embedLongForm: false,
+    })
+    const doc = decodePeer4({ longForm: alice.longForm }).doc
     const resolver: DIDResolver = (did: string) => (did === alice.id ? doc : undefined)
 
     const delegated = await createCapability({
       signer: bob,
       payload: { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
       header: undefined,
-      options: { parentCapability: stringifyToken(rootCap), resolver },
+      parentCapability: stringifyToken(rootCap),
+      resolver,
     })
     expect(delegated.payload.iss).toBe(bob.id)
     expect(delegated.payload.sub).toBe(alice.id)
@@ -1347,7 +1472,7 @@ describe('createCapability() - delegation validation (C-03)', () => {
         signer: bob,
         payload: { sub: alice.id, aud: carol.id, act: 'test/read', res: 'foo/bar' },
         header: undefined,
-        options: { parentCapability: stringifyToken(rootCap) },
+        parentCapability: stringifyToken(rootCap),
       }),
     ).rejects.toThrow(`Unknown DID: ${alice.id}`)
   })
@@ -1377,15 +1502,19 @@ describe('verifyToken hook', () => {
         res: 'foo/*',
       },
       header: undefined,
-      options: { parentCapability: stringifyToken(delegateToB) },
+      parentCapability: stringifyToken(delegateToB),
     })
 
     const verified: Array<string> = []
-    const verifyToken = vi.fn((_token: unknown, raw: string) => {
+    const verifyToken = vi.fn(({ token: _token, raw }: { token: unknown; raw: string }) => {
       verified.push(raw)
     })
 
-    await checkDelegationChain(delegateToC.payload, [stringifyToken(delegateToB)], { verifyToken })
+    await checkDelegationChain({
+      payload: delegateToC.payload,
+      capabilities: [stringifyToken(delegateToB)],
+      verifyToken,
+    })
 
     expect(verifyToken).toHaveBeenCalledTimes(1)
     expect(verified[0]).toBe(stringifyToken(delegateToB))
@@ -1410,7 +1539,11 @@ describe('verifyToken hook', () => {
     })
 
     await expect(
-      checkDelegationChain(delegateToB.payload, [stringifyToken(delegateToB)], { verifyToken }),
+      checkDelegationChain({
+        payload: delegateToB.payload,
+        capabilities: [stringifyToken(delegateToB)],
+        verifyToken,
+      }),
     ).rejects.toThrow('Token revoked')
   })
 
@@ -1430,24 +1563,28 @@ describe('verifyToken hook', () => {
 
     const capString = stringifyToken(capability)
     const token = await bob.signToken({
-      sub: alice.id,
-      prc: 'test/read',
-      cap: capString,
+      payload: {
+        sub: alice.id,
+        prc: 'test/read',
+        cap: capString,
+      },
     })
 
     const verifyTokenHook = vi.fn()
 
-    await checkCapability({ act: 'test/read', res: 'foo/bar' }, token.payload, {
+    await checkCapability({
+      permission: { act: 'test/read', res: 'foo/bar' },
+      payload: token.payload,
       verifyToken: verifyTokenHook,
     })
 
     expect(verifyTokenHook).toHaveBeenCalledTimes(1)
-    expect(verifyTokenHook).toHaveBeenCalledWith(
-      expect.objectContaining({
+    expect(verifyTokenHook).toHaveBeenCalledWith({
+      token: expect.objectContaining({
         payload: expect.objectContaining({ iss: alice.id, aud: bob.id }),
       }),
-      capString,
-    )
+      raw: capString,
+    })
   })
 
   test('checkCapability rejects when verifyToken throws for capability', async () => {
@@ -1465,9 +1602,11 @@ describe('verifyToken hook', () => {
     })
 
     const token = await bob.signToken({
-      sub: alice.id,
-      prc: 'test/read',
-      cap: stringifyToken(capability),
+      payload: {
+        sub: alice.id,
+        prc: 'test/read',
+        cap: stringifyToken(capability),
+      },
     })
 
     const verifyTokenHook = vi.fn(() => {
@@ -1475,7 +1614,9 @@ describe('verifyToken hook', () => {
     })
 
     await expect(
-      checkCapability({ act: 'test/read', res: 'foo/bar' }, token.payload, {
+      checkCapability({
+        permission: { act: 'test/read', res: 'foo/bar' },
+        payload: token.payload,
         verifyToken: verifyTokenHook,
       }),
     ).rejects.toThrow('Token revoked')
@@ -1485,14 +1626,18 @@ describe('verifyToken hook', () => {
     const alice = randomIdentity()
 
     const token = await alice.signToken({
-      sub: alice.id,
-      act: 'test/read',
-      res: 'foo/bar',
+      payload: {
+        sub: alice.id,
+        act: 'test/read',
+        res: 'foo/bar',
+      },
     })
 
     const verifyTokenHook = vi.fn()
 
-    await checkCapability({ act: 'test/read', res: 'foo/bar' }, token.payload, {
+    await checkCapability({
+      permission: { act: 'test/read', res: 'foo/bar' },
+      payload: token.payload,
       verifyToken: verifyTokenHook,
     })
 
@@ -1522,18 +1667,22 @@ describe('verifyToken hook', () => {
         res: 'foo/bar',
       },
       header: undefined,
-      options: { parentCapability: stringifyToken(delegateToB) },
+      parentCapability: stringifyToken(delegateToB),
     })
 
     const token = await signerC.signToken({
-      sub: signerA.id,
-      prc: 'test/call',
-      cap: [stringifyToken(delegateToC), stringifyToken(delegateToB)],
+      payload: {
+        sub: signerA.id,
+        prc: 'test/call',
+        cap: [stringifyToken(delegateToC), stringifyToken(delegateToB)],
+      },
     })
 
     const verifyTokenHook = vi.fn()
 
-    await checkCapability({ act: 'test/call', res: 'foo/bar' }, token.payload, {
+    await checkCapability({
+      permission: { act: 'test/call', res: 'foo/bar' },
+      payload: token.payload,
       verifyToken: verifyTokenHook,
     })
 
@@ -1556,9 +1705,11 @@ describe('verifyToken hook', () => {
     })
 
     const token = await bob.signToken({
-      sub: alice.id,
-      prc: 'test/read',
-      cap: stringifyToken(capability),
+      payload: {
+        sub: alice.id,
+        prc: 'test/read',
+        cap: stringifyToken(capability),
+      },
     })
 
     const verifyTokenHook = vi.fn(async () => {
@@ -1566,7 +1717,9 @@ describe('verifyToken hook', () => {
       await new Promise((resolve) => setTimeout(resolve, 1))
     })
 
-    await checkCapability({ act: 'test/read', res: 'foo/bar' }, token.payload, {
+    await checkCapability({
+      permission: { act: 'test/read', res: 'foo/bar' },
+      payload: token.payload,
       verifyToken: verifyTokenHook,
     })
 
@@ -1611,7 +1764,7 @@ describe('checkCapability() - a capability presented directly rather than invoke
         cap: [parent],
       },
       header: undefined,
-      options: { parentCapability: parent },
+      parentCapability: parent,
     })
     return { root, manager, device, leaf: leafToken.payload as CapabilityPayload, parent }
   }
@@ -1619,7 +1772,7 @@ describe('checkCapability() - a capability presented directly rather than invoke
   test('the presented capability grants what it names', async () => {
     const { leaf } = await presented()
     await expect(
-      checkCapability({ act: 'write', res: 'doc/1' }, leaf as never),
+      checkCapability({ permission: { act: 'write', res: 'doc/1' }, payload: leaf as never }),
     ).resolves.not.toThrow()
   })
 
@@ -1627,9 +1780,9 @@ describe('checkCapability() - a capability presented directly rather than invoke
     const { leaf } = await presented()
     // The parent grants `write *`, so before the presented capability's own `res` was checked this
     // was accepted — the narrowing at the last hop was a no-op.
-    await expect(checkCapability({ act: 'write', res: 'doc/999' }, leaf as never)).rejects.toThrow(
-      'Invalid capability: permission not granted',
-    )
+    await expect(
+      checkCapability({ permission: { act: 'write', res: 'doc/999' }, payload: leaf as never }),
+    ).rejects.toThrow('Invalid capability: permission not granted')
   })
 
   test('an action the presented capability does not name is refused', async () => {
@@ -1637,16 +1790,18 @@ describe('checkCapability() - a capability presented directly rather than invoke
     // Hand-signed: the mint path refuses a different action, and an attacker holding the key
     // signs whatever it likes. Only `act` differs from the capability the mint path would produce.
     const widened = await manager.signToken({
-      sub: root.id,
-      aud: device.id,
-      act: 'read',
-      res: '*',
-      exp: now() + 3600,
-      cap: [parent],
+      payload: {
+        sub: root.id,
+        aud: device.id,
+        act: 'read',
+        res: '*',
+        exp: now() + 3600,
+        cap: [parent],
+      },
     })
-    await expect(checkCapability({ act: 'write', res: 'doc/1' }, widened.payload)).rejects.toThrow(
-      'Invalid capability: permission not granted',
-    )
+    await expect(
+      checkCapability({ permission: { act: 'write', res: 'doc/1' }, payload: widened.payload }),
+    ).rejects.toThrow('Invalid capability: permission not granted')
   })
 
   test('the parent still has to cover the presented capability, not merely the request', async () => {
@@ -1654,15 +1809,20 @@ describe('checkCapability() - a capability presented directly rather than invoke
     // A leaf claiming more than its parent granted: `delete` was never delegated. The request is
     // within the leaf, so only the leaf-against-parent comparison can refuse it.
     const overreaching = await manager.signToken({
-      sub: root.id,
-      aud: device.id,
-      act: ['write', 'delete'],
-      res: '*',
-      exp: now() + 3600,
-      cap: [parent],
+      payload: {
+        sub: root.id,
+        aud: device.id,
+        act: ['write', 'delete'],
+        res: '*',
+        exp: now() + 3600,
+        cap: [parent],
+      },
     })
     await expect(
-      checkCapability({ act: 'delete', res: 'doc/1' }, overreaching.payload),
+      checkCapability({
+        permission: { act: 'delete', res: 'doc/1' },
+        payload: overreaching.payload,
+      }),
     ).rejects.toThrow('Invalid capability: permission mismatch')
   })
 
@@ -1685,10 +1845,13 @@ describe('checkCapability() - a capability presented directly rather than invoke
     // no escape — the leaf capability of the chain is what the request is checked against.
     const invocation = { iss: device.id, sub: root.id, cap: [capability] }
     await expect(
-      checkCapability({ act: 'write', res: 'doc/1' }, invocation as never),
+      checkCapability({ permission: { act: 'write', res: 'doc/1' }, payload: invocation as never }),
     ).resolves.not.toThrow()
     await expect(
-      checkCapability({ act: 'write', res: 'doc/999' }, invocation as never),
+      checkCapability({
+        permission: { act: 'write', res: 'doc/999' },
+        payload: invocation as never,
+      }),
     ).rejects.toThrow('Invalid capability: permission mismatch')
   })
 
@@ -1718,12 +1881,14 @@ describe('checkCapability() - a capability presented directly rather than invoke
       // Hand-signed: the mint path would refuse some of these outright, and what is under test is
       // the verifier rather than the minter.
       const leaf = await manager.signToken({
-        sub: root.id,
-        aud: device.id,
-        act: 'write',
-        res: '*',
-        cap: [parent],
-        ...claims,
+        payload: {
+          sub: root.id,
+          aud: device.id,
+          act: 'write',
+          res: '*',
+          cap: [parent],
+          ...claims,
+        },
       })
       return leaf.payload as CapabilityPayload
     }
@@ -1735,28 +1900,44 @@ describe('checkCapability() - a capability presented directly rather than invoke
         iat: reference - 60,
       })
       await expect(
-        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+        checkCapability({
+          permission: { act: 'write', res: 'doc/1' },
+          payload: leaf as never,
+          atTime: reference,
+        }),
       ).resolves.not.toThrow()
     })
 
     test('an expired one is refused', async () => {
       const leaf = await leafWith({ exp: reference - 1 })
       await expect(
-        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+        checkCapability({
+          permission: { act: 'write', res: 'doc/1' },
+          payload: leaf as never,
+          atTime: reference,
+        }),
       ).rejects.toThrow('Invalid token: expired')
     })
 
     test('a not-yet-valid one is refused', async () => {
       const leaf = await leafWith({ exp: reference + 3600, nbf: reference + 60 })
       await expect(
-        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+        checkCapability({
+          permission: { act: 'write', res: 'doc/1' },
+          payload: leaf as never,
+          atTime: reference,
+        }),
       ).rejects.toThrow('Invalid token: not yet valid')
     })
 
     test('one issued in the future is refused', async () => {
       const leaf = await leafWith({ exp: reference + 3600, iat: reference + 60 })
       await expect(
-        checkCapability({ act: 'write', res: 'doc/1' }, leaf as never, { atTime: reference }),
+        checkCapability({
+          permission: { act: 'write', res: 'doc/1' },
+          payload: leaf as never,
+          atTime: reference,
+        }),
       ).rejects.toThrow('Invalid token: issued in the future')
     })
   })
@@ -1775,7 +1956,7 @@ describe('audienceConfirmation()', () => {
     // would cycle), so this is what keeps a log and a capability comparable by eye.
     const { publicKey } = randomIdentity()
     expect(audienceConfirmation({ alg: 'EdDSA', publicKey })).toEqual({
-      kid: encodeKey(publicKey, 'EdDSA'),
+      kid: encodeKey({ publicKey, alg: 'EdDSA' }),
     })
   })
 

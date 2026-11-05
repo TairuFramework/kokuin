@@ -34,20 +34,20 @@ const identity = randomIdentity()
 console.log('Identity DID:', identity.id) // did:key:z...
 
 // Create an unsigned token with custom claims
-const unsigned = createUnsignedToken({
+const unsigned = createUnsignedToken({ payload: {
   sub: 'user-123',
   aud: 'did:key:z6MkRecipient…',
   exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour
-})
+} })
 
 // Sign it with the identity's private key
-const signed = await signToken(identity, unsigned)
+const signed = await signToken({ signer: identity, token: unsigned })
 
 // Serialize to compact format (header.payload.signature)
 const tokenString = stringifyToken(signed)
 
 // Verify — public key is embedded in the DID, no key distribution required
-const verified = await verifyToken(tokenString)
+const verified = await verifyToken({ token: tokenString })
 console.log(verified.payload.iss) // identity.id (the issuer DID)
 console.log(verified.payload.sub) // 'user-123'
 ```
@@ -76,13 +76,11 @@ const identity = await store.provideIdentity('user-auth-key')
 console.log('DID:', identity.id)
 
 // Sign a token
-const token = await signToken(
-  identity,
-  createUnsignedToken({
+const token = await signToken({ signer: identity, token: createUnsignedToken({ payload: {
     sub: 'user-456',
     aud: 'my-service',
     exp: Math.floor(Date.now() / 1000) + 86400, // 24 hours
-  }),
+  } }) }
 )
 const tokenString = stringifyToken(token)
 
@@ -123,12 +121,10 @@ const identity = await store.provideIdentity('session-key')
 const signingIdentity = await store.provideSigningIdentity('session-key')
 
 // Sign a token with the browser identity
-const token = await signToken(
-  identity,
-  createUnsignedToken({
+const token = await signToken({ signer: identity, token: createUnsignedToken({ payload: {
     sub: 'resource:7',
     exp: Math.floor(Date.now() / 1000) + 3600,
-  }),
+  } }) }
 )
 const tokenString = stringifyToken(token)
 
@@ -161,12 +157,10 @@ const identity = await store.provideIdentity('device-identity')
 console.log('DID:', identity.id)
 
 // Sign a token
-const token = await signToken(
-  identity,
-  createUnsignedToken({
+const token = await signToken({ signer: identity, token: createUnsignedToken({ payload: {
     sub: 'sync-request',
     exp: Math.floor(Date.now() / 1000) + 300,
-  }),
+  } }) }
 )
 const tokenString = stringifyToken(token)
 
@@ -198,13 +192,11 @@ const identity = await store.provideIdentity('main-process-key')
 console.log('DID:', identity.id)
 
 // Sign a token (e.g. for IPC verification in the renderer)
-const ipcToken = await signToken(
-  identity,
-  createUnsignedToken({
+const ipcToken = await signToken({ signer: identity, token: createUnsignedToken({ payload: {
     sub: 'renderer-process',
     aud: 'main-process',
     exp: Math.floor(Date.now() / 1000) + 300, // 5 minutes
-  }),
+  } }) }
 )
 
 // Clean up
@@ -227,16 +219,16 @@ import { HDKeyStore, derivePrivateKey, resolveDerivationPath } from '@kokuin/det
 import { createFullIdentity } from '@kokuin/token'
 
 // Managed entries — the store derives on demand
-const store = HDKeyStore.fromMnemonic('abandon abandon … art')
-// or: HDKeyStore.fromSeed(masterSeed)
+const store = HDKeyStore.fromMnemonic({ mnemonic: 'abandon abandon … art' })
+// or: HDKeyStore.fromSeed({ seed: masterSeed })
 
 const identity = await store.provideIdentity('0')
 console.log('DID:', identity.id)
 
 // Standalone derivation — same seed + path always yields the same key pair
-const path = resolveDerivationPath('0') // numeric keyID → "m/44'/876'/0'"
-const privateKey = derivePrivateKey(masterSeed, path) // Uint8Array
-const identity2 = createFullIdentity(privateKey)
+const path = resolveDerivationPath({ keyID: '0' }) // numeric keyID → "m/44'/876'/0'"
+const privateKey = derivePrivateKey({ seed: masterSeed, path }) // Uint8Array
+const identity2 = createFullIdentity({ privateKey })
 ```
 
 **Use case**: Reproducible identities from a seed phrase — no persistent storage required
@@ -255,19 +247,17 @@ import type { IdentityProvider } from '@kokuin/token'
 import { createUnsignedToken, signToken } from '@kokuin/token'
 
 // `transport` is a WebHID or Node-HID Ledger transport instance
-const provider = createLedgerIdentityProvider(transport)
+const provider = createLedgerIdentityProvider({ transport })
 
 // Call provideIdentity with a keyID string to get a FullIdentity from the device
 const identity = await provider.provideIdentity('0')
 console.log('Hardware DID:', identity.id)
 
 // Sign a token — private key never leaves the device
-const token = await signToken(
-  identity,
-  createUnsignedToken({
+const token = await signToken({ signer: identity, token: createUnsignedToken({ payload: {
     sub: 'secure-action',
     exp: Math.floor(Date.now() / 1000) + 300,
-  }),
+  } }) }
 )
 ```
 
@@ -296,28 +286,22 @@ const sender = randomIdentity()
 const recipient = randomIdentity()
 
 // Create encrypter targeting the recipient's DID
-const encrypter = createTokenEncrypter(recipient.id)
+const encrypter = createTokenEncrypter({ recipient: recipient.id })
 
 // Low-level: encrypt raw bytes
 const plaintext = new TextEncoder().encode('secret message')
-const jwe = await encryptToken(encrypter, plaintext)
+const jwe = await encryptToken({ encrypter, plaintext })
 // jwe is a JWE compact serialization string (5 dot-separated parts)
 
-const decrypted = await decryptToken(recipient, jwe)
+const decrypted = await decryptToken({ decrypter: recipient, jwe })
 new TextDecoder().decode(decrypted) // 'secret message'
 
 // High-level: envelope wrapping (sign, then encrypt — hides sender identity)
 const mode: EnvelopeMode = 'jws-in-jwe'
-const wrapped = await wrapEnvelope(
-  mode,
-  { hello: 'world' },
-  {
-    signer: sender,
-    encrypter,
-  },
+const wrapped = await wrapEnvelope({ mode, payload: { hello: 'world' }, signer: sender, encrypter }
 )
 
-const { payload, mode: unwrappedMode } = await unwrapEnvelope(wrapped, { decrypter: recipient })
+const { payload, mode: unwrappedMode } = await unwrapEnvelope({ message: wrapped, decrypter: recipient })
 console.log(unwrappedMode) // 'jws-in-jwe'
 console.log(payload) // { hello: 'world' }
 ```
@@ -346,6 +330,7 @@ siblings with `createControllerResolver` registered.
 
 ```typescript
 import { createTokenEncrypterAsync, decryptToken, encryptToken } from '@kokuin/jwe'
+import type { KeyAgreementIdentityAgreeKeyParams } from '@kokuin/token'
 import { x25519 } from '@noble/curves/ed25519.js'
 import {
   agreementPath,
@@ -356,7 +341,7 @@ import {
 } from '@kokuin/controller'
 
 const seed = new Uint8Array(32).fill(3)
-const inception = await createInception(seed, 0)
+const inception = await createInception({ seed, profile: 0 })
 const did = didFromInception(inception.event)
 
 // Any log loader works — this one is a fixed in-memory log.
@@ -364,18 +349,18 @@ const resolver = createControllerResolver({
   loadLog: async () => ({ chain: [inception], events: [] }),
 })
 
-const encrypter = await createTokenEncrypterAsync(did, { methods: [resolver] })
-const jwe = await encryptToken(encrypter, new TextEncoder().encode('hello'))
+const encrypter = await createTokenEncrypterAsync({ recipient: did, methods: [resolver] })
+const jwe = await encryptToken({ encrypter, plaintext: new TextEncoder().encode('hello') })
 
 // The profile holder derives the same agreement key from the seed to decrypt.
-const agreement = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
+const agreement = deriveKeyPair({ seed, path: agreementPath({ profile: 0, gen: 0, seq: 0 }), alg: 'X25519' })
 const recipient = {
   id: did,
-  agreeKey: async (ephemeralPublicKey: Uint8Array) =>
+  agreeKey: async ({ ephemeralPublicKey }: KeyAgreementIdentityAgreeKeyParams) =>
     x25519.getSharedSecret(agreement.privateKey, ephemeralPublicKey),
 }
 
-const decrypted = await decryptToken(recipient, jwe)
+const decrypted = await decryptToken({ decrypter: recipient, jwe })
 new TextDecoder().decode(decrypted) // 'hello'
 ```
 
@@ -383,7 +368,7 @@ new TextDecoder().decode(decrypted) // 'hello'
 message was addressed
 
 **Key points**:
-- `await createInception(seed, profile)` derives a deterministic inception event; `didFromInception`
+- `await createInception({ seed, profile })` derives a deterministic inception event; `didFromInception`
   hashes it into the DID — same seed and profile index always produce the same DID
 - `createControllerResolver({ loadLog })` adapts a folded event log into a `DIDMethodResolver`;
   `loadLog(did)` returns the DID's `ControllerLog` — `{ chain, events }`, the root chain and the
@@ -426,7 +411,7 @@ import {
 import { createUnsignedToken, signToken, verifyToken } from '@kokuin/token'
 
 const seed = new Uint8Array(32).fill(7)
-const inception = await createInception(seed, 0)
+const inception = await createInception({ seed, profile: 0 })
 const did = didFromInception(inception.event)
 const rotate = await createRotate({
   seed,
@@ -441,10 +426,10 @@ const log = { chain: [inception, rotate], events: [] }
 const identity = await createControllerIdentity({ seed, profile: 0, log })
 identity.id // the did:kokuin: DID, not a did:key:
 
-const token = await signToken(identity, createUnsignedToken({ hello: 'world' }))
+const token = await signToken({ signer: identity, token: createUnsignedToken({ payload: { hello: 'world' } }) })
 
 const resolver = createControllerResolver({ loadLog: async () => log })
-const verified = await verifyToken(token, { methods: [resolver] })
+const verified = await verifyToken({ token, methods: [resolver] })
 verified.payload.iss // === did
 ```
 
@@ -494,7 +479,7 @@ any claim whose subject is the profile rather than a device
   registry wired for resolution is wired for enforcement; there is no second option to forget. It is
   evaluated against the log's **current** head, never against a position the capability names —
   `iat` is author-supplied and backdatable. A profile clears a denial only by settling: a rotate whose
-  snapshot leaves it out (build it with `snapshotOf(head, { deny: [entry] })`), or a `reset`
+  snapshot leaves it out (build it with `snapshotOf({ state: head, deny: [entry] })`), or a `reset`
 - **A revoke can also deny a key, and that is what retires a leaked one for what it has already
   signed.** The target is spelled `keyTarget(key)` — `#<the multibase key exactly as it appears in
   `k`>`, the same spelling a `kid` uses — and it rides the same deny set, so `resolveDenySet`
@@ -520,7 +505,7 @@ any claim whose subject is the profile rather than a device
   const rev = await createRevoke({
     did,
     head,
-    parents: await epochHeads(did, log),
+    parents: await epochHeads({ did, log }),
     signer: { root: { seed, profile: 0 } },
     target: keyTarget(leakedKey),
   })
@@ -548,7 +533,7 @@ any claim whose subject is the profile rather than a device
   makes a `rotate` actually retire a leaked authority key — a stolen key stops minting verifiable
   tokens at the next rotate, not at the next reset. `resolveHistoric` accepts any key that was
   authoritative at some position **within the current generation**, and is reached only through
-  `verifyToken({ historic: true })`. Use it for material the profile issued in the past — an
+  `verifyToken({ token, historic: true })`. Use it for material the profile issued in the past — an
   already-issued capability, a revocation record — which a routine rotate must not invalidate,
   including copies held by third parties who cannot know a rotation happened. A `reset` invalidates
   even those: it bumps the generation, and every key from the prior one stops resolving under either
@@ -593,7 +578,7 @@ const resolver = createControllerResolver({
 const observedAt = await logs.getObservedAt(did) // last explicit store write
 ```
 
-- `merge(did, update)` writes what `update` makes of the stored log, atomically per DID; `update`
+- `merge({ did, update })` writes what `update` makes of the stored log, atomically per DID; `update`
   may run more than once, so keep it free of side effects. Returning `current` itself writes nothing. The store does not arbitrate: build the
   update from `authoritativeLog` (`@kokuin/controller`) for an **untrusted** log, as the resolver does
 - Passing the store as `history` makes the resolver refuse a chain behind one already seen and

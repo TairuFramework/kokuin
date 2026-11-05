@@ -6,11 +6,9 @@ import type { SignatureAlgorithm } from './schemas.js'
 import { memoizeVerifier } from './verified-memo.js'
 
 /** @internal */
-export type Verifier = (
-  signature: Uint8Array,
-  message: Uint8Array,
-  publicKey: Uint8Array,
-) => boolean | Promise<boolean>
+export type VerifierParams = { signature: Uint8Array; message: Uint8Array; publicKey: Uint8Array }
+
+export type Verifier = (params: VerifierParams) => boolean | Promise<boolean>
 
 /** @internal */
 export type Verifiers = Partial<Record<SignatureAlgorithm, Verifier>>
@@ -58,7 +56,7 @@ function providerVerifiers(crypto: CryptoProvider): Verifiers {
       return pending.result.then((results) => results[index] === true)
     }
     for (const alg of ['EdDSA', 'ES256'] as const) {
-      verifiers[alg] = memoizeVerifier(alg, (signature, message, publicKey) => {
+      verifiers[alg] = memoizeVerifier(alg, ({ signature, message, publicKey }) => {
         return enqueue({ alg, signature, message, publicKey })
       })
     }
@@ -71,11 +69,16 @@ function providerVerifiers(crypto: CryptoProvider): Verifiers {
 export const defaultVerifiers: Verifiers = providerVerifiers(nobleCrypto)
 
 /** Custom overrides own their algorithm's policy and bypass the signature memo. */
-export function getVerifier(
-  algorithm: SignatureAlgorithm,
-  verifiers: Verifiers = {},
-  options: CryptoOptions = {},
-): Verifier {
+export type GetVerifierParams = {
+  algorithm: SignatureAlgorithm
+  verifiers?: Verifiers
+} & CryptoOptions
+
+export function getVerifier({
+  verifiers = {},
+  algorithm,
+  ...options
+}: GetVerifierParams): Verifier {
   const verifier =
     verifiers[algorithm] ?? providerVerifiers(options.crypto ?? nobleCrypto)[algorithm]
   if (verifier == null) throw new Error('Unsupported signature algorithm')

@@ -123,7 +123,7 @@ describe('SQLite coordinator refresh', () => {
       consumer: { caller: 'previous' },
       ...metadata,
     })
-    expect((await b.manager.records.apply(await copies(a))).rejected).toEqual([])
+    expect((await b.manager.records.apply({ records: await copies(a) })).rejected).toEqual([])
     if (addEntries) {
       for (const [f, entryID] of [
         [a, 'a-only'],
@@ -189,7 +189,7 @@ describe('SQLite coordinator refresh', () => {
     const incoming = [...fromA, ...fromB].filter((record) => record.id !== entry.entryID)
     incoming.push(variant, losingVariant)
     const f = await fixture(a.identity)
-    const applied = await f.manager.records.apply(incoming)
+    const applied = await f.manager.records.apply({ records: incoming })
     expect(applied.rejected).toEqual([])
     expect(applied.parked).toEqual([])
     expect((await f.store.getEntry(entry))?.provenance).toBe(winningOp.claim.meta.branchID)
@@ -259,13 +259,13 @@ describe('SQLite coordinator refresh', () => {
         }),
       ).toEqual({ status: 'rotated', version: 3 })
       const record = await selected({
-        f: f,
+        f,
         type: 'vault.entry',
         owner: key.ownerDID,
         id: entry.entryID,
       })
       expect(
-        (await verifySignedRecord({ record: record, opKind: VAULT_OP_KIND }))?.claim.meta.consumer,
+        (await verifySignedRecord({ record, opKind: VAULT_OP_KIND }))?.claim.meta.consumer,
       ).toEqual({
         caller: 'current',
       })
@@ -289,14 +289,13 @@ describe('SQLite coordinator refresh', () => {
         }),
       ).toEqual({ status: 'rotated', version: 3 })
       const record = await selected({
-        f: f,
+        f,
         type: 'vault.entry',
         owner: key.ownerDID,
         id: entry.entryID,
       })
       expect(
-        (await verifySignedRecord({ record: record, opKind: VAULT_OP_KIND }))?.claim.meta
-          .contentHLC,
+        (await verifySignedRecord({ record, opKind: VAULT_OP_KIND }))?.claim.meta.contentHLC,
       ).toBe(contentHLC)
       expect(await f.manager.readEntry(entry)).toEqual(bytes('unchanged'))
     },
@@ -313,7 +312,7 @@ describe('SQLite coordinator refresh', () => {
       ...metadata,
     })
     const before = await selected({
-      f: f,
+      f,
       type: 'vault.entry',
       owner: key.ownerDID,
       id: entry.entryID,
@@ -329,7 +328,7 @@ describe('SQLite coordinator refresh', () => {
       await f.manager.refreshEntry({ ...entry, expectedHLC: row.hlc, consumer: { current: true } }),
     ).toBe('updated')
     const refreshed = await selected({
-      f: f,
+      f,
       type: 'vault.entry',
       owner: key.ownerDID,
       id: entry.entryID,
@@ -358,7 +357,7 @@ describe('SQLite coordinator refresh', () => {
     const row = (await f.store.listWrappings(key))[0]
     if (!row) throw new Error('Missing wrapping')
     const before = await selected({
-      f: f,
+      f,
       type: 'vault.wrapping',
       owner: key.ownerDID,
       id: row.wrappingID,
@@ -379,7 +378,7 @@ describe('SQLite coordinator refresh', () => {
       current: true,
     })
     expect(
-      await selected({ f: f, type: 'vault.wrapping', owner: key.ownerDID, id: row.wrappingID }),
+      await selected({ f, type: 'vault.wrapping', owner: key.ownerDID, id: row.wrappingID }),
     ).toEqual(result)
   })
 
@@ -402,7 +401,7 @@ describe('SQLite coordinator refresh', () => {
         plaintext: bytes('secret'),
         ...metadata,
       })
-      await peer.manager.records.apply(await copies(f))
+      await peer.manager.records.apply({ records: await copies(f) })
       await peer.manager.rotate({
         ...key,
         excludedRecipients: [revoked.id],
@@ -413,14 +412,14 @@ describe('SQLite coordinator refresh', () => {
           .filter((row) => row.recipientDID === other.id)
           .map((row) => row.wrappingID),
       )
-      await f.manager.records.apply(
-        (await copies(peer)).filter((r) => {
+      await f.manager.records.apply({
+        records: (await copies(peer)).filter((r) => {
           return (
             r.type !== 'vault.wrapping' ||
             (receipt === 'another recipient' && otherWrappings.has(r.id))
           )
         }),
-      )
+      })
       expect(
         await f.manager.rotate({ ...key, sourceVersion: 1, excludedRecipients: [], reissue: [] }),
       ).toBe(3)
@@ -457,13 +456,13 @@ describe('SQLite coordinator refresh', () => {
         ...metadata,
       })
       const before = await selected({
-        f: f,
+        f,
         type: 'vault.entry',
         owner: key.ownerDID,
         id: entry.entryID,
       })
       const target = await f.manager.createKey({ ownerDID: f.identity.id })
-      await peer.manager.records.apply(await copies(f))
+      await peer.manager.records.apply({ records: await copies(f) })
       if (race === 'consent') await peer.manager.updateEntry({ ...entry, plaintext: bytes('new') })
       if (race === 'deletion') await peer.manager.deleteEntry(entry)
       if (race === 'key move') await peer.manager.reKeyEntry({ ...entry, toKeyID: target.keyID })
@@ -495,7 +494,7 @@ describe('SQLite coordinator refresh', () => {
         }),
       ).rejects.toThrow()
       expect(
-        await selected({ f: f, type: 'vault.entry', owner: key.ownerDID, id: entry.entryID }),
+        await selected({ f, type: 'vault.entry', owner: key.ownerDID, id: entry.entryID }),
       ).toEqual(before)
       expect((await f.store.getKey(key))?.version).toBe(1)
     },
@@ -510,12 +509,12 @@ describe('SQLite coordinator refresh', () => {
       const row = (await f.store.listWrappings(key))[0]
       if (!row) throw new Error('Missing wrapping')
       const before = await selected({
-        f: f,
+        f,
         type: 'vault.wrapping',
         owner: key.ownerDID,
         id: row.wrappingID,
       })
-      await peer.manager.records.apply(await copies(f))
+      await peer.manager.records.apply({ records: await copies(f) })
       let injected: Array<SignedRecord>
       if (race === 'copy') {
         injected = [
@@ -560,7 +559,7 @@ describe('SQLite coordinator refresh', () => {
         }),
       ).rejects.toThrow()
       expect(
-        await selected({ f: f, type: 'vault.wrapping', owner: key.ownerDID, id: row.wrappingID }),
+        await selected({ f, type: 'vault.wrapping', owner: key.ownerDID, id: row.wrappingID }),
       ).toEqual(before)
     },
   )
@@ -575,7 +574,7 @@ describe('SQLite coordinator refresh', () => {
       ...metadata,
     })
     const before = await selected({
-      f: f,
+      f,
       type: 'vault.entry',
       owner: key.ownerDID,
       id: entry.entryID,
@@ -612,7 +611,7 @@ describe('SQLite coordinator refresh', () => {
         plaintext: bytes('same'),
         ...metadata,
       })
-      await b.manager.records.apply(await copies(a))
+      await b.manager.records.apply({ records: await copies(a) })
       await a.manager.putEntry({
         ...key,
         entryID: 'a-only',
@@ -624,8 +623,8 @@ describe('SQLite coordinator refresh', () => {
       await b.manager.rotate({ ...key, excludedRecipients: [removed.id], reissue: [] })
       const forkA = await copies(a)
       const forkB = await copies(b)
-      await a.manager.records.apply(forkB)
-      await b.manager.records.apply(forkA)
+      await a.manager.records.apply({ records: forkB })
+      await b.manager.records.apply({ records: forkA })
       const markerValue = { repair: 'same authenticated input set' }
       for (const f of [a, b])
         expect(
@@ -670,7 +669,7 @@ describe('SQLite coordinator refresh', () => {
         [a, repairedB],
         [b, repairedA],
       ] as const) {
-        await f.manager.records.apply(incoming)
+        await f.manager.records.apply({ records: incoming })
         await f.manager.records.adapter.transaction(async (tx) => {
           for (const record of selectedEntries) await tx.putCopy(record)
         })
@@ -733,7 +732,7 @@ describe('SQLite coordinator refresh', () => {
     const wrapping = (await f.store.listWrappings(key))[0]
     if (!row || !wrapping) throw new Error('Missing material')
     const record = await selected({
-      f: f,
+      f,
       type: 'vault.wrapping',
       owner: key.ownerDID,
       id: wrapping.wrappingID,
@@ -787,12 +786,15 @@ describe('SQLite coordinator refresh', () => {
     const row = (await f.store.listWrappings(key))[0]
     if (!row || f.params.mode !== 'replicated') throw new Error('Missing wrapping')
     const before = await selected({
-      f: f,
+      f,
       type: 'vault.wrapping',
       owner: key.ownerDID,
       id: row.wrappingID,
     })
-    const validate: VaultRecordHooks['validateConsumerMetadata'] = async (consumer, request) => {
+    const validate: VaultRecordHooks['validateConsumerMetadata'] = async ({
+      value: consumer,
+      request,
+    }) => {
       return (
         request.op.claim.type !== 'vault.wrapping' ||
         (consumer !== null &&
@@ -815,7 +817,7 @@ describe('SQLite coordinator refresh', () => {
       }),
     ).rejects.toMatchObject({ name: 'VaultWriteConflict' })
     expect(
-      await selected({ f: f, type: 'vault.wrapping', owner: key.ownerDID, id: row.wrappingID }),
+      await selected({ f, type: 'vault.wrapping', owner: key.ownerDID, id: row.wrappingID }),
     ).toEqual(before)
     const refreshed = await manager.refreshWrapping({
       ...key,
@@ -829,10 +831,12 @@ describe('SQLite coordinator refresh', () => {
       ...recipient.params,
       records: { ...recipient.params.records, validateConsumerMetadata: validate },
     })
-    expect((await receiver.records.apply([refreshed])).parked).toHaveLength(1)
-    await receiver.records.apply((await copies(f)).filter((r) => r.type !== 'vault.wrapping'))
-    expect((await receiver.records.apply([before])).rejected).toHaveLength(1)
-    expect((await receiver.records.apply([refreshed])).applied).toBe(1)
+    expect((await receiver.records.apply({ records: [refreshed] })).parked).toHaveLength(1)
+    await receiver.records.apply({
+      records: (await copies(f)).filter((r) => r.type !== 'vault.wrapping'),
+    })
+    expect((await receiver.records.apply({ records: [before] })).rejected).toHaveLength(1)
+    expect((await receiver.records.apply({ records: [refreshed] })).applied).toBe(1)
     const opened = await receiver.openKey({ ...key, inputs: { pin: bytes('pin') } })
     expect(opened.version).toBe(1)
     opened.contentKey.fill(0)
@@ -851,7 +855,7 @@ describe('SQLite coordinator refresh', () => {
     const wrapping = (await f.store.listWrappings(key))[0]
     if (!row || !wrapping) throw new Error('Missing material')
     const record = await selected({
-      f: f,
+      f,
       type: 'vault.wrapping',
       owner: key.ownerDID,
       id: wrapping.wrappingID,
@@ -914,7 +918,7 @@ describe('SQLite coordinator refresh', () => {
         plaintext: bytes('same'),
         ...metadata,
       })
-      await b.manager.records.apply(await copies(a))
+      await b.manager.records.apply({ records: await copies(a) })
       await a.manager.rotate({
         ...key,
         excludedRecipients: [],
@@ -936,7 +940,7 @@ describe('SQLite coordinator refresh', () => {
       const op = selectWinningBranch(branches.map((branch) => branch.introducingOp))
       const winningID = `${op.claim.hlc}:${op.opHash}`
       const losing = branches[0]?.branchID === winningID ? right : left
-      await a.manager.records.apply(right)
+      await a.manager.records.apply({ records: right })
       const record = losing.find((r) => r.type === 'vault.entry')
       if (!record) throw new Error('Missing entry')
       await a.manager.records.adapter.transaction(async (tx) => {
@@ -975,7 +979,7 @@ describe('SQLite coordinator refresh', () => {
     await f.manager.unlock(key)
     const original = (await f.store.listWrappings(key))[0]
     if (!original) throw new Error('Missing wrapping')
-    await peer.manager.records.apply(await copies(f))
+    await peer.manager.records.apply({ records: await copies(f) })
     await peer.manager.addFactor({
       ...key,
       factor: { kind: 'pin', input: bytes('pin'), cost: { m: 8, t: 1, p: 1 } },
@@ -986,15 +990,15 @@ describe('SQLite coordinator refresh', () => {
       excludedRecipients: [],
       reissue: [{ ...entry, action: 'skip' }],
     })
-    await f.manager.records.apply(
-      (await copies(peer)).filter((record) => {
+    await f.manager.records.apply({
+      records: (await copies(peer)).filter((record) => {
         return (
           record.type === 'vault.key' ||
           record.type === 'vault.key-branch' ||
           (record.type === 'vault.wrapping' && record.id === original.wrappingID)
         )
       }),
-    )
+    })
     expect(await f.store.listWrappings({ ...key, keyVersion: 1 })).toHaveLength(0)
     const before = await copies(f)
     const row = await f.store.getEntry(entry)
@@ -1072,16 +1076,16 @@ describe('SQLite coordinator refresh', () => {
         ],
       ],
     })
-    await peer.manager.records.apply(await copies(f))
+    await peer.manager.records.apply({ records: await copies(f) })
     await peer.manager.rotate({
       ...key,
       inputs: { pin: bytes('pin') },
       excludedRecipients: [],
       reissue: [],
     })
-    await f.manager.records.apply(
-      (await copies(peer)).filter((record) => record.type !== 'vault.wrapping'),
-    )
+    await f.manager.records.apply({
+      records: (await copies(peer)).filter((record) => record.type !== 'vault.wrapping'),
+    })
     const before = await copies(f)
     await expect(
       f.manager.rotate({ ...key, sourceVersion: 1, excludedRecipients: [], reissue: [] }),

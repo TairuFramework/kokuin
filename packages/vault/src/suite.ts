@@ -166,7 +166,8 @@ async function didFactorSecretForSender(
   secret: Uint8Array
   params: Record<string, unknown>
 }> {
-  const { sharedSecret, ephemeralPublicKey } = await deriveSharedSecretAsync(recipientDID, {
+  const { sharedSecret, ephemeralPublicKey } = await deriveSharedSecretAsync({
+    recipient: recipientDID,
     methods: methods ?? [],
   })
 
@@ -199,7 +200,7 @@ async function secretFactorForRecipient(
   params: Record<string, unknown>,
 ): Promise<Uint8Array> {
   if (input == null) {
-    throw new NoAvailableFactor({ kind: kind })
+    throw new NoAvailableFactor({ kind })
   }
 
   const { salt, m, t, p } = params
@@ -287,7 +288,7 @@ async function didFactorSecretForRecipient(
     throw new VaultTampered({ message: 'did factor descriptor carries no epk' })
   }
 
-  return await identity.agreeKey(fromB64(epk))
+  return await identity.agreeKey({ ephemeralPublicKey: fromB64(epk) })
 }
 
 const suite1: VaultSuite = {
@@ -345,7 +346,7 @@ const suite1: VaultSuite = {
     }
 
     const kek = deriveKEK({
-      secrets: secrets,
+      secrets,
       wrappingID: params.wrappingID,
       suiteID: SUITE_VAULT_1,
       keyID: params.keyID,
@@ -355,7 +356,7 @@ const suite1: VaultSuite = {
 
     return {
       descriptors,
-      descriptorDigest: await descriptorDigest(descriptors, params),
+      descriptorDigest: await descriptorDigest({ ...params, descriptors }),
       iv,
       wrappedKey: gcm(kek, iv, wrappingAAD(descriptors)).encrypt(params.contentKey),
     }
@@ -411,7 +412,7 @@ const suite1: VaultSuite = {
     }
 
     const kek = deriveKEK({
-      secrets: secrets,
+      secrets,
       wrappingID: params.wrappingID,
       suiteID: SUITE_VAULT_1,
       keyID: params.keyID,

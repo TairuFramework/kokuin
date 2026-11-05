@@ -18,11 +18,11 @@ import {
 
 const seed = new Uint8Array(32).fill(1)
 const profile = 0
-const inception = await createInception(seed, profile)
+const inception = await createInception({ seed, profile })
 const did = didFromInception(inception.event)
 const subject = 'did:key:zStolenDevice'
 const empty: StateSnapshot = { members: [], deny: [] }
-const deviceKey = (await createInception(new Uint8Array(32).fill(2), profile)).event.k[0]
+const deviceKey = (await createInception({ seed: new Uint8Array(32).fill(2), profile })).event.k[0]
 if (deviceKey == null) throw new Error('Missing device key')
 const { longForm, shortForm } = encodePeer4({
   '@context': ['https://www.w3.org/ns/did/v1'],
@@ -54,7 +54,7 @@ async function rotate(prior: SignedEvent, deny: Array<string> = []): Promise<Sig
 }
 
 async function assertFolds(chain: Array<SignedEvent>) {
-  const folded = await foldLog(did, { chain, events: [] })
+  const folded = await foldLog({ did, input: { chain, events: [] } })
   if (!folded.ok) throw new Error(folded.reason)
   return folded.head
 }
@@ -65,52 +65,50 @@ describe('deviceRevokeIndex()', () => {
     const revoke = await rotate(plain, [subject])
     const chain = [inception, plain, revoke]
     await assertFolds(chain)
-    expect(await deviceRevokeIndex({ did: did, chain: chain, subject: subject })).toBe(2)
+    expect(await deviceRevokeIndex({ did, chain, subject })).toBe(2)
   })
 
   test('returns undefined for a plain rotate and for an inception alone', async () => {
-    expect(
-      await deviceRevokeIndex({ did: did, chain: [inception], subject: subject }),
-    ).toBeUndefined()
+    expect(await deviceRevokeIndex({ did, chain: [inception], subject })).toBeUndefined()
     expect(
       await deviceRevokeIndex({
-        did: did,
+        did,
         chain: [inception, await rotate(inception)],
-        subject: subject,
+        subject,
       }),
     ).toBeUndefined()
   })
 
   test('does not count a reset carrying the denial', async () => {
     const reset = await createReset({
-      seed: seed,
-      profile: profile,
+      seed,
+      profile,
       gen: 1,
       snapshot: { ...empty, deny: [subject] },
     })
     const chain = [inception, reset, await rotate(reset, [subject])]
     await assertFolds(chain)
-    expect(await deviceRevokeIndex({ did: did, chain: chain, subject: subject })).toBeUndefined()
+    expect(await deviceRevokeIndex({ did, chain, subject })).toBeUndefined()
   })
 
   test('attributes a carried denial to the first rotate that introduced it', async () => {
     const revoke = await rotate(inception, [subject])
     const chain = [inception, revoke, await rotate(revoke, [subject])]
     await assertFolds(chain)
-    expect(await deviceRevokeIndex({ did: did, chain: chain, subject: subject })).toBe(1)
+    expect(await deviceRevokeIndex({ did, chain, subject })).toBe(1)
   })
 
   test('finds re-denial after a reset denial is dropped', async () => {
     const reset = await createReset({
-      seed: seed,
-      profile: profile,
+      seed,
+      profile,
       gen: 1,
       snapshot: { ...empty, deny: [subject] },
     })
     const undeny = await rotate(reset)
     const chain = [inception, reset, undeny, await rotate(undeny, [subject])]
     await assertFolds(chain)
-    expect(await deviceRevokeIndex({ did: did, chain: chain, subject: subject })).toBe(3)
+    expect(await deviceRevokeIndex({ did, chain, subject })).toBe(3)
   })
 
   test('returns the first revoke even when a later rotate re-denies the subject', async () => {
@@ -118,15 +116,15 @@ describe('deviceRevokeIndex()', () => {
     const undeny = await rotate(revoke)
     const chain = [inception, revoke, undeny, await rotate(undeny, [subject])]
     await assertFolds(chain)
-    expect(await deviceRevokeIndex({ did: did, chain: chain, subject: subject })).toBe(1)
+    expect(await deviceRevokeIndex({ did, chain, subject })).toBe(1)
   })
 
   test('keeps did:key fragments distinct', async () => {
     const qualified = `${subject}#device`
     const chain = [inception, await rotate(inception, [qualified])]
     expect((await assertFolds(chain)).deny.has(qualified)).toBe(true)
-    expect(await deviceRevokeIndex({ did: did, chain: chain, subject: subject })).toBeUndefined()
-    expect(await deviceRevokeIndex({ did: did, chain: chain, subject: qualified })).toBe(1)
+    expect(await deviceRevokeIndex({ did, chain, subject })).toBeUndefined()
+    expect(await deviceRevokeIndex({ did, chain, subject: qualified })).toBe(1)
   })
 
   test.each(peerForms)(
@@ -134,7 +132,7 @@ describe('deviceRevokeIndex()', () => {
     async ({ denied, equivalent }) => {
       const chain = [inception, await rotate(inception, [denied])]
       await assertFolds(chain)
-      expect(await deviceRevokeIndex({ did: did, chain: chain, subject: equivalent })).toBe(1)
+      expect(await deviceRevokeIndex({ did, chain, subject: equivalent })).toBe(1)
     },
   )
 
@@ -144,7 +142,7 @@ describe('deviceRevokeIndex()', () => {
       const revoke = await rotate(inception, [denied])
       const chain = [inception, revoke, await rotate(revoke, [equivalent])]
       await assertFolds(chain)
-      expect(await deviceRevokeIndex({ did: did, chain: chain, subject: equivalent })).toBe(1)
+      expect(await deviceRevokeIndex({ did, chain, subject: equivalent })).toBe(1)
     },
   )
 
@@ -152,16 +150,14 @@ describe('deviceRevokeIndex()', () => {
     'does not count a spelling change after a reset-carried denial ($denied)',
     async ({ denied, equivalent }) => {
       const reset = await createReset({
-        seed: seed,
-        profile: profile,
+        seed,
+        profile,
         gen: 1,
         snapshot: { ...empty, deny: [denied] },
       })
       const chain = [inception, reset, await rotate(reset, [equivalent])]
       await assertFolds(chain)
-      expect(
-        await deviceRevokeIndex({ did: did, chain: chain, subject: equivalent }),
-      ).toBeUndefined()
+      expect(await deviceRevokeIndex({ did, chain, subject: equivalent })).toBeUndefined()
     },
   )
 
@@ -169,27 +165,27 @@ describe('deviceRevokeIndex()', () => {
     const skipped = await skippedInception(inception)
     const chain = [inception, skipped, await rotate(inception, [subject])]
     await assertFolds(chain)
-    expect(await deviceRevokeIndex({ did: did, chain: chain, subject: subject })).toBeUndefined()
+    expect(await deviceRevokeIndex({ did, chain, subject })).toBeUndefined()
   })
 
   test('returns undefined if a later invalid event prevents the whole chain folding', async () => {
     const revoke = await rotate(inception, [subject])
     const invalid = { ...(await rotate(revoke, [subject])), sigs: [] }
     expect(
-      await deviceRevokeIndex({ did: did, chain: [inception, revoke, invalid], subject: subject }),
+      await deviceRevokeIndex({ did, chain: [inception, revoke, invalid], subject }),
     ).toBeUndefined()
   })
 
   test('returns undefined for an empty chain or a different controller DID', async () => {
-    expect(await deviceRevokeIndex({ did: did, chain: [], subject: subject })).toBeUndefined()
+    expect(await deviceRevokeIndex({ did, chain: [], subject })).toBeUndefined()
     const otherDID = didFromInception(
-      (await createInception(new Uint8Array(32).fill(2), profile)).event,
+      (await createInception({ seed: new Uint8Array(32).fill(2), profile })).event,
     )
     expect(
       await deviceRevokeIndex({
         did: otherDID,
         chain: [inception, await rotate(inception, [subject])],
-        subject: subject,
+        subject,
       }),
     ).toBeUndefined()
   })
@@ -202,7 +198,7 @@ describe('deviceRevokeIndex()', () => {
         event: { ...revoke.event, t: 'rev', crit },
       } as unknown as SignedEvent
       const chain = [inception, legacy, revoke]
-      expect(await deviceRevokeIndex({ did: did, chain: chain, subject: subject })).toBeUndefined()
+      expect(await deviceRevokeIndex({ did, chain, subject })).toBeUndefined()
       await expect(
         async () => await createDeviceRevoke({ seed, profile, did, chain, subject }),
       ).rejects.toThrow()
@@ -212,7 +208,8 @@ describe('deviceRevokeIndex()', () => {
 
 describe('createDeviceRevoke()', () => {
   test('creates a valid revoke while preserving snapshot members and existing denials', async () => {
-    const memberKey = (await createInception(new Uint8Array(32).fill(2), profile)).event.k[0]
+    const memberKey = (await createInception({ seed: new Uint8Array(32).fill(2), profile })).event
+      .k[0]
     if (memberKey == null) throw new Error('Missing member key')
     const member: MemberEntry = {
       did: `did:key:${memberKey}`,
@@ -231,21 +228,17 @@ describe('createDeviceRevoke()', () => {
     const before = structuredClone(chain)
     const revoke = await createDeviceRevoke({ seed, profile, did, chain, subject })
     const head = await assertFolds([...chain, revoke])
-    expect(await deviceRevokeIndex({ did: did, chain: [...chain, revoke], subject: subject })).toBe(
-      2,
-    )
+    expect(await deviceRevokeIndex({ did, chain: [...chain, revoke], subject })).toBe(2)
     expect([...head.deny]).toEqual(['did:key:zOtherDevice', subject])
     expect([...head.members.values()]).toEqual([{ ...member, removed: false, effective: true }])
     expect(chain).toEqual(before)
   })
 
   test('creates a same-generation revoke after a reset', async () => {
-    const chain = [inception, await createReset({ seed: seed, profile: profile, gen: 2 })]
+    const chain = [inception, await createReset({ seed, profile, gen: 2 })]
     const revoke = await createDeviceRevoke({ seed, profile, did, chain, subject })
     expect((await assertFolds([...chain, revoke])).gen).toBe(2)
-    expect(await deviceRevokeIndex({ did: did, chain: [...chain, revoke], subject: subject })).toBe(
-      2,
-    )
+    expect(await deviceRevokeIndex({ did, chain: [...chain, revoke], subject })).toBe(2)
   })
 
   test('throws if the subject is already denied', async () => {
@@ -286,27 +279,27 @@ describe('createDeviceRevoke()', () => {
 describe('deviceRevokeIndices()', () => {
   test('returns every revoke, including a re-revoke after a reset cleared the denial', async () => {
     const revoke = await rotate(inception, [subject])
-    const reset = await createReset({ seed: seed, profile: profile, gen: 1 })
+    const reset = await createReset({ seed, profile, gen: 1 })
     const rerevoke = await rotate(reset, [subject])
     const chain = [inception, revoke, reset, rerevoke]
     await assertFolds(chain)
-    expect(await deviceRevokeIndices({ did: did, chain: chain, subject: subject })).toEqual([1, 3])
-    expect(await deviceRevokeIndex({ did: did, chain: chain, subject: subject })).toBe(1)
+    expect(await deviceRevokeIndices({ did, chain, subject })).toEqual([1, 3])
+    expect(await deviceRevokeIndex({ did, chain, subject })).toBe(1)
   })
 
   test('returns an empty array for a chain without a revoke and for an invalid chain', async () => {
     expect(
       await deviceRevokeIndices({
-        did: did,
+        did,
         chain: [inception, await rotate(inception)],
-        subject: subject,
+        subject,
       }),
     ).toEqual([])
     expect(
       await deviceRevokeIndices({
-        did: did,
+        did,
         chain: [inception, await skippedInception(inception)],
-        subject: subject,
+        subject,
       }),
     ).toEqual([])
   })

@@ -4,7 +4,7 @@ import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
 import type { RecordTypeDefinition, VisibilityContext } from '@kokuin/records'
 import { filterVisibleRecords, visibilityRules } from '@kokuin/records'
 import type * as Token from '@kokuin/token'
-import type { SignedToken, SigningIdentity, SignTokenOptions } from '@kokuin/token'
+import type { SignedToken, SigningIdentity, SigningIdentitySignTokenParams } from '@kokuin/token'
 import { randomIdentity } from '@kokuin/token'
 import type { VaultPinRejected } from '@kokuin/vault'
 import {
@@ -90,10 +90,10 @@ function exclusiveSigner(identity: SigningIdentity): ExclusiveSigner {
   let active = false
   let calls = 0
 
-  async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>(
-    payload: Payload,
-    options?: SignTokenOptions,
-  ): Promise<SignedToken<Payload>> {
+  async function signToken<Payload extends Record<string, unknown> = Record<string, unknown>>({
+    payload,
+    ...options
+  }: SigningIdentitySignTokenParams<Payload>): Promise<SignedToken<Payload>> {
     if (active) throw new Error('Overlapping signer call')
 
     active = true
@@ -103,7 +103,7 @@ function exclusiveSigner(identity: SigningIdentity): ExclusiveSigner {
       // Hold the call open across a timer, so an overlapping call would arrive while it runs.
       await new Promise((resolve) => setTimeout(resolve, 1))
 
-      return await identity.signToken(payload, options)
+      return await identity.signToken({ payload, ...options })
     } finally {
       active = false
     }
@@ -218,7 +218,7 @@ async function fixture(
   // A local-only deployment registers no records store.
   if (mode === 'replicated') {
     db.register(vaultRecordsStoreDefinition)
-    await getVaultRecordsStore(db, VAULT_OP_KIND)
+    await getVaultRecordsStore({ provider: db, opKind: VAULT_OP_KIND })
   }
 
   const identity = randomIdentity()
@@ -379,7 +379,7 @@ describe('records apply reads (replicated)', () => {
     const target = await fixture()
     let applied = 0
     const measured = await target.measure(async () => {
-      applied = (await target.manager.records.apply(records)).applied
+      applied = (await target.manager.records.apply({ records })).applied
     })
 
     expect(applied).toBe(records.length)
@@ -461,14 +461,14 @@ describe('visibility filter (replicated)', () => {
       requester: { peerDID: f.ownerDID, controllerDID: null },
       proofs: [],
       holderTypes: vaultHolderTypes(vaultTypes),
-      currentKeyVersion: vaultKeyVersionReader(adapter, params),
-      authorizeProof: vaultProofAuthorizer(params, adapter),
+      currentKeyVersion: vaultKeyVersionReader({ store: adapter, ...params }),
+      authorizeProof: vaultProofAuthorizer({ ...params, store: adapter }),
       isGroupMember: async () => false,
     }
 
     let visible = 0
     const measured = await f.measure(async () => {
-      visible = (await filterVisibleRecords(entries, types, ctx)).length
+      visible = (await filterVisibleRecords({ records: entries, types, ctx })).length
     })
 
     expect(key.ownerDID).toBe(f.ownerDID)
@@ -526,7 +526,7 @@ describe('signer calls (replicated)', () => {
     ).flatMap((decision) => decision.copies)
     const replica = await fixture()
 
-    expect((await replica.manager.records.apply(records)).applied).toBe(records.length)
+    expect((await replica.manager.records.apply({ records })).applied).toBe(records.length)
     // Rotate alone signs a branch, a wrapping and three entries.
     expect(exclusive?.calls()).toBeGreaterThan(10)
   })

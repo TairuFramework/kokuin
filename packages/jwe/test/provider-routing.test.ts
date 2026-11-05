@@ -8,11 +8,12 @@ for (const mode of ['jws', 'jws-in-jwe', 'jwe-in-jws'] as const) {
   test(`${mode} verifies through the selected provider`, async () => {
     const sender = randomIdentity()
     const recipient = randomIdentity()
-    const message = await wrapEnvelope(
+    const message = await wrapEnvelope({
       mode,
-      { value: mode },
-      { signer: sender, encrypter: createTokenEncrypter(recipient.id) },
-    )
+      payload: { value: mode },
+      signer: sender,
+      encrypter: createTokenEncrypter({ recipient: recipient.id }),
+    })
     let calls = 0
     const crypto: CryptoProvider = {
       ...nobleCrypto,
@@ -21,7 +22,7 @@ for (const mode of ['jws', 'jws-in-jwe', 'jwe-in-jws'] as const) {
         return nobleCrypto.verify(...args)
       },
     }
-    expect(await unwrapEnvelope(message, { decrypter: recipient, crypto })).toEqual({
+    expect(await unwrapEnvelope({ message, decrypter: recipient, crypto })).toEqual({
       mode,
       payload: mode === 'jwe-in-jws' ? { value: mode } : { value: mode, iss: sender.id },
     })
@@ -34,7 +35,7 @@ for (const mode of ['jws', 'jws-in-jwe', 'jwe-in-jws'] as const) {
       },
     }
     await expect(
-      unwrapEnvelope(message, { decrypter: recipient, crypto: rejecting }),
+      unwrapEnvelope({ message, decrypter: recipient, crypto: rejecting }),
     ).rejects.toThrow('Invalid signature')
     const sentinel = new Error('verification offline')
     const failed: CryptoProvider = {
@@ -45,7 +46,7 @@ for (const mode of ['jws', 'jws-in-jwe', 'jwe-in-jws'] as const) {
       },
     }
     for (let i = 0; i < 2; i++)
-      await expect(unwrapEnvelope(message, { decrypter: recipient, crypto: failed })).rejects.toBe(
+      await expect(unwrapEnvelope({ message, decrypter: recipient, crypto: failed })).rejects.toBe(
         sentinel,
       )
     expect(calls).toBe(4)
@@ -59,8 +60,8 @@ test('plain envelopes never invoke the provider', async () => {
       throw new Error('unexpected verification')
     },
   }
-  const message = await wrapEnvelope('plain', { value: 'plain' }, {})
-  expect(await unwrapEnvelope(message, { crypto })).toEqual({
+  const message = await wrapEnvelope({ mode: 'plain', payload: { value: 'plain' }, ...{} })
+  expect(await unwrapEnvelope({ message, crypto })).toEqual({
     mode: 'plain',
     payload: { value: 'plain' },
   })

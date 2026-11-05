@@ -12,10 +12,12 @@ function descriptorJSON(descriptors: ReadonlyArray<FactorDescriptor>): string {
   return json
 }
 
-export async function digestParts(parts: Array<string>, options?: CryptoOptions): Promise<string> {
+export type DigestPartsParams = { parts: Array<string> } & CryptoOptions
+
+export async function digestParts({ parts, ...options }: DigestPartsParams): Promise<string> {
   const framed = parts.map((part) => `${part.length}:${part}`).join('')
 
-  return toB64U(await (options?.crypto ?? nobleCrypto).blake3(fromUTF(framed), 32))
+  return toB64U(await (options.crypto ?? nobleCrypto).blake3({ input: fromUTF(framed), dkLen: 32 }))
 }
 
 export type VaultKeyDigestInput = {
@@ -40,53 +42,65 @@ export type VaultEntryDigestInput = {
   hlc: string
 }
 
-export function vaultKeyDigest(key: VaultKeyDigestInput, options?: CryptoOptions): Promise<string> {
-  return digestParts([key.ownerDID, String(key.suite), String(key.version), key.state], options)
+export type VaultKeyDigestParams = { key: VaultKeyDigestInput } & CryptoOptions
+
+export function vaultKeyDigest({ key, ...options }: VaultKeyDigestParams): Promise<string> {
+  return digestParts({
+    ...options,
+    parts: [key.ownerDID, String(key.suite), String(key.version), key.state],
+  })
 }
 
-export function vaultWrappingDigest(
-  wrapping: VaultWrappingDigestInput,
-  options?: CryptoOptions,
-): Promise<string> {
-  return digestParts(
-    [
+export type VaultWrappingDigestParams = { wrapping: VaultWrappingDigestInput } & CryptoOptions
+
+export function vaultWrappingDigest({
+  wrapping,
+  ...options
+}: VaultWrappingDigestParams): Promise<string> {
+  return digestParts({
+    ...options,
+    parts: [
       wrapping.wrappingID,
       wrapping.recipientDID ?? '',
       wrapping.iv,
       wrapping.wrappedKey,
       descriptorJSON(wrapping.factors),
     ],
-    options,
-  )
+  })
 }
 
-export function vaultEntriesDigest(
-  entries: ReadonlyArray<VaultEntryDigestInput>,
-  options?: CryptoOptions,
-): Promise<string> {
+export type VaultEntriesDigestParams = {
+  entries: ReadonlyArray<VaultEntryDigestInput>
+} & CryptoOptions
+
+export function vaultEntriesDigest({
+  entries,
+  ...options
+}: VaultEntriesDigestParams): Promise<string> {
   const ordered = [...entries].sort((left, right) => {
     return left.entryID < right.entryID ? -1 : left.entryID > right.entryID ? 1 : 0
   })
 
-  return digestParts(
-    ordered.flatMap((entry) => [entry.entryID, entry.iv, entry.ciphertext, entry.hlc]),
-    options,
-  )
+  return digestParts({
+    ...options,
+    parts: ordered.flatMap((entry) => [entry.entryID, entry.iv, entry.ciphertext, entry.hlc]),
+  })
 }
 
-export function vaultEntryDigest(
-  entry: VaultEntryDigestInput,
-  options?: CryptoOptions,
-): Promise<string> {
-  return vaultEntriesDigest([entry], options)
+export type VaultEntryDigestParams = { entry: VaultEntryDigestInput } & CryptoOptions
+
+export function vaultEntryDigest({ entry, ...options }: VaultEntryDigestParams): Promise<string> {
+  return vaultEntriesDigest({ ...options, entries: [entry] })
 }
 
 /** Same canonical descriptor encoding and length framing as the wrapping digest. */
-export function descriptorDigest(
-  descriptors: Array<FactorDescriptor>,
-  options?: CryptoOptions,
-): Promise<string> {
-  return digestParts([descriptorJSON(descriptors)], options)
+export type DescriptorDigestParams = { descriptors: Array<FactorDescriptor> } & CryptoOptions
+
+export function descriptorDigest({
+  descriptors,
+  ...options
+}: DescriptorDigestParams): Promise<string> {
+  return digestParts({ ...options, parts: [descriptorJSON(descriptors)] })
 }
 
 export async function checkDescriptorDigest(
@@ -96,7 +110,7 @@ export async function checkDescriptorDigest(
   },
 ): Promise<void> {
   const { descriptors, expectedDescriptorDigest, crypto } = params
-  if ((await descriptorDigest(descriptors, { crypto })) !== expectedDescriptorDigest) {
+  if ((await descriptorDigest({ descriptors, crypto })) !== expectedDescriptorDigest) {
     throw new VaultTampered({ message: 'Vault factor descriptors differ from the trusted digest' })
   }
 }

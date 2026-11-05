@@ -7,9 +7,9 @@ const seed = new Uint8Array(32).fill(1)
 const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
 async function build() {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
-  const r = await foldLog(did, { chain: [icp], events: [] })
+  const r = await foldLog({ did, input: { chain: [icp], events: [] } })
   if (!r.ok) throw new Error('fixture')
   const head = r.states[0]
   if (head === undefined) throw new Error('fixture')
@@ -26,7 +26,7 @@ describe('wire types the fold never checks', () => {
       event: { v: 1, t: 'nop', i: did, g: 0, s: 1, p: digest },
       sigs: [],
     } as unknown as SignedEvent
-    const r = await foldLog(did, { chain: [icp, noCrit], events: [] })
+    const r = await foldLog({ did, input: { chain: [icp, noCrit], events: [] } })
     expect(r.ok).toBe(false)
   })
 
@@ -35,9 +35,12 @@ describe('wire types the fold never checks', () => {
     const skipped: Array<string> = []
     for (const crit of [false, 0, '', null, undefined, 'false', 'no', 1, {}, []]) {
       const event = { v: 1, t: 'nop', i: did, g: 0, s: 1, p: digest, crit }
-      const r = await foldLog(did, {
-        chain: [icp, { event, sigs: [] } as unknown as SignedEvent],
-        events: [],
+      const r = await foldLog({
+        did,
+        input: {
+          chain: [icp, { event, sigs: [] } as unknown as SignedEvent],
+          events: [],
+        },
       })
       if (r.ok) skipped.push(JSON.stringify(crit))
     }
@@ -54,9 +57,12 @@ describe('wire types the fold never checks', () => {
     const rev = { v: 1, t: 'rev', i: did, g: 0, s: 1, p: digest, crit: true, x: target }
     for (const event of [rev, { ...rev, cap: 'header.payload.signature' }]) {
       expect(
-        await foldLog(did, {
-          chain: [icp, { event, sigs: ['AAAA'] } as unknown as SignedEvent],
-          events: [],
+        await foldLog({
+          did,
+          input: {
+            chain: [icp, { event, sigs: ['AAAA'] } as unknown as SignedEvent],
+            events: [],
+          },
         }),
       ).toEqual({
         ok: false,

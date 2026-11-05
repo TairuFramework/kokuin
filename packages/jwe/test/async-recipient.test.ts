@@ -1,3 +1,4 @@
+import type { KeyAgreementIdentityAgreeKeyParams } from '@kokuin/token'
 import {
   CODECS,
   createIdentity,
@@ -43,7 +44,9 @@ function buildProfile(): {
 
   const profileAgreement: KeyAgreementIdentity = {
     id: kokuinDID,
-    async agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array> {
+    async agreeKey({
+      ephemeralPublicKey,
+    }: KeyAgreementIdentityAgreeKeyParams): Promise<Uint8Array> {
       return x25519.getSharedSecret(agreementPrivateKey, ephemeralPublicKey)
     },
   }
@@ -57,25 +60,31 @@ const decoder = new TextDecoder()
 describe('createTokenEncrypterAsync()', () => {
   test('encrypts to a resolver-backed DID and round-trips', async () => {
     const { resolver, profileAgreement } = buildProfile()
-    const encrypter = await createTokenEncrypterAsync(kokuinDID, { methods: [resolver] })
+    const encrypter = await createTokenEncrypterAsync({
+      recipient: kokuinDID,
+      methods: [resolver],
+    })
     expect(encrypter.recipientID).toBe(kokuinDID)
 
-    const jwe = await encryptToken(encrypter, encoder.encode('hello'))
-    expect(decoder.decode(await decryptToken(profileAgreement, jwe))).toBe('hello')
+    const jwe = await encryptToken({ encrypter, plaintext: encoder.encode('hello') })
+    expect(decoder.decode(await decryptToken({ decrypter: profileAgreement, jwe }))).toBe('hello')
   })
 
   test('falls through to the sync path for a self-contained DID', async () => {
     const identity = randomIdentity()
-    const encrypter = await createTokenEncrypterAsync(identity.id, { methods: [] })
+    const encrypter = await createTokenEncrypterAsync({
+      recipient: identity.id,
+      methods: [],
+    })
     expect(encrypter.recipientID).toBe(identity.id)
 
     // Confirm the sync path actually ran: the encrypter agrees with what the identity derives.
-    const jwe = await encryptToken(encrypter, encoder.encode('hi'))
-    expect(decoder.decode(await decryptToken(identity, jwe))).toBe('hi')
+    const jwe = await encryptToken({ encrypter, plaintext: encoder.encode('hi') })
+    expect(decoder.decode(await decryptToken({ decrypter: identity, jwe }))).toBe('hi')
   })
 
   test('names the method when no resolver is registered', async () => {
-    await expect(createTokenEncrypterAsync(kokuinDID, { methods: [] })).rejects.toThrow(
+    await expect(createTokenEncrypterAsync({ recipient: kokuinDID, methods: [] })).rejects.toThrow(
       /no resolver registered for did:kokuin/i,
     )
   })
@@ -87,9 +96,9 @@ describe('createTokenEncrypterAsync()', () => {
         throw new Error('unused')
       },
     }
-    await expect(createTokenEncrypterAsync(kokuinDID, { methods: [signOnly] })).rejects.toThrow(
-      /does not support key agreement/i,
-    )
+    await expect(
+      createTokenEncrypterAsync({ recipient: kokuinDID, methods: [signOnly] }),
+    ).rejects.toThrow(/does not support key agreement/i)
   })
 
   test('reports a set holding no algorithm this package supports', async () => {
@@ -102,9 +111,9 @@ describe('createTokenEncrypterAsync()', () => {
         return [{ alg: 'ML-KEM-768' as never, publicKey: new Uint8Array(1184) }]
       },
     }
-    await expect(createTokenEncrypterAsync(kokuinDID, { methods: [exotic] })).rejects.toThrow(
-      /no supported key agreement algorithm/i,
-    )
+    await expect(
+      createTokenEncrypterAsync({ recipient: kokuinDID, methods: [exotic] }),
+    ).rejects.toThrow(/no supported key agreement algorithm/i)
   })
 
   test('does not swallow the sync path own diagnostics for a did:peer:4 short form', async () => {
@@ -119,14 +128,14 @@ describe('createTokenEncrypterAsync()', () => {
     // No resolver registered for the 'peer' method, so findMethodResolver returns undefined and
     // the call falls to the sync path. That path's own precise error must survive, not be
     // replaced by a generic "no resolver registered for did:peer" message.
-    await expect(createTokenEncrypterAsync(identity.id, { methods: [] })).rejects.toThrow(
-      /short form/,
-    )
+    await expect(
+      createTokenEncrypterAsync({ recipient: identity.id, methods: [] }),
+    ).rejects.toThrow(/short form/)
   })
 
   test('does not swallow the sync path own diagnostics for an unsupported did:key algorithm', async () => {
-    const did = getDID(CODECS.ES256, new Uint8Array(33).fill(1))
-    await expect(createTokenEncrypterAsync(did, { methods: [] })).rejects.toThrow(
+    const did = getDID({ codec: CODECS.ES256, publicKey: new Uint8Array(33).fill(1) })
+    await expect(createTokenEncrypterAsync({ recipient: did, methods: [] })).rejects.toThrow(
       /Unsupported DID algorithm for encryption/,
     )
   })
@@ -135,28 +144,32 @@ describe('createTokenEncrypterAsync()', () => {
 describe('deriveSharedSecretAsync()', () => {
   test('agrees with the resolver-backed recipient', async () => {
     const { resolver, profileAgreement } = buildProfile()
-    const { sharedSecret, ephemeralPublicKey } = await deriveSharedSecretAsync(kokuinDID, {
+    const { sharedSecret, ephemeralPublicKey } = await deriveSharedSecretAsync({
+      recipient: kokuinDID,
       methods: [resolver],
     })
-    expect(await profileAgreement.agreeKey(ephemeralPublicKey)).toEqual(sharedSecret)
+    expect(await profileAgreement.agreeKey({ ephemeralPublicKey })).toEqual(sharedSecret)
   })
 
   test('falls through to the sync path for a self-contained DID', async () => {
     const identity = randomIdentity()
-    const { sharedSecret, ephemeralPublicKey } = await deriveSharedSecretAsync(identity.id, {
+    const { sharedSecret, ephemeralPublicKey } = await deriveSharedSecretAsync({
+      recipient: identity.id,
       methods: [],
     })
-    expect(await identity.agreeKey(ephemeralPublicKey)).toEqual(sharedSecret)
+    expect(await identity.agreeKey({ ephemeralPublicKey })).toEqual(sharedSecret)
   })
 
   test('names the method when no resolver is registered', async () => {
-    await expect(deriveSharedSecretAsync(kokuinDID, { methods: [] })).rejects.toThrow(
+    await expect(deriveSharedSecretAsync({ recipient: kokuinDID, methods: [] })).rejects.toThrow(
       /no resolver registered for did:kokuin/i,
     )
   })
 
   test('throws when handed something other than a DID string', async () => {
     const notAString = new Uint8Array(32) as unknown as string
-    await expect(deriveSharedSecretAsync(notAString, { methods: [] })).rejects.toThrow(/DID string/)
+    await expect(deriveSharedSecretAsync({ recipient: notAString, methods: [] })).rejects.toThrow(
+      /DID string/,
+    )
   })
 })

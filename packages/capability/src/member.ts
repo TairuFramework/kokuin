@@ -107,18 +107,25 @@ function carriesExactly(iss: string, pinned: ResolvedSigningKey): boolean {
  * verdict no single state supports. With `@kokuin/controller`, put `resolver.frozen()` in `methods`
  * for each verification, not the live resolver.
  */
-export async function assertMemberRoot(
-  payload: CapabilityPayload,
-  options: DelegationChainOptions | undefined,
-  time: number,
-): Promise<void> {
+export type AssertMemberRootParams = {
+  payload: CapabilityPayload
+  time: number
+} & DelegationChainOptions
+
+export async function assertMemberRoot({
+  time,
+  payload,
+  ...options
+}: AssertMemberRootParams): Promise<void> {
   const { iss, sub, mbr } = payload
   if (!isMemberClaim(mbr)) {
     throw new Error(`${MEMBER_GRANT_NOT_MEMBER}: malformed mbr claim`)
   }
 
   const resolveMember =
-    options?.methods == null ? undefined : findMethodResolver(options.methods, sub)?.resolveMember
+    options.methods == null
+      ? undefined
+      : findMethodResolver({ registry: options.methods, did: sub })?.resolveMember
   if (resolveMember == null) {
     throw new Error(`${MEMBER_GRANT_NO_RESOLVER}: ${sub}`)
   }
@@ -127,7 +134,7 @@ export async function assertMemberRoot(
   // saturated log — reads alike: the issuer is not a member this verifier can stand behind.
   let member: ResolvedMember
   try {
-    member = await resolveMember(sub, { did: iss, add: mbr.add, gen: mbr.g })
+    member = await resolveMember({ subject: sub, member: { did: iss, add: mbr.add, gen: mbr.g } })
   } catch (cause) {
     throw new Error(`${MEMBER_GRANT_NOT_MEMBER}: ${iss}`, { cause })
   }
@@ -145,13 +152,13 @@ export async function assertMemberRoot(
   if (typeof iat !== 'number') {
     throw new Error(MEMBER_GRANT_NO_IAT)
   }
-  const maxLifetime = options?.maxMemberGrantLifetime ?? DEFAULT_MEMBER_GRANT_LIFETIME
+  const maxLifetime = options.maxMemberGrantLifetime ?? DEFAULT_MEMBER_GRANT_LIFETIME
   if (!(exp - iat <= maxLifetime)) {
     throw new Error(`${MEMBER_GRANT_TOO_LONG}: ${maxLifetime}s`)
   }
 
-  assertNonExpired(payload, time)
-  assertValidNotBefore(payload as { nbf?: number }, time)
-  assertValidIssuedAt(payload, time)
+  assertNonExpired({ payload, atTime: time })
+  assertValidNotBefore({ payload: payload as { nbf?: number }, atTime: time })
+  assertValidIssuedAt({ payload, atTime: time })
   await assertAudienceNotRevoked(payload, options)
 }

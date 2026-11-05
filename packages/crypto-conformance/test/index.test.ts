@@ -39,7 +39,7 @@ test('rejects a provider which accepts every verification input', async () => {
 test('rejects a provider which returns the wrong hash', async () => {
   const incorrect = {
     ...nobleCrypto,
-    blake3: async (_input: Uint8Array, length: number) => new Uint8Array(length),
+    blake3: async ({ dkLen }: { dkLen: number }) => new Uint8Array(dkLen),
   }
   const outcomes = await Promise.allSettled(
     cryptoConformance(incorrect).map((entry) => entry.run()),
@@ -175,10 +175,10 @@ function weakened(name: string): CryptoProvider {
     return alg === weakening.alg
       ? Promise.resolve(verify(signature, message, publicKey))
       : nobleCrypto.verify({
-          alg: alg,
-          signature: signature,
-          message: message,
-          publicKey: publicKey,
+          alg,
+          signature,
+          message,
+          publicKey,
         })
   }
   return {
@@ -258,7 +258,7 @@ describe('pinned upstream vectors', { timeout: 120_000 }, () => {
     const wrong = {
       ...nobleCrypto,
       sign: async () => new Uint8Array(64),
-      blake3: async (_input: Uint8Array, length: number) => new Uint8Array(length),
+      blake3: async ({ dkLen }: { dkLen: number }) => new Uint8Array(dkLen),
     }
     const cases = externalConformance(wrong)
     const outcomes = await Promise.allSettled(cases.map((entry) => entry.run()))

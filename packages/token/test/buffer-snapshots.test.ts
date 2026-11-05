@@ -18,7 +18,11 @@ test.each(['signature', 'message', 'publicKey'] as const)(
     const message = Buffer.from('original message')
     const publicKey = Buffer.from(ed25519.getPublicKey(privateKey))
     const signature = Buffer.from(ed25519.sign(message, privateKey))
-    const pending = getVerifier('EdDSA')(signature, message, publicKey)
+    const pending = getVerifier({ algorithm: 'EdDSA' })({
+      signature,
+      message,
+      publicKey,
+    })
     ;({ signature, message, publicKey })[field].fill(0)
     await expect(pending).resolves.toBe(true)
   },
@@ -27,8 +31,8 @@ test.each(['signature', 'message', 'publicKey'] as const)(
 test.each(['signature', 'data'] as const)(
   'payload verification owns Buffer %s before resolving',
   async (field) => {
-    const identity = createSigningIdentity(ed25519.utils.randomSecretKey())
-    const token = await identity.signToken({ test: true })
+    const identity = createSigningIdentity({ privateKey: ed25519.utils.randomSecretKey() })
+    const token = await identity.signToken({ payload: { test: true } })
     const signature = Buffer.from(fromB64U(token.signature))
     const data = Buffer.from(token.data)
     const pending = verifySignedPayload({ ...token, signature, data })
@@ -43,9 +47,9 @@ test.each(['single-key', 'multi-key'] as const)(
     const privateKey = Buffer.from(ed25519.utils.randomSecretKey())
     const identity =
       kind === 'single-key'
-        ? createSigningIdentity(privateKey)
+        ? createSigningIdentity({ privateKey })
         : await createIdentity({ keys: [{ purpose: 'sig', alg: 'EdDSA', privateKey }] })
-    const pending = identity.signToken({ test: true })
+    const pending = identity.signToken({ payload: { test: true } })
     privateKey.fill(0)
     const token = await pending
     expect(ed25519.verify(fromB64U(token.signature), fromUTF(token.data), identity.publicKey)).toBe(
@@ -63,25 +67,32 @@ test.each(['sync', 'async'] as const)(
     const signature = ed25519.sign(message, privateKey)
     const verify = memoizeVerifier(
       'EdDSA',
-      kind === 'sync' ? ed25519.verify : async (...args) => ed25519.verify(...args),
+      kind === 'sync'
+        ? ({ signature, message, publicKey }) => ed25519.verify(signature, message, publicKey)
+        : async ({ signature, message, publicKey }) =>
+            ed25519.verify(signature, message, publicKey),
     )
-    expect(await verify(signature, message, publicKey)).toBe(true)
+    expect(await verify({ signature, message, publicKey })).toBe(true)
     message.fill(0)
-    expect(await verify(signature, message, publicKey)).toBe(false)
+    expect(await verify({ signature, message, publicKey })).toBe(false)
   },
 )
 
 test('a replaced Buffer signature cannot poison the memo for a zero signature', async () => {
-  const identity = createSigningIdentity(ed25519.utils.randomSecretKey())
-  const token = await identity.signToken({ test: true })
+  const identity = createSigningIdentity({ privateKey: ed25519.utils.randomSecretKey() })
+  const token = await identity.signToken({ payload: { test: true } })
   const signature = Buffer.alloc(64)
   const message = fromUTF(token.data)
-  const pending = getVerifier('EdDSA')(signature, message, identity.publicKey)
+  const pending = getVerifier({ algorithm: 'EdDSA' })({
+    signature,
+    message,
+    publicKey: identity.publicKey,
+  })
   signature.set(fromB64U(token.signature))
   const accepted = await pending
   const zero = Buffer.alloc(64)
   expect(ed25519.verify(zero, message, identity.publicKey)).toBe(false)
-  await expect(verifyToken({ ...token, signature: toB64U(zero) })).rejects.toThrow(
+  await expect(verifyToken({ token: { ...token, signature: toB64U(zero) } })).rejects.toThrow(
     'Invalid signature',
   )
   expect(accepted).toBe(false)

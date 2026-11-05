@@ -56,7 +56,9 @@ export type DelegationStoreAPI = {
    * `verified_at`, or verify through `markRevocationVerified`, which requires it.
    */
   addRevocation(input: InsertRevokedCapability): Promise<boolean>
-  getRevocationByIssuer(jti: string, issuer: string): Promise<RevokedCapability | null>
+  getRevocationByIssuer(
+    params: DelegationStoreAPIGetRevocationByIssuerParams,
+  ): Promise<RevokedCapability | null>
   listRevocations(jti: string): Promise<Array<RevokedCapability>>
   /**
    * Diagnostic only -- **not** an authorization read. The `verified_at IS NOT NULL` predicate is
@@ -64,15 +66,15 @@ export type DelegationStoreAPI = {
    * genuine revocation stays pending forever and this answers `false` for it. Authorization must
    * read the issuer's row whatever its verification state.
    */
-  isRevokedBy(jti: string, issuer: string): Promise<boolean>
+  isRevokedBy(params: DelegationStoreAPIIsRevokedByParams): Promise<boolean>
   getHeldRevocations(params: { audience: string }): Promise<Array<HeldRevocation>>
-  markRevocationVerified(
-    jti: string,
-    issuer: string,
-    params: { cap_exp: number; verified_at?: number },
-  ): Promise<boolean>
-  getPendingRevocationByIssuer(jti: string, issuer: string): Promise<RevokedCapability | null>
-  deletePendingRevocationsFromOtherIssuers(jti: string, issuer: string): Promise<number>
+  markRevocationVerified(params: DelegationStoreAPIMarkRevocationVerifiedParams): Promise<boolean>
+  getPendingRevocationByIssuer(
+    params: DelegationStoreAPIGetPendingRevocationByIssuerParams,
+  ): Promise<RevokedCapability | null>
+  deletePendingRevocationsFromOtherIssuers(
+    params: DelegationStoreAPIDeletePendingRevocationsFromOtherIssuersParams,
+  ): Promise<number>
   /**
    * Deletes verified rows whose `cap_exp` is more than the grace in the past. A single
    * time-predicate `DELETE`: atomic, idempotent, and safe alongside writes. Nothing calls it
@@ -165,11 +167,17 @@ const storeDatabases = new WeakMap<DelegationStoreAPI, Kysely<DelegationStoreTab
 // attacker involved. Every DID crossing this boundary -- written or compared --
 // is folded through `normalizeDID`, because a raw equality here silently
 // returns "not revoked".
-export function createDelegationStore(
-  db: Kysely<DelegationStoreTables>,
-  adapter: Adapter,
-  context: StoreContext,
-): DelegationStoreAPI {
+export type CreateDelegationStoreParams = {
+  db: Kysely<DelegationStoreTables>
+  adapter: Adapter
+  context: StoreContext
+}
+
+export function createDelegationStore({
+  context,
+  adapter,
+  db,
+}: CreateDelegationStoreParams): DelegationStoreAPI {
   const api: DelegationStoreAPI = {
     // Lock before reading so arbitration preserves history even on one ambient transaction.
     async addDelegationToken(token: InsertDelegationToken): Promise<boolean> {
@@ -449,7 +457,7 @@ export function createDelegationStore(
 
     // `jti` alone does not identify a row: several revokers may name the same
     // capability and only the one signed by its issuer binds.
-    async getRevocationByIssuer(jti: string, issuer: string): Promise<RevokedCapability | null> {
+    async getRevocationByIssuer({ jti, issuer }): Promise<RevokedCapability | null> {
       const row = await db
         .selectFrom('revoked_capabilities')
         .selectAll()
@@ -470,7 +478,7 @@ export function createDelegationStore(
         .execute()
     },
 
-    async isRevokedBy(jti: string, issuer: string): Promise<boolean> {
+    async isRevokedBy({ jti, issuer }): Promise<boolean> {
       const row = await db
         .selectFrom('revoked_capabilities')
         .select('jti')
@@ -521,16 +529,12 @@ export function createDelegationStore(
 
     // Promotion is an authorization decision about one author's claim: the
     // arriving capability proves only that its own issuer's record is genuine.
-    async markRevocationVerified(
-      jti: string,
-      issuer: string,
-      params: { cap_exp: number; verified_at?: number },
-    ): Promise<boolean> {
+    async markRevocationVerified({ jti, issuer, cap_exp, verified_at }): Promise<boolean> {
       const result = await db
         .updateTable('revoked_capabilities')
         .set({
-          verified_at: params.verified_at ?? nowSeconds(),
-          cap_exp: params.cap_exp,
+          verified_at: verified_at ?? nowSeconds(),
+          cap_exp,
           updated_at: adapter.encodeTimestamp(new Date()) as number,
         })
         .where('jti', '=', jti)
@@ -540,10 +544,7 @@ export function createDelegationStore(
       return (result.numUpdatedRows ?? 0n) > 0n
     },
 
-    async getPendingRevocationByIssuer(
-      jti: string,
-      issuer: string,
-    ): Promise<RevokedCapability | null> {
+    async getPendingRevocationByIssuer({ jti, issuer }): Promise<RevokedCapability | null> {
       const row = await db
         .selectFrom('revoked_capabilities')
         .selectAll()
@@ -556,7 +557,7 @@ export function createDelegationStore(
 
     // The inverse scoping of `markRevocationVerified`: what that promotes this
     // discards, so together they settle every pending row for the `jti`.
-    async deletePendingRevocationsFromOtherIssuers(jti: string, issuer: string): Promise<number> {
+    async deletePendingRevocationsFromOtherIssuers({ jti, issuer }): Promise<number> {
       const result = await db
         .deleteFrom('revoked_capabilities')
         .where('jti', '=', jti)
@@ -596,4 +597,22 @@ export function createDelegationStore(
 
   storeDatabases.set(api, db)
   return api
+}
+
+export type DelegationStoreAPIGetRevocationByIssuerParams = { jti: string; issuer: string }
+
+export type DelegationStoreAPIIsRevokedByParams = { jti: string; issuer: string }
+
+export type DelegationStoreAPIMarkRevocationVerifiedParams = {
+  jti: string
+  issuer: string
+  cap_exp: number
+  verified_at?: number
+}
+
+export type DelegationStoreAPIGetPendingRevocationByIssuerParams = { jti: string; issuer: string }
+
+export type DelegationStoreAPIDeletePendingRevocationsFromOtherIssuersParams = {
+  jti: string
+  issuer: string
 }

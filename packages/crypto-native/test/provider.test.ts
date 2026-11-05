@@ -11,12 +11,16 @@ test('rejects native ABI mismatches and propagates worker failures', async () =>
   }
   expect(() => providerFor({ abiVersion: 2, execute })).toThrow('ABI mismatch')
   const provider = providerFor({ abiVersion: 1, execute })
-  await expect(provider.blake3(new Uint8Array(), 32)).rejects.toThrow('worker failed')
+  await expect(provider.blake3({ input: new Uint8Array(), dkLen: 32 })).rejects.toThrow(
+    'worker failed',
+  )
 })
 
 test('rejects missing batch outputs and malformed verification responses', async () => {
   const empty = providerFor({ abiVersion: 1, execute: async () => [] })
-  await expect(empty.blake3Batch([new Uint8Array()], 32)).rejects.toThrow('response')
+  await expect(empty.blake3Batch({ inputs: [new Uint8Array()], dkLen: 32 })).rejects.toThrow(
+    'response',
+  )
   const malformed = providerFor({
     abiVersion: 1,
     execute: async () => [new Uint8Array([2]).buffer],
@@ -39,10 +43,13 @@ test('validates every signing item before dispatching any seed', async () => {
     },
   })
   await expect(
-    provider.signBatch('EdDSA', [
-      { privateKey: new Uint8Array(32), message: new Uint8Array() },
-      { privateKey: new Uint8Array(31), message: new Uint8Array() },
-    ]),
+    provider.signBatch({
+      alg: 'EdDSA',
+      items: [
+        { privateKey: new Uint8Array(32), message: new Uint8Array() },
+        { privateKey: new Uint8Array(31), message: new Uint8Array() },
+      ],
+    }),
   ).rejects.toThrow(TypeError)
 })
 
@@ -55,7 +62,7 @@ test('signing batch membership is fixed before native dispatch', async () => {
     { privateKey: new Uint8Array(32), message: new Uint8Array() },
     { privateKey: new Uint8Array(32), message: new Uint8Array() },
   ]
-  const operation = provider.signBatch('EdDSA', items)
+  const operation = provider.signBatch({ alg: 'EdDSA', items })
   items.length = 0
   expect(await operation).toEqual([new Uint8Array(64).fill(1), new Uint8Array(64).fill(2)])
 })
@@ -83,7 +90,7 @@ test('hash batch membership ignores later caller removals', async () => {
     execute: async () => [new Uint8Array(32).fill(3).buffer],
   })
   const inputs = [new Uint8Array()]
-  const operation = provider.blake3Batch(inputs, 32)
+  const operation = provider.blake3Batch({ inputs, dkLen: 32 })
   inputs.pop()
   expect(await operation).toEqual([new Uint8Array(32).fill(3)])
 })

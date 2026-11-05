@@ -97,32 +97,33 @@ function isSummary(child: RangeSummary | RangeLeafList): child is RangeSummary {
 describe('fingerprintRange', () => {
   test('does not depend on the order of the leaves', async () => {
     const rows = leaves(100)
-    expect(await fingerprintRange(shuffled(rows))).toBe(await fingerprintRange(rows))
+    expect(await fingerprintRange({ leaves: shuffled(rows) })).toBe(
+      await fingerprintRange({ leaves: rows }),
+    )
   })
 
   test.each([10, 100, 1000])('is the hash of the lane sum and count at %i rows', async (count) => {
     const rows = leaves(count)
-    expect(await fingerprintRange(rows)).toBe(referenceFingerprint(rows))
+    expect(await fingerprintRange({ leaves: rows })).toBe(referenceFingerprint(rows))
   })
 
   test('adding then removing a leaf restores the fingerprint', async () => {
     const rows = leaves(100)
     const extra = leafAt(1000)
-    const added = await fingerprintRange([...rows, extra])
-    expect(added).not.toBe(await fingerprintRange(rows))
+    const added = await fingerprintRange({ leaves: [...rows, extra] })
+    expect(added).not.toBe(await fingerprintRange({ leaves: rows }))
     expect(added).toBe(referenceFingerprint([...rows, extra]))
-    expect(await fingerprintRange([...rows, extra].filter((row) => row !== extra))).toBe(
-      await fingerprintRange(rows),
-    )
+    expect(
+      await fingerprintRange({ leaves: [...rows, extra].filter((row) => row !== extra) }),
+    ).toBe(await fingerprintRange({ leaves: rows }))
   })
 
   test('adds lanes as big-endian words with unsigned wrap', async () => {
     // 0x000000ff + 0x00000001 carries into the second byte only when read big-endian;
     // 0xffffffff + 0x00000001 wraps to zero.
-    const carry = await fingerprintRange([
-      leafWithHash('a', laneHash(0xff)),
-      leafWithHash('b', laneHash(0x01)),
-    ])
+    const carry = await fingerprintRange({
+      leaves: [leafWithHash('a', laneHash(0xff)), leafWithHash('b', laneHash(0x01))],
+    })
     const expectedCarry = new Uint8Array(36)
     const carryView = new DataView(expectedCarry.buffer)
     for (let lane = 0; lane < 8; lane++) {
@@ -131,10 +132,9 @@ describe('fingerprintRange', () => {
     carryView.setUint32(32, 2, false)
     expect(carry).toBe(toB64U(blake3(expectedCarry, { dkLen: 16 })))
 
-    const wrapped = await fingerprintRange([
-      leafWithHash('a', laneHash(0xffffffff)),
-      leafWithHash('b', laneHash(0x01)),
-    ])
+    const wrapped = await fingerprintRange({
+      leaves: [leafWithHash('a', laneHash(0xffffffff)), leafWithHash('b', laneHash(0x01))],
+    })
     const expectedWrap = new Uint8Array(36)
     new DataView(expectedWrap.buffer).setUint32(32, 2, false)
     expect(wrapped).toBe(toB64U(blake3(expectedWrap, { dkLen: 16 })))
@@ -142,27 +142,29 @@ describe('fingerprintRange', () => {
 
   test('the count takes part, so equal sums of different sizes differ', async () => {
     const zero = laneHash(0)
-    const none = await fingerprintRange([])
-    const one = await fingerprintRange([leafWithHash('a', zero)])
-    const two = await fingerprintRange([leafWithHash('a', zero), leafWithHash('b', zero)])
-    const wrapPair = await fingerprintRange([
-      leafWithHash('a', laneHash(0xffffffff)),
-      leafWithHash('b', laneHash(0x01)),
-    ])
+    const none = await fingerprintRange({ leaves: [] })
+    const one = await fingerprintRange({ leaves: [leafWithHash('a', zero)] })
+    const two = await fingerprintRange({
+      leaves: [leafWithHash('a', zero), leafWithHash('b', zero)],
+    })
+    const wrapPair = await fingerprintRange({
+      leaves: [leafWithHash('a', laneHash(0xffffffff)), leafWithHash('b', laneHash(0x01))],
+    })
     expect(new Set([none, one, two]).size).toBe(3)
     // Same zero sum and the same count: the fingerprint cannot tell them apart.
     expect(wrapPair).toBe(two)
   })
 
   test('refuses an op hash that is not 32 bytes of base64url', async () => {
-    await expect(async () => await fingerprintRange([leafWithHash('a', 'a')])).rejects.toThrow(
-      RecordRangeError,
-    )
     await expect(
-      async () => await fingerprintRange([leafWithHash('a', toB64U(new Uint8Array(31)))]),
+      async () => await fingerprintRange({ leaves: [leafWithHash('a', 'a')] }),
     ).rejects.toThrow(RecordRangeError)
     await expect(
-      async () => await fingerprintRange([leafWithHash('a', `${laneHash(0)}=`)]),
+      async () =>
+        await fingerprintRange({ leaves: [leafWithHash('a', toB64U(new Uint8Array(31)))] }),
+    ).rejects.toThrow(RecordRangeError)
+    await expect(
+      async () => await fingerprintRange({ leaves: [leafWithHash('a', `${laneHash(0)}=`)] }),
     ).rejects.toThrow(RecordRangeError)
   })
 })
@@ -170,12 +172,14 @@ describe('fingerprintRange', () => {
 describe('rangeContains', () => {
   test('bounds are exclusive below, inclusive above, and scoped to one type', () => {
     const bounds: RangeBounds = { type: TYPE, lower: position('b'), upper: position('d') }
-    expect(rangeContains(bounds, { type: TYPE, owner: OWNER, id: 'b' })).toBe(false)
-    expect(rangeContains(bounds, { type: TYPE, owner: OWNER, id: 'c' })).toBe(true)
-    expect(rangeContains(bounds, { type: TYPE, owner: OWNER, id: 'd' })).toBe(true)
-    expect(rangeContains(bounds, { type: TYPE, owner: OWNER, id: 'e' })).toBe(false)
-    expect(rangeContains(bounds, { type: 'credential.key', owner: OWNER, id: 'c' })).toBe(false)
-    expect(rangeContains(WHOLE, { type: TYPE, owner: OWNER, id: '' })).toBe(true)
+    expect(rangeContains({ bounds, key: { type: TYPE, owner: OWNER, id: 'b' } })).toBe(false)
+    expect(rangeContains({ bounds, key: { type: TYPE, owner: OWNER, id: 'c' } })).toBe(true)
+    expect(rangeContains({ bounds, key: { type: TYPE, owner: OWNER, id: 'd' } })).toBe(true)
+    expect(rangeContains({ bounds, key: { type: TYPE, owner: OWNER, id: 'e' } })).toBe(false)
+    expect(rangeContains({ bounds, key: { type: 'credential.key', owner: OWNER, id: 'c' } })).toBe(
+      false,
+    )
+    expect(rangeContains({ bounds: WHOLE, key: { type: TYPE, owner: OWNER, id: '' } })).toBe(true)
   })
 })
 
@@ -189,8 +193,15 @@ describe('summarizeRange', () => {
       upper: rangePosition(sorted[19] as RangeLeaf),
     }
     const inside = sorted.slice(10, 20)
-    const summary = await summarizeRange([...rows, ...leaves(5, 'credential.key')], bounds)
-    expect(summary).toEqual({ bounds, fingerprint: await fingerprintRange(inside), count: 10 })
+    const summary = await summarizeRange({
+      leaves: [...rows, ...leaves(5, 'credential.key')],
+      rangeBounds: bounds,
+    })
+    expect(summary).toEqual({
+      bounds,
+      fingerprint: await fingerprintRange({ leaves: inside }),
+      count: 10,
+    })
   })
 })
 
@@ -244,10 +255,10 @@ describe('splitRange', () => {
       if (index > 0) {
         expect(summary.bounds.lower).toBe(summaries[index - 1]?.bounds.upper)
       }
-      const inside = rows.filter((row) => rangeContains(summary.bounds, row))
+      const inside = rows.filter((row) => rangeContains({ bounds: summary.bounds, key: row }))
       expect(summary.count).toBe(inside.length)
       expect(summary.count).toBeGreaterThan(0)
-      expect(summary.fingerprint).toBe(await fingerprintRange(inside))
+      expect(summary.fingerprint).toBe(await fingerprintRange({ leaves: inside }))
     })
     expect(summaries.reduce((total, summary) => total + summary.count, 0)).toBe(count)
   })
@@ -359,7 +370,7 @@ function decisionFromOp(op: VerifiedRecordOp): RecordDecision {
 }
 
 async function leafFromOp(op: VerifiedRecordOp, policy: MergePolicy): Promise<RangeLeaf | null> {
-  return await rangeLeaf(decisionFromOp(op), policy)
+  return await rangeLeaf({ decision: decisionFromOp(op), policy })
 }
 
 describe('rangeLeaf', () => {
@@ -377,7 +388,9 @@ describe('rangeLeaf', () => {
             : `header.${toB64U(fromUTF(JSON.stringify({ iss: 'other', claim: 'invalid' })))}.signature`,
       }
       const copies = position === 'first' ? [malformed, valid] : [valid, malformed]
-      expect(await rangeLeaf({ ...decision, copies }, { kind: 'lww' })).toEqual({
+      expect(
+        await rangeLeaf({ decision: { ...decision, copies }, policy: { kind: 'lww' } }),
+      ).toEqual({
         type: TYPE,
         owner: 'did:key:owner',
         id: 'record-1',
@@ -408,7 +421,9 @@ describe('rangeLeaf', () => {
       contentDigest: op(opHash, { type: 'catalog.record', meta: { version: [1] } }).contentDigest,
       signers: ['owner'],
     })
-    expect(await fingerprintRange([nonCredential as RangeLeaf])).toBe('sASs4GoVReTICHkgY7JX9w')
+    expect(await fingerprintRange({ leaves: [nonCredential as RangeLeaf] })).toBe(
+      'sASs4GoVReTICHkgY7JX9w',
+    )
     expect(await leafFromOp(op(opHash, { meta: { version: [1] } }), VERSIONED)).toEqual({
       type: TYPE,
       owner: 'did:key:owner',

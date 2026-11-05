@@ -65,7 +65,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
         recipient: row.recipientDID,
         consumer,
       },
-      hlc: hlc,
+      hlc,
     })
   }
 
@@ -110,8 +110,10 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
       Array.isArray(attributes) ||
       Object.keys(attributes).length !== Object.keys(row.attributes).length ||
       Object.entries(attributes).some(([name, value]) => row.attributes[name] !== value) ||
-      (await recordPayloadDigest(encodeVaultRecordPayload('vault.entry', row), ctx.params)) !==
-        op.claim.payloadDigest
+      (await recordPayloadDigest({
+        ...ctx.params,
+        payload: encodeVaultRecordPayload({ type: 'vault.entry', payload: row }),
+      })) !== op.claim.payloadDigest
     )
       throw new VaultTampered({ message: 'Entry projection disagrees with authenticated content' })
 
@@ -172,7 +174,10 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
     const params = ctx.params
 
     await ctx.locked([request], async (tx) => {
-      const decisionsRead = getRecordDecisions(ctx.recordsFor(tx).adapter, request.records)
+      const decisionsRead = getRecordDecisions({
+        store: ctx.recordsFor(tx).adapter,
+        keys: request.records,
+      })
 
       // A task that fails before reading the decisions must not leave this rejection unhandled.
       decisionsRead.catch(() => {})
@@ -218,7 +223,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
             identity: params.signer,
             claim: op.claim,
             opKind: params.records.opKind,
-            options: params,
+            crypto: params?.crypto,
           })),
         })
       }
@@ -227,7 +232,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
 
       await ctx.write({
         store: tx,
-        output: output,
+        output,
         preconditions: {
           key: {
             ...request,

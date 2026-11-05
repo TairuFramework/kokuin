@@ -59,12 +59,12 @@ Revocation upserts use `withStoreTransaction`. No statement binds more than 500 
   Postgres also uses `FOR UPDATE` for existing rows. Other DIDs can merge in independent Postgres transactions.
   SQLite reserves its single writer, so independent writes wait regardless of DID.
   Within one host transaction, operations for different DIDs do not share a key queue.
-- `markObserved(did, at?: Date): Promise<void>`: updates only `updated_at`, defaulting to the current time.
+- `markObserved(params: ControllerStoreAPIMarkObservedParams): Promise<void>`: updates only `updated_at`, defaulting to the current time.
   It preserves stored log bytes and `created_at`, returns no change signal, and does nothing for an unknown DID.
   It shares merge's key lock and joins host transactions, including their rollback.
   Timestamp precision follows the adapter. SQLite stores whole seconds.
   Call it explicitly after accepting an identical presentation. An unchanged `merge` still writes nothing.
-- `merge(did, update)`: writes what `update` makes of the stored log and returns it, the read and
+- `merge({ did, update })`: writes what `update` makes of the stored log and returns it, the read and
   the write in one transaction, joining an enclosing one. It holds
   `withKeyLock(provider, 'controller_logs', [did])`, which serialises concurrent merges for that DID,
   also within one transaction. A consumer may hold the same lock around its own read-then-merge and
@@ -148,16 +148,16 @@ Revocations:
   rejected: the record still binds, only its retention is bounded. A row written verified
   (`verified_at` set) with `cap_exp: null` is never purged by either method below; pass `cap_exp`
   with `verified_at`, or verify through `markRevocationVerified`, which requires it.
-- `getRevocationByIssuer(jti, issuer)`: the enforcement read, whatever the verification state.
+- `getRevocationByIssuer({ jti, issuer })`: the enforcement read, whatever the verification state.
 - `listRevocations(jti)`: every author's claim. Diagnostics.
-- `isRevokedBy(jti, issuer)`: diagnostic only, **not** an authorization read. It requires
+- `isRevokedBy({ jti, issuer })`: diagnostic only, **not** an authorization read. It requires
   `verified_at IS NOT NULL`, the inverse of the enforcement rule: a co-member holds no copy of the
   capability, so its genuine revocation stays pending forever.
 - `getHeldRevocations({ audience })`: verified revocations joined to locally held tokens whose
   grantor is the revoker, including superseded tokens.
-- `markRevocationVerified(jti, issuer, { cap_exp, verified_at? })`,
-  `getPendingRevocationByIssuer(jti, issuer)`,
-  `deletePendingRevocationsFromOtherIssuers(jti, issuer)`: the cap-arrival cross-check. The
+- `markRevocationVerified({ jti, issuer, cap_exp, verified_at? })`,
+  `getPendingRevocationByIssuer({ jti, issuer })`,
+  `deletePendingRevocationsFromOtherIssuers({ jti, issuer })`: the cap-arrival cross-check. The
   arriving capability proves only that its own issuer's record is genuine.
 
 The history schema is defined in `0-init`, without an additional migration. A database whose
@@ -220,7 +220,7 @@ Consumer contracts:
 
 ### Revocation checker
 
-`createDelegationRevocationChecker(store, { methods })` is a `VerifyTokenHook` over the store, built
+`createDelegationRevocationChecker(params: CreateDelegationRevocationCheckerParams)` is a `VerifyTokenHook` over the store, built
 on `@kokuin/capability`'s `createRevocationChecker`. It throws `VerifiedRevocationError` when the
 token is revoked. Pass the same resolution options (`methods`, `resolver`, `cache`) as the chain
 check.
@@ -229,11 +229,11 @@ check.
 import { checkCapability } from '@kokuin/capability'
 import { createDelegationRevocationChecker } from '@kokuin/store-delegation'
 
-const verifyToken = createDelegationRevocationChecker(delegations, { methods })
-await checkCapability(permission, payload, { methods, verifyToken })
+const verifyToken = createDelegationRevocationChecker({ api: delegations, methods })
+await checkCapability({ permission, payload, methods, verifyToken })
 ```
 
-The returned hook also carries `.verdict(token, raw)`, resolving `true` for revoked and `false`
+The returned hook also carries `.verdict({ token, raw })`, resolving `true` for revoked and `false`
 otherwise, for callers that prefer a value to an exception.
 
 Behaviour worth knowing:

@@ -2,7 +2,7 @@ import type { CryptoProvider } from '@kokuin/crypto'
 import type { DIDCache, DIDResolver, MethodRegistry, SignedToken, Verifiers } from '@kokuin/token'
 
 /** Hook called for each token during verification. Throw to reject. */
-export type VerifyTokenHook = (token: CapabilityToken, raw: string) => void | Promise<void>
+export type VerifyTokenHook = (params: VerifyTokenHookParams) => void | Promise<void>
 
 /** Options for delegation chain validation */
 export type DelegationChainOptions = {
@@ -120,3 +120,5 @@ export type CapabilityToken<
 > = SignedToken<Payload, Header>
 
 export type SignCapabilityPayload = Omit<CapabilityPayload, 'iss'> & { iss?: string }
+
+export type VerifyTokenHookParams = { token: CapabilityToken; raw: string }

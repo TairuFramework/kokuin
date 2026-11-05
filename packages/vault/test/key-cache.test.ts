@@ -14,8 +14,11 @@ describe('the key cache', () => {
     const key = contentKey()
     cache.set({ keyID: KEY_ID, contentKey: key, keyVersion: 1, branchID: 'branch-1' })
 
-    expect(cache.get(KEY_ID, 1)).toEqual({ contentKey: key, branchID: 'branch-1' })
-    expect(cache.get('k-key-other', 1)).toBeNull()
+    expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })).toEqual({
+      contentKey: key,
+      branchID: 'branch-1',
+    })
+    expect(cache.get({ keyID: 'k-key-other', keyVersion: 1 })).toBeNull()
   })
 
   test('an old-version read keeps the current-version key cached', () => {
@@ -23,18 +26,18 @@ describe('the key cache', () => {
     cache.set({ keyID: KEY_ID, contentKey: contentKey(1), keyVersion: 1, branchID: 'branch-1' })
     cache.set({ keyID: KEY_ID, contentKey: contentKey(2), keyVersion: 2, branchID: 'branch-2' })
 
-    expect(cache.get(KEY_ID, 1)?.contentKey).toEqual(contentKey(1))
-    expect(cache.get(KEY_ID, 2)?.contentKey).toEqual(contentKey(2))
+    expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })?.contentKey).toEqual(contentKey(1))
+    expect(cache.get({ keyID: KEY_ID, keyVersion: 2 })?.contentKey).toEqual(contentKey(2))
   })
 
   test('evicting a losing branch leaves another version cached', () => {
     const cache = createKeyCache()
     cache.set({ keyID: KEY_ID, contentKey: contentKey(1), keyVersion: 1, branchID: 'branch-1' })
     cache.set({ keyID: KEY_ID, contentKey: contentKey(2), keyVersion: 2, branchID: 'branch-2' })
-    cache.evictVersion(KEY_ID, 1)
+    cache.evictVersion({ keyID: KEY_ID, keyVersion: 1 })
 
-    expect(cache.get(KEY_ID, 1)).toBeNull()
-    expect(cache.get(KEY_ID, 2)?.contentKey).toEqual(contentKey(2))
+    expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })).toBeNull()
+    expect(cache.get({ keyID: KEY_ID, keyVersion: 2 })?.contentKey).toEqual(contentKey(2))
   })
 
   describe('the cache owns its buffers exclusively', () => {
@@ -45,19 +48,19 @@ describe('the key cache', () => {
 
       key.fill(9)
 
-      expect(cache.get(KEY_ID, 1)?.contentKey).toEqual(contentKey(1))
+      expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })?.contentKey).toEqual(contentKey(1))
     })
 
     test('get returns a fresh clone each time, distinct from the cached buffer', () => {
       const cache = createKeyCache()
       cache.set({ keyID: KEY_ID, contentKey: contentKey(1), keyVersion: 1, branchID: '' })
 
-      const first = cache.get(KEY_ID, 1)?.contentKey
-      const second = cache.get(KEY_ID, 1)?.contentKey
+      const first = cache.get({ keyID: KEY_ID, keyVersion: 1 })?.contentKey
+      const second = cache.get({ keyID: KEY_ID, keyVersion: 1 })?.contentKey
       expect(first).not.toBe(second)
 
       first?.fill(0)
-      expect(cache.get(KEY_ID, 1)?.contentKey).toEqual(contentKey(1))
+      expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })?.contentKey).toEqual(contentKey(1))
       expect(second).toEqual(contentKey(1))
     })
 
@@ -68,7 +71,7 @@ describe('the key cache', () => {
 
       cache.evict(KEY_ID)
 
-      expect(cache.get(KEY_ID, 1)).toBeNull()
+      expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })).toBeNull()
       expect(key).toEqual(contentKey())
     })
 
@@ -81,8 +84,8 @@ describe('the key cache', () => {
 
       cache.evictAll()
 
-      expect(cache.get('k-a', 1)).toBeNull()
-      expect(cache.get('k-b', 1)).toBeNull()
+      expect(cache.get({ keyID: 'k-a', keyVersion: 1 })).toBeNull()
+      expect(cache.get({ keyID: 'k-b', keyVersion: 1 })).toBeNull()
       expect(first).toEqual(contentKey(1))
       expect(second).toEqual(contentKey(2))
     })
@@ -94,7 +97,7 @@ describe('the key cache', () => {
       cache.set({ keyID: KEY_ID, contentKey: key, keyVersion: 1, branchID: '' })
 
       clock += 60_000
-      expect(cache.get(KEY_ID, 1)).toBeNull()
+      expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })).toBeNull()
       expect(key).toEqual(contentKey())
     })
 
@@ -105,7 +108,7 @@ describe('the key cache', () => {
       cache.set({ keyID: KEY_ID, contentKey: contentKey(2), keyVersion: 1, branchID: '' })
 
       expect(first).toEqual(contentKey(1))
-      expect(cache.get(KEY_ID, 1)?.contentKey).toEqual(contentKey(2))
+      expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })?.contentKey).toEqual(contentKey(2))
     })
 
     test('a missing version leaves another version and the caller buffer untouched', () => {
@@ -113,8 +116,8 @@ describe('the key cache', () => {
       const key = contentKey()
       cache.set({ keyID: KEY_ID, contentKey: key, keyVersion: 1, branchID: '' })
 
-      expect(cache.get(KEY_ID, 2)).toBeNull()
-      expect(cache.get(KEY_ID, 1)?.contentKey).toEqual(key)
+      expect(cache.get({ keyID: KEY_ID, keyVersion: 2 })).toBeNull()
+      expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })?.contentKey).toEqual(key)
       expect(key).toEqual(contentKey())
     })
 
@@ -123,14 +126,14 @@ describe('the key cache', () => {
       const cache = createKeyCache({ ttl: 60_000, now: () => clock })
       cache.set({ keyID: KEY_ID, contentKey: contentKey(), keyVersion: 1, branchID: '' })
 
-      expect(cache.has(KEY_ID, 1)).toBe(true)
-      expect(cache.has('k-key-other', 1)).toBe(false)
-      expect(cache.has(KEY_ID, 2)).toBe(false)
-      expect(cache.has(KEY_ID, 1)).toBe(true)
+      expect(cache.has({ keyID: KEY_ID, keyVersion: 1 })).toBe(true)
+      expect(cache.has({ keyID: 'k-key-other', keyVersion: 1 })).toBe(false)
+      expect(cache.has({ keyID: KEY_ID, keyVersion: 2 })).toBe(false)
+      expect(cache.has({ keyID: KEY_ID, keyVersion: 1 })).toBe(true)
 
       cache.set({ keyID: 'k-ttl', contentKey: contentKey(), keyVersion: 1, branchID: '' })
       clock += 60_000
-      expect(cache.has('k-ttl', 1)).toBe(false)
+      expect(cache.has({ keyID: 'k-ttl', keyVersion: 1 })).toBe(false)
     })
   })
 
@@ -141,10 +144,10 @@ describe('the key cache', () => {
       cache.set({ keyID: KEY_ID, contentKey: contentKey(), keyVersion: 1, branchID: '' })
 
       clock += 59_999
-      expect(cache.get(KEY_ID, 1)).not.toBeNull()
+      expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })).not.toBeNull()
 
       clock += 1
-      expect(cache.get(KEY_ID, 1)).toBeNull()
+      expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })).toBeNull()
     })
 
     test('the clock runs from the set, so a re-unlock extends the life', () => {
@@ -156,7 +159,7 @@ describe('the key cache', () => {
       cache.set({ keyID: KEY_ID, contentKey: contentKey(), keyVersion: 1, branchID: '' })
 
       clock += 50_000
-      expect(cache.get(KEY_ID, 1)).not.toBeNull()
+      expect(cache.get({ keyID: KEY_ID, keyVersion: 1 })).not.toBeNull()
     })
   })
 })

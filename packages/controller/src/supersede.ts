@@ -209,16 +209,24 @@ function resolveContenders(contenders: Array<FoldedBranch>): Resolution {
  * Chains that do not fold are filtered out before comparison, so a thief who cannot produce a valid
  * event cannot create a duplicity report.
  */
-export async function resolveBranches(
-  did: string,
-  chains: Array<Array<SignedEvent>>,
-  options: CryptoOptions = {},
-): Promise<ResolveResult> {
+export type ResolveBranchesParams = {
+  did: string
+  chains: Array<Array<SignedEvent>>
+} & CryptoOptions
+
+export async function resolveBranches({
+  chains,
+  did,
+  ...options
+}: ResolveBranchesParams): Promise<ResolveResult> {
   const originals = chains.slice()
   const snapshots = chains.map((chain) => snapshotLog({ chain, events: [] }).chain)
   const valid: Array<FoldedBranch> = []
   for (const branch of snapshots) {
-    const folded = branchFrom(branch, await foldLog(did, { chain: branch, events: [] }, options))
+    const folded = branchFrom(
+      branch,
+      await foldLog({ ...options, did, input: { chain: branch, events: [] } }),
+    )
     if (folded != null) {
       valid.push(folded)
     }

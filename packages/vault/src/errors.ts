@@ -85,7 +85,7 @@ export class UnsupportedVaultSuite extends VaultError {
 
 export class VaultTampered extends VaultError {
   constructor({ message, options }: VaultTamperedParams) {
-    super({ message: message, options: { ...options, code: 'VAULT_TAMPERED' } })
+    super({ message, options: { ...options, code: 'VAULT_TAMPERED' } })
     this.name = 'VaultTampered'
   }
 }

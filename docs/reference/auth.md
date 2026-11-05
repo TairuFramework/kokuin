@@ -37,9 +37,9 @@ import type {
 | ---------------------------------------- | --------------------------- | -------------------------------------------------------------- |
 | `randomIdentity()`                       | `OwnIdentity`               | Fresh Ed25519 key pair in memory (`did:key:…`)                 |
 | `createIdentity(input)`                  | `Promise<MultiKeyIdentity>` | Multi-key `did:peer:4` identity with signing + encryption keys |
-| `createSigningIdentity(privateKey)`      | `SigningIdentity`           | Sign-only identity from an Ed25519 private key                 |
+| `createSigningIdentity(params: CreateSigningIdentityParams)`      | `SigningIdentity`           | Sign-only identity from an Ed25519 private key                 |
 | `createKeyAgreementIdentity(privateKey)` | `KeyAgreementIdentity`      | Key-agreement-only identity (JWE recipient, via `@kokuin/jwe`) |
-| `createFullIdentity(privateKey)`         | `FullIdentity`              | Sign + key agreement from one Ed25519 private key              |
+| `createFullIdentity(params: CreateFullIdentityParams)`         | `FullIdentity`              | Sign + key agreement from one Ed25519 private key              |
 
 **Identity hierarchy**: `OwnIdentity ⊇ FullIdentity ⊇ SigningIdentity | KeyAgreementIdentity`.
 
@@ -54,7 +54,7 @@ type Identity = { readonly id: string }
 
 type SigningIdentity = Identity & {
   publicKey: Uint8Array
-  signToken<Payload>(payload: Payload, options?: SignTokenOptions): Promise<SignedToken<Payload>>
+  signToken<Payload>(params: SigningIdentitySignTokenParams<Payload>): Promise<SignedToken<Payload>>
 }
 
 type SignTokenOptions = {
@@ -63,8 +63,10 @@ type SignTokenOptions = {
   embedLongForm?: boolean // override the did:peer:4 long-form policy
 }
 
+type KeyAgreementIdentityAgreeKeyParams = { ephemeralPublicKey: Uint8Array }
+
 type KeyAgreementIdentity = Identity & {
-  agreeKey(ephemeralPublicKey: Uint8Array): Promise<Uint8Array>
+  agreeKey(params: KeyAgreementIdentityAgreeKeyParams): Promise<Uint8Array>
 }
 
 type FullIdentity = SigningIdentity & KeyAgreementIdentity
@@ -100,20 +102,20 @@ import {
 const identity = randomIdentity()
 
 // 1. Create an unsigned token with a custom payload
-const unsigned = createUnsignedToken({
+const unsigned = createUnsignedToken({ payload: {
   sub: 'resource:42',
   aud: 'did:key:z6MkRecipient…',
   exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour
-})
+} })
 
 // 2. Sign it with the identity's private key
-const signed = await signToken(identity, unsigned)
+const signed = await signToken({ signer: identity, token: unsigned })
 
 // 3. Serialize to a compact dot-separated string (header.payload.signature)
 const tokenString = stringifyToken(signed)
 
 // 4. Verify later — no private key required
-const verified = await verifyToken(tokenString)
+const verified = await verifyToken({ token: tokenString })
 console.log(verified.payload.iss) // identity.id (the issuer DID)
 console.log(verified.payload.sub) // 'resource:42'
 ```
@@ -135,13 +137,13 @@ const identity = randomIdentity()
 const serialized: string[] = []
 
 for (let i = 0; i < 100; i++) {
-  const token = await signToken(identity, createUnsignedToken({ sub: `task-${i}` }))
+  const token = await signToken({ signer: identity, token: createUnsignedToken({ payload: { sub: `task-${i}` } }) })
   serialized.push(stringifyToken(token))
 }
 
 // Verify any time, anywhere — public key is embedded in the DID
 for (const s of serialized) {
-  const verified = await verifyToken(s)
+  const verified = await verifyToken({ token: s })
   if (verified.payload.iss === identity.id) {
     console.log('Valid:', verified.payload.sub)
   }
@@ -194,12 +196,12 @@ import { createTokenEncrypter, encryptToken, decryptToken } from '@kokuin/jwe'
 const recipient = randomIdentity()
 
 // Encrypt for a recipient identified by DID
-const encrypter = createTokenEncrypter(recipient.id)
-const jwe = await encryptToken(encrypter, new TextEncoder().encode('secret payload'))
+const encrypter = createTokenEncrypter({ recipient: recipient.id })
+const jwe = await encryptToken({ encrypter, plaintext: new TextEncoder().encode('secret payload') })
 
 // Recipient decrypts with their private identity — decryptToken reads only
 // recipient.agreeKey(), so any KeyAgreementIdentity (including a FullIdentity) works
-const plaintext = await decryptToken(recipient, jwe)
+const plaintext = await decryptToken({ decrypter: recipient, jwe })
 console.log(new TextDecoder().decode(plaintext)) // 'secret payload'
 ```
 
@@ -219,7 +221,7 @@ const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(recipient.id)
 // ship ephemeralPublicKey alongside whatever the secret protects
 
 // Recipient recovers the identical bytes with agreeKey (see `KeyAgreementIdentity` above):
-const recovered = await recipient.agreeKey(ephemeralPublicKey)
+const recovered = await recipient.agreeKey({ ephemeralPublicKey })
 ```
 
 `deriveSharedSecret` resolves the recipient's agreement key by the same rule
@@ -248,17 +250,11 @@ const signer = randomIdentity()
 const recipient = randomIdentity()
 const mode: EnvelopeMode = 'jws-in-jwe'
 
-const encrypter = createTokenEncrypter(recipient.id)
-const envelope = await wrapEnvelope(
-  mode,
-  { hello: 'world' },
-  {
-    signer,
-    encrypter,
-  },
+const encrypter = createTokenEncrypter({ recipient: recipient.id })
+const envelope = await wrapEnvelope({ mode, payload: { hello: 'world' }, signer, encrypter }
 )
 
-const unwrapped = await unwrapEnvelope(envelope, { decrypter: recipient })
+const unwrapped = await unwrapEnvelope({ message: envelope, decrypter: recipient })
 console.log(unwrapped.payload) // { hello: 'world' }
 console.log(unwrapped.mode) // 'jws-in-jwe'
 ```
@@ -275,7 +271,7 @@ Rotation is managed through `@kokuin/controller`. A rotation event contains:
 
 `verifyRotate` validates a single rotate: it checks that `k` hashes to the digests the prior event committed in `n`. This creates a key takeover protection: an attacker who steals the current signing key still cannot rotate the profile, because rotation requires revealing keys that match the pre-committed digests — keys they do not possess. `foldLog` walks the whole root chain to establish the current key state, then merges the current epoch's management events (member adds, renewals, removals and revokes) into it.
 
-One consequence reaches every caller of `verifyToken`, whether or not they think about controllers: a method whose key set rotates answers **two** questions, and the safe one is the default. `resolve` answers from the profile's current keys alone, so a rotated-away key stops verifying; `resolveHistoric`, reached only by `verifyToken({ historic: true })`, accepts a key that was authoritative earlier in the same generation, for material the issuer minted in the past. Use the second only for archived artefacts, never to authenticate a live signer.
+One consequence reaches every caller of `verifyToken`, whether or not they think about controllers: a method whose key set rotates answers **two** questions, and the safe one is the default. `resolve` answers from the profile's current keys alone, so a rotated-away key stops verifying; `resolveHistoric`, reached only by `verifyToken({ token, historic: true })`, accepts a key that was authoritative earlier in the same generation, for material the issuer minted in the past. Use the second only for archived artefacts, never to authenticate a live signer.
 
 See [./controller.md](./controller.md) for the method and the full event log API, and [./security.md](./security.md) for the guarantees and the rules a consumer has to follow to get them.
 
@@ -352,12 +348,10 @@ console.log('DID:', identity.id)
 const signingIdentity = await store.provideSigningIdentity('user-session')
 
 // Sign a token
-const token = await signToken(
-  identity,
-  createUnsignedToken({
+const token = await signToken({ signer: identity, token: createUnsignedToken({ payload: {
     sub: 'resource:7',
     exp: Math.floor(Date.now() / 1000) + 3600,
-  }),
+  } }) }
 )
 const tokenString = stringifyToken(token)
 ```
@@ -400,12 +394,10 @@ const identity = await store.provideIdentity('main-process-key')
 console.log('DID:', identity.id)
 
 // Sign a token (e.g. for IPC verification)
-const token = await signToken(
-  identity,
-  createUnsignedToken({
+const token = await signToken({ signer: identity, token: createUnsignedToken({ payload: {
     sub: 'renderer-process',
     aud: 'main-process',
-  }),
+  } }) }
 )
 ```
 
@@ -424,19 +416,19 @@ import { HDKeyStore, derivePrivateKey, resolveDerivationPath } from '@kokuin/det
 import { createFullIdentity } from '@kokuin/token'
 
 // Managed entries — the store derives on demand
-const store = HDKeyStore.fromMnemonic('abandon abandon … art')
-// or: HDKeyStore.fromSeed(masterSeed)
+const store = HDKeyStore.fromMnemonic({ mnemonic: 'abandon abandon … art' })
+// or: HDKeyStore.fromSeed({ seed: masterSeed })
 
 const identity = await store.provideIdentity('0')
 console.log('DID:', identity.id)
 
 // Standalone derivation (no store required)
-const path = resolveDerivationPath('0') // numeric keyID → "m/44'/876'/0'"
-const privateKey = derivePrivateKey(masterSeed, path) // Uint8Array
-const identity2 = createFullIdentity(privateKey)
+const path = resolveDerivationPath({ keyID: '0' }) // numeric keyID → "m/44'/876'/0'"
+const privateKey = derivePrivateKey({ seed: masterSeed, path }) // Uint8Array
+const identity2 = createFullIdentity({ privateKey })
 ```
 
-The HD name map: `resolveDerivationPath('0')` → `"m/44'/876'/0'"` (default base path `44'/876'`). Pass a full `m/…` path directly to skip resolution.
+The HD name map: `resolveDerivationPath({ keyID: '0' })` → `"m/44'/876'/0'"` (default base path `44'/876'`). Pass a full `m/…` path directly to skip resolution.
 
 ### `@kokuin/ledger-device` — Ledger hardware wallet
 
@@ -446,7 +438,7 @@ Provides an `IdentityProvider` backed by a Ledger hardware device over USB/WebHI
 import { createLedgerIdentityProvider } from '@kokuin/ledger-device'
 
 // `transport` is a WebHID or Node-HID Ledger transport instance
-const provider = createLedgerIdentityProvider(transport)
+const provider = createLedgerIdentityProvider({ transport })
 
 // Call provideIdentity with a keyID string to obtain a FullIdentity from the device
 const identity = await provider.provideIdentity('0')

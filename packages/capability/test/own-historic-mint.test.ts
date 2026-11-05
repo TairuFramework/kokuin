@@ -27,7 +27,7 @@ import { checkCapability, createCapability, now } from '../src/index.js'
 describe('a rotated-away authority key, at the capability path', () => {
   test('can it mint a fresh capability granting itself everything?', async () => {
     const seed = new Uint8Array(32).fill(31)
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
     const rotate = await createRotate({
       seed,
@@ -69,7 +69,7 @@ describe('a rotated-away authority key, at the capability path', () => {
     // Does a fresh capability minted by the retired key verify?
     let tokenVerified = true
     try {
-      await verifyToken(raw, { methods })
+      await verifyToken({ token: raw, methods })
     } catch {
       tokenVerified = false
     }
@@ -77,11 +77,11 @@ describe('a rotated-away authority key, at the capability path', () => {
     // And does it grant authority through the capability path?
     let granted = true
     try {
-      await checkCapability(
-        { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
-        { iss: thiefDevice.id, sub: did, cap: [raw] } as never,
-        { methods },
-      )
+      await checkCapability({
+        permission: { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
+        payload: { iss: thiefDevice.id, sub: did, cap: [raw] } as never,
+        methods,
+      })
     } catch {
       granted = false
     }
@@ -118,11 +118,11 @@ describe('a rotated-away authority key, at the capability path', () => {
     let grantedAfterRevoke = true
     let refusal = ''
     try {
-      await checkCapability(
-        { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
-        { iss: thiefDevice.id, sub: did, cap: [raw] } as never,
-        { methods: remedied },
-      )
+      await checkCapability({
+        permission: { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
+        payload: { iss: thiefDevice.id, sub: did, cap: [raw] } as never,
+        methods: remedied,
+      })
     } catch (err) {
       grantedAfterRevoke = false
       refusal = (err as Error).message
@@ -152,11 +152,11 @@ describe('a rotated-away authority key, at the capability path', () => {
     )
     let honestGranted = true
     try {
-      await checkCapability(
-        { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
-        { iss: honestDevice.id, sub: did, cap: [honest] } as never,
-        { methods: remedied },
-      )
+      await checkCapability({
+        permission: { act: 'revoke', res: 'did:kokuin:zSomeoneElse' },
+        payload: { iss: honestDevice.id, sub: did, cap: [honest] } as never,
+        methods: remedied,
+      })
     } catch {
       honestGranted = false
     }

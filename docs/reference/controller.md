@@ -31,10 +31,10 @@ import {
   handleForDID,
 } from '@kokuin/controller'
 
-const inception = await createInception(seed, 0) // profile index 0
+const inception = await createInception({ seed, profile: 0 }) // profile index 0
 const did = didFromInception(inception.event) // did:kokuin:z…
 
-enumerateProfiles(seed, 5) // [{ index, did, handle }, …] — for a cold recovery picker
+enumerateProfiles({ seed, count: 5 }) // [{ index, did, handle }, …] — for a cold recovery picker
 handleForDID(did) // 'bo-ta-nes' — three pronounceable syllables, derived from the DID
 ```
 
@@ -55,7 +55,7 @@ Hardened derivation is one-way, so a sub-seed holder cannot reach the recovery k
 ```typescript
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from '@kokuin/controller'
 
-const { privateKey, publicKey } = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
+const { privateKey, publicKey } = deriveKeyPair({ seed, path: authorityPath({ profile: 0, gen: 0, seq: 0 }), alg: 'EdDSA' })
 ```
 
 ## Custody tiers
@@ -123,19 +123,19 @@ Reveals the keys the prior event committed in `n`, commits the next set, and rep
 ```typescript
 import { createRotate, foldLog, snapshotOf } from '@kokuin/controller'
 
-const folded = await foldLog(did, log)
+const folded = await foldLog({ did, input: log })
 if (!folded.ok) throw new Error(folded.reason)
 const rotate = await createRotate({
   seed,
   profile: 0,
   did,
   prior: log.chain[log.chain.length - 1].event, // the chain's last event
-  snapshot: snapshotOf(folded.head, { deny: [entryToDrop], members: [addToDismiss] }),
+  snapshot: snapshotOf({ state: folded.head, deny: [entryToDrop], members: [addToDismiss] }),
   seal: digestOf(grant), // optional
 })
 ```
 
-`snapshot` is **a replacement, not an addition**. Build it with `snapshotOf(head, drop)`, which carries forward every live member, removed incarnation and deny entry, minus what `drop` names; writing one by hand and forgetting an entry silently un-revokes a device, un-retires a leaked key or dismisses a member, with nothing in the log to say so. The snapshot is root's **chosen replacement state**, not a proven merge: a removal or denial root never saw is not in it, and root's tooling must present it that way.
+`snapshot` is **a replacement, not an addition**. Build it with `snapshotOf({ state: head, deny, members })`, which carries forward every live member, removed incarnation and deny entry, minus the selected `deny` and `members` entries; writing one by hand and forgetting an entry silently un-revokes a device, un-retires a leaked key or dismisses a member, with nothing in the log to say so. The snapshot is root's **chosen replacement state**, not a proven merge: a removal or denial root never saw is not in it, and root's tooling must present it that way.
 
 The fold judges every snapshot against the generation it lands on, each rule with its own reason:
 - **Shape** (`SNAPSHOT_MALFORMED`): `m` and optional `u` contain Ed25519 member entries, with no duplicate add digest across either list. Only live entries require unique pins. `d` contains strings.
@@ -178,7 +178,7 @@ const revoke = await createDeviceRevoke({ seed, profile: 0, did, chain, subject 
 const index = await deviceRevokeIndex({ did: did, chain: [...chain, revoke], subject: subject })
 ```
 
-`createDeviceRevoke` folds the chain and carries `snapshotOf(head)` forward, appending the subject to the head's deny set.
+`createDeviceRevoke` folds the chain and carries `snapshotOf({ state: head })` forward, appending the subject to the head's deny set.
 It preserves existing denials and management members, and throws if the chain is invalid or the subject is already denied.
 
 ### Epoch events
@@ -200,7 +200,7 @@ An epoch event shares the envelope's spirit and fields of its own:
 | `rmv` | `add` (the incarnation removed)          | Root, or any member whose pinned key is not the target's |
 | `rev` | `x`: a DID or a key target               | Root, or any single member — never targeting a member    |
 
-Parents list every head the author knows — a recommendation the fold cannot enforce. `epochHeads(did, log)` computes them: the applied events of the current epoch that no applied event names as a parent, sorted, or `[head.epoch]` for an empty epoch. It throws if the log does not fold, and returns at most `MAX_EVENT_PARENTS` heads — the smallest digests when the epoch has more tips — so its answer is always a valid `parents`. The tips left out stay tips, and the next event built from `epochHeads` names them: repeated building folds every tip in. Leases are unix seconds as non-negative safe integers. A member is identified by its **add digest**, its _incarnation_: renew and remove name that digest, so a delayed renew or remove never carries over to a re-add of the same key.
+Parents list every head the author knows — a recommendation the fold cannot enforce. `epochHeads({ did, log })` computes them: the applied events of the current epoch that no applied event names as a parent, sorted, or `[head.epoch]` for an empty epoch. It throws if the log does not fold, and returns at most `MAX_EVENT_PARENTS` heads — the smallest digests when the epoch has more tips — so its answer is always a valid `parents`. The tips left out stay tips, and the next event built from `epochHeads` names them: repeated building folds every tip in. Leases are unix seconds as non-negative safe integers. A member is identified by its **add digest**, its _incarnation_: renew and remove name that digest, so a delayed renew or remove never carries over to a re-add of the same key.
 
 ```typescript
 import {
@@ -216,10 +216,10 @@ import {
 const now = Math.floor(Date.now() / 1000)
 // `head` is the fold's head; `parents` the current epoch's heads this party holds (at most
 // `MAX_EVENT_PARENTS`).
-const folded = await foldLog(did, log)
+const folded = await foldLog({ did, input: log })
 if (!folded.ok) throw new Error(folded.reason)
 const head = folded.head
-const parents = await epochHeads(did, log)
+const parents = await epochHeads({ did, log })
 
 // Root admits a member.
 const add = await createAdd({
@@ -258,7 +258,7 @@ A key the chain head **currently publishes** in `k` or `ka` cannot be denied —
 ## The fold
 
 ```typescript
-foldLog(did, log: ControllerLog, options?: CryptoOptions): Promise<FoldResult>
+foldLog(params: FoldLogParams): Promise<FoldResult>
 
 type FoldResult =
   | { ok: true; states: Array<KeyState>; head: KeyState; applied: Array<string>; pending: number; rejected: number }
@@ -336,7 +336,7 @@ A skipped event is the only one the fold accepts without verifying a signature, 
 ## Branch selection
 
 ```typescript
-resolveBranches(did, chains: Array<Array<SignedEvent>>, options?: CryptoOptions): Promise<ResolveResult>
+resolveBranches(params: ResolveBranchesParams): Promise<ResolveResult>
 
 type ResolveResult =
   | { ok: true; winner: Array<SignedEvent>; superseded: number }
@@ -357,7 +357,7 @@ Comparing heads would make chain _length_ the deciding factor, and length is the
 
 ```typescript
 declare function mergeLogs(params: MergeLogsParams): Promise<ControllerLog>
-pruneLog(did, log, options?: CryptoOptions): Promise<ControllerLog>     // the least of a log that still folds to the same head
+pruneLog(params: PruneLogParams): Promise<ControllerLog>     // the least of a log that still folds to the same head
 ```
 
 `mergeLogs` is a pure merge, for joining what a party holds with what it was handed — a grant's proof bundle, a peer's copy — before folding. The chain is settled by the branch rules and a fork throws (`LOG_FORKED`) rather than merging two histories root never wrote as one; the events are a union, deduplicated by digest _and_ signatures, since keeping only the first copy would let a forged copy shadow the genuine one. Nothing here authenticates an event: the result is input to a fold, not memory.
@@ -394,7 +394,7 @@ The split between the first two is the single most important thing to get right 
 ### `resolveMember`
 
 ```typescript
-resolver.resolveMember(subject, { did, add, gen }): Promise<{ key: ResolvedSigningKey; lease: number }>
+resolver.resolveMember({ subject, member: { did, add, gen } }): Promise<{ key: ResolvedSigningKey; lease: number }>
 ```
 
 Every condition is asked of the head: the member must be present under that add digest, effective (not removed, not denied), and its DID must be the queried one under canonical DID equivalence — any other DID is another member, even one carrying the same key. **The generation is part of the identity**: a reset carrying a snapshot keeps each member's add digest, so only `gen` can tell a grant minted before the reset from one minted after, and a query naming any generation but the head's is refused. That is what makes a reset kill every grant of the generation it replaces, carried members' included. A refusal is an `IssuerKeyNotFoundError` carrying `MEMBER_NOT_EFFECTIVE`. The lease is reported, never judged: the log has no clock, and bounding a grant by it is the verifier's step.
@@ -423,10 +423,7 @@ A stored log whose chain no longer folds is treated as no memory: local corrupti
 ```typescript
 type LogStore = {
   get(did: string): Promise<ControllerLog | undefined>
-  merge(
-    did: string,
-    update: (current: ControllerLog | undefined) => Promise<ControllerLog>,
-  ): Promise<ControllerLog>
+  merge(params: LogStoreMergeParams): Promise<ControllerLog>
 }
 ```
 
@@ -468,7 +465,7 @@ Prefer the key form on any path that runs often. The seed is the root of everyth
 
 ## Conformance
 
-`@kokuin/controller-conformance` is private and never published: a framework-agnostic suite (`runControllerConformance(impl)`) that any implementation of this method runs to prove it honours the contract — inception self-certification, pre-rotation, state snapshots and retired-key tombstones, key denial, reset supersession and snapshot resets, duplicity, criticality, the epoch merge (order independence, causal authorisation, old-epoch and cross-epoch events, saturation) and the management-member rules.
+`@kokuin/controller-conformance` is private and never published: a framework-agnostic suite (`runControllerConformance({ suite: impl })`) that any implementation of this method runs to prove it honours the contract — inception self-certification, pre-rotation, state snapshots and retired-key tombstones, key denial, reset supersession and snapshot resets, duplicity, criticality, the epoch merge (order independence, causal authorisation, old-epoch and cross-epoch events, saturation) and the management-member rules.
 
 It is a contract, not a proof of security. The 2026-08-15 review found five Criticals that the suite passed, because it only ever presented equal-length branches: the properties it certified were never the ones under attack. Rows have since been added for what those attacks reached. Treat a green suite as "this implementation agrees with the others", never as "this implementation is safe".
 
@@ -492,7 +489,7 @@ This denial does not invalidate the removed incarnation's historic evidence, inc
 Tombstones obey the same Ed25519, DID pin and root-key exclusion rules as live entries.
 An add digest cannot occur twice across `m` and `u`. A new live incarnation may share a removed incarnation's pin.
 
-`snapshotOf(head)` preserves removed incarnations alongside live members and denials.
+`snapshotOf({ state: head })` preserves removed incarnations alongside live members and denials.
 `drop.members` prunes either kind by add digest, explicitly discarding evidence from future snapshots.
 Earlier chain snapshots can still supply evidence. An incarnation added and removed between settlements needs its tombstone preserved to remain provable.
 Tombstones accumulate within a generation, increasing every carrying settlement's event size by one complete member entry per retained incarnation.
@@ -533,7 +530,7 @@ A blind reset supplies no membership evidence for the new generation.
 A reset snapshot may re-admit an incarnation as live through root attestation, matching `resolveMember` behaviour.
 Only then can its unchanged add digest resolve under the new generation.
 A reset must never carry `u`, even an empty list: nobody has been removed in the new generation.
-`createReset` silently drops `snapshot.removed`, so `createReset({ seed, profile, gen, snapshot: snapshotOf(head) })` works after removal.
+`createReset` silently drops `snapshot.removed`, so `createReset({ seed, profile, gen, snapshot: snapshotOf({ state: head }) })` works after removal.
 The fold still refuses any reset carrying `u` with `RESET_HAS_TOMBSTONES`.
 
 ## Provider migration

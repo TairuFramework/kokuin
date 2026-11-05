@@ -21,8 +21,7 @@ type EvaluateParams = {
   roots: RootKeySet
   matches: DenialMatcher
   budget: SignatureBudget
-  options: CryptoOptions
-}
+} & CryptoOptions
 
 // Merging an epoch. The epoch's events are a set, not a sequence: nothing here may depend on the order
 // they were presented in, how often, or which copy of a duplicate arrived first. The three places that
@@ -262,7 +261,7 @@ async function evaluate({
   roots,
   matches,
   budget,
-  options,
+  ...options
 }: EvaluateParams): Promise<{ reason: string } | { effect: EpochState }> {
   const { event, digest } = candidate
   // A copy of the same body under a different signature is not a different event, so the event is
@@ -274,7 +273,8 @@ async function evaluate({
   let signer: MemberEntry | null = null
   if (event.by === undefined) {
     candidate.authentic = await authenticate(
-      async (c) => await verifyEpochSignature(c, { rootKeys: anchor.keys }, options),
+      async (c) =>
+        await verifyEpochSignature({ ...options, signed: c, signer: { rootKeys: anchor.keys } }),
     )
     if (candidate.authentic === undefined) {
       return { reason: 'invalid root signature' }
@@ -286,7 +286,8 @@ async function evaluate({
     if (isDenied(causal.deny, member, matches))
       return { reason: 'signer is denied in the causal state' }
     candidate.authentic = await authenticate(
-      async (c) => await verifyEpochSignature(c, { memberKey: member.key }, options),
+      async (c) =>
+        await verifyEpochSignature({ ...options, signed: c, signer: { memberKey: member.key } }),
     )
     if (candidate.authentic === undefined) {
       return { reason: 'invalid member signature' }
@@ -543,13 +544,13 @@ export async function foldEpochDetailed(
     }
 
     const outcome = await evaluate({
-      candidate: candidate,
-      causal: causal,
-      anchor: anchor,
-      roots: roots,
-      matches: matches,
-      budget: budget,
-      options: params,
+      ...params,
+      candidate,
+      causal,
+      anchor,
+      roots,
+      matches,
+      budget,
     })
     if (exhausted(budget)) {
       return { ok: false, reason: TOO_MANY_FAILED_SIGNATURES }

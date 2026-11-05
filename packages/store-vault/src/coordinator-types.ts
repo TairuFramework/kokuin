@@ -147,9 +147,9 @@ export type VaultCoordinator = {
   openKey(params: OpenKeyParams): Promise<OpenedKey>
   unlock(params: OpenKeyParams): Promise<void>
   lock(address: KeyAddress & CoordinatorCall): Promise<void>
-  lockAll(ownerDID: string, call?: CoordinatorCall): Promise<void>
+  lockAll(params: VaultCoordinatorLockAllParams): Promise<void>
   status(params: OpenKeyParams): Promise<KeyStatus>
-  listKeys(ownerDID: string, call?: CoordinatorCall): Promise<Array<KeyRow>>
+  listKeys(params: VaultCoordinatorListKeysParams): Promise<Array<KeyRow>>
   setKeyState(
     params: KeyAddress & CoordinatorCall & Pick<KeyRow, 'state'> & { consumer?: unknown },
   ): Promise<void>
@@ -179,3 +179,7 @@ export type VaultCoordinator = {
     params: KeyAddress & CoordinatorCall & { records: ReadonlyArray<SignedRecord> },
   ): Promise<void>
 }
+
+export type VaultCoordinatorLockAllParams = { ownerDID: string } & CoordinatorCall
+
+export type VaultCoordinatorListKeysParams = { ownerDID: string } & CoordinatorCall

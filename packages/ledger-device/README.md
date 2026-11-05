@@ -35,3 +35,10 @@ See [provider adoption](../../docs/reference/crypto-provider.md) for selection, 
 | `new LedgerDisconnectedError` | `LedgerDisconnectedErrorParams` | `cause?` |
 
 These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.
+
+Additional APIs use the same flat params convention.
+
+| Export | Named params type | Previous positional form |
+| --- | --- | --- |
+| `encodeSignMessageChunks` | `EncodeSignMessageChunksParams` | `encodeSignMessageChunks(pathBytes: Uint8Array, message: Uint8Array)` |
+| `createLedgerIdentityProvider` | `CreateLedgerIdentityProviderParams` | `createLedgerIdentityProvider(params: CreateLedgerIdentityProviderParams)` |

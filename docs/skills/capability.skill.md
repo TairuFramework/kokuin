@@ -68,7 +68,7 @@ const delegatedCap = await createCapability({
     res: 'docs/report', // narrowed from 'docs/*'
     exp: Math.floor(Date.now() / 1000) + 1800,
   },
-  options: { parentCapability: rootCapStr } satisfies CreateCapabilityOptions,
+  ...{ parentCapability: rootCapStr } satisfies CreateCapabilityOptions,
 })
 
 const delegatedCapStr = stringifyToken(delegatedCap)
@@ -93,20 +93,20 @@ const requested: Permission = { act: 'read', res: 'docs/report' }
 
 // `consumerPayload` is the SignedPayload from the consumer's token;
 // it must include `cap` pointing to the delegation chain.
-await checkCapability(requested, consumerPayload)
+await checkCapability({ permission: requested, payload: consumerPayload })
 // Resolves → permission granted
 // Throws   → denied (expired, chain broken, permission exceeded, etc.)
 
 // Lower-level: validate a chain array directly
-await checkDelegationChain(consumerPayload, [delegatedCapStr, rootCapStr], {
+await checkDelegationChain({ payload: consumerPayload, capabilities: [delegatedCapStr, rootCapStr], ...({
   maxDepth: 5,
-} satisfies DelegationChainOptions)
+} satisfies DelegationChainOptions) })
 ```
 
 **Key points**:
 - `checkCapability` handles both self-issued tokens (no chain) and delegated tokens (reads `payload.cap`)
 - `checkDelegationChain` takes the `capabilities` array explicitly — head is the immediate parent, tail leads toward the root
-- `DEFAULT_MAX_DELEGATION_DEPTH` is 4; override via `options.maxDepth`
+- `DEFAULT_MAX_DELEGATION_DEPTH` is 4; override via `maxDepth`
 - `assertNonExpired` and `assertValidIssuedAt` are called automatically on every link
 
 ### Pattern 3b: Grants Issued by a Management Member
@@ -120,11 +120,11 @@ const now = Math.floor(Date.now() / 1000)
 const grant = await createCapability({
   signer: memberIdentity, // a did:key, or the LONG form of a did:peer:4
   payload: { sub: profileDID, aud: agentDID, act: 'read', res: 'docs/*', iat: now, exp: now + 3600 },
-  options: { member: { add: memberAddDigest, g: head.gen } },
+  member: { add: memberAddDigest, g: head.gen },
 })
 
 // Verifier: one frozen view of the controller resolver per verification.
-await checkCapability(requested, invocationPayload, { methods: [controllerResolver.frozen()] })
+await checkCapability({ permission: requested, payload: invocationPayload, methods: [controllerResolver.frozen()] })
 ```
 
 **Key points**:
@@ -133,7 +133,7 @@ await checkCapability(requested, invocationPayload, { methods: [controllerResolv
 - **Bounded at mint**: a grant past the issuer's lease, or longer than `maxMemberGrantLifetime` (default `DEFAULT_MEMBER_GRANT_LIFETIME`, 43200 s = 12 h, set per verification in `DelegationChainOptions`), is refused, not trimmed. The lifetime bounds how late an offline verifier learns an edge holder was revoked; the lease bounds a stolen member that verifier never sees removed
 - A reset kills every member grant of the old generation, carried members' included: `g` must equal the log's current generation
 - **Pass `resolver.frozen()`, fresh per verification**, never the live resolver: membership, lease and every audience denial must come from one state of the log. One frozen view folds the log once for the whole chain
-- **Direct path**: `checkCapability(permission, grantPayload)` with a member grant as the payload trusts the caller to have verified its signature, exactly like the `iss === sub` arm. Inside a `cap` chain the walk verifies each link before asking about membership
+- **Direct path**: `checkCapability({ permission, payload: grantPayload })` with a member grant as the payload trusts the caller to have verified its signature, exactly like the `iss === sub` arm. Inside a `cap` chain the walk verifies each link before asking about membership
 - A member grant is a chain root with the profile's own power over resources, and no management power: membership comes only from a root add in the log
 
 ### Pattern 4: Revocation
@@ -171,11 +171,11 @@ const resolution = {
 const backend: RevocationBackend = createMemoryRevocationBackend(resolution)
 
 // Wrap it as a VerifyTokenHook — same options, the checker re-verifies independently on use
-const revocationHook: VerifyTokenHook = createRevocationChecker(backend, resolution)
+const revocationHook: VerifyTokenHook = createRevocationChecker({ backend, ...resolution })
 
 // To revoke a token by its jti:
 // `jtiToRevoke` is the `jti` claim of the token being revoked (from its payload)
-const record: RevocationRecord = await createRevocationRecord(revokerIdentity, jtiToRevoke)
+const record: RevocationRecord = await createRevocationRecord({ signer: revokerIdentity, jti: jtiToRevoke })
 await backend.add(record)
 
 // Check with revocation enabled — any revoked capability in the chain causes rejection.
@@ -183,19 +183,16 @@ await backend.add(record)
 // itself, and does so *before* the hook runs. Passing only `verifyToken` would throw on the
 // first `did:kokuin:` link and never reach the revocation check at all.
 const requested: Permission = { act: 'read', res: 'docs/report' }
-await checkCapability(requested, consumerPayload, {
-  ...resolution,
-  verifyToken: revocationHook,
-})
+await checkCapability({ permission: requested, payload: consumerPayload, ...resolution, verifyToken: revocationHook })
 ```
 
 **Key points**:
-- `createRevocationRecord(signer, jti)` is `async` and returns `Promise<RevocationRecord>` — always `await` it before calling `backend.add`
-- `VerifyTokenHook` signature: `(token: CapabilityToken, raw: string) => void | Promise<void>` — throw to reject
-- `createMemoryRevocationBackend` is backed by an in-memory `Map` keyed by `(issuer, jti)`; for persistence, implement `RevocationBackend` (`add` + `get(jti, issuer)`). The checker passes the token's normalized issuer, and a backend **must** scope records by it — keyed by `jti` alone, anyone can sign a record for a revoked `jti` that displaces the issuer's and undoes the revocation
-- Revocation plugs in via `DelegationChainOptions.verifyToken` and applies to every capability in the `cap` chain — but **not** to the invocation payload you pass as `checkCapability`'s second argument. A self-issued token with an empty chain is never passed to the hook, so its own `jti` is never revocation-checked; revoke the capability it rests on, or check the leaf yourself
+- `createRevocationRecord({ signer, jti })` is `async` and returns `Promise<RevocationRecord>` — always `await` it before calling `backend.add`
+- `VerifyTokenHook` signature: `({ token, raw }: VerifyTokenHookParams) => void | Promise<void>` — throw to reject
+- `createMemoryRevocationBackend` is backed by an in-memory `Map` keyed by `(issuer, jti)`; for persistence, implement `RevocationBackend` (`add` + `get({ jti, issuer })`). The checker passes the token's normalized issuer, and a backend **must** scope records by it — keyed by `jti` alone, anyone can sign a record for a revoked `jti` that displaces the issuer's and undoes the revocation
+- Revocation plugs in via `DelegationChainOptions.verifyToken` and applies to every capability in the `cap` chain — but **not** to the invocation payload you pass as the `payload` field passed to `checkCapability`. A self-issued token with an empty chain is never passed to the hook, so its own `jti` is never revocation-checked; revoke the capability it rests on, or check the leaf yourself
 - `DelegationChainOptions` carries `methods` / `resolver` / `cache` too, and uses them to verify each link before the hook runs. Pass them there as well as to the checker — omitting them fails the chain before revocation is ever consulted
-- Both `createMemoryRevocationBackend` and `createRevocationChecker` take an optional `RevocationOptions` (`{ methods?, resolver?, cache? }`) — the same three resolution inputs `DelegationChainOptions` carries. Each verifies independently, so pass the same options to both
+- `createMemoryRevocationBackend` accepts `RevocationOptions`. `createRevocationChecker` takes `{ backend, ...RevocationOptions }` (`{ methods?, resolver?, cache? }`) — the same three resolution inputs `DelegationChainOptions` carries. Each verifies independently, so pass the same options to both
 - **The checker fails closed on an unresolvable issuer.** When the record's `iss` matches the token's but cannot be resolved to a key, it throws `UnresolvableIssuerError` (re-exported from `@kokuin/capability`, with an `isUnresolvableIssuerError()` guard) rather than treating the token as un-revoked — "I could not check" is not evidence of non-revocation. A record with an invalid signature, or one naming a _different_ issuer, is still ignored: neither could revoke this token anyway
 - "Unresolvable" includes a resolver that throws, one that returns nothing, and one whose answer is unusable — an oversized document, or a document that does not hash to the DID requested. A broken or lying resolver must not be able to suppress a revocation by reading as "not revoked"
 - Because of that, omitting a resolution input turns every affected capability with a stored revocation record into a hard verification failure — it does not silently pass
@@ -219,8 +216,8 @@ const db = new HozonDB({ adapter })
 db.register(delegationStoreDefinition)
 const store = await getDelegationStore(db)
 
-const verifyToken = createDelegationRevocationChecker(store, { methods })
-await checkCapability(permission, payload, { methods, verifyToken }) // throws VerifiedRevocationError if revoked
+const verifyToken = createDelegationRevocationChecker({ api: store, methods })
+await checkCapability({ permission, payload, methods, verifyToken }) // throws VerifiedRevocationError if revoked
 ```
 
 **Key points**:
@@ -248,7 +245,7 @@ await checkCapability(permission, payload, { methods, verifyToken }) // throws V
 
 **Use `@kokuin/store-delegation`** when:
 - Delegation tokens and revocations must persist (SQLite or Postgres via Hozon)
-- You want `createDelegationRevocationChecker(store, { methods })` as the `verifyToken` hook
+- You want `createDelegationRevocationChecker(params: CreateDelegationRevocationCheckerParams)` as the `verifyToken` hook
 
 **Use `createRevocationChecker`** when:
 - Long-lived capabilities need early invalidation without key rotation

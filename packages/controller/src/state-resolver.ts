@@ -1,3 +1,9 @@
+import type {
+  DIDMethodResolverResolveHistoricParams,
+  DIDMethodResolverResolveMemberHistoricParams,
+  DIDMethodResolverResolveMemberParams,
+  DIDMethodResolverResolveParams,
+} from '@kokuin/token'
 import {
   type DIDMethodResolver,
   IssuerKeyNotFoundError,
@@ -326,16 +332,19 @@ export function resolverOver(load: (did: string) => Promise<FoldedView>): DIDMet
     method: DID_METHOD,
     // The head's key set only: a profile that rotated away from a key answers "no" for it here, which
     // is what makes `rotate` retire a leaked authority key rather than add one beside it.
-    async resolve(did: string, header: ResolveIssuerHeader = {}): Promise<ResolvedSigningKey> {
+    async resolve({
+      did,
+      header = {},
+    }: DIDMethodResolverResolveParams): Promise<ResolvedSigningKey> {
       return signingKeyFrom({ did, view: await live(did), header })
     },
     // Every key set within the current generation, for a caller verifying past-issued material. A
     // `rotate` must not invalidate those; a `reset` still does, and the scan stops at the generation
     // boundary. See {@link signingKeyFrom}.
-    async resolveHistoric(
-      did: string,
-      header: ResolveIssuerHeader = {},
-    ): Promise<ResolvedSigningKey> {
+    async resolveHistoric({
+      did,
+      header = {},
+    }: DIDMethodResolverResolveHistoricParams): Promise<ResolvedSigningKey> {
       return signingKeyFrom({ did, view: await live(did), header, historic: true })
     },
     async resolveDenySet(did: string): Promise<ReadonlySet<string>> {
@@ -359,10 +368,13 @@ export function resolverOver(load: (did: string) => Promise<FoldedView>): DIDMet
       // seed, never by resolution.
       return agreementKeysFrom(did, (await live(did)).head)
     },
-    async resolveMemberHistoric(subject: string, member: MemberQuery) {
+    async resolveMemberHistoric({ subject, member }: DIDMethodResolverResolveMemberHistoricParams) {
       return historicMemberFrom(subject, await live(subject), member)
     },
-    async resolveMember(subject: string, member: MemberQuery): Promise<ResolvedMember> {
+    async resolveMember({
+      subject,
+      member,
+    }: DIDMethodResolverResolveMemberParams): Promise<ResolvedMember> {
       return memberFrom(subject, (await live(subject)).head, member)
     },
   }

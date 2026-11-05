@@ -19,7 +19,7 @@ function fromWire(json: string): unknown {
 }
 
 async function build() {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
   const rot = await createRotate({
     seed,
@@ -52,7 +52,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     let thrown: unknown
     let returned: unknown
     try {
-      returned = await foldLog(did, { chain: [hostile], events: [] })
+      returned = await foldLog({ did, input: { chain: [hostile], events: [] } })
     } catch (error) {
       thrown = error
     }
@@ -70,7 +70,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     let thrown: unknown
     let returned: unknown
     try {
-      returned = await foldLog(did, { chain: [tame], events: [] })
+      returned = await foldLog({ did, input: { chain: [tame], events: [] } })
     } catch (error) {
       thrown = error
     }
@@ -80,7 +80,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
 
   test('ROW 3 (closed): the same trick past the inception — answered at any log position', async () => {
     const { icp, did, honest } = await build()
-    const good = await foldLog(did, { chain: [icp], events: [] })
+    const good = await foldLog({ did, input: { chain: [icp], events: [] } })
     if (!good.ok) throw new Error('fixture')
     const head = good.states[0]
     if (head === undefined) throw new Error('fixture')
@@ -94,7 +94,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     let thrown: unknown
     let hostileResult: unknown
     try {
-      hostileResult = await foldLog(did, { chain: [icp, wire], events: [] })
+      hostileResult = await foldLog({ did, input: { chain: [icp, wire], events: [] } })
     } catch (error) {
       thrown = error
     }
@@ -105,7 +105,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     // reason, so the rejection above is the non-finite member and not the junk signature bytes or
     // the type: the chain carries no `rev`, so the tame body reaches the unknown-type path.
     const tame = fromWire(raw.replace('JUNK', '1')) as SignedEvent
-    const control = await foldLog(did, { chain: [icp, tame], events: [] })
+    const control = await foldLog({ did, input: { chain: [icp, tame], events: [] } })
     expect(control).toEqual({ ok: false, reason: 'unknown critical event type: rev', index: 1 })
     expect(honest.length).toBe(2)
   })
@@ -116,12 +116,12 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
       '{"event":{"v":1,"t":"icp","g":0,"s":0,"crit":true,"k":["zAbc"],"ka":["zAbc"],"n":["zAbc"],"kt":1,"nt":1,"r":"zAbc","junk":1e400},"sigs":[]}',
     ) as SignedEvent
 
-    const aloneOk = await resolveBranches(did, [honest])
+    const aloneOk = await resolveBranches({ did, chains: [honest] })
 
     let thrown: unknown
     let together: unknown
     try {
-      together = await resolveBranches(did, [honest, [hostile]])
+      together = await resolveBranches({ did, chains: [honest, [hostile]] })
     } catch (error) {
       thrown = error
     }
@@ -137,7 +137,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     let thrown: unknown
     let answered: unknown
     try {
-      answered = await verifySignatures({ event: event, sigs: ['AAAA'], keys: ['zAbc'] })
+      answered = await verifySignatures({ event, sigs: ['AAAA'], keys: ['zAbc'] })
     } catch (error) {
       thrown = error
     }
@@ -163,7 +163,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
       ['-1e400', body('-1e400')],
       ['NaN', { event: { ...(body('1').event as object), junk: Number.NaN }, sigs: [] }],
     ] as Array<[string, SignedEvent]>) {
-      const result = await foldLog(did, { chain: [event], events: [] })
+      const result = await foldLog({ did, input: { chain: [event], events: [] } })
       expect(result).toEqual({ ok: false, reason: 'malformed event', index: 0 })
     }
 
@@ -171,7 +171,7 @@ describe('ATTACK: a non-finite number reaches `canonicalBytes` and breaks fold t
     // `invalid inception` rejection rather than the malformed-event one — so the guard above
     // discriminates the non-finite values specifically and does not simply refuse every number.
     for (const junk of ['-0', '9007199254740993', '1e21']) {
-      const result = await foldLog(did, { chain: [body(junk)], events: [] })
+      const result = await foldLog({ did, input: { chain: [body(junk)], events: [] } })
       expect(result).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
     }
   })

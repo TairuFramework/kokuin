@@ -1,3 +1,4 @@
+import type { DIDMethodResolverResolveParams } from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
@@ -14,7 +15,7 @@ const publicKey = new Uint8Array(32).fill(7)
 
 const kokuinResolver: DIDMethodResolver = {
   method: 'kokuin',
-  resolve: async (did) => {
+  resolve: async ({ did }: DIDMethodResolverResolveParams) => {
     if (did !== 'did:kokuin:zABC') {
       throw new Error(`Unknown DID: ${did}`)
     }
@@ -24,19 +25,23 @@ const kokuinResolver: DIDMethodResolver = {
 
 describe('findMethodResolver()', () => {
   test('matches on the method segment', () => {
-    expect(findMethodResolver([kokuinResolver], 'did:kokuin:zABC')).toBe(kokuinResolver)
+    expect(findMethodResolver({ registry: [kokuinResolver], did: 'did:kokuin:zABC' })).toBe(
+      kokuinResolver,
+    )
   })
 
   test('returns undefined for an unregistered method', () => {
-    expect(findMethodResolver([kokuinResolver], 'did:example:1')).toBeUndefined()
+    expect(findMethodResolver({ registry: [kokuinResolver], did: 'did:example:1' })).toBeUndefined()
   })
 
   test('returns undefined for a malformed DID rather than throwing', () => {
-    expect(findMethodResolver([kokuinResolver], 'not-a-did')).toBeUndefined()
+    expect(findMethodResolver({ registry: [kokuinResolver], did: 'not-a-did' })).toBeUndefined()
   })
 
   test('does not match a method that is only a prefix of the registered one', () => {
-    expect(findMethodResolver([kokuinResolver], 'did:kokuinx:zABC')).toBeUndefined()
+    expect(
+      findMethodResolver({ registry: [kokuinResolver], did: 'did:kokuinx:zABC' }),
+    ).toBeUndefined()
   })
 })
 

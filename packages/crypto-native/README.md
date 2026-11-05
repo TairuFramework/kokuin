@@ -22,7 +22,7 @@ import { createNativeCrypto } from '@kokuin/crypto-native'
 const crypto = createNativeCrypto()
 
 export async function signMessage(seed: Uint8Array, message: Uint8Array) {
-  return crypto.sign('EdDSA', seed, message)
+  return crypto.sign({ alg: 'EdDSA', privateKey: seed, message })
 }
 ```
 
@@ -63,6 +63,14 @@ See [provider adoption](../../docs/reference/crypto-provider.md) for immutable o
 ## Named params migration
 
 `CryptoProvider.verify` now accepts one `VerifyItem`: `{ alg, signature, message, publicKey }`.
-`sign` keeps its three positional arguments. Batch methods retain their existing signatures.
+`sign`, `signBatch`, `blake3` and `blake3Batch` take flat params objects.
+`verifyBatch` retains its single array argument.
 
 These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.
+
+| API | Named params type | Previous positional form |
+| --- | --- | --- |
+| `CryptoProvider.sign` | `CryptoProviderSignParams` | `sign(alg, privateKey, message)` |
+| `CryptoProvider.signBatch` | `CryptoProviderSignBatchParams` | `signBatch(alg, items)` |
+| `CryptoProvider.blake3` | `CryptoProviderBlake3Params` | `blake3(input, dkLen)` |
+| `CryptoProvider.blake3Batch` | `CryptoProviderBlake3BatchParams` | `blake3Batch(inputs, dkLen)` |

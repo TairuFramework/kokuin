@@ -13,7 +13,7 @@ import {
 import { concatBytes } from '../src/utils.js'
 
 function multikey(codec: Uint8Array, publicKey: Uint8Array): string {
-  return encodeMultibase(concatBytes(codec, publicKey))
+  return encodeMultibase(concatBytes({ a: codec, b: publicKey }))
 }
 
 const X25519_CODEC = new Uint8Array([0xec, 0x01])
@@ -33,7 +33,9 @@ describe('signingKeysOf', () => {
   const { publicKey } = ed25519.keygen()
 
   test('a did:key carries exactly its key', () => {
-    expect(signingKeysOf(getDID(CODECS.EdDSA, publicKey))).toEqual([{ alg: 'EdDSA', publicKey }])
+    expect(signingKeysOf(getDID({ codec: CODECS.EdDSA, publicKey }))).toEqual([
+      { alg: 'EdDSA', publicKey },
+    ])
   })
 
   test('a short-form did:peer:4 and a did:kokuin carry none', () => {

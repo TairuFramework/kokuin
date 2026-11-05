@@ -53,14 +53,17 @@ describe('ledger implements IdentityProvider and neither storage type', () => {
   test('conforms to IdentityProvider structurally', () => {
     // A compile-time assertion: if the return type ever stops satisfying IdentityProvider,
     // test:types fails. The runtime check below is the belt to that suspenders.
-    const provider: IdentityProvider<FullIdentity> = createLedgerIdentityProvider(
-      createMockTransport(),
-    )
+    const provider: IdentityProvider<FullIdentity> = createLedgerIdentityProvider({
+      transport: createMockTransport(),
+    })
     expect(typeof provider.provideIdentity).toBe('function')
   })
 
   test('exposes no KeyStore or KeyEntry surface — the key never leaves the device', () => {
-    const provider = createLedgerIdentityProvider(createMockTransport()) as Record<string, unknown>
+    const provider = createLedgerIdentityProvider({ transport: createMockTransport() }) as Record<
+      string,
+      unknown
+    >
 
     // This is the contract working, not an omission. There is no key material to get, set,
     // or remove: the private key is generated on-device and never leaves it. Under the old
@@ -74,7 +77,7 @@ describe('ledger implements IdentityProvider and neither storage type', () => {
   })
 
   test('provideIdentity yields a did:key EdDSA FullIdentity', async () => {
-    const provider = createLedgerIdentityProvider(createMockTransport())
+    const provider = createLedgerIdentityProvider({ transport: createMockTransport() })
     const identity = await provider.provideIdentity('0')
     expect(identity.id).toMatch(/^did:key:z/)
     expect(typeof identity.signToken).toBe('function')

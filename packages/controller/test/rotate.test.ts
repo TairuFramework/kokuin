@@ -24,7 +24,7 @@ const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
 const seed = new Uint8Array(32).fill(1)
 
 async function setup() {
-  const inception = await createInception(seed, 0)
+  const inception = await createInception({ seed, profile: 0 })
   const did = didFromInception(inception.event)
   return { inception, did, priorDigest: digestOf(inception.event) }
 }
@@ -154,13 +154,20 @@ describe('createRotate()', () => {
       log.push(rot)
       prior = rot.event
     }
-    const result = await foldLog(did, { chain: log, events: [] })
+    const result = await foldLog({ did, input: { chain: log, events: [] } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.states.map((state) => state.keySeq)).toEqual([0, 1, 2, 3, 4])
     expect(result.states.map((state) => state.seq)).toEqual([0, 1, 2, 3, 4])
-    expect(keyStateAt(result, 4)?.keys).toEqual([
-      encodeKey(deriveKeyPair(seed, authorityPath(0, 0, 4), 'EdDSA').publicKey, 'EdDSA'),
+    expect(keyStateAt({ result, position: 4 })?.keys).toEqual([
+      encodeKey({
+        publicKey: deriveKeyPair({
+          seed,
+          path: authorityPath({ profile: 0, gen: 0, seq: 4 }),
+          alg: 'EdDSA',
+        }).publicKey,
+        alg: 'EdDSA',
+      }),
     ])
   })
 })
@@ -175,7 +182,9 @@ describe('verifyRotate()', () => {
       prior: inception.event,
       snapshot: { members: [], deny: [] },
     })
-    expect(await verifyRotate(signed, { digest: priorDigest, n: inception.event.n })).toBe(true)
+    expect(
+      await verifyRotate({ signed, prior: { digest: priorDigest, n: inception.event.n } }),
+    ).toBe(true)
   })
 
   test('rejects a rotate whose keys were not pre-committed — a stolen device cannot rotate', async () => {
@@ -188,7 +197,9 @@ describe('verifyRotate()', () => {
       prior: inception.event,
       snapshot: { members: [], deny: [] },
     })
-    expect(await verifyRotate(signed, { digest: priorDigest, n: inception.event.n })).toBe(false)
+    expect(
+      await verifyRotate({ signed, prior: { digest: priorDigest, n: inception.event.n } }),
+    ).toBe(false)
   })
 
   test('rejects a rotate that does not chain to the prior digest', async () => {
@@ -201,7 +212,10 @@ describe('verifyRotate()', () => {
       snapshot: { members: [], deny: [] },
     })
     expect(
-      await verifyRotate(signed, { digest: digestOf({ other: true }), n: inception.event.n }),
+      await verifyRotate({
+        signed,
+        prior: { digest: digestOf({ other: true }), n: inception.event.n },
+      }),
     ).toBe(false)
   })
 
@@ -217,12 +231,17 @@ describe('verifyRotate()', () => {
     const injected = { did: 'did:key:zInjected', key: 'zInjected', add: 'zAdd', lease: 1 }
     for (const patch of [{ d: ['did:key:zInjected'] }, { m: [injected] }]) {
       const tampered = { ...signed, event: { ...signed.event, ...patch } }
-      expect(await verifyRotate(tampered, { digest: priorDigest, n: inception.event.n })).toBe(
-        false,
-      )
+      expect(
+        await verifyRotate({
+          signed: tampered,
+          prior: { digest: priorDigest, n: inception.event.n },
+        }),
+      ).toBe(false)
     }
     // Control: the untouched event verifies.
-    expect(await verifyRotate(signed, { digest: priorDigest, n: inception.event.n })).toBe(true)
+    expect(
+      await verifyRotate({ signed, prior: { digest: priorDigest, n: inception.event.n } }),
+    ).toBe(true)
   })
 
   test('rejects a key presented as an authority key when it is X25519-tagged, not EdDSA', async () => {
@@ -239,10 +258,17 @@ describe('verifyRotate()', () => {
       prior: inception.event,
       snapshot: { members: [], deny: [] },
     })
-    const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
-    const event = { ...signed.event, k: [encodeKey(current.publicKey, 'X25519')] }
+    const current = deriveKeyPair({
+      seed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 1 }),
+      alg: 'EdDSA',
+    })
+    const event = {
+      ...signed.event,
+      k: [encodeKey({ publicKey: current.publicKey, alg: 'X25519' })],
+    }
     const sigs = await signEvent(event, [current.privateKey])
-    expect(await verifySignatures({ event: event, sigs: sigs, keys: event.k })).toBe(false)
+    expect(await verifySignatures({ event, sigs, keys: event.k })).toBe(false)
   })
 
   // `k` and `p` stay exactly as createRotate produced them, so the pre-rotation and chaining
@@ -257,12 +283,19 @@ describe('verifyRotate()', () => {
       prior: inception.event,
       snapshot: { members: [], deny: [] },
     })
-    const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
+    const current = deriveKeyPair({
+      seed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 1 }),
+      alg: 'EdDSA',
+    })
     const event = { ...signed.event, ka: [] }
     const sigs = await signEvent(event, [current.privateKey])
-    expect(await verifyRotate({ event, sigs }, { digest: priorDigest, n: inception.event.n })).toBe(
-      false,
-    )
+    expect(
+      await verifyRotate({
+        signed: { event, sigs },
+        prior: { digest: priorDigest, n: inception.event.n },
+      }),
+    ).toBe(false)
   })
 
   test('rejects a rotate whose ka holds a key that is not X25519-tagged', async () => {
@@ -274,12 +307,19 @@ describe('verifyRotate()', () => {
       prior: inception.event,
       snapshot: { members: [], deny: [] },
     })
-    const current = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
+    const current = deriveKeyPair({
+      seed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 1 }),
+      alg: 'EdDSA',
+    })
     const event = { ...signed.event, ka: [at(signed.event.k, 0)] }
     const sigs = await signEvent(event, [current.privateKey])
-    expect(await verifyRotate({ event, sigs }, { digest: priorDigest, n: inception.event.n })).toBe(
-      false,
-    )
+    expect(
+      await verifyRotate({
+        signed: { event, sigs },
+        prior: { digest: priorDigest, n: inception.event.n },
+      }),
+    ).toBe(false)
   })
 })
 
@@ -312,7 +352,7 @@ describe('createRotate() refuses to emit an event the fold would reject', () => 
       prior: inception.event,
       snapshot,
     })
-    expect((await foldLog(did, { chain: [inception, good], events: [] })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: [inception, good], events: [] } })).ok).toBe(true)
   })
 
   test('a seed that is not the log`s root is left alone — the fold is that layer', async () => {
@@ -331,7 +371,7 @@ describe('createRotate() refuses to emit an event the fold would reject', () => 
       snapshot: { members: [], deny: [] },
     })
     expect(forged.event.t).toBe('rot')
-    expect(await foldLog(did, { chain: [inception, forged], events: [] })).toEqual({
+    expect(await foldLog({ did, input: { chain: [inception, forged], events: [] } })).toEqual({
       ok: false,
       reason: 'invalid rotate',
       index: 1,
@@ -354,7 +394,11 @@ describe('a rotate`s thresholds and seal are checked', () => {
       snapshot: { members: [], deny: [] },
     })
     const event = { ...base.event, ...patch } as unknown as RotateEvent
-    const key = deriveKeyPair(seed, authorityPath(0, 0, 1), 'EdDSA')
+    const key = deriveKeyPair({
+      seed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 1 }),
+      alg: 'EdDSA',
+    })
     return {
       signed: { event, sigs: await signEvent(event, [key.privateKey]) },
       prior: { digest: priorDigest, n: inception.event.n },
@@ -379,8 +423,8 @@ describe('a rotate`s thresholds and seal are checked', () => {
   ]) {
     test(`a rotate carrying ${JSON.stringify(patch)} is rejected`, async () => {
       const { signed, prior, did, inception } = await rotateWith(patch)
-      expect(await verifyRotate(signed, prior)).toBe(false)
-      expect(await foldLog(did, { chain: [inception, signed], events: [] })).toEqual({
+      expect(await verifyRotate({ signed, prior })).toBe(false)
+      expect(await foldLog({ did, input: { chain: [inception, signed], events: [] } })).toEqual({
         ok: false,
         reason: 'invalid rotate',
         index: 1,
@@ -393,8 +437,10 @@ describe('a rotate`s thresholds and seal are checked', () => {
     // own output never encodes an absent `a` at all — `canonicalize` drops undefined members — so
     // the digest of a sealless rotate does not depend on the member existing.
     const { signed, prior, did, inception } = await rotateWith({ a: 'zSomeExternalDigest' })
-    expect(await verifyRotate(signed, prior)).toBe(true)
-    expect((await foldLog(did, { chain: [inception, signed], events: [] })).ok).toBe(true)
+    expect(await verifyRotate({ signed, prior })).toBe(true)
+    expect((await foldLog({ did, input: { chain: [inception, signed], events: [] } })).ok).toBe(
+      true,
+    )
 
     const sealed = await createRotate({
       seed,

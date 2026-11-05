@@ -38,7 +38,7 @@ vi.mock('electron-store', () => {
 
 const { ElectronKeyStore } = await import('../src/store.js')
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+function sameBytes({ a, b }: { a: Uint8Array; b: Uint8Array }): boolean {
   return a.length === b.length && a.every((byte, i) => byte === b[i])
 }
 
@@ -51,7 +51,7 @@ describe('ElectronKeyStore conformance', () => {
   let counter = 0
   const cases = mutableKeyStoreConformanceCases({
     createStore: () => new ElectronKeyStore({ name: `conformance-${counter++}` }),
-    isSameKey: sameBytes,
+    isSameKey: ({ a, b }) => sameBytes({ a, b }),
     createKey: () => crypto.getRandomValues(new Uint8Array(32)),
   })
 

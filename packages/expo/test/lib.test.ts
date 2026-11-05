@@ -115,7 +115,7 @@ describe('ExpoKeyEntry', () => {
   test('remove() triggers the delete', () => {
     const store = new ExpoKeyStore()
     store.entry('user').remove()
-    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('user', undefined)
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('user', {})
   })
 
   test('remove() does not produce an unhandled rejection when the delete fails', async () => {
@@ -187,8 +187,8 @@ describe('provider capture', () => {
     const options: { crypto: CryptoProvider } = { crypto }
     const store = new ExpoKeyStore(options)
     options.crypto = { ...nobleCrypto }
-    await store.provideIdentitySync('sync').signToken({ value: 1 })
-    await (await store.provideIdentity('async')).signToken({ value: 2 })
+    await store.provideIdentitySync('sync').signToken({ payload: { value: 1 } })
+    await (await store.provideIdentity('async')).signToken({ payload: { value: 2 } })
     expect(sign).toHaveBeenCalledTimes(2)
     expect(SecureStore.getItem).toHaveBeenLastCalledWith('sync', {})
   })

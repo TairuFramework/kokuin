@@ -65,7 +65,7 @@ export type VaultKeyBranch = {
 
 export type VaultRecords = {
   adapter: RecordStoreAdapter
-  apply(records: ReadonlyArray<SignedRecord>, transportContext?: unknown): Promise<ApplyResult>
+  apply(params: VaultRecordsApplyParams): Promise<ApplyResult>
   write(params: {
     records: ReadonlyArray<SignedRecord>
     preconditions: VaultWritePreconditions
@@ -199,7 +199,7 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
   }
   const api: VaultRecords = {
     adapter,
-    apply: (records, transportContext) => apply(records, adapter, transportContext),
+    apply: ({ records, transportContext }) => apply(records, adapter, transportContext),
     async write(input) {
       const request = {
         ...input,
@@ -224,10 +224,10 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
         const ops = await settleAll(
           request.records.map(async (record) => {
             const op = await verifySignedRecord({
-              record: record,
+              record,
               opKind: params.opKind,
               methods: inner.methods,
-              options: params,
+              crypto: params?.crypto,
             })
 
             if (
@@ -248,7 +248,7 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
           }),
         )
         const [old, observedEntry] = await settleAll([
-          getRecordDecisions(tx, request.records),
+          getRecordDecisions({ store: tx, keys: request.records }),
           expectedEntry === undefined
             ? Promise.resolve(undefined)
             : inner.store.getEntry(expectedEntry),
@@ -268,7 +268,7 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
                   record: copy,
                   opKind: params.opKind,
                   methods: inner.methods,
-                  options: params,
+                  crypto: params?.crypto,
                 })
               }),
             )
@@ -323,7 +323,7 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
         // All three run together. Results are checked in the old order: held copies, entry key,
         // key version and branches, entry HLC.
         const [currentRead, entryRead, keyRead] = await Promise.allSettled([
-          getRecordDecisions(tx, request.records),
+          getRecordDecisions({ store: tx, keys: request.records }),
           expectedEntry === undefined
             ? Promise.resolve(undefined)
             : inner.store.getEntry(expectedEntry),
@@ -337,7 +337,7 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
                 record: copy,
                 opKind: params.opKind,
                 methods: inner.methods,
-                options: params,
+                crypto: params?.crypto,
               })
             })
           }),
@@ -391,7 +391,7 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
             opJWT: row.op_jwt,
             opKind: params.opKind,
             methods: bound.methods,
-            options: params,
+            crypto: params?.crypto,
           })
         }),
       )
@@ -436,10 +436,10 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
       const ops = await settleAll(
         candidates.map((record) => {
           return verifySignedRecord({
-            record: record,
+            record,
             opKind: params.opKind,
             methods: bound.methods,
-            options: params,
+            crypto: params?.crypto,
           })
         }),
       )
@@ -450,7 +450,11 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
 
         if (op === null || op.claim.meta.keyID !== address.keyID) continue
 
-        const decoded = await decodeVaultRecord(record, op.claim.meta, params)
+        const decoded = await decodeVaultRecord({
+          ...params,
+          record,
+          recordMeta: op.claim.meta,
+        })
 
         if (decoded.type !== 'vault.key-branch') continue
 
@@ -504,4 +508,9 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
   }
 
   return api
+}
+
+export type VaultRecordsApplyParams = {
+  records: ReadonlyArray<SignedRecord>
+  transportContext?: unknown
 }

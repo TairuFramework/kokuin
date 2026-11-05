@@ -1,4 +1,5 @@
 import { createTokenEncrypterAsync, decryptToken, encryptToken } from '@kokuin/jwe'
+import type { KeyAgreementIdentityAgreeKeyParams } from '@kokuin/token'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { describe, expect, test } from 'vitest'
 
@@ -12,30 +13,37 @@ const decoder = new TextDecoder()
 describe('encrypting to a did:kokuin: profile', () => {
   test('round-trips through a real folded log', async () => {
     const seed = new Uint8Array(32).fill(3)
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
     const resolver = createControllerResolver({
       loadLog: async () => ({ chain: [inception], events: [] }),
     })
 
-    const encrypter = await createTokenEncrypterAsync(did, { methods: [resolver] })
-    const jwe = await encryptToken(encrypter, encoder.encode('hello'))
+    const encrypter = await createTokenEncrypterAsync({
+      recipient: did,
+      methods: [resolver],
+    })
+    const jwe = await encryptToken({ encrypter, plaintext: encoder.encode('hello') })
 
     // The recipient side: the profile holder derives the same agreement key from the seed.
-    const agreement = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
+    const agreement = deriveKeyPair({
+      seed,
+      path: agreementPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'X25519',
+    })
     const recipient = {
       id: did,
-      agreeKey: async (ephemeralPublicKey: Uint8Array) => {
+      agreeKey: async ({ ephemeralPublicKey }: KeyAgreementIdentityAgreeKeyParams) => {
         return x25519.getSharedSecret(agreement.privateKey, ephemeralPublicKey)
       },
     }
 
-    expect(decoder.decode(await decryptToken(recipient, jwe))).toBe('hello')
+    expect(decoder.decode(await decryptToken({ decrypter: recipient, jwe }))).toBe('hello')
   })
 
   test('a rotation moves the encryption target', async () => {
     const seed = new Uint8Array(32).fill(3)
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
     const rotate = await createRotate({
       seed,
@@ -48,25 +56,41 @@ describe('encrypting to a did:kokuin: profile', () => {
       loadLog: async () => ({ chain: [inception, rotate], events: [] }),
     })
 
-    const encrypter = await createTokenEncrypterAsync(did, { methods: [resolver] })
-    const jwe = await encryptToken(encrypter, encoder.encode('hello, rotated'))
+    const encrypter = await createTokenEncrypterAsync({
+      recipient: did,
+      methods: [resolver],
+    })
+    const jwe = await encryptToken({
+      encrypter,
+      plaintext: encoder.encode('hello, rotated'),
+    })
 
     // The rotated agreement key opens the ciphertext.
-    const rotatedAgreement = deriveKeyPair(seed, agreementPath(0, 0, 1), 'X25519')
+    const rotatedAgreement = deriveKeyPair({
+      seed,
+      path: agreementPath({ profile: 0, gen: 0, seq: 1 }),
+      alg: 'X25519',
+    })
     const rotatedRecipient = {
       id: did,
-      agreeKey: async (ephemeralPublicKey: Uint8Array) => {
+      agreeKey: async ({ ephemeralPublicKey }: KeyAgreementIdentityAgreeKeyParams) => {
         return x25519.getSharedSecret(rotatedAgreement.privateKey, ephemeralPublicKey)
       },
     }
-    expect(decoder.decode(await decryptToken(rotatedRecipient, jwe))).toBe('hello, rotated')
+    expect(decoder.decode(await decryptToken({ decrypter: rotatedRecipient, jwe }))).toBe(
+      'hello, rotated',
+    )
 
     // The inception's superseded agreement key must NOT open it — an implementation that
     // resolved `ka` off the inception rather than the folded state would pass without this.
-    const inceptionAgreement = deriveKeyPair(seed, agreementPath(0, 0, 0), 'X25519')
+    const inceptionAgreement = deriveKeyPair({
+      seed,
+      path: agreementPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'X25519',
+    })
     const inceptionRecipient = {
       id: did,
-      agreeKey: async (ephemeralPublicKey: Uint8Array) => {
+      agreeKey: async ({ ephemeralPublicKey }: KeyAgreementIdentityAgreeKeyParams) => {
         return x25519.getSharedSecret(inceptionAgreement.privateKey, ephemeralPublicKey)
       },
     }
@@ -74,6 +98,8 @@ describe('encrypting to a did:kokuin: profile', () => {
     // ("invalid ghash tag" before 2.3, "aes-gcm: invalid tag" from 2.3) so a patch bump does
     // not read as a security regression, while still failing if the rejection came from
     // anywhere other than authentication.
-    await expect(decryptToken(inceptionRecipient, jwe)).rejects.toThrow(/invalid (ghash )?tag/)
+    await expect(decryptToken({ decrypter: inceptionRecipient, jwe })).rejects.toThrow(
+      /invalid (ghash )?tag/,
+    )
   })
 })

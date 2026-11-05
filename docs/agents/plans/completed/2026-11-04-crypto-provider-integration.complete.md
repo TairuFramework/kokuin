@@ -9,7 +9,7 @@ The standalone providers came from the [standalone delivery](2026-10-27-crypto-c
 
 ## Key design decisions
 
-- One option, `crypto?: CryptoProvider`, defaults to strict `nobleCrypto`. Positional APIs append an options parameter. Parameter objects gain a field. Method-registry positions on record APIs are unchanged.
+- One option, `crypto?: CryptoProvider`, defaults to strict `nobleCrypto`. Public APIs with two or more parameters take one params object, with option fields folded in flat rather than nested. `agreeKey` also takes an object on every identity, so multi-key identities stay substitutable.
 - Provider identity is reference equality after resolving the default. Omission and explicit `nobleCrypto` are the same provider.
 - Provider behaviour is immutable for its lifetime. There is no mutable global selection and no dynamic fallback. Native failures propagate.
 - Custom verifier overrides keep precedence and own their verification policy. Missing algorithm overrides use the selected provider.

@@ -20,12 +20,32 @@ const seedB = new Uint8Array(32).fill(23)
  * hashes to — which is exactly why the published thresholds have to mean something.
  */
 async function twoKeyInception(kt: unknown, nt: unknown, signers: 'both' | 'first') {
-  const a = deriveKeyPair(seedA, authorityPath(0, 0, 0), 'EdDSA')
-  const aNext = deriveKeyPair(seedA, authorityPath(0, 0, 1), 'EdDSA')
-  const b = deriveKeyPair(seedB, authorityPath(0, 0, 0), 'EdDSA')
-  const bNext = deriveKeyPair(seedB, authorityPath(0, 0, 1), 'EdDSA')
-  const agreement = deriveKeyPair(seedA, agreementPath(0, 0, 0), 'X25519')
-  const recovery = deriveKeyPair(seedA, recoveryPath(0), 'EdDSA')
+  const a = deriveKeyPair({
+    seed: seedA,
+    path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+    alg: 'EdDSA',
+  })
+  const aNext = deriveKeyPair({
+    seed: seedA,
+    path: authorityPath({ profile: 0, gen: 0, seq: 1 }),
+    alg: 'EdDSA',
+  })
+  const b = deriveKeyPair({
+    seed: seedB,
+    path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+    alg: 'EdDSA',
+  })
+  const bNext = deriveKeyPair({
+    seed: seedB,
+    path: authorityPath({ profile: 0, gen: 0, seq: 1 }),
+    alg: 'EdDSA',
+  })
+  const agreement = deriveKeyPair({
+    seed: seedA,
+    path: agreementPath({ profile: 0, gen: 0, seq: 0 }),
+    alg: 'X25519',
+  })
+  const recovery = deriveKeyPair({ seed: seedA, path: recoveryPath(0), alg: 'EdDSA' })
 
   const event = {
     v: 1,
@@ -33,15 +53,18 @@ async function twoKeyInception(kt: unknown, nt: unknown, signers: 'both' | 'firs
     g: 0,
     s: 0,
     crit: true,
-    k: [encodeKey(a.publicKey, 'EdDSA'), encodeKey(b.publicKey, 'EdDSA')],
-    ka: [encodeKey(agreement.publicKey, 'X25519')],
+    k: [
+      encodeKey({ publicKey: a.publicKey, alg: 'EdDSA' }),
+      encodeKey({ publicKey: b.publicKey, alg: 'EdDSA' }),
+    ],
+    ka: [encodeKey({ publicKey: agreement.publicKey, alg: 'X25519' })],
     n: [
-      digestOf(encodeKey(aNext.publicKey, 'EdDSA')),
-      digestOf(encodeKey(bNext.publicKey, 'EdDSA')),
+      digestOf(encodeKey({ publicKey: aNext.publicKey, alg: 'EdDSA' })),
+      digestOf(encodeKey({ publicKey: bNext.publicKey, alg: 'EdDSA' })),
     ],
     kt,
     nt,
-    r: digestOf(encodeKey(recovery.publicKey, 'EdDSA')),
+    r: digestOf(encodeKey({ publicKey: recovery.publicKey, alg: 'EdDSA' })),
   } as unknown as InceptionEvent
 
   const keys = signers === 'both' ? [a.privateKey, b.privateKey] : [a.privateKey]
@@ -58,19 +81,19 @@ async function twoKeyInception(kt: unknown, nt: unknown, signers: 'both' | 'firs
 describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', () => {
   test('ROW 1: a 2-key set declaring `kt: 1` still demands BOTH signatures (fail-closed)', async () => {
     const { signed, did } = await twoKeyInception(1, 1, 'first')
-    const r = await foldLog(did, { chain: [signed], events: [] })
+    const r = await foldLog({ did, input: { chain: [signed], events: [] } })
     expect(r.ok).toBe(false)
   })
 
   test('ROW 2 (closed): both signatures are not enough — `kt: 1` over 2 keys is a lie', async () => {
     const { signed, did } = await twoKeyInception(1, 1, 'both')
-    const r = await foldLog(did, { chain: [signed], events: [] })
+    const r = await foldLog({ did, input: { chain: [signed], events: [] } })
     expect(r).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
 
     // ROW 2 control: the identical body with the truthful thresholds, signed the same way. It
     // folds — so what ROW 1 and ROW 2 reject is the declaration, not the two-key shape.
     const truthful = await twoKeyInception(2, 2, 'both')
-    const ok = await foldLog(truthful.did, { chain: [truthful.signed], events: [] })
+    const ok = await foldLog({ did: truthful.did, input: { chain: [truthful.signed], events: [] } })
     expect(ok.ok).toBe(true)
     if (!ok.ok) return
     const state = ok.states[0]
@@ -87,14 +110,14 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
       [null, null],
     ] as Array<[unknown, unknown]>) {
       const { signed, did } = await twoKeyInception(kt, nt, 'both')
-      const r = await foldLog(did, { chain: [signed], events: [] })
+      const r = await foldLog({ did, input: { chain: [signed], events: [] } })
       expect(r).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
     }
     // ROW 3 control: an absent member is refused too — the check is `===` against the set size, so
     // `undefined` is not quietly coerced, and neither is the string `"2"`.
     for (const kt of [undefined, '2'] as Array<unknown>) {
       const { signed, did } = await twoKeyInception(kt, 2, 'both')
-      const r = await foldLog(did, { chain: [signed], events: [] })
+      const r = await foldLog({ did, input: { chain: [signed], events: [] } })
       expect(r.ok).toBe(false)
     }
   })
@@ -107,7 +130,7 @@ describe('ATTACK: are the published `kt` / `nt` thresholds enforced at all?', ()
       ...signed,
       event: { ...signed.event, k: [firstKey] },
     }
-    const r = await foldLog(did, { chain: [tampered], events: [] })
+    const r = await foldLog({ did, input: { chain: [tampered], events: [] } })
     expect(r.ok).toBe(false)
   })
 })

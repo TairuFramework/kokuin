@@ -35,26 +35,26 @@ describe('multihash SHA-256', () => {
   it('verifies a valid multihash against original bytes', () => {
     const bytes = new TextEncoder().encode('hello')
     const mh = multihashSHA256(bytes)
-    expect(verifyMultihash(mh, bytes)).toBe(true)
+    expect(verifyMultihash({ multihash: mh, bytes })).toBe(true)
   })
 
   it('rejects a multihash that does not match the bytes', () => {
     const bytes = new TextEncoder().encode('hello')
     const mh = multihashSHA256(new TextEncoder().encode('world'))
-    expect(verifyMultihash(mh, bytes)).toBe(false)
+    expect(verifyMultihash({ multihash: mh, bytes })).toBe(false)
   })
 
   it('rejects a multihash with wrong function code', () => {
     const bytes = new TextEncoder().encode('hello')
     const mh = multihashSHA256(bytes)
     mh[0] = 0x13
-    expect(verifyMultihash(mh, bytes)).toBe(false)
+    expect(verifyMultihash({ multihash: mh, bytes })).toBe(false)
   })
 
   it('rejects a multihash with wrong length byte', () => {
     const bytes = new TextEncoder().encode('hello')
     const mh = multihashSHA256(bytes)
     mh[1] = 0x10
-    expect(verifyMultihash(mh, bytes)).toBe(false)
+    expect(verifyMultihash({ multihash: mh, bytes })).toBe(false)
   })
 })

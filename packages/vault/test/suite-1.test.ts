@@ -69,7 +69,7 @@ describe('suite 1 wrapping', () => {
     const identity = randomIdentity()
     const { sharedSecret, ephemeralPublicKey } = deriveSharedSecret(identity.id)
 
-    expect(await identity.agreeKey(ephemeralPublicKey)).toEqual(sharedSecret)
+    expect(await identity.agreeKey({ ephemeralPublicKey })).toEqual(sharedSecret)
     expect(sharedSecret).toHaveLength(32)
   })
 

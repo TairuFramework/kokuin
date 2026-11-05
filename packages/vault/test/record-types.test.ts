@@ -77,7 +77,7 @@ describe('vault record registration and authority', () => {
     const owner = randomIdentity()
     const peer = memoryStore()
     const source = await chain(owner)
-    const wrapping = await dependent({ signer: owner, source: source, type: 'vault.wrapping' })
+    const wrapping = await dependent({ signer: owner, source, type: 'vault.wrapping' })
     const op = await verified(wrapping)
     for (const patch of [
       { keyID: 'invalid' },
@@ -109,10 +109,10 @@ describe('vault record registration and authority', () => {
         },
       },
     })
-    expect(await types.get('vault.wrapping')?.precheck?.(op, wrapping)).toBe(true)
+    expect(await types.get('vault.wrapping')?.precheck?.({ op, record: wrapping })).toBe(true)
     const stranger = await dependent({
       signer: randomIdentity(),
-      source: source,
+      source,
       type: 'vault.wrapping',
     })
     expect((await peer.apply([stranger])).parked).toEqual([stranger])
@@ -179,7 +179,7 @@ describe('vault record registration and authority', () => {
     expect(
       reasons(
         await peer.apply([branch], {
-          validateConsumerMetadata: async (value) => (value as { permit: boolean }).permit,
+          validateConsumerMetadata: async ({ value }) => (value as { permit: boolean }).permit,
         }),
       ),
     ).toEqual(['unauthorized'])
@@ -198,16 +198,19 @@ describe('vault record registration and authority', () => {
     })
     expect(reasons(await peer.apply([foreign]))).toEqual(['signature'])
     await peer.apply([source.key])
-    const payload = encodeVaultRecordPayload('vault.key-branch', {
-      authorDID: owner.id,
-      hlc: foreign.hlc,
-      opJWT: foreign.opJWT,
-      opHash: foreign.opHash,
-      suite: 1,
+    const payload = encodeVaultRecordPayload({
+      type: 'vault.key-branch',
+      payload: {
+        authorDID: owner.id,
+        hlc: foreign.hlc,
+        opJWT: foreign.opJWT,
+        opHash: foreign.opHash,
+        suite: 1,
+      },
     })
     const branch = await signed(owner, {
       type: 'vault.key-branch',
-      id: (await recordPayloadDigest(payload)) as string,
+      id: (await recordPayloadDigest({ payload })) as string,
       owner: owner.id,
       hlc: source.branch.hlc,
       payload,
@@ -231,7 +234,7 @@ describe('vault record registration and authority', () => {
       return r.verifySignedRecord({ record: customRecord, opKind: custom })
     })
     if (!op) throw new Error('Custom domain fixture')
-    expect(await types.get('vault.key')?.precheck?.(op, customRecord)).toBe(true)
+    expect(await types.get('vault.key')?.precheck?.({ op, record: customRecord })).toBe(true)
   })
 })
 
@@ -335,7 +338,9 @@ describe('key ordering and authenticated branches', () => {
     const source = await chain(owner)
     const other = await resign({ signer: randomIdentity(), record: source.key })
     const ops = [await verified(source.key), await verified(other)] as const
-    expect(await recordClaimDigest(ops[0].claim)).toBe(await recordClaimDigest(ops[1].claim))
+    expect(await recordClaimDigest({ claim: ops[0].claim })).toBe(
+      await recordClaimDigest({ claim: ops[1].claim }),
+    )
     const expected = [source.key.opHash, other.opHash].sort().at(-1)
     expect(selectWinningBranch(ops).opHash).toBe(expected)
     expect(selectWinningBranch([...ops].reverse()).opHash).toBe(expected)
@@ -348,7 +353,7 @@ describe('key ordering and authenticated branches', () => {
     const source = await chain(owner)
     await peer.apply([source.key])
     const op = await verified(source.branch)
-    const decoded = await decodeVaultRecord(source.branch, op.claim.meta)
+    const decoded = await decodeVaultRecord({ record: source.branch, recordMeta: op.claim.meta })
     if (decoded.type !== 'vault.key-branch') throw new Error('Fixture type')
     const base = decoded.payload
     for (const patch of [
@@ -358,12 +363,15 @@ describe('key ordering and authenticated branches', () => {
       { suite: 2 },
       { opJWT: `${base.opJWT}=` },
     ]) {
-      const payload = encodeVaultRecordPayload('vault.key-branch', { ...base, ...patch })
+      const payload = encodeVaultRecordPayload({
+        type: 'vault.key-branch',
+        payload: { ...base, ...patch },
+      })
       const broken = await resign({
         signer: owner,
         record: source.branch,
         changes: {
-          id: (await recordPayloadDigest(payload)) as string,
+          id: (await recordPayloadDigest({ payload })) as string,
           payload,
         },
       })
@@ -411,27 +419,27 @@ describe('dependent records', () => {
       const exact = await chain(owner)
       const other = await chain(owner, { counter: 11 })
       await peer.apply([other.key, other.branch])
-      const record = await dependent({ signer: owner, source: exact, type: type })
+      const record = await dependent({ signer: owner, source: exact, type })
       expect((await peer.apply([record])).parked).toEqual([record])
       expect((await peer.apply([record, exact.branch])).applied).toBe(2)
       const op = await verified(record)
       const wrongVersion = await resign({
         signer: owner,
-        record: record,
+        record,
         changes: {
           meta: { ...op.claim.meta, keyVersion: 2 },
         },
       })
       const foreign = await resign({
         signer: owner,
-        record: record,
+        record,
         changes: { owner: randomIdentity().id },
       })
       for (const missing of [wrongVersion, foreign])
         expect((await peer.apply([missing])).parked).toEqual([missing])
       const empty = await resign({
         signer: owner,
-        record: record,
+        record,
         changes: { meta: { ...op.claim.meta, branchID: '' } },
       })
       expect(reasons(await peer.apply([empty]))).toEqual(['unauthorized'])
@@ -510,7 +518,7 @@ describe('dependent records', () => {
     const owner = randomIdentity()
     const peer = memoryStore()
     const source = await chain(owner)
-    const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
+    const entry = await dependent({ signer: owner, source, type: 'vault.entry' })
     const op = await verified(entry)
     for (const contentHLC of [stamp(200), 'not-a-clock', stamp(90).replace('00000090', '90')]) {
       const broken = await resign({
@@ -552,10 +560,10 @@ describe('dependent records', () => {
     const peer = memoryStore()
     const source = await chain(owner)
     await peer.apply([source.key, source.branch])
-    const first = await dependent({ signer: owner, source: source, type: 'vault.wrapping' })
+    const first = await dependent({ signer: owner, source, type: 'vault.wrapping' })
     const next = await dependent({
       signer: owner,
-      source: source,
+      source,
       type: 'vault.wrapping',
       options: { counter: 120 },
     })
@@ -563,24 +571,24 @@ describe('dependent records', () => {
     expect((await peer.store.get(first))?.copies[0]?.opHash).toBe(next.opHash)
     const winner = await dependent({
       signer: owner,
-      source: source,
+      source,
       type: 'vault.entry',
       options: { contentCounter: 95 },
     })
     const loser = await dependent({
       signer: owner,
-      source: source,
+      source,
       type: 'vault.entry',
       options: { contentCounter: 90 },
     })
     const refused = await dependent({
       signer: randomIdentity(),
-      source: source,
+      source,
       type: 'vault.entry',
       options: { contentCounter: 99 },
     })
     await peer.apply([winner, loser, refused], {
-      authority: { authorize: async (r) => r.issuer === owner.id },
+      authority: { authorize: async ({ op: r }) => r.issuer === owner.id },
     })
     expect((await peer.store.get(winner))?.copies[0]?.opHash).toBe(winner.opHash)
     expect(peer.candidates().map((r) => r.opHash)).toEqual([winner.opHash, loser.opHash])
@@ -597,7 +605,7 @@ describe('dependent records', () => {
     await peer.apply([source.key, source.branch])
     const entry = await dependent({
       signer: writer,
-      source: source,
+      source,
       type: 'vault.entry',
       options: {
         id: 'consumer:reserved:entry',
@@ -628,7 +636,7 @@ describe('revocation, visibility and key locks', () => {
       await peer.apply([source.key, source.branch])
       const wrapping = await dependent({
         signer: owner,
-        source: source,
+        source,
         type: 'vault.wrapping',
         options: {
           recipient: field === 'recipient' ? recipient.id : null,
@@ -638,10 +646,10 @@ describe('revocation, visibility and key locks', () => {
       await peer.apply([wrapping])
       const revoke = await signed(owner, {
         type: 'vault.revocation',
-        id: vaultRevocationRecordID(source.keyID, recipient.id),
+        id: vaultRevocationRecordID({ keyID: source.keyID, recipientDID: recipient.id }),
         owner: owner.id,
         hlc: stamp(200),
-        payload: encodeVaultRecordPayload('vault.revocation', {}),
+        payload: encodeVaultRecordPayload({ type: 'vault.revocation', payload: {} }),
         meta: { keyID: source.keyID, revokedDID: recipient.id, consumer: {} },
       })
       expect((await peer.apply([revoke])).applied).toBe(1)
@@ -664,7 +672,10 @@ describe('revocation, visibility and key locks', () => {
       // Visibility uses a transaction-bound port too.
       await peer.store.transaction(async (tx) => {
         expect(
-          await definition('vault.wrapping', peer).visibleTo?.(wrapping, { ...context, store: tx }),
+          await definition('vault.wrapping', peer).visibleTo?.({
+            record: wrapping,
+            ctx: { ...context, store: tx },
+          }),
         ).toBe(false)
       })
     },
@@ -674,19 +685,21 @@ describe('revocation, visibility and key locks', () => {
     const owner = randomIdentity()
     const source = await chain(owner)
     const peer = memoryStore()
-    const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
-    const wrapping = await dependent({ signer: owner, source: source, type: 'vault.wrapping' })
+    const entry = await dependent({ signer: owner, source, type: 'vault.entry' })
+    const wrapping = await dependent({ signer: owner, source, type: 'vault.wrapping' })
     const revoke = await signed(owner, {
       type: 'vault.revocation',
-      id: vaultRevocationRecordID(source.keyID, owner.id),
+      id: vaultRevocationRecordID({ keyID: source.keyID, recipientDID: owner.id }),
       owner: owner.id,
       hlc: stamp(200),
-      payload: encodeVaultRecordPayload('vault.revocation', {}),
+      payload: encodeVaultRecordPayload({ type: 'vault.revocation', payload: {} }),
       meta: { keyID: source.keyID, revokedDID: owner.id, consumer: {} },
     })
     const want = [{ type: 'vault.key', key: JSON.stringify([owner.id, source.keyID]) }]
     for (const record of [source.key, source.branch, entry, wrapping, revoke])
-      expect(await definition(record.type, peer).lockKeys?.(record, null)).toEqual(want)
+      expect(
+        await definition(record.type, peer).lockKeys?.({ incoming: record, stored: null }),
+      ).toEqual(want)
     const another = await chain(owner, { version: 2 })
     const secondID = (await chain(randomIdentity())).keyID
     const op = await verified(entry)
@@ -697,12 +710,14 @@ describe('revocation, visibility and key locks', () => {
     })
     await peer.apply([source.key, source.branch, entry])
     const previous = await peer.store.get(entry)
-    expect(await definition('vault.entry', peer).lockKeys?.(moved, previous)).toEqual([
-      { type: 'vault.key', key: JSON.stringify([owner.id, secondID]) },
-      ...want,
-    ])
     expect(
-      await definition('vault.key', peer).lockKeys?.({ ...another.key, opHash: 'forged' }, null),
+      await definition('vault.entry', peer).lockKeys?.({ incoming: moved, stored: previous }),
+    ).toEqual([{ type: 'vault.key', key: JSON.stringify([owner.id, secondID]) }, ...want])
+    expect(
+      await definition('vault.key', peer).lockKeys?.({
+        incoming: { ...another.key, opHash: 'forged' },
+        stored: null,
+      }),
     ).toEqual([])
   })
 
@@ -725,9 +740,10 @@ describe('revocation, visibility and key locks', () => {
       },
     })
     expect(
-      await types
-        .get('vault.key')
-        ?.visibleTo?.(source.key, { ...visibility(peer.store), transportContext: context }),
+      await types.get('vault.key')?.visibleTo?.({
+        record: source.key,
+        ctx: { ...visibility(peer.store), transportContext: context },
+      }),
     ).toBe(false)
   })
 })
@@ -761,12 +777,15 @@ test('a mismatched apply engine cannot cross the definition replay domain or byp
   const op = await verifySignedRecord({ record: foreign, opKind: foreignKind })
   if (op === null) throw new Error('Foreign domain fixture')
   expect(
-    await types.get('vault.key')?.authorize(op, {
-      record: foreign,
-      stored: null,
-      store: peer.store,
-      resolveController: async () => null,
-      verifyCapability: async () => false,
+    await types.get('vault.key')?.authorize({
+      op,
+      ctx: {
+        record: foreign,
+        stored: null,
+        store: peer.store,
+        resolveController: async () => null,
+        verifyCapability: async () => false,
+      },
     }),
   ).toBe(false)
   const result = await applyRecordChunk({
@@ -784,12 +803,15 @@ test('a mismatched apply engine cannot cross the definition replay domain or byp
   expect(await peer.store.get(foreign)).toBeNull()
   const matching = vaultRecordTypes({ ...peer.hooks, opKind: foreignKind })
   expect(
-    await matching.get('vault.key')?.authorize(op, {
-      record: foreign,
-      stored: null,
-      store: peer.store,
-      resolveController: async () => null,
-      verifyCapability: async () => false,
+    await matching.get('vault.key')?.authorize({
+      op,
+      ctx: {
+        record: foreign,
+        stored: null,
+        store: peer.store,
+        resolveController: async () => null,
+        verifyCapability: async () => false,
+      },
     }),
   ).toBe(true)
 })
@@ -799,8 +821,8 @@ test('a throwing effect rolls back selected records, retained candidates and ear
   const source = await chain(owner)
   const peer = memoryStore()
   await peer.apply([source.key, source.branch])
-  const wrapping = await dependent({ signer: owner, source: source, type: 'vault.wrapping' })
-  const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
+  const wrapping = await dependent({ signer: owner, source, type: 'vault.wrapping' })
+  const entry = await dependent({ signer: owner, source, type: 'vault.entry' })
   const failure = new Error('Candidate storage unavailable')
   await expect(
     peer.apply([wrapping, entry], {
@@ -879,10 +901,10 @@ test('requester-owned wrapping proofs earn key and entry visibility without rece
   const receiver = randomIdentity()
   const peer = memoryStore()
   const source = await chain(owner)
-  const entry = await dependent({ signer: owner, source: source, type: 'vault.entry' })
+  const entry = await dependent({ signer: owner, source, type: 'vault.entry' })
   const proof = await dependent({
     signer: owner,
-    source: source,
+    source,
     type: 'vault.wrapping',
     options: {
       recipient: holder.id,
@@ -905,7 +927,11 @@ test('requester-owned wrapping proofs earn key and entry visibility without rece
           if (request.verb === 'administer') return request.issuer === request.owner
           if (request.op.claim.type === 'vault.wrapping')
             return request.op.claim.meta.recipient === receiver.id
-          return await visibleTo(request.record, ['keyHolder'], disclosureContext)
+          return await visibleTo({
+            record: request.record,
+            rules: ['keyHolder'],
+            ctx: disclosureContext,
+          })
         },
       },
     }
@@ -919,18 +945,25 @@ test('requester-owned wrapping proofs earn key and entry visibility without rece
       requester: { peerDID: holder.id, controllerDID: null },
       proofs: [proof],
       holderTypes: vaultHolderTypes(types),
-      currentKeyVersion: vaultKeyVersionReader(store, params),
-      authorizeProof: vaultProofAuthorizer(params, store, transportContext),
+      currentKeyVersion: vaultKeyVersionReader({ store, ...params }),
+      authorizeProof: vaultProofAuthorizer({
+        ...params,
+        store,
+        transportContext,
+      }),
     }
     disclosureContext = ctx
     expect(
-      await wrapping.authorize(await verified(proof), {
-        record: proof,
-        stored: null,
-        store,
-        transportContext,
-        resolveController: async () => null,
-        verifyCapability: async () => false,
+      await wrapping.authorize({
+        op: await verified(proof),
+        ctx: {
+          record: proof,
+          stored: null,
+          store,
+          transportContext,
+          resolveController: async () => null,
+          verifyCapability: async () => false,
+        },
       }),
     ).toBe(false)
     const foreignProof = await dependent({
@@ -951,21 +984,32 @@ test('requester-owned wrapping proofs earn key and entry visibility without rece
     for (const invalid of [nonWrapping]) {
       const rejected = { ...ctx, proofs: [invalid] }
       disclosureContext = rejected
-      expect(await verifyHolderProof(invalid, rejected)).toBe(false)
-      expect(await types.get('vault.key')?.visibleTo?.(source.key, rejected)).toBe(false)
-      expect(await types.get('vault.entry')?.visibleTo?.(entry, rejected)).toBe(false)
+      expect(await verifyHolderProof({ proof: invalid, ctx: rejected })).toBe(false)
+      expect(await types.get('vault.key')?.visibleTo?.({ record: source.key, ctx: rejected })).toBe(
+        false,
+      )
+      expect(await types.get('vault.entry')?.visibleTo?.({ record: entry, ctx: rejected })).toBe(
+        false,
+      )
     }
     const foreignContext = { ...ctx, proofs: [foreignProof] }
     disclosureContext = foreignContext
-    expect(await verifyHolderProof(foreignProof, foreignContext)).toBe(true)
-    expect(await types.get('vault.key')?.visibleTo?.(source.key, foreignContext)).toBe(false)
-    expect(await types.get('vault.entry')?.visibleTo?.(entry, foreignContext)).toBe(false)
+    expect(await verifyHolderProof({ proof: foreignProof, ctx: foreignContext })).toBe(true)
+    expect(
+      await types.get('vault.key')?.visibleTo?.({ record: source.key, ctx: foreignContext }),
+    ).toBe(false)
+    expect(
+      await types.get('vault.entry')?.visibleTo?.({ record: entry, ctx: foreignContext }),
+    ).toBe(false)
     expect([...ctx.holderTypes.keys()]).toEqual(['vault.wrapping'])
     expect(vaultHolderTypes(new Map()).size).toBe(0)
-    expect(await ctx.currentKeyVersion(owner.id, source.keyID)).toBe(1)
-    expect(await ctx.currentKeyVersion(otherOwner.id, source.keyID)).toBeNull()
+    expect(await ctx.currentKeyVersion({ owner: owner.id, keyID: source.keyID })).toBe(1)
+    expect(await ctx.currentKeyVersion({ owner: otherOwner.id, keyID: source.keyID })).toBeNull()
     expect(
-      await vaultKeyVersionReader(store, { opKind: 'other/vault-op' })(owner.id, source.keyID),
+      await vaultKeyVersionReader({ store, opKind: 'other/vault-op' })({
+        owner: owner.id,
+        keyID: source.keyID,
+      }),
     ).toBeNull()
     for (const refusal of [
       { authority: { authorize: async () => false } },
@@ -974,24 +1018,35 @@ test('requester-owned wrapping proofs earn key and entry visibility without rece
     ]) {
       const refused = {
         ...ctx,
-        authorizeProof: vaultProofAuthorizer({ ...params, ...refusal }, store, transportContext),
+        authorizeProof: vaultProofAuthorizer({
+          ...params,
+          ...refusal,
+          store,
+          transportContext,
+        }),
       }
       disclosureContext = refused
-      expect(await verifyHolderProof(proof, refused)).toBe(false)
-      expect(await types.get('vault.key')?.visibleTo?.(source.key, refused)).toBe(false)
-      expect(await types.get('vault.entry')?.visibleTo?.(entry, refused)).toBe(false)
+      expect(await verifyHolderProof({ proof, ctx: refused })).toBe(false)
+      expect(await types.get('vault.key')?.visibleTo?.({ record: source.key, ctx: refused })).toBe(
+        false,
+      )
+      expect(await types.get('vault.entry')?.visibleTo?.({ record: entry, ctx: refused })).toBe(
+        false,
+      )
     }
-    expect(await ctx.authorizeProof(nonWrapping, null)).toBe(false)
+    expect(await ctx.authorizeProof({ record: nonWrapping, stored: null })).toBe(false)
     disclosureContext = ctx
-    expect(await verifyHolderProof(proof, ctx)).toBe(true)
-    expect(await types.get('vault.key')?.visibleTo?.(source.key, ctx)).toBe(true)
-    expect(await types.get('vault.entry')?.visibleTo?.(entry, ctx)).toBe(true)
+    expect(await verifyHolderProof({ proof, ctx })).toBe(true)
+    expect(await types.get('vault.key')?.visibleTo?.({ record: source.key, ctx })).toBe(true)
+    expect(await types.get('vault.entry')?.visibleTo?.({ record: entry, ctx })).toBe(true)
     const rotated = await chain(owner, { version: 2 })
     await store.putCopy(rotated.key)
     const stale = ctx
     disclosureContext = stale
-    expect(await verifyHolderProof(proof, stale)).toBe(false)
-    expect(await types.get('vault.key')?.visibleTo?.(source.key, stale)).toBe(false)
-    expect(await types.get('vault.entry')?.visibleTo?.(entry, stale)).toBe(false)
+    expect(await verifyHolderProof({ proof, ctx: stale })).toBe(false)
+    expect(await types.get('vault.key')?.visibleTo?.({ record: source.key, ctx: stale })).toBe(
+      false,
+    )
+    expect(await types.get('vault.entry')?.visibleTo?.({ record: entry, ctx: stale })).toBe(false)
   })
 })

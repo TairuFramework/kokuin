@@ -33,20 +33,17 @@ export type SignRecordOpParams = {
   identity: SigningIdentity
   claim: RecordClaim
   opKind: string
-  options?: CryptoOptions
-}
+} & CryptoOptions
 export type VerifyRecordOpParams = {
   opJWT: string
   opKind: string
   methods?: MethodRegistry
-  options?: CryptoOptions
-}
+} & CryptoOptions
 export type VerifySignedRecordParams = {
   record: SignedRecord
   opKind: string
   methods?: MethodRegistry
-  options?: CryptoOptions
-}
+} & CryptoOptions
 
 /** A record op whose signature checked out. `issuer` is the verified signer, normalized. */
 export type VerifiedRecordOp = {
@@ -72,7 +69,7 @@ const opMemo = new Map<string, OpMemoEntry>()
  */
 function selfCertifying(iss: string, methods?: MethodRegistry): boolean {
   if (!iss.startsWith('did:key:') && !iss.startsWith('did:peer:4')) return false
-  return methods == null || findMethodResolver(methods, iss) === undefined
+  return methods == null || findMethodResolver({ registry: methods, did: iss }) === undefined
 }
 
 function freezeJSON(value: unknown): void {
@@ -117,7 +114,7 @@ export class RecordOpSigningError extends Error {
  */
 async function digestParts(parts: Array<string>, options: CryptoOptions): Promise<string> {
   const framed = parts.map((part) => `${part.length}:${part}`).join('')
-  return toB64U(await (options.crypto ?? nobleCrypto).blake3(fromUTF(framed), 32))
+  return toB64U(await (options.crypto ?? nobleCrypto).blake3({ input: fromUTF(framed), dkLen: 32 }))
 }
 
 /** The address of an op: a digest of its exact token string. */
@@ -206,17 +203,17 @@ export async function signRecordOp({
   identity,
   claim,
   opKind,
-  options,
+  ...options
 }: SignRecordOpParams): Promise<{ opJWT: string; opHash: string }> {
-  const crypto = options?.crypto ?? nobleCrypto
+  const crypto = options.crypto ?? nobleCrypto
   const bytes = canonicalRecordClaim(claim)
   const previous = signingQueues.get(identity) ?? Promise.resolve()
   // Queued entries never reject, so a failed call does not stop the next one.
   const signing = previous.then(async () => {
-    const signed = await identity.signToken(
-      { kind: opKind, claim: toB64U(bytes) },
-      { embedLongForm: true },
-    )
+    const signed = await identity.signToken({
+      payload: { kind: opKind, claim: toB64U(bytes) },
+      embedLongForm: true,
+    })
     const opJWT = stringifyToken(signed)
     const opHash = await recordOpHash(opJWT, { crypto })
     return { signed, opJWT, opHash }
@@ -270,12 +267,12 @@ export async function verifyRecordOp({
   opJWT,
   opKind,
   methods,
-  options,
+  ...options
 }: VerifyRecordOpParams): Promise<VerifiedRecordOp | null> {
   if (!isCanonicalCompactToken(opJWT)) {
     return null
   }
-  const crypto = options?.crypto ?? nobleCrypto
+  const crypto = options.crypto ?? nobleCrypto
   const capturedMethods = captureMethods(methods)
   const opHash = await recordOpHash(opJWT, { crypto })
   // Keyed on the token's digest: the same bytes under the same kind verify the same way.
@@ -289,7 +286,8 @@ export async function verifyRecordOp({
   }
   let verified: VerifiedToken<Record<string, unknown>>
   try {
-    verified = await verifyToken<Record<string, unknown>>(opJWT, {
+    verified = await verifyToken<Record<string, unknown>>({
+      token: opJWT,
       methods: capturedMethods,
       crypto: guardedProvider(crypto),
     })
@@ -307,7 +305,7 @@ export async function verifyRecordOp({
   if (decoded === null) {
     return null
   }
-  const contentDigest = await recordClaimDigest(decoded, { crypto })
+  const contentDigest = await recordClaimDigest({ claim: decoded, crypto })
   const op = copyOp({ issuer: normalizeDID(iss), claim: decoded, opHash, contentDigest })
   // Only successes are kept. A refusal is recomputed on every call.
   if (selfCertifying(iss, capturedMethods)) {
@@ -332,16 +330,16 @@ export async function verifySignedRecord({
   record,
   opKind,
   methods,
-  options,
+  ...options
 }: VerifySignedRecordParams): Promise<VerifiedRecordOp | null> {
   const owned = snapshotRecord(record)
   return bindRecord(
     owned,
     await verifyRecordOp({
+      ...options,
       opJWT: owned.opJWT,
-      opKind: opKind,
-      methods: methods,
-      options: options,
+      opKind,
+      methods,
     }),
   )
 }
@@ -371,12 +369,17 @@ function bindRecord(
  * lifetime, whatever its issuer's DID method. Scope one to a single operation, such as one apply
  * chunk: a resolved issuer's keys may rotate between operations.
  */
-export function createRecordVerifier(
-  opKind: string,
-  methods?: MethodRegistry,
-  options?: CryptoOptions,
-): (record: SignedRecord) => Promise<VerifiedRecordOp | null> {
-  const captured = { crypto: options?.crypto ?? nobleCrypto }
+export type CreateRecordVerifierParams = {
+  opKind: string
+  methods?: MethodRegistry
+} & CryptoOptions
+
+export function createRecordVerifier({
+  methods,
+  opKind,
+  ...options
+}: CreateRecordVerifierParams): (record: SignedRecord) => Promise<VerifiedRecordOp | null> {
+  const captured = { crypto: options.crypto ?? nobleCrypto }
   const capturedMethods = captureMethods(methods)
   const ops = new Map<string, Promise<VerifiedRecordOp | null>>()
   return async (input) => {
@@ -384,10 +387,10 @@ export function createRecordVerifier(
     let pending = ops.get(record.opJWT)
     if (pending === undefined) {
       pending = verifyRecordOp({
+        ...captured,
         opJWT: record.opJWT,
-        opKind: opKind,
+        opKind,
         methods: capturedMethods,
-        options: captured,
       })
       const token = record.opJWT
       pending = pending.then(

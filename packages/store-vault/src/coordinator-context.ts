@@ -256,7 +256,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
       },
     })
 
-    if (!allowed) throw new VaultNotAuthorized({ verb: verb })
+    if (!allowed) throw new VaultNotAuthorized({ verb })
   }
 
   async function key(address: KeyAddress, store = params.store): Promise<KeyRow> {
@@ -276,14 +276,14 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
   }: SignedParams<Type>): Promise<SignedRecord> {
     if (params.mode !== 'replicated') throw new TypeError('Local writes are unsigned')
 
-    const bytes = payload === null ? null : encodeVaultRecordPayload(type, payload)
+    const bytes = payload === null ? null : encodeVaultRecordPayload({ type, payload })
     const stamp = hlc ?? (await params.nextHLC())
     const claim = {
       type,
       id: address.id,
       owner: address.ownerDID,
       hlc: stamp,
-      payloadDigest: await recordPayloadDigest(bytes, params),
+      payloadDigest: await recordPayloadDigest({ ...params, payload: bytes }),
       deleted: bytes === null,
       meta,
     }
@@ -296,9 +296,9 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
       payload: bytes,
       ...(await signRecordOp({
         identity: params.signer,
-        claim: claim,
+        claim,
         opKind: params.records.opKind,
-        options: params,
+        crypto: params?.crypto,
       })),
     }
   }
@@ -307,13 +307,13 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     if (params.mode !== 'replicated') throw new TypeError('Local rows have no signed evidence')
 
     const op = await verifySignedRecord({
-      record: record,
+      record,
       opKind: params.records.opKind,
       methods: storeMethods(store, {
         ...params.records,
         methodsFor: params.records.methodsFor ?? params.methodsFor,
       }),
-      options: params,
+      crypto: params?.crypto,
     })
 
     if (op === null) throw new VaultNotFound()
@@ -333,7 +333,10 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     addresses: ReadonlyArray<RecordKey>,
     store = params.store,
   ): Promise<Array<StoredRecordEvidence>> {
-    const decisions = await getRecordDecisions(recordsFor(store).adapter, addresses)
+    const decisions = await getRecordDecisions({
+      store: recordsFor(store).adapter,
+      keys: addresses,
+    })
 
     return settleAll(
       addresses.map(async (address) => {
@@ -350,7 +353,11 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     row: WrappingRow,
     evidence: StoredRecordEvidence,
   ): Promise<WrappingEvidence> {
-    const decoded = await decodeVaultRecord(evidence.record, evidence.op.claim.meta, params)
+    const decoded = await decodeVaultRecord({
+      ...params,
+      record: evidence.record,
+      recordMeta: evidence.op.claim.meta,
+    })
 
     if (
       decoded.type !== 'vault.wrapping' ||
@@ -460,7 +467,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     // only the corrupt one is reported.
     const read = async (): Promise<Array<RecordDecision | null | VaultRecordRowError>> => {
       try {
-        const decisions = await getRecordDecisions(adapter, keys)
+        const decisions = await getRecordDecisions({ store: adapter, keys })
 
         return keys.map((key) => decisions.get(recordKeyText(key)) ?? null)
       } catch (error) {
@@ -520,7 +527,11 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
         continue
       }
 
-      const decoded = await decodeVaultRecord(record, op.claim.meta, params)
+      const decoded = await decodeVaultRecord({
+        ...params,
+        record,
+        recordMeta: op.claim.meta,
+      })
 
       if (decoded.type === 'vault.key-branch')
         return { branchID, branchRecordID: record.id, suite: decoded.payload.suite }
@@ -540,7 +551,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
 
     if (result.rejected.length > 0 || result.parked.length > 0) throw new VaultWriteConflict()
 
-    const decisions = await getRecordDecisions(recordsFor(store).adapter, output)
+    const decisions = await getRecordDecisions({ store: recordsFor(store).adapter, keys: output })
 
     await settleAll(
       output.map(async (record) => {
@@ -593,17 +604,17 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
       opHash: record.opHash,
       suite: row.suite,
     }
-    const branchRecordID = await recordPayloadDigest(
-      encodeVaultRecordPayload('vault.key-branch', payload),
-      params,
-    )
+    const branchRecordID = await recordPayloadDigest({
+      ...params,
+      payload: encodeVaultRecordPayload({ type: 'vault.key-branch', payload }),
+    })
 
     if (branchRecordID === null) throw new Error('Branch has no payload digest')
 
     const proof = await signed({
       type: 'vault.key-branch',
       address: { ownerDID: row.ownerDID, id: branchRecordID },
-      payload: payload,
+      payload,
       meta: {
         keyID: row.keyID,
         keyVersion: row.version,

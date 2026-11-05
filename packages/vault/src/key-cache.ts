@@ -14,11 +14,11 @@ export type KeyCacheParams = {
 }
 
 export type KeyCache = {
-  get(keyID: string, keyVersion: number): { contentKey: Uint8Array; branchID: string } | null
+  get(params: KeyCacheGetParams): { contentKey: Uint8Array; branchID: string } | null
 
-  has(keyID: string, keyVersion: number): boolean
+  has(params: KeyCacheHasParams): boolean
   set(params: KeyCacheSetParams): void
-  evictVersion(keyID: string, keyVersion: number): void
+  evictVersion(params: KeyCacheEvictVersionParams): void
   evict(keyID: string): void
   evictAll(): void
 }
@@ -72,7 +72,7 @@ export function createKeyCache(params: KeyCacheParams = {}): KeyCache {
   }
 
   return {
-    get(keyID, keyVersion) {
+    get({ keyID, keyVersion }) {
       const cached = live(keyID, keyVersion)
 
       if (cached == null) {
@@ -82,7 +82,7 @@ export function createKeyCache(params: KeyCacheParams = {}): KeyCache {
       return { contentKey: cached.contentKey.slice(), branchID: cached.branchID }
     },
 
-    has(keyID, keyVersion) {
+    has({ keyID, keyVersion }) {
       return live(keyID, keyVersion) != null
     },
 
@@ -101,7 +101,7 @@ export function createKeyCache(params: KeyCacheParams = {}): KeyCache {
     },
 
     evict,
-    evictVersion,
+    evictVersion: ({ keyID, keyVersion }) => evictVersion(keyID, keyVersion),
 
     evictAll() {
       for (const keyID of [...entries.keys()]) {
@@ -110,3 +110,9 @@ export function createKeyCache(params: KeyCacheParams = {}): KeyCache {
     },
   }
 }
+
+export type KeyCacheGetParams = { keyID: string; keyVersion: number }
+
+export type KeyCacheHasParams = { keyID: string; keyVersion: number }
+
+export type KeyCacheEvictVersionParams = { keyID: string; keyVersion: number }

@@ -41,7 +41,7 @@ const seed = new Uint8Array(32).fill(23)
 const target = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 const other = 'did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG'
 
-const icp = await createInception(seed, 0)
+const icp = await createInception({ seed, profile: 0 })
 const did = didFromInception(icp.event)
 const rot = await createRotate({
   seed,
@@ -50,7 +50,7 @@ const rot = await createRotate({
   prior: icp.event,
   snapshot: { members: [], deny: [] },
 })
-const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
+const reset = await createReset({ seed, profile: 0, gen: 1 })
 // A chain `rev` as an older log carries one, signed by the inception key. The chain no longer has the
 // type, so it reaches the unknown-type path; it is here as a well-formed envelope around a body the
 // fold does not understand.
@@ -67,7 +67,8 @@ const revokeBody = {
 const revoke = {
   event: revokeBody,
   sigs: await signEvent(revokeBody as unknown as EventCommon, [
-    deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA').privateKey,
+    deriveKeyPair({ seed, path: authorityPath({ profile: 0, gen: 0, seq: 0 }), alg: 'EdDSA' })
+      .privateKey,
   ]),
 } as unknown as SignedEvent
 
@@ -248,13 +249,18 @@ const malformed: Array<[string, Array<unknown>, FoldResult]> = [
 describe('foldLog() is total', () => {
   for (const [name, log, expected] of malformed) {
     test(`answers ${name} with a reason`, async () => {
-      expect(await foldLog(did, { chain: log as Array<SignedEvent>, events: [] })).toEqual(expected)
+      expect(
+        await foldLog({ did, input: { chain: log as Array<SignedEvent>, events: [] } }),
+      ).toEqual(expected)
     })
   }
 
   test('answers a log that is not an array with a reason', async () => {
     expect(
-      await foldLog(did, { chain: undefined as unknown as Array<SignedEvent>, events: [] }),
+      await foldLog({
+        did,
+        input: { chain: undefined as unknown as Array<SignedEvent>, events: [] },
+      }),
     ).toEqual({
       ok: false,
       reason: 'malformed log',
@@ -287,9 +293,14 @@ describe('the exported verifiers are total', () => {
 
   test('verifyReset answers a non-array `sigs` with false', async () => {
     // The one exported verifier that reads `sigs` before handing it to `verifySignatures`.
-    expect(await verifyReset({ event: reset.event } as unknown as never, icp.event)).toBe(false)
+    expect(
+      await verifyReset({
+        signed: { event: reset.event } as unknown as never,
+        inception: icp.event,
+      }),
+    ).toBe(false)
     // Control: the same reset with its signatures present verifies against the same inception.
-    expect(await verifyReset(reset, icp.event)).toBe(true)
+    expect(await verifyReset({ signed: reset, inception: icp.event })).toBe(true)
   })
 
   test('verifyRotate answers a malformed `k`, `n` and `d` with false', async () => {
@@ -301,11 +312,13 @@ describe('the exported verifiers are total', () => {
       ['d', 'did:key:zNotAnArray'],
       ['d', 7],
     ] as Array<[string, unknown]>) {
-      expect(await verifyRotate(withEventMember(rot, member, value) as never, prior)).toBe(false)
+      expect(
+        await verifyRotate({ signed: withEventMember(rot, member, value) as never, prior }),
+      ).toBe(false)
     }
     // Control: the untouched rotate verifies against the same prior, so each rejection above is the
     // member it names and not the surrounding event.
-    expect(await verifyRotate(rot, prior)).toBe(true)
+    expect(await verifyRotate({ signed: rot, prior })).toBe(true)
   })
 })
 
@@ -316,8 +329,13 @@ describe('a malformed event its own author signed', async () => {
   // reset in particular verifies against the revealed recovery key rather than against `k`, so
   // nothing else ever looks at what it publishes.
 
-  const authority = (seq: number) => deriveKeyPair(seed, authorityPath(0, 0, seq), 'EdDSA')
-  const recovery = deriveKeyPair(seed, recoveryPath(0), 'EdDSA')
+  const authority = (seq: number) =>
+    deriveKeyPair({
+      seed,
+      path: authorityPath({ profile: 0, gen: 0, seq }),
+      alg: 'EdDSA',
+    })
+  const recovery = deriveKeyPair({ seed, path: recoveryPath(0), alg: 'EdDSA' })
 
   /** The rotate, mutated and re-signed by the next key it legitimately reveals. */
   async function signedRotate(member: string, value: unknown): Promise<SignedEvent<RotateEvent>> {
@@ -331,7 +349,7 @@ describe('a malformed event its own author signed', async () => {
     return {
       event,
       sigs: await signEvent(event, [recovery.privateKey]),
-      recoveryKey: encodeKey(recovery.publicKey, 'EdDSA'),
+      recoveryKey: encodeKey({ publicKey: recovery.publicKey, alg: 'EdDSA' }),
     }
   }
 
@@ -465,15 +483,20 @@ describe('a malformed event its own author signed', async () => {
 
   for (const [name, log, expected] of cases) {
     test(`${name} is rejected`, async () => {
-      expect(await foldLog(did, { chain: log as Array<SignedEvent>, events: [] })).toEqual(expected)
+      expect(
+        await foldLog({ did, input: { chain: log as Array<SignedEvent>, events: [] } }),
+      ).toEqual(expected)
     })
   }
 
   test('a rotate whose deny snapshot is well formed still folds', async () => {
     // The control for the snapshot rows above: the same re-signing machinery with a legal `d`.
-    const result = await foldLog(did, {
-      chain: [icp, await signedRotate('d', [target])],
-      events: [],
+    const result = await foldLog({
+      did,
+      input: {
+        chain: [icp, await signedRotate('d', [target])],
+        events: [],
+      },
     })
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -491,7 +514,9 @@ describe('a malformed event its own author signed', async () => {
       prior: forged.event,
       snapshot: { members: [], deny: [] },
     })
-    expect(await foldLog(forgedDID, { chain: [forged, following], events: [] })).toEqual({
+    expect(
+      await foldLog({ did: forgedDID, input: { chain: [forged, following], events: [] } }),
+    ).toEqual({
       ok: false,
       reason: 'invalid inception',
       index: 0,
@@ -500,7 +525,7 @@ describe('a malformed event its own author signed', async () => {
 
   test('an inception whose recovery commitment is not a string is rejected', async () => {
     const [forgedDID, forged] = await signedInception('r', 42)
-    expect(await foldLog(forgedDID, { chain: [forged], events: [] })).toEqual({
+    expect(await foldLog({ did: forgedDID, input: { chain: [forged], events: [] } })).toEqual({
       ok: false,
       reason: 'invalid inception',
       index: 0,
@@ -510,7 +535,9 @@ describe('a malformed event its own author signed', async () => {
   test('an unmutated inception still folds', async () => {
     // Control for both rows above: the same re-signing path with nothing changed.
     const [forgedDID, forged] = await signedInception('kt', 1)
-    expect((await foldLog(forgedDID, { chain: [forged], events: [] })).ok).toBe(true)
+    expect((await foldLog({ did: forgedDID, input: { chain: [forged], events: [] } })).ok).toBe(
+      true,
+    )
   })
 })
 
@@ -520,7 +547,12 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   // the fold never reads decided how much stack the fold used. V8's `JSON.parse` is iterative and
   // accepts arbitrary depth, so each shape below arrives from ordinary wire bytes.
 
-  const authority = (seq: number) => deriveKeyPair(seed, authorityPath(0, 0, seq), 'EdDSA')
+  const authority = (seq: number) =>
+    deriveKeyPair({
+      seed,
+      path: authorityPath({ profile: 0, gen: 0, seq }),
+      alg: 'EdDSA',
+    })
 
   /** `levels` nested arrays around a string, round-tripped through the wire. */
   function nest(levels: number): unknown {
@@ -564,9 +596,12 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   test(`a body reaching exactly ${MAX_CANONICAL_DEPTH} levels folds`, async () => {
     // The control, and the reason the bound is a bound rather than a rejection of nesting: a log
     // this deep is canonicalized, hashed and accepted like any other.
-    const result = await foldLog(did, {
-      chain: [icp, await rotateWithDeepMember(nest(deepestAccepted))],
-      events: [],
+    const result = await foldLog({
+      did,
+      input: {
+        chain: [icp, await rotateWithDeepMember(nest(deepestAccepted))],
+        events: [],
+      },
     })
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -580,7 +615,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
       icp,
       { ...rot, event: { ...rot.event, zz: nest(shallowestRejected) } },
     ] as Array<SignedEvent>
-    expect(await foldLog(did, { chain: log, events: [] })).toEqual({
+    expect(await foldLog({ did, input: { chain: log, events: [] } })).toEqual({
       ok: false,
       reason: 'malformed event',
       index: 1,
@@ -620,7 +655,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
       let result: unknown
       await expect(
         (async () => {
-          result = await foldLog(did, { chain: log, events: [] })
+          result = await foldLog({ did, input: { chain: log, events: [] } })
         })(),
       ).resolves.toBeUndefined()
       expect(result).toEqual(expected)
@@ -637,7 +672,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
       { ...rot, event: { ...rot.event, a: abyss() } },
     ] as unknown as Array<SignedEvent>
 
-    const clean = await resolveBranches(did, [forkA, forkB])
+    const clean = await resolveBranches({ did, chains: [forkA, forkB] })
     expect(clean.ok).toBe(false)
     if (clean.ok) return
     expect(clean.duplicity.seq).toBe(1)
@@ -645,7 +680,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
     let withHostile: unknown
     await expect(
       (async () => {
-        withHostile = await resolveBranches(did, [forkA, hostile, forkB])
+        withHostile = await resolveBranches({ did, chains: [forkA, hostile, forkB] })
       })(),
     ).resolves.toBeUndefined()
     // Byte-identical to the clean pair: the hostile branch is filtered, not merged.
@@ -668,11 +703,11 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
     // and its members are whatever the wire carried.
     for (const build of [nest, nestObjects]) {
       for (const levels of [0, 1, deepestAccepted, MAX_CANONICAL_DEPTH - 1]) {
-        expect(withinCanonicalDepth(build(levels)), `${levels} levels`).toBe(true)
+        expect(withinCanonicalDepth({ value: build(levels) }), `${levels} levels`).toBe(true)
         expect(() => canonicalBytes(build(levels))).not.toThrow()
       }
       for (const levels of [MAX_CANONICAL_DEPTH, MAX_CANONICAL_DEPTH + 1, 5000]) {
-        expect(withinCanonicalDepth(build(levels)), `${levels} levels`).toBe(false)
+        expect(withinCanonicalDepth({ value: build(levels) }), `${levels} levels`).toBe(false)
         expect(() => canonicalBytes(build(levels))).toThrow()
       }
     }
@@ -680,7 +715,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
     // one input where an unbounded recursion never returns at all.
     const cyclic: Record<string, unknown> = {}
     cyclic.self = cyclic
-    expect(withinCanonicalDepth(cyclic)).toBe(false)
+    expect(withinCanonicalDepth({ value: cyclic })).toBe(false)
   })
 
   test('isCanonicalizable agrees with canonicalBytes on every reason it throws', () => {
@@ -699,7 +734,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
       ['too deep', nest(MAX_CANONICAL_DEPTH)],
     ]
     for (const [label, value] of refused) {
-      expect(isCanonicalizable(value), label).toBe(false)
+      expect(isCanonicalizable({ value }), label).toBe(false)
       expect(() => canonicalBytes(value), label).toThrow()
     }
 
@@ -716,7 +751,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
       ['at the depth bound', nest(MAX_CANONICAL_DEPTH - 1)],
     ]
     for (const [label, value] of accepted) {
-      expect(isCanonicalizable(value), label).toBe(true)
+      expect(isCanonicalizable({ value }), label).toBe(true)
       expect(() => canonicalBytes(value), label).not.toThrow()
     }
 
@@ -734,7 +769,7 @@ describe('an event body nested deeper than the canonicalizer will go', () => {
   test('a cyclic value is answered rather than hung, by both predicates', () => {
     const cyclic: Record<string, unknown> = {}
     cyclic.self = cyclic
-    expect(isCanonicalizable(cyclic)).toBe(false)
+    expect(isCanonicalizable({ value: cyclic })).toBe(false)
   })
 })
 
@@ -747,26 +782,31 @@ describe('resolveBranches() survives a hostile branch', async () => {
   const hostile = [icp, withoutEventMember(rot, 'k')] as Array<SignedEvent>
 
   test('still reports duplicity among the well-formed branches', async () => {
-    const result = await resolveBranches(did, [forkA, hostile, forkB])
+    const result = await resolveBranches({ did, chains: [forkA, hostile, forkB] })
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.duplicity.gen).toBe(0)
     expect(result.duplicity.seq).toBe(1)
     // Control: the same two branches without the hostile one report the same duplicity, so the
     // hostile branch is filtered rather than participating.
-    expect(await resolveBranches(did, [forkA, forkB])).toEqual(result)
+    expect(await resolveBranches({ did, chains: [forkA, forkB] })).toEqual(result)
   })
 
   test('still picks the winner when one exists', async () => {
     // `superseded` is 0, not 1: `[icp]` is a prefix of the winner, so it was extended rather than
     // contradicted and none of its events were discarded. The hostile branch never folded, so
     // nothing of it is counted either.
-    const result = await resolveBranches(did, [hostile, [icp, rot], [icp]])
+    const result = await resolveBranches({ did, chains: [hostile, [icp, rot], [icp]] })
     expect(result).toEqual({ ok: true, winner: [icp, rot], superseded: 0 })
   })
 
   test('reports no valid history when every branch is hostile', async () => {
-    expect(await resolveBranches(did, [hostile, [null] as unknown as Array<SignedEvent>])).toEqual({
+    expect(
+      await resolveBranches({
+        did,
+        chains: [hostile, [null] as unknown as Array<SignedEvent>],
+      }),
+    ).toEqual({
       ok: false,
       failure: 'no-valid-branch',
       duplicity: { gen: -1, seq: -1, digests: ['', ''] },
@@ -776,7 +816,7 @@ describe('resolveBranches() survives a hostile branch', async () => {
   // One row per shape a branch can arrive in, each asserted equal to the clean pair's answer:
   // filtering a hostile branch has to be indistinguishable from never having been handed it, or a
   // thief can change what duplicity resolution reports by adding branches nobody can verify.
-  const clean = await resolveBranches(did, [forkA, forkB])
+  const clean = await resolveBranches({ did, chains: [forkA, forkB] })
   const hostiles: Array<[string, unknown]> = [
     ['a nested-array entry', [icp, [rot]]],
     ['a rotate whose `g` is an object', [icp, { event: { ...rot.event, g: {} }, sigs: rot.sigs }]],
@@ -791,7 +831,10 @@ describe('resolveBranches() survives a hostile branch', async () => {
       let result: unknown
       await expect(
         (async () => {
-          result = await resolveBranches(did, [forkA, branch as Array<SignedEvent>, forkB])
+          result = await resolveBranches({
+            did,
+            chains: [forkA, branch as Array<SignedEvent>, forkB],
+          })
         })(),
       ).resolves.toBeUndefined()
       expect(result).toEqual(clean)
@@ -799,10 +842,10 @@ describe('resolveBranches() survives a hostile branch', async () => {
   }
 
   test('every branch hostile reports the no-valid-history sentinel', async () => {
-    const result = await resolveBranches(
+    const result = await resolveBranches({
       did,
-      hostiles.map(([, h]) => h) as Array<Array<SignedEvent>>,
-    )
+      chains: hostiles.map(([, h]) => h) as Array<Array<SignedEvent>>,
+    })
     expect(result).toEqual({
       ok: false,
       failure: 'no-valid-branch',

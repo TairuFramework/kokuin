@@ -1,10 +1,11 @@
 import type { StoreProvider } from '@hozon/db'
 import { HozonDB } from '@hozon/db'
 import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
+import type { CryptoProviderBlake3Params } from '@kokuin/crypto'
 import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
 import type { SignedRecord } from '@kokuin/records'
 import { signRecordOp, verifySignedRecord } from '@kokuin/records'
-import type { MethodRegistry } from '@kokuin/token'
+import type { DIDMethodResolverResolveParams, MethodRegistry } from '@kokuin/token'
 import { createSigningIdentityForDID, randomIdentity } from '@kokuin/token'
 import { VAULT_OP_KIND } from '@kokuin/vault'
 import { ed25519 } from '@noble/curves/ed25519.js'
@@ -26,12 +27,12 @@ async function fixture() {
   const db = new HozonDB({ adapter: new NodeSQLiteAdapter({ database: ':memory:' }) })
   db.register(vaultStoreDefinition)
   db.register(vaultRecordsStoreDefinition)
-  await getVaultRecordsStore(db, VAULT_OP_KIND)
+  await getVaultRecordsStore({ provider: db, opKind: VAULT_OP_KIND })
   const identity = randomIdentity()
-  const signer = createSigningIdentityForDID(
-    'did:test:provider-issuer',
-    ed25519.utils.randomSecretKey(),
-  )
+  const signer = createSigningIdentityForDID({
+    id: 'did:test:provider-issuer',
+    privateKey: ed25519.utils.randomSecretKey(),
+  })
   const signingKey = { alg: 'EdDSA' as const, publicKey: signer.publicKey }
   const staticMethods: MethodRegistry = [{ method: 'test', resolve: async () => signingKey }]
   let counter = 1000
@@ -69,7 +70,7 @@ async function fixture() {
     return [
       {
         method: 'test',
-        resolve: async (did) => {
+        resolve: async ({ did }: DIDMethodResolverResolveParams) => {
           expect(did).toBe(signer.id)
           let timer: NodeJS.Timeout | undefined
           try {
@@ -146,7 +147,7 @@ test('records apply resolves methods again inside its transaction', async () => 
     )
     f.calls.length = 0
     f.resolved.length = 0
-    const result = await f.manager.records.apply(records)
+    const result = await f.manager.records.apply({ records })
     expect(result.rejected).toEqual([])
     expect(result.parked).toEqual([])
     expect(f.calls.some((provider) => provider.isTransactionBound)).toBe(true)
@@ -189,7 +190,7 @@ test('apply scopes verification hooks while importing a signed branch and its de
   try {
     db.register(vaultStoreDefinition)
     db.register(vaultRecordsStoreDefinition)
-    await getVaultRecordsStore(db, VAULT_OP_KIND)
+    await getVaultRecordsStore({ provider: db, opKind: VAULT_OP_KIND })
     const records = (
       await f.manager.records.adapter.list([
         'vault.key',
@@ -226,7 +227,7 @@ test('apply scopes verification hooks while importing a signed branch and its de
       store: await getVaultStore(db),
       records: { ...f.params.records, methods: methodsFor(db), methodsFor },
     })
-    const result = await manager.records.apply(records)
+    const result = await manager.records.apply({ records })
     expect(result.rejected).toEqual([])
     expect(result.parked).toEqual([])
     expect(result.applied).toBe(4)
@@ -352,15 +353,15 @@ for (const failure of ['provider', 'payload', 'commitment'] as const) {
         let reject = false
         const crypto = {
           ...nobleCrypto,
-          blake3: async (input: Uint8Array, length: number) => {
+          blake3: async ({ input, dkLen: length }: CryptoProviderBlake3Params) => {
             if (reject) throw sentinel
-            return nobleCrypto.blake3(input, length)
+            return nobleCrypto.blake3({ input, dkLen: length })
           },
         }
         const record = (await f.manager.records.adapter.list(['vault.entry']))[0]?.copies[0]
         if (record === undefined) throw new Error('Missing entry fixture')
         const op = await verifySignedRecord({
-          record: record,
+          record,
           opKind: VAULT_OP_KIND,
           methods: f.params.records.methods,
         })
@@ -435,18 +436,21 @@ test.each([false, true])(
         methods: f.params.records.methods,
       })
       if (op === null) throw new Error('Invalid fixture')
-      const decoded = await decodeVaultRecord(original, op.claim.meta)
+      const decoded = await decodeVaultRecord({ record: original, recordMeta: op.claim.meta })
       if (decoded.type !== 'vault.entry') throw new Error('Wrong fixture type')
-      const payload = encodeVaultRecordPayload('vault.entry', {
-        ...decoded.payload,
-        ciphertext: new Uint8Array([7, 8, 9]),
+      const payload = encodeVaultRecordPayload({
+        type: 'vault.entry',
+        payload: {
+          ...decoded.payload,
+          ciphertext: new Uint8Array([7, 8, 9]),
+        },
       })
       const incoming = {
         ...original,
         payload,
         ...(await signRecordOp({
           identity: f.params.signer,
-          claim: { ...op.claim, payloadDigest: await recordPayloadDigest(payload) },
+          claim: { ...op.claim, payloadDigest: await recordPayloadDigest({ payload }) },
           opKind: VAULT_OP_KIND,
         })),
       }
@@ -454,14 +458,14 @@ test.each([false, true])(
       let payloadCalls = 0
       const crypto = {
         ...nobleCrypto,
-        blake3: async (bytes: Uint8Array, length: number) => {
+        blake3: async ({ input: bytes, dkLen: length }: CryptoProviderBlake3Params) => {
           if (
             bytes.length === payload.length &&
             bytes.every((value, index) => value === payload[index]) &&
             ++payloadCalls === 2
           )
             throw sentinel
-          return nobleCrypto.blake3(bytes, length)
+          return nobleCrypto.blake3({ input: bytes, dkLen: length })
         },
       }
       const write = async (provider: StoreProvider) => {

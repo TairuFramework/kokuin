@@ -44,7 +44,7 @@ export function coordinatorCases(harness: StoreHarness): void {
         decisions
           .flatMap((decision) => decision.copies)
           .map(async (record) => {
-            const op = await verifySignedRecord({ record: record, opKind: VAULT_OP_KIND })
+            const op = await verifySignedRecord({ record, opKind: VAULT_OP_KIND })
             if (op === null) throw new Error('Invalid signed record')
             return { record, op }
           }),
@@ -132,14 +132,14 @@ export function coordinatorCases(harness: StoreHarness): void {
       const b = await fixture('replicated', a.identity)
       const key = await a.manager.createKey({ ownerDID: a.identity.id, consumer: previousEvidence })
       const types = ['vault.key', 'vault.key-branch', 'vault.wrapping']
-      await b.manager.records.apply(
-        (await a.manager.records.adapter.list(types)).flatMap((d) => d.copies),
-      )
+      await b.manager.records.apply({
+        records: (await a.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+      })
       await a.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })
       await b.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })
-      await a.manager.records.apply(
-        (await b.manager.records.adapter.list(types)).flatMap((d) => d.copies),
-      )
+      await a.manager.records.apply({
+        records: (await b.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+      })
       expect(
         await administrator(a).repairFork({
           ...key,
@@ -198,7 +198,7 @@ export function coordinatorCases(harness: StoreHarness): void {
             return refusal !== 'authority' || request.op.claim.meta.consumer === null
           }),
         }
-        const validateConsumerMetadata = vi.fn(async (consumer: unknown) => {
+        const validateConsumerMetadata = vi.fn(async ({ value: consumer }: { value: unknown }) => {
           seen.push(consumer)
           return refusal !== 'metadata' || consumer === null
         })
@@ -325,17 +325,17 @@ export function coordinatorCases(harness: StoreHarness): void {
         'vault.entry',
         'vault.revocation',
       ]
-      await b.manager.records.apply(
-        (await a.manager.records.adapter.list(types)).flatMap((d) => d.copies),
-      )
+      await b.manager.records.apply({
+        records: (await a.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+      })
       await a.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })
       await b.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })
       const left = (await a.manager.records.listKeyBranches({ ...key, keyVersion: 2 }))[0]
       const right = (await b.manager.records.listKeyBranches({ ...key, keyVersion: 2 }))[0]
       if (!left || !right) throw new Error('missing branches')
       const [winner, loser] =
-        (await recordClaimDigest(left.introducingOp.claim)) >
-        (await recordClaimDigest(right.introducingOp.claim))
+        (await recordClaimDigest({ claim: left.introducingOp.claim })) >
+        (await recordClaimDigest({ claim: right.introducingOp.claim }))
           ? [a, b]
           : [b, a]
       const selected = (
@@ -346,9 +346,9 @@ export function coordinatorCases(harness: StoreHarness): void {
         })
       )?.copies[0]
       if (!selected) throw new Error('missing entry record')
-      await winner.manager.records.apply(
-        (await loser.manager.records.adapter.list(types)).flatMap((d) => d.copies),
-      )
+      await winner.manager.records.apply({
+        records: (await loser.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+      })
       // Entry and key decisions have independent digest winners. Force the unreadable projection.
       await winner.manager.records.adapter.transaction(async (tx) => {
         await tx.putCopy(selected)
@@ -567,9 +567,9 @@ export function coordinatorCases(harness: StoreHarness): void {
         'vault.entry',
         'vault.revocation',
       ]
-      await b.manager.records.apply(
-        (await a.manager.records.adapter.list(types)).flatMap((d) => d.copies),
-      )
+      await b.manager.records.apply({
+        records: (await a.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+      })
       const request = {
         ...key,
         excludedRecipients: [],
@@ -579,9 +579,9 @@ export function coordinatorCases(harness: StoreHarness): void {
       }
       await a.manager.rotate(request)
       await b.manager.rotate(request)
-      await a.manager.records.apply(
-        (await b.manager.records.adapter.list(types)).flatMap((d) => d.copies),
-      )
+      await a.manager.records.apply({
+        records: (await b.manager.records.adapter.list(types)).flatMap((d) => d.copies),
+      })
       // A replacement makes repair necessary regardless of branch digest order.
       const repair = {
         ...request,
@@ -652,7 +652,7 @@ export function coordinatorCases(harness: StoreHarness): void {
         const opening = f.manager.openKey(pending)
         const ownOpening = f.manager.openKey(ownPending)
         await vi.waitFor(() => expect(reached).toBe(2))
-        await f.manager.lockAll(f.identity.id)
+        await f.manager.lockAll({ ownerDID: f.identity.id })
         release()
         ;(await opening).contentKey.fill(0)
         ;(await ownOpening).contentKey.fill(0)
@@ -768,7 +768,7 @@ export function coordinatorCases(harness: StoreHarness): void {
           expect(await f.manager.listEntries({ ...key, attributes: { app: 'test' } })).toHaveLength(
             1,
           )
-          expect(await f.manager.listKeys(f.identity.id)).toHaveLength(1)
+          expect(await f.manager.listKeys({ ownerDID: f.identity.id })).toHaveLength(1)
           expect(f.calls.length).toBeGreaterThanOrEqual(6)
           expect(f.calls.every((call) => call.verb === 'read')).toBe(true)
           expect(f.queries.filter((q) => !/^(select|begin|commit)/i.test(q.sql))).toEqual([])
@@ -790,11 +790,11 @@ export function coordinatorCases(harness: StoreHarness): void {
             ['read', () => f.manager.openKey(key)],
             ['read', () => f.manager.unlock(key)],
             ['read', () => f.manager.lock(key)],
-            ['read', () => f.manager.lockAll(key.ownerDID)],
+            ['read', () => f.manager.lockAll({ ownerDID: key.ownerDID })],
             ['read', () => f.manager.readEntry(entry)],
             ['read', () => f.manager.getEntry(entry)],
             ['read', () => f.manager.listEntries(key)],
-            ['read', () => f.manager.listKeys(key.ownerDID)],
+            ['read', () => f.manager.listKeys({ ownerDID: key.ownerDID })],
             ['read', () => f.manager.status(key)],
             ['administer', () => f.manager.createKey({ ownerDID: key.ownerDID })],
             [
@@ -1094,7 +1094,7 @@ export function coordinatorCases(harness: StoreHarness): void {
     test('replicated writes enter apply, admission refusal rolls back the whole key creation', async () => {
       const f = await fixture('replicated')
       f.params.authority.authorize = vi.fn(
-        async (r) => !(r.source === 'record' && r.recordKey.type === 'vault.wrapping'),
+        async ({ op: r }) => !(r.source === 'record' && r.recordKey.type === 'vault.wrapping'),
       )
       await expect(f.manager.createKey({ ownerDID: f.identity.id })).rejects.toThrow()
       expect(await f.store.listKeys(f.identity.id)).toEqual([])
@@ -1105,8 +1105,8 @@ export function coordinatorCases(harness: StoreHarness): void {
       const a = await fixture('replicated')
       const b = await fixture('replicated', a.identity)
       const key = await a.manager.createKey({ ownerDID: a.identity.id })
-      await b.manager.records.apply(
-        (
+      await b.manager.records.apply({
+        records: (
           await a.manager.records.adapter.list([
             'vault.key',
             'vault.key-branch',
@@ -1115,7 +1115,7 @@ export function coordinatorCases(harness: StoreHarness): void {
             'vault.revocation',
           ])
         ).flatMap((d) => d.copies),
-      )
+      })
       await a.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })
       await b.manager.rotate({ ...key, excludedRecipients: [], reissue: [] })
       const branches = [a, b]
@@ -1127,8 +1127,8 @@ export function coordinatorCases(harness: StoreHarness): void {
       const [firstBranch, secondBranch] = keys
       if (firstBranch === undefined || secondBranch === undefined) throw new Error('Missing branch')
       const [loser, winner] =
-        (await recordClaimDigest(firstBranch.introducingOp.claim)) <
-        (await recordClaimDigest(secondBranch.introducingOp.claim))
+        (await recordClaimDigest({ claim: firstBranch.introducingOp.claim })) <
+        (await recordClaimDigest({ claim: secondBranch.introducingOp.claim }))
           ? [a, b]
           : [b, a]
       await loser.manager.putEntry({
@@ -1150,8 +1150,8 @@ export function coordinatorCases(harness: StoreHarness): void {
         ...metadata,
       })
       await loser.manager.deleteEntry({ ownerDID: key.ownerDID, entryID: 'deleted' })
-      await a.manager.records.apply(
-        (
+      await a.manager.records.apply({
+        records: (
           await b.manager.records.adapter.list([
             'vault.key',
             'vault.key-branch',
@@ -1160,9 +1160,9 @@ export function coordinatorCases(harness: StoreHarness): void {
             'vault.revocation',
           ])
         ).flatMap((d) => d.copies),
-      )
-      await b.manager.records.apply(
-        (
+      })
+      await b.manager.records.apply({
+        records: (
           await a.manager.records.adapter.list([
             'vault.key',
             'vault.key-branch',
@@ -1171,7 +1171,7 @@ export function coordinatorCases(harness: StoreHarness): void {
             'vault.revocation',
           ])
         ).flatMap((d) => d.copies),
-      )
+      })
       await expect(
         a.manager.readEntry({ ownerDID: key.ownerDID, entryID: 'loser-only' }),
       ).rejects.toMatchObject({ name: 'VaultSupersededBranch' })
@@ -1222,7 +1222,9 @@ export function coordinatorCases(harness: StoreHarness): void {
       expect(
         new Set(
           await Promise.all(
-            ops.map(async (o) => (o === null ? 'invalid' : await recordClaimDigest(o.claim))),
+            ops.map(async (o) =>
+              o === null ? 'invalid' : await recordClaimDigest({ claim: o.claim }),
+            ),
           ),
         ).size,
       ).toBe(1)

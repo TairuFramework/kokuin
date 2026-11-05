@@ -67,9 +67,9 @@ declare function createCapability<Payload extends SignCapabilityPayload>(
 
 **Root capability** (signer DID === `sub` DID): no parent required. The signer is the subject — they are asserting a permission they already own.
 
-**Member-issued capability** (signer is a management member of a `did:kokuin:` `sub`): `options.member` names the signer's membership, and the capability is a chain root with no parent. See [Grants issued by management members](#grants-issued-by-management-members).
+**Member-issued capability** (signer is a management member of a `did:kokuin:` `sub`): `member` names the signer's membership, and the capability is a chain root with no parent. See [Grants issued by management members](#grants-issued-by-management-members).
 
-**Delegated capability** (signer DID !== `sub` DID, no `member`): `options.parentCapability` (a stringified `CapabilityToken`) is required. The signer must be the `aud` of the parent, and the delegated permission must not exceed the parent's `act`/`res`.
+**Delegated capability** (signer DID !== `sub` DID, no `member`): `parentCapability` (a stringified `CapabilityToken`) is required. The signer must be the `aud` of the parent, and the delegated permission must not exceed the parent's `act`/`res`.
 
 ```typescript
 type CreateCapabilityOptions = {
@@ -113,23 +113,23 @@ import { assertValidPattern, isMatch, hasPartsMatch, hasPermission } from '@koku
 | Function             | Signature                                                | Purpose                           |
 | -------------------- | -------------------------------------------------------- | --------------------------------- |
 | `assertValidPattern` | `(value: string \| Array<string>) => void`               | Throw if pattern is invalid       |
-| `isMatch`            | `(expected: string, actual: string) => boolean`          | Exact match or `actual === '*'`   |
-| `hasPartsMatch`      | `(expected: string, actual: string) => boolean`          | Path prefix/wildcard match        |
-| `hasPermission`      | `(expected: Permission, granted: Permission) => boolean` | Full permission subsumption check |
+| `isMatch`            | `IsMatchParams` | Exact match or `actual === '*'`   |
+| `hasPartsMatch`      | `HasPartsMatchParams` | Path prefix/wildcard match        |
+| `hasPermission`      | `HasPermissionParams` | Full permission subsumption check |
 
-`hasPermission(expected, granted)` returns `true` when `granted` covers `expected`: it handles arrays on either side and delegates to `isMatch`/`hasPartsMatch` for the leaf comparison.
+`hasPermission({ expected, granted })` returns `true` when `granted` covers `expected`: it handles arrays on either side and delegates to `isMatch`/`hasPartsMatch` for the leaf comparison.
 
 ```typescript
 import { hasPermission } from '@kokuin/capability'
 
 // Exact match
-hasPermission({ act: 'read', res: 'docs/report' }, { act: 'read', res: 'docs/report' }) // true
+hasPermission({ expected: { act: 'read', res: 'docs/report' }, granted: { act: 'read', res: 'docs/report' } }) // true
 
 // Wildcard match
-hasPermission({ act: 'read', res: 'docs/report' }, { act: '*', res: 'docs/*' }) // true
+hasPermission({ expected: { act: 'read', res: 'docs/report' }, granted: { act: '*', res: 'docs/*' } }) // true
 
 // Permission not covered
-hasPermission({ act: 'write', res: 'docs/report' }, { act: 'read', res: 'docs/*' }) // false
+hasPermission({ expected: { act: 'write', res: 'docs/report' }, granted: { act: 'read', res: 'docs/*' } }) // false
 ```
 
 ---
@@ -175,22 +175,18 @@ type DelegationChainOptions = {
 }
 ```
 
-**`assertNonExpired(payload, atTime?)`** — throws if `payload.exp` is in the past relative to `atTime` (defaults to `now()`).
+**`assertNonExpired(params: AssertNonExpiredParams)`** — throws if `payload.exp` is in the past relative to `atTime` (defaults to `now()`).
 
-**`assertValidIssuedAt(payload, atTime?)`** — throws if `payload.iat` is in the future relative to `atTime`.
+**`assertValidIssuedAt(params: AssertValidIssuedAtParams)`** — throws if `payload.iat` is in the future relative to `atTime`.
 
-**`assertValidDelegation(from, to, atTime?)`** — validates a single delegation step: `to.iss` must equal `from.aud`, `to.sub` must equal `from.sub`, `from` must be non-expired and have a valid issued-at, and `to`'s permission must be a subset of `from`'s.
+**`assertValidDelegation(params: AssertValidDelegationParams)`** — validates a single delegation step: `to.iss` must equal `from.aud`, `to.sub` must equal `from.sub`, `from` must be non-expired and have a valid issued-at, and `to`'s permission must be a subset of `from`'s.
 
-**`checkDelegationChain(payload, capabilities, options?)`** — recursively validates a full chain. `capabilities` is the ordered list of stringified parent tokens (head = immediate parent, tail = grandparents toward root). The root token is valid when `iss === sub` (self-issued), or when it carries `mbr` and its issuer is an effective management member of `sub` (see below).
+**`checkDelegationChain(params: CheckDelegationChainParams)`** — recursively validates a full chain. `capabilities` is the ordered list of stringified parent tokens (head = immediate parent, tail = grandparents toward root). The root token is valid when `iss === sub` (self-issued), or when it carries `mbr` and its issuer is an effective management member of `sub` (see below).
 
-**`checkCapability(permission, payload, options?)`** — the top-level entry point. Given a `permission` being requested and a signed `payload` (from the incoming token), it checks that the payload grants the permission directly (self-issued, or a member-issued grant presented on its own) or via its `cap` delegation chain. On both direct arms the caller must already have verified the payload's signature: `checkCapability` does not verify the token it is handed, only the chain behind it.
+**`checkCapability(params: CheckCapabilityParams)`** — the top-level entry point. Given a `permission` being requested and a signed `payload` (from the incoming token), it checks that the payload grants the permission directly (self-issued, or a member-issued grant presented on its own) or via its `cap` delegation chain. On both direct arms the caller must already have verified the payload's signature: `checkCapability` does not verify the token it is handed, only the chain behind it.
 
 ```typescript
-async function checkCapability(
-  permission: Permission,
-  payload: SignedPayload, // from @kokuin/token
-  options?: DelegationChainOptions,
-): Promise<void>
+async function checkCapability(params: CheckCapabilityParams): Promise<void>
 ```
 
 ---
@@ -217,7 +213,7 @@ const grant = await createCapability(
       exp: now + 12 * 3600,
     },
     header: undefined,
-    options: { member: { add: memberAddDigest, g: head.gen } },
+    member: { add: memberAddDigest, g: head.gen },
   }, // the incarnation, and the log's generation
 )
 ```
@@ -228,10 +224,10 @@ const grant = await createCapability(
 
 ### Verification
 
-`checkCapability` and `checkDelegationChain` accept a root that carries `mbr` and whose `iss` is not `sub` through `assertMemberRoot(payload, options, time)`, which checks, in order:
+`checkCapability` and `checkDelegationChain` accept a root that carries `mbr` and whose `iss` is not `sub` through `assertMemberRoot({ payload, ...options, time })`, which checks, in order:
 1. `mbr` is well formed — else `MEMBER_GRANT_NOT_MEMBER` (`: malformed mbr claim`);
 2. the subject's method can answer `resolveMember` — else `MEMBER_GRANT_NO_RESOLVER`;
-3. `resolveMember(sub, { did: iss, add, gen: g })` answers: the incarnation is an effective member (present, not removed, its DID and pinned key not denied) in the head's generation, under the issuer's DID — any refusal, including an unresolvable or saturated log, is `MEMBER_GRANT_NOT_MEMBER`, with the original error as `cause`;
+3. `resolveMember({ subject: sub, member: { did: iss, add, gen: g } })` answers: the incarnation is an effective member (present, not removed, its DID and pinned key not denied) in the head's generation, under the issuer's DID — any refusal, including an unresolvable or saturated log, is `MEMBER_GRANT_NOT_MEMBER`, with the original error as `cause`;
 4. `iss` carries exactly the pinned key — one Ed25519 key, byte-equal — else `MEMBER_GRANT_KEY_MISMATCH`;
 5. `exp` is present and `exp <= lease` — else `MEMBER_GRANT_PAST_LEASE`;
 6. `iat` is present — else `MEMBER_GRANT_NO_IAT`;
@@ -247,7 +243,7 @@ Each reason is thrown with a `: detail` suffix, so match with `startsWith`.
 **One frozen view per verification.** Membership, pin, lease and every audience denial on the chain must come from one state of the subject's log, or a revoke landing between two of the questions gives a verdict no single state supports. With `@kokuin/controller`, put a fresh `resolver.frozen()` view in `methods` for each verification and drop it after:
 
 ```typescript
-await checkCapability(requested, payload, { methods: [resolver.frozen()] })
+await checkCapability({ permission: requested, payload, methods: [resolver.frozen()] })
 ```
 
 The view folds each DID at most once, so a whole chain — membership, lease, each link's audience — costs one `loadLog`.
@@ -272,7 +268,8 @@ import type { RevocationBackend, RevocationRecord, VerifyTokenHook } from '@koku
 **`VerifyTokenHook`**:
 
 ```typescript
-type VerifyTokenHook = (token: CapabilityToken, raw: string) => void | Promise<void>
+type VerifyTokenHookParams = { token: CapabilityToken; raw: string }
+type VerifyTokenHook = (params: VerifyTokenHookParams) => void | Promise<void>
 ```
 
 **`RevocationRecord`** — a **signed token**, not a plain object. The claims below are its _payload_:
@@ -294,7 +291,7 @@ type RevocationClaims = {
 ```typescript
 type RevocationBackend = {
   add(record: RevocationRecord): Promise<void>
-  get(jti: string, issuer: string): Promise<RevocationRecord | undefined>
+  get(params: RevocationBackendGetParams): Promise<RevocationRecord | undefined>
 }
 ```
 
@@ -304,9 +301,9 @@ It answers with the _record_, not with a boolean: the checker re-verifies the si
 
 **`createMemoryRevocationBackend(options?)`** — returns an in-memory `RevocationBackend` backed by a `Map` keyed by `(normalized issuer, jti)`. `add` verifies the record's signature and throws `Invalid revocation record` on one that does not check out. Suitable for single-process use; does not survive restarts.
 
-**`createRevocationRecord(signer, jti)`** — **signs** `{ jti, rev: true, iat }` with `signer`, producing the record. The caller is responsible for persisting it via `backend.add(record)`.
+**`createRevocationRecord({ signer, jti })`** — **signs** `{ jti, rev: true, iat }` with `signer`, producing the record. The caller is responsible for persisting it via `backend.add(record)`.
 
-**`createRevocationChecker(backend)`** — wraps a `RevocationBackend` as a `VerifyTokenHook`. Wire it via `DelegationChainOptions.verifyToken`:
+**`createRevocationChecker({ backend })`** — wraps a `RevocationBackend` as a `VerifyTokenHook`. Wire it via `DelegationChainOptions.verifyToken`:
 
 ```typescript
 import {
@@ -316,14 +313,14 @@ import {
 } from '@kokuin/capability'
 
 const backend = createMemoryRevocationBackend()
-const checker = createRevocationChecker(backend)
+const checker = createRevocationChecker({ backend })
 
 // Later, to revoke a token:
-const record = await createRevocationRecord(revokerIdentity, jtiToRevoke)
+const record = await createRevocationRecord({ signer: revokerIdentity, jti: jtiToRevoke })
 await backend.add(record)
 
 // Check with revocation enabled:
-await checkCapability(permission, signedPayload, { verifyToken: checker })
+await checkCapability({ permission, payload: signedPayload, verifyToken: checker })
 ```
 
 ---
@@ -348,7 +345,7 @@ import { createSigningIdentity } from '@kokuin/token'
 ```typescript
 import { createLedgerIdentityProvider } from '@kokuin/ledger-device'
 
-const provider = createLedgerIdentityProvider(transport) // positional LedgerTransport
+const provider = createLedgerIdentityProvider({ transport }) // positional LedgerTransport
 const identity = await provider.provideIdentity('0') // keyID string → FullIdentity
 ```
 
@@ -389,7 +386,7 @@ const delegatedCap = await createCapability(
       res: 'docs/report', // narrower than 'docs/*'
     },
     header: undefined,
-    options: { parentCapability: rootCapStr },
+    parentCapability: rootCapStr,
   }, // links back to the root
 )
 // stringify before embedding in the consumer token's `cap` claim (a string)
@@ -399,20 +396,15 @@ const delegatedCapStr = stringifyToken(delegatedCap)
 // checkCapability resolves the cap chain and verifies every link.
 const requestedPermission: Permission = { act: 'read', res: 'docs/report' }
 
-const consumerToken = await signToken(
-  consumerIdentity,
-  createUnsignedToken({
+const consumerToken = await signToken({ signer: consumerIdentity, token: createUnsignedToken({ payload: {
     sub: rootIdentity.id,
     act: 'read',
     res: 'docs/report',
     cap: delegatedCapStr,
-  }),
+  } }) }
 )
 const consumerPayload = consumerToken.payload
 
-await checkCapability(requestedPermission, consumerPayload, {
-  // optionally inject revocation:
-  // verifyToken: createRevocationChecker(backend),
-})
+await checkCapability({ permission: requestedPermission, payload: consumerPayload })
 // Resolves → permission granted; throws → denied
 ```

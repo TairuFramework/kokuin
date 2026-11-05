@@ -26,11 +26,13 @@ for (const vector of corpus.verify) {
 }
 
 test('signs and verifies the RFC 8032 empty-message vector', async () => {
-  expect(await strictNoble.sign('EdDSA', seed, new Uint8Array())).toEqual(signature)
+  expect(
+    await strictNoble.sign({ alg: 'EdDSA', privateKey: seed, message: new Uint8Array() }),
+  ).toEqual(signature)
   expect(
     await strictNoble.verify({
       alg: 'EdDSA',
-      signature: signature,
+      signature,
       message: new Uint8Array(),
       publicKey: key,
     }),
@@ -38,7 +40,7 @@ test('signs and verifies the RFC 8032 empty-message vector', async () => {
   expect(
     await strictNoble.verify({
       alg: 'EdDSA',
-      signature: signature,
+      signature,
       message: new Uint8Array([1]),
       publicKey: key,
     }),
@@ -54,9 +56,9 @@ test('rejects identity, torsion and mixed-order public keys', async () => {
     expect(
       await strictNoble.verify({
         alg: 'EdDSA',
-        signature: signature,
+        signature,
         message: new Uint8Array(),
-        publicKey: publicKey,
+        publicKey,
       }),
     ).toBe(false)
   }
@@ -67,10 +69,16 @@ test('hashes official blake3 empty-input output at several lengths', async () =>
     'af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262e00f03e7b69af26b7faaf09fcd333050338ddfe085b8cc869ca98b206c08243a',
   )
   for (const length of [16, 32, 64]) {
-    expect(await strictNoble.blake3(new Uint8Array(), length)).toEqual(expected.subarray(0, length))
+    expect(await strictNoble.blake3({ input: new Uint8Array(), dkLen: length })).toEqual(
+      expected.subarray(0, length),
+    )
   }
-  await expect(strictNoble.blake3(new Uint8Array(), 0)).rejects.toThrow(RangeError)
-  await expect(strictNoble.blake3(new Uint8Array(), 65537)).rejects.toThrow(RangeError)
+  await expect(strictNoble.blake3({ input: new Uint8Array(), dkLen: 0 })).rejects.toThrow(
+    RangeError,
+  )
+  await expect(strictNoble.blake3({ input: new Uint8Array(), dkLen: 65537 })).rejects.toThrow(
+    RangeError,
+  )
 })
 
 test('preserves mixed batch order and rejects malformed signing batches', async () => {
@@ -81,10 +89,13 @@ test('preserves mixed batch order and rejects malformed signing batches', async 
     ]),
   ).toEqual([true, false])
   await expect(
-    strictNoble.signBatch('EdDSA', [
-      { privateKey: seed, message: new Uint8Array() },
-      { privateKey: new Uint8Array(31), message: new Uint8Array() },
-    ]),
+    strictNoble.signBatch({
+      alg: 'EdDSA',
+      items: [
+        { privateKey: seed, message: new Uint8Array() },
+        { privateKey: new Uint8Array(31), message: new Uint8Array() },
+      ],
+    }),
   ).rejects.toThrow(TypeError)
 })
 
@@ -100,8 +111,8 @@ test('verifies P-256 raw messages and rejects high-S signatures', async () => {
     await strictNoble.verify({
       alg: 'ES256',
       signature: compact,
-      message: message,
-      publicKey: publicKey,
+      message,
+      publicKey,
     }),
   ).toBe(true)
   const high = hexToBytes(
@@ -111,21 +122,27 @@ test('verifies P-256 raw messages and rejects high-S signatures', async () => {
     await strictNoble.verify({
       alg: 'ES256',
       signature: high,
-      message: message,
-      publicKey: publicKey,
+      message,
+      publicKey,
     }),
   ).toBe(false)
 })
 
 test('rejects invalid algorithms even for empty batches and snapshots subarrays', async () => {
-  await expect(strictNoble.signBatch('ES256' as 'EdDSA', [])).rejects.toThrow(TypeError)
+  await expect(strictNoble.signBatch({ alg: 'ES256' as 'EdDSA', items: [] })).rejects.toThrow(
+    TypeError,
+  )
   const padded = new Uint8Array(40)
   padded.set(seed, 4)
-  const signing = strictNoble.sign('EdDSA', padded.subarray(4, 36), new Uint8Array())
+  const signing = strictNoble.sign({
+    alg: 'EdDSA',
+    privateKey: padded.subarray(4, 36),
+    message: new Uint8Array(),
+  })
   padded.fill(0)
   expect(await signing).toEqual(signature)
-  expect(await strictNoble.signBatch('EdDSA', [])).toEqual([])
+  expect(await strictNoble.signBatch({ alg: 'EdDSA', items: [] })).toEqual([])
   expect(await strictNoble.verifyBatch([])).toEqual([])
-  expect(await strictNoble.blake3Batch([], 32)).toEqual([])
-  await expect(strictNoble.blake3Batch([], 0)).rejects.toThrow(RangeError)
+  expect(await strictNoble.blake3Batch({ inputs: [], dkLen: 32 })).toEqual([])
+  await expect(strictNoble.blake3Batch({ inputs: [], dkLen: 0 })).rejects.toThrow(RangeError)
 })

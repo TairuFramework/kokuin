@@ -19,8 +19,7 @@ export type AdvanceRecordPullParams = {
   state: RecordPullState
   local: ReadonlyArray<RangeLeaf>
   response: RangeResponse
-  options?: CryptoOptions
-}
+} & CryptoOptions
 
 /**
  * What a requester says about one range the responder summarized:
@@ -81,12 +80,12 @@ async function answerFor(
     return 'matches'
   }
   const expected = summary.fingerprint
-  const mine = local.filter((leaf) => rangeContains(summary.bounds, leaf))
+  const mine = local.filter((leaf) => rangeContains({ bounds: summary.bounds, key: leaf }))
   if (mine.length === 0) {
     return 'empty'
   }
   // The fingerprint already carries the count.
-  return (await fingerprintRange(mine, options)) === expected ? 'matches' : 'differs'
+  return (await fingerprintRange({ ...options, leaves: mine })) === expected ? 'matches' : 'differs'
 }
 
 /**
@@ -101,11 +100,16 @@ async function answerFor(
  * leaf `assertListedLeaf` refuses: a responder splits a larger range, so a longer list is
  * not one it would send.
  */
-export async function nextRequesterSteps(
-  local: ReadonlyArray<RangeLeaf>,
-  response: RangeResponse,
-  options?: CryptoOptions,
-): Promise<Array<RequesterStep>> {
+export type NextRequesterStepsParams = {
+  local: ReadonlyArray<RangeLeaf>
+  response: RangeResponse
+} & CryptoOptions
+
+export async function nextRequesterSteps({
+  response,
+  local,
+  ...options
+}: NextRequesterStepsParams): Promise<Array<RequesterStep>> {
   if (!isLeafList(response)) {
     const bounds = { ...response.bounds }
     return [{ answer: await answerFor(local, response, options), bounds }]
@@ -118,14 +122,14 @@ export async function nextRequesterSteps(
   }
   const held = new Map(
     local
-      .filter((leaf) => rangeContains(response.bounds, leaf))
+      .filter((leaf) => rangeContains({ bounds: response.bounds, key: leaf }))
       .map((leaf) => [rangePosition(leaf), leaf] as const),
   )
   const seen = new Set<string>()
   const get: Array<RecordKey> = []
   for (const listed of response.leaves) {
     if (
-      rangeContains(response.bounds, listed) &&
+      rangeContains({ bounds: response.bounds, key: listed }) &&
       !seen.has(rangePosition(listed)) &&
       prefersResponder(listed, held.get(rangePosition(listed)))
     ) {
@@ -177,7 +181,7 @@ export async function advanceRecordPull({
   state,
   local,
   response,
-  options,
+  ...options
 }: AdvanceRecordPullParams): Promise<{ state: RecordPullState; steps: Array<RequesterStep> }> {
   const index = pendingIndexFor(state.pending, response.bounds)
   const range = state.pending[index] as RangeBounds
@@ -189,8 +193,10 @@ export async function advanceRecordPull({
   }
 
   let requested = state.requested.map((key) => ({ ...key }))
-  const steps = await nextRequesterSteps(local, response, {
-    crypto: options?.crypto ?? nobleCrypto,
+  const steps = await nextRequesterSteps({
+    local,
+    response,
+    crypto: options.crypto ?? nobleCrypto,
   })
   for (const step of steps) {
     if ('answer' in step) {

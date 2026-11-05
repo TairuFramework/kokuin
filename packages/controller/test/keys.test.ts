@@ -9,15 +9,23 @@ describe('tagged key encoding', () => {
   const x = x25519.getPublicKey(new Uint8Array(32).fill(9))
 
   test('round-trips an Ed25519 key with its algorithm', () => {
-    expect(decodeKey(encodeKey(ed, 'EdDSA'))).toEqual({ alg: 'EdDSA', publicKey: ed })
+    expect(decodeKey(encodeKey({ publicKey: ed, alg: 'EdDSA' }))).toEqual({
+      alg: 'EdDSA',
+      publicKey: ed,
+    })
   })
 
   test('round-trips an X25519 key with its algorithm', () => {
-    expect(decodeKey(encodeKey(x, 'X25519'))).toEqual({ alg: 'X25519', publicKey: x })
+    expect(decodeKey(encodeKey({ publicKey: x, alg: 'X25519' }))).toEqual({
+      alg: 'X25519',
+      publicKey: x,
+    })
   })
 
   test('the same bytes under two algorithms encode differently', () => {
-    expect(encodeKey(ed, 'EdDSA')).not.toBe(encodeKey(ed, 'X25519'))
+    expect(encodeKey({ publicKey: ed, alg: 'EdDSA' })).not.toBe(
+      encodeKey({ publicKey: ed, alg: 'X25519' }),
+    )
   })
 
   test('rejects an unknown multicodec rather than guessing by length', () => {

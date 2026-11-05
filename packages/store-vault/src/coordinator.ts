@@ -42,7 +42,11 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
     await ctx.authorize({ operation: 'createKey', verb: 'administer', address: request })
 
     const unique = params.runtime.getRandomValues(new Uint8Array(16))
-    const { keyID, keyUnique } = await createVaultKeyReference(request.ownerDID, unique, params)
+    const { keyID, keyUnique } = await createVaultKeyReference({
+      ...params,
+      owner: request.ownerDID,
+      unique,
+    })
     const key: KeyRow = {
       ownerDID: request.ownerDID,
       keyID,
@@ -79,7 +83,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
           params.mode === 'replicated'
             ? ctx.keyRecords({
                 row: key,
-                store: store,
+                store,
                 unique: keyUnique,
                 consumer: request.consumer,
               })
@@ -121,15 +125,15 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
           for (const row of rows)
             output.push(
               await records.wrapping({
-                row: row,
+                row,
                 branch: chain,
                 consumer: request.consumer ?? null,
               }),
             )
 
           await ctx.write({
-            store: store,
-            output: output,
+            store,
+            output,
             preconditions: { key: { ...key, expectedVersion: null, expectedBranches: [] } },
             call: request,
           })
@@ -152,7 +156,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
     await ctx.locked([request], async (store) => {
       const key = await ctx.key(request, store)
       const [branch, branches, wrappings] = await settleAll([
-        ctx.branch({ address: request, version: key.version, store: store }),
+        ctx.branch({ address: request, version: key.version, store }),
         ctx.branches(key, key.version, store),
         store.listWrappings({ ...key, keyVersion: key.version }),
       ])
@@ -160,7 +164,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
         return (
           (params.mode === 'local' || w.provenance === branch.branchID) &&
           w.descriptors.some((d) => d.kind === 'did') &&
-          satisfiableFactors(w.descriptors, params.identity) !== null
+          satisfiableFactors({ descriptors: w.descriptors, identity: params.identity }) !== null
         )
       })
 
@@ -176,12 +180,14 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
       const evidence = await ctx.wrappingEvidence(existing, store)
       const opened = await open.open({
         address: { ...request, atVersion: key.version },
-        store: store,
+        store,
       })
 
       try {
         const wrappingID = params.runtime.getRandomID()
-        const factors = change(factorsFromDescriptors(existing.descriptors, request.inputs))
+        const factors = change(
+          factorsFromDescriptors({ descriptors: existing.descriptors, inputs: request.inputs }),
+        )
         const wrapped = await getSuite(opened.suite).wrap({
           crypto: params.crypto,
           runtime: params.runtime,
@@ -209,9 +215,9 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
           const consumer =
             request.consumer === undefined ? evidence.op.claim.meta.consumer : request.consumer
           const replacement = await records.wrapping({
-            row: row,
-            branch: branch,
-            consumer: consumer,
+            row,
+            branch,
+            consumer,
           })
           const deletion = await ctx.signed({
             type: 'vault.wrapping',
@@ -226,7 +232,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
           })
 
           await ctx.write({
-            store: store,
+            store,
             output: [replacement, deletion],
             preconditions: {
               key: {
@@ -266,10 +272,10 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
       opened.contentKey.fill(0)
     },
     async lock(address) {
-      await ctx.authorize({ operation: 'lock', verb: 'read', address: address })
+      await ctx.authorize({ operation: 'lock', verb: 'read', address })
       ctx.evict(address)
     },
-    async lockAll(ownerDID, call = {}) {
+    async lockAll({ ownerDID, ...call }) {
       await ctx.authorize({ operation: 'lockAll', verb: 'read', address: { ownerDID, ...call } })
       ctx.evictAll(ownerDID)
     },
@@ -293,8 +299,8 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
         return { state: 'unopenable' }
       }
 
-      const branch = await ctx.branch({ address: request, version: version })
-      const hit = ctx.cache.get(ctx.cacheID(request), version)
+      const branch = await ctx.branch({ address: request, version })
+      const hit = ctx.cache.get({ keyID: ctx.cacheID(request), keyVersion: version })
 
       if (hit !== null) {
         const matches = hit.branchID === branch.branchID
@@ -306,7 +312,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
 
       const options = (await params.store.listWrappings({ ...request, keyVersion: version }))
         .filter((w) => params.mode === 'local' || w.provenance === branch.branchID)
-        .map((w) => satisfiableFactors(w.descriptors, params.identity))
+        .map((w) => satisfiableFactors({ descriptors: w.descriptors, identity: params.identity }))
         .filter((value) => value !== null)
 
       if (options.some((o) => o.length === 0)) return { state: 'available' }
@@ -315,7 +321,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
         ? { state: 'locked', unlockOptions: options }
         : { state: 'unopenable' }
     },
-    async listKeys(ownerDID, call = {}) {
+    async listKeys({ ownerDID, ...call }) {
       await ctx.authorize({ operation: 'listKeys', verb: 'read', address: { ownerDID, ...call } })
 
       return params.store.listKeys(ownerDID)
@@ -351,7 +357,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
         })
 
         await ctx.write({
-          store: store,
+          store,
           output: [record],
           preconditions: { key: { ...key, expectedVersion: key.version } },
           call: request,
@@ -394,7 +400,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
         })
 
         await ctx.write({
-          store: store,
+          store,
           output: [record],
           preconditions: { key: { ...key, expectedVersion: key.version } },
           call: request,
@@ -417,8 +423,8 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
         if (
           revocations.some((did) => {
             return (
-              vaultRevocationRecordID(key.keyID, did) ===
-              vaultRevocationRecordID(key.keyID, request.recipientDID)
+              vaultRevocationRecordID({ keyID: key.keyID, recipientDID: did }) ===
+              vaultRevocationRecordID({ keyID: key.keyID, recipientDID: request.recipientDID })
             )
           })
         )
@@ -429,7 +435,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
 
         const opened = await open.open({
           address: { ...request, atVersion: key.version },
-          store: store,
+          store,
         })
 
         try {
@@ -458,17 +464,17 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
           if (params.mode === 'local') await store.putWrapping(row)
           else {
             const [branch, branches] = await settleAll([
-              ctx.branch({ address: key, version: key.version, store: store }),
+              ctx.branch({ address: key, version: key.version, store }),
               ctx.branches(key, key.version, store),
             ])
             const record = await records.wrapping({
-              row: row,
-              branch: branch,
+              row,
+              branch,
               consumer: request.consumer,
             })
 
             await ctx.write({
-              store: store,
+              store,
               output: [record],
               preconditions: {
                 key: {
@@ -495,7 +501,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
           operation: 'refreshWrapping',
           verb: 'administer',
           address: request,
-          store: store,
+          store,
         })
         const key = await ctx.key(request, store)
         const row = await store.getWrapping(request)
@@ -507,7 +513,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
         )
           throw new VaultNotFound()
         const [branch, branches, evidence, revocations] = await settleAll([
-          ctx.branch({ address: key, version: key.version, store: store }),
+          ctx.branch({ address: key, version: key.version, store }),
           ctx.branches(key, key.version, store),
           ctx.wrappingEvidence(row, store),
           ctx.recordsFor(store).listRevocations(key),
@@ -527,27 +533,32 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
             return recipients.some((recipient) => {
               return (
                 typeof recipient === 'string' &&
-                vaultRevocationRecordID(key.keyID, recipient) ===
-                  vaultRevocationRecordID(key.keyID, did)
+                vaultRevocationRecordID({ keyID: key.keyID, recipientDID: recipient }) ===
+                  vaultRevocationRecordID({ keyID: key.keyID, recipientDID: did })
               )
             })
           })
         )
           throw new VaultNotFound()
         if (evidence.record.opHash !== request.expectedOpHash) throw new VaultWriteConflict()
-        const decoded = await decodeVaultRecord(evidence.record, evidence.op.claim.meta, params)
+        const decoded = await decodeVaultRecord({
+          ...params,
+          record: evidence.record,
+          recordMeta: evidence.op.claim.meta,
+        })
         if (decoded.type !== 'vault.wrapping') throw new VaultNotFound()
         const hlc = await params.nextHLC()
-        if (compareRecordDecisionHLC(hlc, evidence.record.hlc) <= 0) throw new VaultWriteConflict()
+        if (compareRecordDecisionHLC({ left: hlc, right: evidence.record.hlc }) <= 0)
+          throw new VaultWriteConflict()
         const record = await ctx.signed({
           type: 'vault.wrapping',
           address: { ownerDID: key.ownerDID, id: row.wrappingID },
           payload: decoded.payload,
           meta: { ...decoded.meta, consumer: request.consumer },
-          hlc: hlc,
+          hlc,
         })
         await ctx.write({
-          store: store,
+          store,
           output: [record],
           preconditions: {
             key: {
@@ -594,18 +605,18 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
           operation: 'readEntry',
           verb: 'read',
           address: { ...request, keyID: row.keyID },
-          store: store,
+          store,
         })
         await records.entryInfo(row, store)
 
         let specific = false
         if (params.mode === 'replicated' && params.authorizeEquivalentBranch !== undefined) {
-          const winning = await ctx.branch({ address: row, version: row.keyVersion, store: store })
+          const winning = await ctx.branch({ address: row, version: row.keyVersion, store })
           if (winning.branchID !== row.provenance) {
             const own = await ctx.branch({
               address: row,
               version: row.keyVersion,
-              store: store,
+              store,
               specific: row.provenance,
             })
             const [entry, entryBranch, winningBranch] = await ctx.storedMany(
@@ -626,10 +637,10 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
           }
         }
         return open.decrypt({
-          row: row,
+          row,
           address: { ...row, inputs: request.inputs },
-          store: store,
-          specific: specific,
+          store,
+          specific,
         })
       })
     },

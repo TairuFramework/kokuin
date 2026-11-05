@@ -10,13 +10,19 @@
  * @module token
  */
 
+export type { DIDCacheSetParams } from './cache.js'
 export {
   type CreateInMemoryDIDCacheOptions,
   createInMemoryDIDCache,
   type DIDCache,
   type DIDResolver,
 } from './cache.js'
-export type { IssuerKeyNotFoundErrorParams, UnresolvableIssuerErrorParams } from './did.js'
+export type {
+  GetDIDParams,
+  IssuerKeyNotFoundErrorParams,
+  ResolveIssuerParams,
+  UnresolvableIssuerErrorParams,
+} from './did.js'
 export {
   CODECS,
   getAgreementKey,
@@ -35,6 +41,16 @@ export {
   signingKeysOf,
   UnresolvableIssuerError,
 } from './did.js'
+export type {
+  CreateFullIdentityParams,
+  CreateKeyAgreementIdentityForDIDParams,
+  CreateSigningIdentityForDIDParams,
+  CreateSigningIdentityParams,
+  KeyAgreementIdentityAgreeKeyParams,
+  MultiKeyIdentityAgreeKeyParams,
+  MultiKeyIdentitySignTokenParams,
+  SigningIdentitySignTokenParams,
+} from './identity.js'
 export {
   type CreateIdentityInput,
   type CryptoOptions,
@@ -63,6 +79,13 @@ export {
   type SignTokenOptions,
 } from './identity.js'
 export type { KeyEntry, KeyStore, MutableKeyEntry } from './keystore.js'
+export type {
+  DIDMethodResolverResolveHistoricParams,
+  DIDMethodResolverResolveMemberHistoricParams,
+  DIDMethodResolverResolveMemberParams,
+  DIDMethodResolverResolveParams,
+  FindMethodResolverParams,
+} from './method.js'
 export {
   type AgreementAlgorithm,
   type DIDMethodResolver,
@@ -74,12 +97,14 @@ export {
   type ResolvedMember,
   type ResolvedSigningKey,
 } from './method.js'
+export type { VerifyMultihashParams } from './multibase.js'
 export {
   decodeMultibase,
   encodeMultibase,
   multihashSHA256,
   verifyMultihash,
 } from './multibase.js'
+export type { DecodePeer4Params } from './peer4.js'
 export {
   type DecodePeer4Options,
   type DIDDoc,
@@ -111,12 +136,14 @@ export {
   encodePrivateKey,
   randomPrivateKey,
 } from './signer.js'
+export type { AssertTimeClaimsValidParams } from './time.js'
 export {
   assertTimeClaimsValid,
   now,
   type TimeClaimsPayload,
   type TimeValidationOptions,
 } from './time.js'
+export type { CreateUnsignedTokenParams, SignTokenParams, VerifyTokenParams } from './token.js'
 export {
   createUnsignedToken,
   isSignedToken,
@@ -129,7 +156,9 @@ export {
   verifyToken,
 } from './token.js'
 export type * from './types.js'
+export type { ConcatBytesParams } from './utils.js'
 export { concatBytes, decodeSignedToken, stringifyToken } from './utils.js'
+export type { GetVerifierParams, VerifierParams } from './verifier.js'
 export {
   getVerifier,
   type Verifier,

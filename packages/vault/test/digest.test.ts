@@ -40,9 +40,9 @@ const ENTRY: VaultEntryDigestInput = {
   hlc: '2026-08-11T00:00:00.000Z-0000-node',
 }
 
-const wrappingBaseline = await vaultWrappingDigest(WRAPPING)
-const keyBaseline = await vaultKeyDigest(KEY)
-const entryBaseline = await vaultEntryDigest(ENTRY)
+const wrappingBaseline = await vaultWrappingDigest({ wrapping: WRAPPING })
+const keyBaseline = await vaultKeyDigest({ key: KEY })
+const entryBaseline = await vaultEntryDigest({ entry: ENTRY })
 
 describe('every field a wrapping digest covers moves it', () => {
   const baseline = wrappingBaseline
@@ -77,7 +77,7 @@ describe('every field a wrapping digest covers moves it', () => {
     ['a dropped factor', { ...WRAPPING, factors: [WRAPPING_FACTOR_0] }],
     ['an absent recipient', { ...WRAPPING, recipientDID: null }],
   ])('%s', async (_name, changed) => {
-    expect(await vaultWrappingDigest(changed)).not.toBe(baseline)
+    expect(await vaultWrappingDigest({ wrapping: changed })).not.toBe(baseline)
   })
 
   test('param key order does not, because a params record is an unordered bag', async () => {
@@ -85,14 +85,16 @@ describe('every field a wrapping digest covers moves it', () => {
       ...WRAPPING,
       factors: [WRAPPING_FACTOR_0, { kind: 'pin', params: { p: 1, t: 3, m: 65536, salt: 'ZZZZ' } }],
     }
-    expect(await vaultWrappingDigest(reordered)).toBe(baseline)
+    expect(await vaultWrappingDigest({ wrapping: reordered })).toBe(baseline)
   })
 
   test('a field moved between neighbours does not collide', async () => {
     const shifted = await vaultWrappingDigest({
-      ...WRAPPING,
-      wrappingID: 'wrap-1x',
-      iv: 'AECAwQFBgcICQoL',
+      wrapping: {
+        ...WRAPPING,
+        wrappingID: 'wrap-1x',
+        iv: 'AECAwQFBgcICQoL',
+      },
     })
     expect(shifted).not.toBe(baseline)
   })
@@ -107,7 +109,7 @@ describe('every field a key digest covers moves it', () => {
     ['version', { ...KEY, version: 3 }],
     ['state', { ...KEY, state: 'retired' }],
   ])('%s', async (_name, changed) => {
-    expect(await vaultKeyDigest(changed)).not.toBe(baseline)
+    expect(await vaultKeyDigest({ key: changed })).not.toBe(baseline)
   })
 })
 
@@ -120,21 +122,25 @@ describe('every field an entry digest covers moves it', () => {
     ['ciphertext', { ...ENTRY, ciphertext: 'JCMiISAfHh0cGxoZ' }],
     ['hlc', { ...ENTRY, hlc: '2026-08-11T00:00:00.001Z-0000-node' }],
   ])('%s', async (_name, changed) => {
-    expect(await vaultEntryDigest(changed)).not.toBe(baseline)
+    expect(await vaultEntryDigest({ entry: changed })).not.toBe(baseline)
   })
 
   test('one entry digests as the one-element set, not as a second framing', async () => {
-    expect(await vaultEntryDigest(ENTRY)).toBe(await vaultEntriesDigest([ENTRY]))
+    expect(await vaultEntryDigest({ entry: ENTRY })).toBe(
+      await vaultEntriesDigest({ entries: [ENTRY] }),
+    )
   })
 
   test('a set digests the same however it is ordered', async () => {
     const other = { ...ENTRY, entryID: 'entry-0' }
-    expect(await vaultEntriesDigest([ENTRY, other])).toBe(await vaultEntriesDigest([other, ENTRY]))
+    expect(await vaultEntriesDigest({ entries: [ENTRY, other] })).toBe(
+      await vaultEntriesDigest({ entries: [other, ENTRY] }),
+    )
   })
 
   test('an entry added to a set moves it', async () => {
-    expect(await vaultEntriesDigest([ENTRY, { ...ENTRY, entryID: 'entry-0' }])).not.toBe(
-      await vaultEntriesDigest([ENTRY]),
-    )
+    expect(
+      await vaultEntriesDigest({ entries: [ENTRY, { ...ENTRY, entryID: 'entry-0' }] }),
+    ).not.toBe(await vaultEntriesDigest({ entries: [ENTRY] }))
   })
 })

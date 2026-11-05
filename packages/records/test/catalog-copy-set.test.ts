@@ -63,7 +63,7 @@ async function signed(
   const claim: RecordClaim = {
     ...key,
     hlc: options.hlc ?? stamp(signer),
-    payloadDigest: await recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest({ payload }),
     deleted: payload === null,
     meta: options.meta ?? {},
   }
@@ -71,19 +71,19 @@ async function signed(
     ...key,
     hlc: claim.hlc,
     payload,
-    ...(await signRecordOp({ identity: signer, claim: claim, opKind: TEST_OP_KIND })),
+    ...(await signRecordOp({ identity: signer, claim, opKind: TEST_OP_KIND })),
   }
 }
 
 async function decisionFor(record: SignedRecord): Promise<RecordDecision> {
-  const op = await verifySignedRecord({ record: record, opKind: TEST_OP_KIND })
+  const op = await verifySignedRecord({ record, opKind: TEST_OP_KIND })
   if (op === null) throw new Error('The signed fixture did not verify')
   return {
     key: { type: record.type, owner: record.owner, id: record.id },
     decisionHLC: typeof op.claim.meta.version === 'string' ? op.claim.meta.version : op.claim.hlc,
     contentDigest:
       typeof records.recordDecisionDigest === 'function'
-        ? await records.recordDecisionDigest({ record: record, opKind: TEST_OP_KIND })
+        ? await records.recordDecisionDigest({ record, opKind: TEST_OP_KIND })
         : toB64U(blake3(canonicalRecordClaim(op.claim), { dkLen: 32 })),
     copies: [record],
   }
@@ -130,7 +130,7 @@ function memoryStore(initial: ReadonlyArray<RecordDecision> = []) {
               : [record],
         })
       },
-      pruneCopy: async (key: RecordKey, signerDID: string) => {
+      pruneCopy: async ({ key, signerDID }: { key: RecordKey; signerDID: string }) => {
         pruned.push({ key, signerDID })
         const decision = view().get(keyOf(key))
         if (decision === undefined) return
@@ -165,7 +165,7 @@ function definition(overrides: Partial<RecordTypeDefinition> = {}): RecordTypeDe
     type: TYPE,
     policy: LWW,
     dependsOn: [],
-    authorize: async (op, ctx) => {
+    authorize: async ({ op, ctx }) => {
       return (
         op.issuer === op.claim.owner || (await ctx.resolveController(op.issuer)) === op.claim.owner
       )
@@ -212,10 +212,18 @@ describe('owner-qualified decisions and signed copies', () => {
       throw new Error('invalid signed fixture')
 
     expect(
-      records.recordDecisionFromVerifiedCopies(key, [{ copy: invalid, op: invalidOp }], 'version'),
+      records.recordDecisionFromVerifiedCopies({
+        key,
+        entries: [{ copy: invalid, op: invalidOp }],
+        stampSource: 'version',
+      }),
     ).toBeNull()
     expect(
-      records.recordDecisionFromVerifiedCopies(key, [{ copy: missing, op: missingOp }], 'version'),
+      records.recordDecisionFromVerifiedCopies({
+        key,
+        entries: [{ copy: missing, op: missingOp }],
+        stampSource: 'version',
+      }),
     ).toBeNull()
     for (const entries of [
       [
@@ -227,9 +235,13 @@ describe('owner-qualified decisions and signed copies', () => {
         { copy: invalid, op: invalidOp },
       ],
     ]) {
-      expect(records.recordDecisionFromVerifiedCopies(key, entries, 'version')?.copies).toEqual([
-        valid,
-      ])
+      expect(
+        records.recordDecisionFromVerifiedCopies({
+          key,
+          entries,
+          stampSource: 'version',
+        })?.copies,
+      ).toEqual([valid])
     }
   })
 
@@ -259,8 +271,8 @@ describe('owner-qualified decisions and signed copies', () => {
         const op = await verifySignedRecord({ record: copy, opKind: TEST_OP_KIND })
         if (op === null) throw new Error('invalid signed fixture')
         if (
-          (await records.recordClaimDigest(op.claim)) >
-          (await records.recordClaimDigest(highOp.claim))
+          (await records.recordClaimDigest({ claim: op.claim })) >
+          (await records.recordClaimDigest({ claim: highOp.claim }))
         ) {
           pair = { key, high, highOp, low: { copy, op } }
           break
@@ -274,9 +286,13 @@ describe('owner-qualified decisions and signed copies', () => {
       [low, { copy: high, op: highOp }],
       [{ copy: high, op: highOp }, low],
     ]) {
-      expect(records.recordDecisionFromVerifiedCopies(key, entries, 'version')?.copies).toEqual([
-        high,
-      ])
+      expect(
+        records.recordDecisionFromVerifiedCopies({
+          key,
+          entries,
+          stampSource: 'version',
+        })?.copies,
+      ).toEqual([high])
     }
   })
 
@@ -305,7 +321,7 @@ describe('owner-qualified decisions and signed copies', () => {
       expect(memory.read(malloryKey)?.copies).toEqual([malloryDelete])
       const leaves = await Promise.all(
         [memory.read(aliceKey), memory.read(malloryKey)].map(async (decision) => {
-          const leaf = await rangeLeaf(decision as RecordDecision, LWW)
+          const leaf = await rangeLeaf({ decision: decision as RecordDecision, policy: LWW })
           if (leaf === null) throw new Error('Decision leaf was not produced')
           return leaf
         }),
@@ -313,8 +329,8 @@ describe('owner-qualified decisions and signed copies', () => {
       expect(leaves.map((leaf) => leaf.owner)).toEqual([aliceKey.owner, malloryKey.owner])
       expect(new Set(leaves.map((leaf) => leaf.id)).size).toBe(1)
       const bounds = { type: TYPE, lower: null, upper: null }
-      expect((await summarizeRange(leaves, bounds)).count).toBe(2)
-      expect(await splitRange({ leaves: leaves, rangeBounds: bounds, leafThreshold: 16 })).toEqual([
+      expect((await summarizeRange({ leaves, rangeBounds: bounds })).count).toBe(2)
+      expect(await splitRange({ leaves, rangeBounds: bounds, leafThreshold: 16 })).toEqual([
         {
           bounds,
           leaves: [...leaves].sort((left, right) => (left.owner < right.owner ? -1 : 1)),
@@ -341,7 +357,7 @@ describe('owner-qualified decisions and signed copies', () => {
       definition({
         type: childKey.type,
         dependsOn: [aliceParent.type],
-        dependencies: (_record, op) => {
+        dependencies: ({ record: _record, op }) => {
           return [
             { type: aliceParent.type, owner: op.claim.owner, id: op.claim.meta.parent as string },
           ]
@@ -349,13 +365,13 @@ describe('owner-qualified decisions and signed copies', () => {
       }),
     ]
     const memory = memoryStore([await decisionFor(stranger)])
-    const first = await applyWith({ input: [child], store: memory.store, types: types })
+    const first = await applyWith({ input: [child], store: memory.store, types })
     expect(first.parked).toEqual([child])
     expect(memory.read(childKey)).toBeNull()
     const second = await applyWith({
       input: [parent, ...first.parked],
       store: memory.store,
-      types: types,
+      types,
     })
     expect(second.applied).toBe(2)
     expect(memory.read(childKey)?.copies).toEqual([child])
@@ -389,7 +405,7 @@ describe('owner-qualified decisions and signed copies', () => {
     const wrappingType = definition({
       type: wrappingKey.type,
       dependsOn: [branchKey.type],
-      dependencies: (_record, op) => {
+      dependencies: ({ record: _record, op }) => {
         return [
           {
             type: branchKey.type,
@@ -413,12 +429,12 @@ describe('owner-qualified decisions and signed copies', () => {
       }
     }
     const wrongBranch = memoryStore([await decisionFor(malloryBranch)])
-    expect(await verifyHolderProof(proof, context(wrongBranch.store))).toBe(false)
+    expect(await verifyHolderProof({ proof, ctx: context(wrongBranch.store) })).toBe(false)
     const wrongWrapping = memoryStore([
       await decisionFor(aliceBranch),
       await decisionFor(malloryWrapping),
     ])
-    expect(await verifyHolderProof(proof, context(wrongWrapping.store))).toBe(true)
+    expect(await verifyHolderProof({ proof, ctx: context(wrongWrapping.store) })).toBe(true)
     const device = randomIdentity()
     const deviceWrapping = await signed(device, wrappingKey, {
       hlc: proof.hlc,
@@ -428,7 +444,7 @@ describe('owner-qualified decisions and signed copies', () => {
       await decisionFor(aliceBranch),
       await decisionFor(deviceWrapping),
     ])
-    expect(await verifyHolderProof(proof, context(alternateCopy.store))).toBe(true)
+    expect(await verifyHolderProof({ proof, ctx: context(alternateCopy.store) })).toBe(true)
   })
 
   test('equalDecisionUsesContentDigestNotSigningTime', async () => {
@@ -520,15 +536,20 @@ describe('owner-qualified decisions and signed copies', () => {
     const replacement = await signed(alice, key, { hlc })
     const oldDecision = await decisionFor(old)
     const both: RecordDecision = { ...oldDecision, copies: [old, replacement] }
-    expect(async () => await rangeLeaf(oldDecision, LWW)).not.toThrow()
-    const oldLeaf = await rangeLeaf(oldDecision, LWW)
-    const bothLeaf = await rangeLeaf(both, LWW)
+    expect(async () => await rangeLeaf({ decision: oldDecision, policy: LWW })).not.toThrow()
+    const oldLeaf = await rangeLeaf({ decision: oldDecision, policy: LWW })
+    const bothLeaf = await rangeLeaf({ decision: both, policy: LWW })
     if (oldLeaf === null || bothLeaf === null) throw new Error('Decision leaf was not produced')
-    expect(await fingerprintRange([oldLeaf])).not.toBe(await fingerprintRange([bothLeaf]))
+    expect(await fingerprintRange({ leaves: [oldLeaf] })).not.toBe(
+      await fingerprintRange({ leaves: [bothLeaf] }),
+    )
     expect(
-      await nextRequesterSteps([oldLeaf], {
-        bounds: { type: TYPE, lower: null, upper: null },
-        leaves: [bothLeaf],
+      await nextRequesterSteps({
+        local: [oldLeaf],
+        response: {
+          bounds: { type: TYPE, lower: null, upper: null },
+          leaves: [bothLeaf],
+        },
       }),
     ).toEqual([{ get: [key] }])
     const memory = memoryStore([oldDecision])
@@ -580,7 +601,7 @@ describe('owner-qualified decisions and signed copies', () => {
     const memory = memoryStore()
     const refusal = new RecordContentRefusalError({ message: 'invalid content' })
     const type = definition({
-      precheck: async (_op, record) => {
+      precheck: async ({ op: _op, record }) => {
         if (record.id === bad.id) throw refusal
         return true
       },
@@ -608,7 +629,7 @@ describe('owner-qualified decisions and signed copies', () => {
         store: memoryStore().store,
         types: [
           definition({
-            authorize: async (_op, ctx) => {
+            authorize: async ({ op: _op, ctx }) => {
               await ctx.resolveController('device')
               return true
             },
@@ -648,7 +669,7 @@ describe('owner-qualified decisions and signed copies', () => {
       store: memory.store,
       types: [
         definition({
-          afterApply: async (record) => {
+          afterApply: async ({ record }) => {
             if (record.id === bad.id)
               throw new RecordContentRefusalError({ message: 'bad content' })
           },

@@ -22,7 +22,7 @@ const seed = new Uint8Array(32).fill(1)
 const victim = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
 async function build() {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
   return { did, icp }
 }
@@ -51,7 +51,7 @@ describe('resolveBranches()', () => {
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const result = await resolveBranches(did, [[icp], [icp, rot]])
+    const result = await resolveBranches({ did, chains: [[icp], [icp, rot]] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.winner).toHaveLength(2)
@@ -67,11 +67,14 @@ describe('resolveBranches()', () => {
       snapshot: { members: [], deny: [] },
     })
     const denying = await settle(did, rot.event, [victim])
-    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
-    const result = await resolveBranches(did, [
-      [icp, rot, denying],
-      [icp, reset],
-    ])
+    const reset = await createReset({ seed, profile: 0, gen: 1 })
+    const result = await resolveBranches({
+      did,
+      chains: [
+        [icp, rot, denying],
+        [icp, reset],
+      ],
+    })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.winner, 1).event.g).toBe(1)
@@ -83,10 +86,13 @@ describe('resolveBranches()', () => {
     const { did, icp } = await build()
     const rotateA = await settle(did, icp.event, [victim])
     const rotateB = await settle(did, icp.event, ['did:key:zOther'])
-    const result = await resolveBranches(did, [
-      [icp, rotateA],
-      [icp, rotateB],
-    ])
+    const result = await resolveBranches({
+      did,
+      chains: [
+        [icp, rotateA],
+        [icp, rotateB],
+      ],
+    })
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.duplicity.gen).toBe(0)
@@ -109,16 +115,19 @@ describe('resolveBranches()', () => {
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const result = await resolveBranches(did, [
-      [icp, a],
-      [icp, b],
-    ])
+    const result = await resolveBranches({
+      did,
+      chains: [
+        [icp, a],
+        [icp, b],
+      ],
+    })
     expect(result.ok).toBe(true)
   })
 
   test('a single branch resolves to itself', async () => {
     const { did, icp } = await build()
-    const result = await resolveBranches(did, [[icp]])
+    const result = await resolveBranches({ did, chains: [[icp]] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.superseded).toBe(0)
@@ -132,10 +141,13 @@ describe('resolveBranches()', () => {
     const forkA = await settle(did, icp.event, [victim])
     const forkB = await settle(did, icp.event, ['did:key:zOther'])
     const forkBNext = await settle(did, forkB.event, ['did:key:zThird'])
-    const result = await resolveBranches(did, [
-      [icp, forkA],
-      [icp, forkB, forkBNext],
-    ])
+    const result = await resolveBranches({
+      did,
+      chains: [
+        [icp, forkA],
+        [icp, forkB, forkBNext],
+      ],
+    })
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.duplicity.gen).toBe(0)
@@ -158,13 +170,13 @@ describe('resolveBranches()', () => {
         sigs: [],
       } as unknown as SignedEvent,
     ]
-    expect((await foldLog(did, { chain: noise, events: [] })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: noise, events: [] } })).ok).toBe(true)
 
     for (const order of [
       [honest, noise],
       [noise, honest],
     ]) {
-      const result = await resolveBranches(did, order)
+      const result = await resolveBranches({ did, chains: order })
       expect(result.ok).toBe(true)
       if (!result.ok) continue
       expect(result.winner).toBe(honest)
@@ -189,8 +201,8 @@ describe('resolveBranches()', () => {
     const a = noise('nop')
     const b = noise('pon')
 
-    const forward = await resolveBranches(did, [a, b])
-    const backward = await resolveBranches(did, [b, a])
+    const forward = await resolveBranches({ did, chains: [a, b] })
+    const backward = await resolveBranches({ did, chains: [b, a] })
     expect(forward.ok && backward.ok).toBe(true)
     if (!forward.ok || !backward.ok) return
     expect(forward.winner).toBe(backward.winner)
@@ -219,13 +231,13 @@ describe('resolveBranches()', () => {
         sigs: [],
       } as unknown as SignedEvent,
     ]
-    expect((await foldLog(did, { chain: padded, events: [] })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: padded, events: [] } })).ok).toBe(true)
 
     for (const order of [
       [honest, padded],
       [padded, honest],
     ]) {
-      const result = await resolveBranches(did, order)
+      const result = await resolveBranches({ did, chains: order })
       expect(result.ok).toBe(true)
       if (!result.ok) continue
       // The same folded head, so the two are one history: the shorter representative is kept and
@@ -250,10 +262,10 @@ describe('resolveBranches()', () => {
       [at(branches, 0), at(branches, 2), at(branches, 1)],
       [at(branches, 2), at(branches, 0), at(branches, 1)],
     ]
-    const first = await resolveBranches(did, at(orderings, 0))
+    const first = await resolveBranches({ did, chains: at(orderings, 0) })
     expect(first.ok).toBe(false)
     for (const order of orderings) {
-      expect(await resolveBranches(did, order)).toEqual(first)
+      expect(await resolveBranches({ did, chains: order })).toEqual(first)
     }
   })
 
@@ -266,16 +278,16 @@ describe('resolveBranches()', () => {
     const snapshot = [
       icp,
       await createReset({
-        seed: seed,
+        seed,
         profile: 0,
         gen: 1,
         snapshot: { members: [], deny: [victim] },
       }),
     ]
-    const blind = [icp, await createReset({ seed: seed, profile: 0, gen: 1 })]
-    const higher = [icp, await createReset({ seed: seed, profile: 0, gen: 2 })]
-    const forked = await resolveBranches(did, [snapshot, blind])
-    expect(forked).toEqual(await resolveBranches(did, [blind, snapshot]))
+    const blind = [icp, await createReset({ seed, profile: 0, gen: 1 })]
+    const higher = [icp, await createReset({ seed, profile: 0, gen: 2 })]
+    const forked = await resolveBranches({ did, chains: [snapshot, blind] })
+    expect(forked).toEqual(await resolveBranches({ did, chains: [blind, snapshot] }))
     expect(forked.ok).toBe(false)
     if (forked.ok) return
     expect(forked.failure).toBe('duplicity')
@@ -283,14 +295,14 @@ describe('resolveBranches()', () => {
     // CONTROL — the same blind reset twice is one history.
     expect(
       (
-        await resolveBranches(did, [
-          blind,
-          [icp, await createReset({ seed: seed, profile: 0, gen: 1 })],
-        ])
+        await resolveBranches({
+          did,
+          chains: [blind, [icp, await createReset({ seed, profile: 0, gen: 1 })]],
+        })
       ).ok,
     ).toBe(true)
 
-    const settled = await resolveBranches(did, [snapshot, higher, blind])
+    const settled = await resolveBranches({ did, chains: [snapshot, higher, blind] })
     expect(settled.ok && settled.winner).toEqual(higher)
   })
 })
@@ -304,11 +316,11 @@ describe('a reset re-parented onto a different prefix', async () => {
   const { did, icp } = await build()
   const rot0 = await settle(did, icp.event, [])
   for (const [name, reset] of [
-    ['blind', await createReset({ seed: seed, profile: 0, gen: 1 })],
+    ['blind', await createReset({ seed, profile: 0, gen: 1 })],
     [
       'with a snapshot',
       await createReset({
-        seed: seed,
+        seed,
         profile: 0,
         gen: 1,
         snapshot: { members: [], deny: [victim] },
@@ -322,7 +334,7 @@ describe('a reset re-parented onto a different prefix', async () => {
         [appended, carried],
         [carried, appended],
       ]) {
-        const result = await resolveBranches(did, order)
+        const result = await resolveBranches({ did, chains: order })
         expect(result.ok).toBe(true)
         if (!result.ok) return
         expect(result.winner).toEqual(carried)
@@ -338,7 +350,7 @@ describe('a reset re-parented onto a different prefix', async () => {
         [one, two],
         [two, one],
       ]) {
-        const result = await resolveBranches(did, order)
+        const result = await resolveBranches({ did, chains: order })
         expect(result.ok).toBe(false)
         if (result.ok) return
         expect(result.failure).toBe('duplicity')

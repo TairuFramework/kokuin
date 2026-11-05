@@ -8,8 +8,7 @@ export type RecordDecisionDigestParams = {
   record: SignedRecord
   opKind: string
   methods?: MethodRegistry
-  options?: CryptoOptions
-}
+} & CryptoOptions
 
 export type RecordDecision = {
   key: RecordKey
@@ -26,11 +25,17 @@ function decisionStamp(op: VerifiedRecordOp, source: 'hlc' | 'version'): string 
 }
 
 /** Select one signed content decision while retaining every verified copy of it. */
-export function recordDecisionFromVerifiedCopies(
-  key: RecordKey,
-  entries: ReadonlyArray<VerifiedRecordCopy>,
-  stampSource: 'hlc' | 'version',
-): RecordDecision | null {
+export type RecordDecisionFromVerifiedCopiesParams = {
+  key: RecordKey
+  entries: ReadonlyArray<VerifiedRecordCopy>
+  stampSource: 'hlc' | 'version'
+}
+
+export function recordDecisionFromVerifiedCopies({
+  stampSource,
+  entries,
+  key,
+}: RecordDecisionFromVerifiedCopiesParams): RecordDecision | null {
   let winner: { decisionHLC: string; contentDigest: string } | null = null
   for (const { op } of entries) {
     const decisionHLC = decisionStamp(op, stampSource)
@@ -38,7 +43,7 @@ export function recordDecisionFromVerifiedCopies(
     const contentDigest = op.contentDigest
     if (
       winner === null ||
-      compareRecordDecisionHLC(decisionHLC, winner.decisionHLC) > 0 ||
+      compareRecordDecisionHLC({ left: decisionHLC, right: winner.decisionHLC }) > 0 ||
       (decisionHLC === winner.decisionHLC && contentDigest > winner.contentDigest)
     ) {
       winner = { decisionHLC, contentDigest }
@@ -65,13 +70,13 @@ export async function recordDecisionDigest({
   record,
   opKind,
   methods,
-  options,
+  ...options
 }: RecordDecisionDigestParams): Promise<string> {
   const op = await verifySignedRecord({
-    record: record,
-    opKind: opKind,
-    methods: methods,
-    options: options,
+    ...options,
+    record,
+    opKind,
+    methods,
   })
   if (op === null) throw new RecordClaimError({ message: 'Record signature is invalid' })
   return op.contentDigest

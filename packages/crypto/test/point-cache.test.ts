@@ -57,8 +57,8 @@ test('cached validation agrees with uncached valid, small-order and mixed-order 
       expect(
         await nobleCrypto.verify({
           alg: 'EdDSA',
-          signature: signature,
-          message: message,
+          signature,
+          message,
           publicKey: key,
         }),
       ).toBe(expected)
@@ -73,9 +73,9 @@ test('repeated verification checks public-key torsion once and signature torsion
     expect(
       await nobleCrypto.verify({
         alg: 'EdDSA',
-        signature: signature,
-        message: message,
-        publicKey: publicKey,
+        signature,
+        message,
+        publicKey,
       }),
     ).toBe(true)
   }
@@ -93,7 +93,7 @@ test('public-key validation evicts after 256 distinct keys', async () => {
     await nobleCrypto.verify({
       alg: 'EdDSA',
       signature: rejectedR,
-      message: message,
+      message,
       publicKey: key,
     })
   counts.decoded.clear()
@@ -101,7 +101,7 @@ test('public-key validation evicts after 256 distinct keys', async () => {
   await nobleCrypto.verify({
     alg: 'EdDSA',
     signature: rejectedR,
-    message: message,
+    message,
     publicKey: oldest,
   })
   expect(counts.decoded.get(bytesToHex(oldest))).toBe(1)
@@ -110,7 +110,7 @@ test('public-key validation evicts after 256 distinct keys', async () => {
   await nobleCrypto.verify({
     alg: 'EdDSA',
     signature: rejectedR,
-    message: message,
+    message,
     publicKey: newest,
   })
   expect(counts.decoded.has(bytesToHex(newest))).toBe(false)
@@ -125,8 +125,8 @@ test('mutating an input view cannot reuse validation for different bytes', async
   expect(
     await nobleCrypto.verify({
       alg: 'EdDSA',
-      signature: signature,
-      message: message,
+      signature,
+      message,
       publicKey: key,
     }),
   ).toBe(true)
@@ -134,8 +134,8 @@ test('mutating an input view cannot reuse validation for different bytes', async
   expect(
     await nobleCrypto.verify({
       alg: 'EdDSA',
-      signature: signature,
-      message: message,
+      signature,
+      message,
       publicKey: key,
     }),
   ).toBe(false)
@@ -143,8 +143,8 @@ test('mutating an input view cannot reuse validation for different bytes', async
   expect(
     await nobleCrypto.verify({
       alg: 'EdDSA',
-      signature: signature,
-      message: message,
+      signature,
+      message,
       publicKey: key,
     }),
   ).toBe(true)

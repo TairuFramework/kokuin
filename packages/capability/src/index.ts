@@ -17,7 +17,12 @@ export { isUnresolvableIssuerError, UnresolvableIssuerError } from '@kokuin/toke
 
 export { AUDIENCE_REVOKED, DENY_SET_UNAVAILABLE } from './audience.js'
 export { audienceConfirmation } from './controller.js'
-export type { CreateCapabilityParams } from './delegation.js'
+export type {
+  AssertValidDelegationParams,
+  CheckCapabilityParams,
+  CheckDelegationChainParams,
+  CreateCapabilityParams,
+} from './delegation.js'
 export {
   assertValidDelegation,
   checkCapability,
@@ -25,6 +30,7 @@ export {
   createCapability,
   DEFAULT_MAX_DELEGATION_DEPTH,
 } from './delegation.js'
+export type { AssertMemberRootParams } from './member.js'
 export {
   assertMemberRoot,
   DEFAULT_MEMBER_GRANT_LIFETIME,
@@ -35,9 +41,13 @@ export {
   MEMBER_GRANT_PAST_LEASE,
   MEMBER_GRANT_TOO_LONG,
 } from './member.js'
+export type { HasPartsMatchParams, HasPermissionParams, IsMatchParams } from './patterns.js'
 export { assertValidPattern, hasPartsMatch, hasPermission, isMatch } from './patterns.js'
 export type {
+  CreateRevocationCheckerParams,
+  CreateRevocationRecordParams,
   RevocationBackend,
+  RevocationBackendGetParams,
   RevocationClaims,
   RevocationOptions,
   RevocationRecord,
@@ -50,6 +60,12 @@ export {
   isTokenRevokedError,
   TokenRevokedError,
 } from './revocation.js'
+export type {
+  AssertDeviceCapabilityPolicyParams,
+  AssertNonExpiredParams,
+  AssertValidIssuedAtParams,
+  AssertValidNotBeforeParams,
+} from './time.js'
 export {
   assertDeviceCapabilityPolicy,
   assertNonExpired,
@@ -70,4 +86,5 @@ export type {
   Permission,
   SignCapabilityPayload,
   VerifyTokenHook,
+  VerifyTokenHookParams,
 } from './types.js'

@@ -68,16 +68,16 @@ export async function signed(
       identity: signer,
       claim: {
         ...claim,
-        payloadDigest: await recordPayloadDigest(payload),
+        payloadDigest: await recordPayloadDigest({ payload }),
         deleted: payload === null,
       },
-      opKind: opKind,
+      opKind,
     })),
   }
 }
 
 export async function verified(record: SignedRecord) {
-  const op = await verifySignedRecord({ record: record, opKind: OP_KIND })
+  const op = await verifySignedRecord({ record, opKind: OP_KIND })
   if (op === null) throw new Error('Fixture signature did not verify')
   return op
 }
@@ -102,7 +102,7 @@ export async function chain(
   } = {},
 ): Promise<Chain> {
   const owner = params.owner ?? signer.id
-  const keyID = await createVaultKeyID(owner, UNIQUE)
+  const keyID = await createVaultKeyID({ owner, unique: UNIQUE })
   const version = params.version ?? 1
   const state = params.state ?? 'active'
   const consumer = params.consumer ?? {}
@@ -111,18 +111,21 @@ export async function chain(
     id: keyID,
     owner,
     hlc: stamp(params.counter ?? version * 10),
-    payload: encodeVaultRecordPayload('vault.key', { suite: 1, state }),
+    payload: encodeVaultRecordPayload({ type: 'vault.key', payload: { suite: 1, state } }),
     meta: { keyID, keyUnique: toB64U(UNIQUE), version, state, consumer },
   })
   const branchID = `${key.hlc}:${key.opHash}`
-  const payload = encodeVaultRecordPayload('vault.key-branch', {
-    authorDID: signer.id,
-    hlc: key.hlc,
-    opJWT: key.opJWT,
-    opHash: key.opHash,
-    suite: 1,
+  const payload = encodeVaultRecordPayload({
+    type: 'vault.key-branch',
+    payload: {
+      authorDID: signer.id,
+      hlc: key.hlc,
+      opJWT: key.opJWT,
+      opHash: key.opHash,
+      suite: 1,
+    },
   })
-  const id = await recordPayloadDigest(payload)
+  const id = await recordPayloadDigest({ payload })
   if (id === null) throw new Error('Branch payload digest missing')
   const branch = await signed(signer, {
     type: 'vault.key-branch',
@@ -147,19 +150,27 @@ export async function dependent({ signer, source, type, options = {} }: Dependen
   const payload = options.deleted
     ? null
     : type === 'vault.entry'
-      ? encodeVaultRecordPayload(type, {
-          iv: new Uint8Array([0, 255]),
-          ciphertext: new Uint8Array([128, 255, 0]),
+      ? encodeVaultRecordPayload({
+          type,
+          payload: {
+            iv: new Uint8Array([0, 255]),
+            ciphertext: new Uint8Array([128, 255, 0]),
+          },
         })
-      : encodeVaultRecordPayload(type, {
-          descriptors: [
-            { kind: 'did', params: { recipient: options.factorRecipient ?? signer.id } },
-          ],
-          descriptorDigest: await descriptorDigest([
-            { kind: 'did', params: { recipient: options.factorRecipient ?? signer.id } },
-          ]),
-          iv: new Uint8Array([0, 255]),
-          wrappedKey: new Uint8Array([128, 255, 0]),
+      : encodeVaultRecordPayload({
+          type,
+          payload: {
+            descriptors: [
+              { kind: 'did', params: { recipient: options.factorRecipient ?? signer.id } },
+            ],
+            descriptorDigest: await descriptorDigest({
+              descriptors: [
+                { kind: 'did', params: { recipient: options.factorRecipient ?? signer.id } },
+              ],
+            }),
+            iv: new Uint8Array([0, 255]),
+            wrappedKey: new Uint8Array([128, 255, 0]),
+          },
         })
   return await signed(signer, {
     type,
@@ -206,12 +217,12 @@ export function memoryStore() {
         const previous = view.get(text)
         const digest = op.contentDigest
         const copies = previous?.contentDigest === digest ? [...previous.copies] : []
-        const signer = recordSignerKey(op.issuer, record.opJWT)
+        const signer = recordSignerKey({ issuer: op.issuer, opJWT: record.opJWT })
         for (let index = copies.length - 1; index >= 0; index--) {
           const copy = copies[index]
           if (copy === undefined) throw new Error('Missing stored copy')
           const old = await verified(copy)
-          if (recordSignerKey(old.issuer, copy.opJWT) === signer) {
+          if (recordSignerKey({ issuer: old.issuer, opJWT: copy.opJWT }) === signer) {
             if (copy.opHash <= record.opHash) return
             copies.splice(index, 1)
           }
@@ -225,7 +236,7 @@ export function memoryStore() {
           copies,
         })
       },
-      async pruneCopy(key, issuer) {
+      async pruneCopy({ key, signerDID: issuer }) {
         const row = view.get(recordKeyText(key))
         if (row)
           row.copies = (

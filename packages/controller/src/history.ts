@@ -51,10 +51,7 @@ export type LogStore = {
    * it was handed) means nothing changed, and the store skips the write: `authoritativeLog` answers
    * that way whenever a resolution learned nothing new, which is most of them.
    */
-  merge(
-    did: string,
-    update: (current: ControllerLog | undefined) => Promise<ControllerLog>,
-  ): Promise<ControllerLog>
+  merge(params: LogStoreMergeParams): Promise<ControllerLog>
 }
 
 /**
@@ -73,10 +70,7 @@ export function createMemoryLogStore(): LogStore {
     async get(did: string): Promise<ControllerLog | undefined> {
       return logs.get(did)
     },
-    merge(
-      did: string,
-      update: (current: ControllerLog | undefined) => Promise<ControllerLog>,
-    ): Promise<ControllerLog> {
+    merge({ did, update }): Promise<ControllerLog> {
       const previous = tails.get(did) ?? Promise.resolve()
       const run = previous.then(async () => {
         const current = logs.get(did)
@@ -109,7 +103,7 @@ async function recall(
   if (seen == null || !isControllerLog(seen) || seen.chain.length === 0) {
     return undefined
   }
-  const folded = await foldLog(did, { chain: seen.chain, events: [] }, options)
+  const folded = await foldLog({ ...options, did, input: { chain: seen.chain, events: [] } })
   const head = folded.ok ? folded.states[folded.states.length - 1] : undefined
   return head === undefined ? undefined : { log: seen, head }
 }
@@ -127,7 +121,7 @@ function sameEntry(entry: Entry, other: unknown): boolean {
   }
   // Digests, not object identity or JSON text: a store hands back a fresh copy, possibly with its
   // keys reordered (Postgres `jsonb`), and the canonical form is what both sides agree on.
-  return isCanonicalizable(event) && digestOf(event) === digestOf(entry.event)
+  return isCanonicalizable({ value: event }) && digestOf(event) === digestOf(entry.event)
 }
 
 /** Whether `next` is `seen` again, entry for entry, so remembering it would change nothing. */
@@ -224,7 +218,11 @@ export async function authoritativeLogWithin(
   const originalSeen = seen
   loaded = snapshotLog(loaded)
   seen = seen === undefined ? undefined : snapshotLog(seen)
-  const loadedChain = await foldLog(did, { chain: loaded.chain, events: [] }, { crypto })
+  const loadedChain = await foldLog({
+    did,
+    input: { chain: loaded.chain, events: [] },
+    crypto,
+  })
   if (!loadedChain.ok) {
     throw invalid(loadedChain.reason, loadedChain.index)
   }
@@ -240,13 +238,21 @@ export async function authoritativeLogWithin(
     // They diverge. Which is authoritative is what branch resolution answers: a higher generation (a
     // reset) wins outright, a chain that only repeats the seen one's prefix loses, and two rotates at
     // one position are a fork.
-    const resolved = await resolveBranches(did, [memory.log.chain, loaded.chain], { crypto })
+    const resolved = await resolveBranches({
+      did,
+      chains: [memory.log.chain, loaded.chain],
+      crypto,
+    })
     if (!resolved.ok) {
       throw new Error(
         `${resolved.failure === 'duplicity' ? LOG_FORKED : LOG_NOT_AUTHORITATIVE}: ${did}`,
       )
     }
-    const winner = await foldLog(did, { chain: resolved.winner, events: [] }, { crypto })
+    const winner = await foldLog({
+      did,
+      input: { chain: resolved.winner, events: [] },
+      crypto,
+    })
     const winnerHead = winner.ok ? winner.states[winner.states.length - 1] : undefined
     if (!winner.ok || winnerHead === undefined || winnerHead.digest !== loadedHead.digest) {
       throw new Error(`${LOG_NOT_AUTHORITATIVE}: ${did}`)
@@ -256,12 +262,12 @@ export async function authoritativeLogWithin(
   }
 
   const held = await withEpoch({
-    did: did,
-    states: states,
+    did,
+    states,
     events: loaded.events,
-    limits: limits,
+    limits,
     trusted: memory?.log.events,
-    options: { crypto },
+    crypto,
   })
   if (!('result' in held)) {
     throw invalid(held.reason, held.index)
@@ -278,4 +284,9 @@ export async function authoritativeLogWithin(
         : log,
     result: held.result,
   }
+}
+
+export type LogStoreMergeParams = {
+  did: string
+  update: (current: ControllerLog | undefined) => Promise<ControllerLog>
 }

@@ -134,7 +134,7 @@ async function claimFor(identity: TestIdentity, draft: Draft = {}): Promise<Reco
         counter: draft.counter ?? 0,
         nodeID: identity.id,
       }),
-    payloadDigest: await recordPayloadDigest(payload),
+    payloadDigest: await recordPayloadDigest({ payload }),
     deleted: payload === null,
     meta: draft.meta ?? {},
   }
@@ -142,7 +142,7 @@ async function claimFor(identity: TestIdentity, draft: Draft = {}): Promise<Reco
 
 async function makeRecord(identity: TestIdentity, draft: Draft = {}): Promise<SignedRecord> {
   const claim = await claimFor(identity, draft)
-  const signed = await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })
+  const signed = await signRecordOp({ identity, claim, opKind: TEST_OP_KIND })
   const payload = draft.payload === undefined ? new Uint8Array([1]) : draft.payload
   return { type: claim.type, id: claim.id, owner: claim.owner, hlc: claim.hlc, payload, ...signed }
 }
@@ -152,7 +152,13 @@ async function makeRecord(identity: TestIdentity, draft: Draft = {}): Promise<Si
  * write, the claimed one) wrote it, a device acting for it through its controller did, or the
  * op carries a capability chain from it.
  */
-async function ownerBinding(op: VerifiedRecordOp, ctx: RecordAuthorizeContext): Promise<boolean> {
+async function ownerBinding({
+  op,
+  ctx,
+}: {
+  op: VerifiedRecordOp
+  ctx: RecordAuthorizeContext
+}): Promise<boolean> {
   const owner = ctx.stored?.owner ?? op.claim.owner
   if (op.issuer === owner || (await ctx.resolveController(op.issuer)) === owner) {
     return true
@@ -161,7 +167,7 @@ async function ownerBinding(op: VerifiedRecordOp, ctx: RecordAuthorizeContext): 
   return (
     Array.isArray(tokens) &&
     tokens.every((token) => typeof token === 'string') &&
-    (await ctx.verifyCapability(tokens, owner, op.issuer))
+    (await ctx.verifyCapability({ tokens, owner, issuer: op.issuer }))
   )
 }
 
@@ -209,7 +215,7 @@ test('same-decision chunk verifies 64 incoming signers at most twice each', asyn
         owner: claim.owner,
         hlc: claim.hlc,
         payload: new Uint8Array([1]),
-        ...(await signRecordOp({ identity: signer, claim: claim, opKind: TEST_OP_KIND })),
+        ...(await signRecordOp({ identity: signer, claim, opKind: TEST_OP_KIND })),
       }
     }),
   )
@@ -228,7 +234,7 @@ test('same-decision chunk verifies 64 incoming signers at most twice each', asyn
   vi.mocked(verifyToken).mockClear()
   const result = await applyWith({
     records: copies,
-    store: store,
+    store,
     types: typesOf(valueType({ authorize: async () => true })),
   })
   expect(result.applied).toBe(64)
@@ -250,11 +256,11 @@ describe('the clock gate runs before anything else', () => {
       id: 'one',
       owner: normalizeDID(identity.id),
       hlc: HLC.serialize({ wallTime: nowMS + 60_001, counter: 0, nodeID: identity.id }),
-      payloadDigest: await recordPayloadDigest(new Uint8Array([1])),
+      payloadDigest: await recordPayloadDigest({ payload: new Uint8Array([1]) }),
       deleted: false,
       meta: {},
     }
-    const signed = await signRecordOp({ identity: identity, claim: claim, opKind: TEST_OP_KIND })
+    const signed = await signRecordOp({ identity, claim, opKind: TEST_OP_KIND })
     const put = vi.fn(async () => {})
     const receiveClock = vi.fn()
     const authorize = vi.fn(async () => true)
@@ -330,7 +336,7 @@ describe('the clock gate runs before anything else', () => {
     const receiveClock = vi.fn()
     const result = await applyWith({
       records: [record],
-      store: store,
+      store,
       types: typesOf(
         valueType({ policy: { kind: 'monotonic', version }, authorize, dependencies }),
       ),
@@ -355,7 +361,7 @@ describe('the clock gate runs before anything else', () => {
     const identity = randomIdentity()
     const { store, read } = memoryStore()
     const record = await makeRecord(identity, { offsetMS: -7 * DAY_MS })
-    const result = await applyWith({ records: [record], store: store, types: typesOf(valueType()) })
+    const result = await applyWith({ records: [record], store, types: typesOf(valueType()) })
     expect(result.applied).toBe(1)
     expect(read('test.value', 'one')).toEqual(record)
   })
@@ -369,7 +375,7 @@ describe('the clock gate runs before anything else', () => {
     const receiveClock = vi.fn()
     const result = await applyWith({
       records: [disguised],
-      store: store,
+      store,
       types: typesOf(valueType({ authorize })),
       params: {
         receiveClock,
@@ -388,10 +394,10 @@ describe('the five checks run in order', () => {
     // Hand-signed, since signing refuses the long id: only the claim check can reject it.
     const handSigned = async (id: string): Promise<SignedRecord> => {
       const claim = { ...(await claimFor(identity)), id }
-      const signed = await identity.signToken(
-        { kind: TEST_OP_KIND, claim: toB64U(fromUTF(canonicalStringify(claim))) },
-        { embedLongForm: true },
-      )
+      const signed = await identity.signToken({
+        payload: { kind: TEST_OP_KIND, claim: toB64U(fromUTF(canonicalStringify(claim))) },
+        embedLongForm: true,
+      })
       const opJWT = stringifyToken(signed)
       const opHash = toB64U(blake3(fromUTF(`${opJWT.length}:${opJWT}`), { dkLen: 32 }))
       const { type, owner, hlc } = claim
@@ -403,7 +409,7 @@ describe('the five checks run in order', () => {
     const { store, read } = memoryStore()
     const result = await applyWith({
       records: [atBound, past],
-      store: store,
+      store,
       types: typesOf(valueType({ authorize })),
     })
     expect(result.applied).toBe(1)
@@ -425,7 +431,7 @@ describe('the five checks run in order', () => {
     const { store, writes } = memoryStore()
     const result = await applyWith({
       records: [forged],
-      store: store,
+      store,
       types: typesOf(valueType({ authorize })),
     })
     expect(result.rejected).toEqual([{ record: forged, reason: 'signature' }])
@@ -444,7 +450,7 @@ describe('the five checks run in order', () => {
     const { store, writes } = memoryStore()
     const result = await applyWith({
       records: [{ ...record, payload: new Uint8Array([9]) }],
-      store: store,
+      store,
       types: typesOf(valueType({ policy: { kind: 'monotonic', version } })),
     })
     expect(result.rejected[0]?.reason).toBe('unauthorized')
@@ -460,7 +466,7 @@ describe('the five checks run in order', () => {
     const receiveClock = vi.fn()
     const result = await applyWith({
       records: [{ ...older, payload: new Uint8Array([9]) }],
-      store: store,
+      store,
       types: typesOf(valueType()),
       params: { receiveClock },
     })
@@ -478,7 +484,7 @@ describe('the five checks run in order', () => {
     const receiveClock = vi.fn()
     const result = await applyWith({
       records: [tampered],
-      store: store,
+      store,
       types: typesOf(valueType()),
       params: { receiveClock },
     })
@@ -497,7 +503,7 @@ describe('the five checks run in order', () => {
     })
     const result = await applyWith({
       records: [record],
-      store: store,
+      store,
       types: typesOf(valueType()),
       params: { receiveClock },
     })
@@ -511,7 +517,7 @@ describe('the five checks run in order', () => {
     const identity = randomIdentity()
     const record = await makeRecord(identity, { type: 'test.other' })
     const { store, writes } = memoryStore()
-    const result = await applyWith({ records: [record], store: store, types: typesOf(valueType()) })
+    const result = await applyWith({ records: [record], store, types: typesOf(valueType()) })
     expect(result.rejected).toEqual([{ record, reason: 'unknown-type' }])
     expect(writes).toEqual([])
   })
@@ -525,7 +531,7 @@ describe('first write', () => {
     const receiveClock = vi.fn()
     const result = await applyWith({
       records: [record],
-      store: store,
+      store,
       types: typesOf(valueType({ policy: VERSIONED })),
       params: {
         receiveClock,
@@ -542,7 +548,7 @@ describe('first write', () => {
     const { store, read } = memoryStore()
     const result = await applyWith({
       records: [record],
-      store: store,
+      store,
       types: typesOf(valueType({ policy: VERSIONED })),
     })
     expect(result.applied).toBe(1)
@@ -555,20 +561,22 @@ describe('authorization', () => {
     const identity = randomIdentity()
     const stored = await makeRecord(identity)
     const incoming = await makeRecord(identity, { offsetMS: 1000 })
-    const authorize = vi.fn(async (_op: VerifiedRecordOp, _ctx: RecordAuthorizeContext) => true)
+    const authorize = vi.fn(
+      async ({ op: _op, ctx: _ctx }: { op: VerifiedRecordOp; ctx: RecordAuthorizeContext }) => true,
+    )
     const resolveController = async () => null
     const verifyCapability = async () => false
     const { store } = memoryStore([stored])
     await applyWith({
       records: [incoming],
-      store: store,
+      store,
       types: typesOf(valueType({ authorize })),
       params: {
         resolveController,
         verifyCapability,
       },
     })
-    const [op, ctx] = authorize.mock.calls[0] ?? []
+    const { op, ctx } = authorize.mock.calls[0]?.[0] ?? {}
     expect(op?.opHash).toBe(incoming.opHash)
     expect(op?.issuer).toBe(normalizeDID(identity.id))
     expect(ctx?.record).toEqual(incoming)
@@ -588,7 +596,7 @@ describe('authorization', () => {
     const { store, read } = memoryStore()
     const result = await applyWith({
       records: [record],
-      store: store,
+      store,
       types: typesOf(valueType()),
       params: {
         resolveController: async (did) => (did === normalizeDID(device.id) ? controller : null),
@@ -613,7 +621,11 @@ describe('authorization', () => {
       },
     })
     expect(refused.rejected).toEqual([{ record, reason: 'unauthorized' }])
-    expect(verifyCapability).toHaveBeenCalledWith(['chain'], owner, normalizeDID(delegate.id))
+    expect(verifyCapability).toHaveBeenCalledWith({
+      tokens: ['chain'],
+      owner,
+      issuer: normalizeDID(delegate.id),
+    })
 
     const granted = await applyWith({
       records: [record],
@@ -634,7 +646,7 @@ describe('authorization', () => {
     const { store, writes, read } = memoryStore([stored])
     const result = await applyWith({
       records: [takeover],
-      store: store,
+      store,
       types: typesOf(valueType({ authorize: async () => true })),
     })
     expect(result.applied).toBe(1)
@@ -653,7 +665,7 @@ describe('authorization', () => {
     const { store, read } = memoryStore()
     const result = await applyWith({
       records: [first, second],
-      store: store,
+      store,
       types: typesOf(valueType()),
     })
     expect(result).toEqual({ applied: 2, parked: [], rejected: [], conflicts: [] })
@@ -673,11 +685,11 @@ describe('authorization', () => {
     const { store, read } = memoryStore([corrupt])
     const result = await applyWith({
       records: [incoming],
-      store: store,
+      store,
       types: typesOf(valueType({ authorize })),
     })
     expect(result).toEqual({ applied: 1, parked: [], rejected: [], conflicts: [] })
-    expect(authorize.mock.calls[0]?.[1].stored).toBeNull()
+    expect(authorize.mock.calls[0]?.[0].ctx.stored).toBeNull()
     expect(read('test.value', 'one')).toEqual(incoming)
   })
 
@@ -687,14 +699,14 @@ describe('authorization', () => {
     const stored = await makeRecord(owner)
     const forged = await makeRecord(taker, { owner: normalizeDID(owner.id), offsetMS: 1000 })
     const { store, writes } = memoryStore([stored])
-    const result = await applyWith({ records: [forged], store: store, types: typesOf(valueType()) })
+    const result = await applyWith({ records: [forged], store, types: typesOf(valueType()) })
     expect(result.rejected).toEqual([{ record: forged, reason: 'unauthorized' }])
     expect(writes).toEqual([])
   })
 })
 
 describe('dependencies and parking', () => {
-  const parentOf = (_record: SignedRecord, op: VerifiedRecordOp) => {
+  const parentOf = ({ record: _record, op }: { record: SignedRecord; op: VerifiedRecordOp }) => {
     return typeof op.claim.meta.parent === 'string'
       ? [
           {
@@ -735,7 +747,7 @@ describe('dependencies and parking', () => {
     const { store, writes } = memoryStore()
     const result = await applyWith({
       records: [leaf, root, child],
-      store: store,
+      store,
       types: chainTypes(),
     })
     expect(result).toEqual({ applied: 3, parked: [], rejected: [], conflicts: [] })
@@ -754,10 +766,10 @@ describe('dependencies and parking', () => {
     const result = await applyWith({
       records: [leaf, child, root],
       store: memoryStore().store,
-      types: types,
+      types,
     })
     expect(result.applied).toBe(3)
-    expect(dependencies.mock.calls.map(([record]) => record.id)).toEqual(['c', 'l'])
+    expect(dependencies.mock.calls.map(([{ record }]) => record.id)).toEqual(['c', 'l'])
   })
 
   test('a dependency later in the chunk, within one type, resolves by retry', async () => {
@@ -770,7 +782,7 @@ describe('dependencies and parking', () => {
       meta: { parentType: 'test.node', parent: 'a' },
     })
     const { store, writes } = memoryStore()
-    const result = await applyWith({ records: [second, first], store: store, types: typesOf(node) })
+    const result = await applyWith({ records: [second, first], store, types: typesOf(node) })
     expect(result).toEqual({ applied: 2, parked: [], rejected: [], conflicts: [] })
     expect(writes.map((record) => record.id)).toEqual(['a', 'b'])
   })
@@ -793,8 +805,8 @@ describe('dependencies and parking', () => {
 
     const first = await applyWith({
       records: [child],
-      store: store,
-      types: types,
+      store,
+      types,
       params: { receiveClock },
     })
     expect(first).toEqual({ applied: 0, parked: [child], rejected: [], conflicts: [] })
@@ -804,8 +816,8 @@ describe('dependencies and parking', () => {
 
     const second = await applyWith({
       records: [...first.parked, root],
-      store: store,
-      types: types,
+      store,
+      types,
       params: { receiveClock },
     })
     expect(second).toEqual({ applied: 2, parked: [], rejected: [], conflicts: [] })
@@ -819,14 +831,14 @@ describe('dependencies and parking', () => {
     const { store, read } = memoryStore()
     const types = chainTypes()
 
-    const session1 = await applyWith({ records: [leaf], store: store, types: types })
+    const session1 = await applyWith({ records: [leaf], store, types })
     expect(session1.parked).toEqual([leaf])
 
     // Still missing in the next session: parked again, not rejected.
     const session2 = await applyWith({
       records: session1.parked,
-      store: store,
-      types: types,
+      store,
+      types,
       params: { nowMS: NOW + DAY_MS },
     })
     expect(session2).toEqual({ applied: 0, parked: [leaf], rejected: [], conflicts: [] })
@@ -834,15 +846,15 @@ describe('dependencies and parking', () => {
     // A later session supplies the dependencies from another peer, then replays the queue.
     const session3 = await applyWith({
       records: [root, child],
-      store: store,
-      types: types,
+      store,
+      types,
       params: { nowMS: NOW + 2 * DAY_MS },
     })
     expect(session3.applied).toBe(2)
     const replay = await applyWith({
       records: session2.parked,
-      store: store,
-      types: types,
+      store,
+      types,
       params: { nowMS: NOW + 2 * DAY_MS },
     })
     expect(replay).toEqual({ applied: 1, parked: [], rejected: [], conflicts: [] })
@@ -861,7 +873,7 @@ describe('dependencies and parking', () => {
         valueType({ type: 'test.child', dependsOn: ['test.root'], dependencies }),
       ),
     })
-    const [record, op] = dependencies.mock.calls[0] ?? []
+    const { record, op } = dependencies.mock.calls[0]?.[0] ?? {}
     expect(record).toEqual(child)
     expect(op?.claim.meta).toEqual({ parentType: 'test.root', parent: 'r' })
   })
@@ -872,7 +884,7 @@ describe('dependencies and parking', () => {
       return valueType({
         type: 'test.wrapping',
         dependsOn: ['test.key'],
-        dependencies: (_record, op) => {
+        dependencies: ({ record: _record, op }) => {
           return [
             {
               type: 'test.key',
@@ -918,15 +930,15 @@ describe('dependencies and parking', () => {
       const authorize = vi.fn(ownerBinding)
       const types = typesOf(keyType(), { ...wrappingType(), authorize })
 
-      const first = await applyWith({ records: [wrapping], store: store, types: types })
+      const first = await applyWith({ records: [wrapping], store, types })
       expect(first).toEqual({ applied: 0, parked: [wrapping], rejected: [], conflicts: [] })
       expect(authorize).not.toHaveBeenCalled()
       expect(read('test.wrapping', 'w')).toBeNull()
 
       const second = await applyWith({
         records: [...first.parked, keyV3],
-        store: store,
-        types: types,
+        store,
+        types,
       })
       expect(second).toEqual({ applied: 2, parked: [], rejected: [], conflicts: [] })
       expect(read('test.wrapping', 'w')).toEqual(wrapping)
@@ -938,7 +950,7 @@ describe('dependencies and parking', () => {
       const { store, read } = memoryStore([keyV2])
       const result = await applyWith({
         records: [wrapping, keyV3],
-        store: store,
+        store,
         types: typesOf(keyType(), wrappingType()),
       })
       expect(result).toEqual({ applied: 2, parked: [], rejected: [], conflicts: [] })
@@ -951,9 +963,9 @@ describe('dependencies and parking', () => {
       valueType({ type: 'test.a', dependsOn: ['test.b'] }),
       valueType({ type: 'test.b', dependsOn: ['test.a'] }),
     )
-    await expect(
-      applyWith({ records: [], store: memoryStore().store, types: types }),
-    ).rejects.toThrow(RecordTypeGraphError)
+    await expect(applyWith({ records: [], store: memoryStore().store, types })).rejects.toThrow(
+      RecordTypeGraphError,
+    )
   })
 })
 
@@ -968,15 +980,15 @@ describe('duplicates, replays and tombstones', () => {
 
     const first = await applyWith({
       records: [record, record],
-      store: store,
-      types: types,
+      store,
+      types,
       params: { receiveClock },
     })
     expect(first).toEqual({ applied: 1, parked: [], rejected: [], conflicts: [] })
     const replay = await applyWith({
       records: [record],
-      store: store,
-      types: types,
+      store,
+      types,
       params: { receiveClock },
     })
     expect(replay).toEqual({ applied: 0, parked: [], rejected: [], conflicts: [] })
@@ -992,7 +1004,7 @@ describe('duplicates, replays and tombstones', () => {
     const authorize = vi.fn(async () => false)
     const result = await applyWith({
       records: [record],
-      store: store,
+      store,
       types: typesOf(valueType({ authorize })),
     })
     expect(result).toEqual({ applied: 0, parked: [], rejected: [], conflicts: [] })
@@ -1007,7 +1019,7 @@ describe('duplicates, replays and tombstones', () => {
     const authorize = vi.fn(async () => true)
     const result = await applyWith({
       records: [record],
-      store: store,
+      store,
       types: typesOf(valueType({ precheck, authorize })),
     })
     expect(result).toEqual({ applied: 0, parked: [], rejected: [], conflicts: [] })
@@ -1024,16 +1036,16 @@ describe('duplicates, replays and tombstones', () => {
     const { store, read } = memoryStore([write])
     const types = typesOf(valueType())
 
-    expect((await applyWith({ records: [tombstone], store: store, types: types })).applied).toBe(1)
+    expect((await applyWith({ records: [tombstone], store, types })).applied).toBe(1)
     expect(read('test.value', 'one')).toEqual(tombstone)
-    expect(await applyWith({ records: [staleReAdd], store: store, types: types })).toEqual({
+    expect(await applyWith({ records: [staleReAdd], store, types })).toEqual({
       applied: 0,
       parked: [],
       rejected: [],
       conflicts: [],
     })
     expect(read('test.value', 'one')).toEqual(tombstone)
-    expect((await applyWith({ records: [reAdd], store: store, types: types })).applied).toBe(1)
+    expect((await applyWith({ records: [reAdd], store, types })).applied).toBe(1)
     expect(read('test.value', 'one')).toEqual(reAdd)
   })
 
@@ -1044,7 +1056,7 @@ describe('duplicates, replays and tombstones', () => {
     const { store, writes } = memoryStore()
     const result = await applyWith({
       records: [stuffed],
-      store: store,
+      store,
       types: typesOf(valueType()),
     })
     expect(result.rejected).toEqual([{ record: stuffed, reason: 'digest' }])
@@ -1076,7 +1088,7 @@ describe('conflicts', () => {
         [low, high],
       ] as const) {
         const { store, read } = memoryStore([first])
-        const result = await applyWith({ records: [second], store: store, types: types })
+        const result = await applyWith({ records: [second], store, types })
         expect(read('test.value', 'one')).toEqual(high)
         expect(result.conflicts).toEqual([
           {
@@ -1105,7 +1117,7 @@ describe('conflicts', () => {
       [b, a],
     ] as const) {
       const { store, read } = memoryStore()
-      const result = await applyWith({ records: [first, second], store: store, types: types })
+      const result = await applyWith({ records: [first, second], store, types })
       expect(read('test.value', 'one')).toEqual(high)
       expect(result.conflicts).toHaveLength(1)
       expect(result.conflicts[0]?.forked).toBe(false)
@@ -1119,11 +1131,19 @@ describe('transactions', () => {
     const record = await makeRecord(identity)
     const { store, read } = memoryStore()
     const observed: Array<[SignedRecord | null, SignedRecord | null]> = []
-    const afterApply = vi.fn(async (applied: SignedRecord, tx: RecordStoreAdapter) => {
-      observed.push([(await tx.get(applied))?.copies[0] ?? null, read(applied.type, applied.id)])
-    })
-    await applyWith({ records: [record], store: store, types: typesOf(valueType({ afterApply })) })
-    expect(afterApply).toHaveBeenCalledWith(record, expect.anything())
+    const afterApply = vi.fn(
+      async ({
+        record: applied,
+        store: tx,
+      }: {
+        record: SignedRecord
+        store: RecordStoreAdapter
+      }) => {
+        observed.push([(await tx.get(applied))?.copies[0] ?? null, read(applied.type, applied.id)])
+      },
+    )
+    await applyWith({ records: [record], store, types: typesOf(valueType({ afterApply })) })
+    expect(afterApply).toHaveBeenCalledWith({ record, store: expect.anything() })
     expect(observed).toEqual([[record, null]])
   })
 
@@ -1135,7 +1155,7 @@ describe('transactions', () => {
     const receiveClock = vi.fn()
     const types = typesOf(
       valueType({
-        afterApply: async (record) => {
+        afterApply: async ({ record }) => {
           if (record.id === 'two') {
             throw new Error('after-apply failed')
           }
@@ -1143,7 +1163,7 @@ describe('transactions', () => {
       }),
     )
     await expect(
-      applyWith({ records: [one, two], store: store, types: types, params: { receiveClock } }),
+      applyWith({ records: [one, two], store, types, params: { receiveClock } }),
     ).rejects.toThrow('after-apply failed')
     expect(read('test.value', 'one')).toBeNull()
     expect(receiveClock).not.toHaveBeenCalled()
@@ -1173,9 +1193,9 @@ describe('transactions', () => {
       },
     }
     const definition = valueType({
-      lockKeys: (incoming) => [{ type: incoming.type, key: incoming.id }],
+      lockKeys: ({ incoming }) => [{ type: incoming.type, key: incoming.id }],
     })
-    const result = await applyWith({ records: [b, a], store: store, types: typesOf(definition) })
+    const result = await applyWith({ records: [b, a], store, types: typesOf(definition) })
     expect(result.applied).toBe(2)
     expect(events[0]).toBe('lock:A,B')
     expect(events.indexOf('read:B')).toBeGreaterThan(0)
@@ -1202,7 +1222,7 @@ describe('transactions', () => {
     }
     const result = await applyWith({
       records: [record],
-      store: store,
+      store,
       types: typesOf(valueType({ lockKeys: () => [{ type: 'test.value', key: 'one' }] })),
       params: {
         resolveController: async () => {
@@ -1243,7 +1263,7 @@ describe('transactions', () => {
       },
     }
     const definition = valueType({
-      lockKeys: (record, stored) => {
+      lockKeys: ({ incoming: record, stored }) => {
         return [record.opHash, stored?.copies[0]?.opHash]
           .filter((key): key is string => key != null)
           .map((key) => ({ type: record.type, key }))
@@ -1251,7 +1271,7 @@ describe('transactions', () => {
     })
     const result = await applyWith({
       records: [incoming],
-      store: store,
+      store,
       types: typesOf(definition),
     })
     expect(result.applied).toBe(1)
@@ -1269,7 +1289,7 @@ describe('transactions', () => {
     const memory = memoryStore([old])
     let locks = 0
     const definition = valueType({
-      lockKeys: (record, stored) => {
+      lockKeys: ({ incoming: record, stored }) => {
         return [record.opHash, stored?.copies[0]?.opHash]
           .filter((key): key is string => key != null)
           .map((key) => ({ type: record.type, key }))
@@ -1317,7 +1337,7 @@ describe('transactions', () => {
       lockKeys: () => [{ type: 'test.value', key: String(++lockReads) }],
     })
     await expect(
-      applyWith({ records: [incoming], store: store, types: typesOf(definition) }),
+      applyWith({ records: [incoming], store, types: typesOf(definition) }),
     ).rejects.toBeInstanceOf(RecordSourceChangedError)
     expect(attempts).toBe(5)
     expect(memory.read('test.value', 'entry')).toBeNull()
@@ -1342,17 +1362,17 @@ describe('afterAuthorize hook', () => {
     const retained: Array<string> = []
     const types = typesOf(
       valueType({
-        afterAuthorize: async (record) => {
+        afterAuthorize: async ({ record }) => {
           retained.push(record.opHash)
         },
       }),
     )
 
-    await applyWith({ records: [older], store: store, types: types })
+    await applyWith({ records: [older], store, types })
     expect(retained).toEqual([older.opHash])
     expect(read('test.value', 'one')).toEqual(newer)
 
-    await applyWith({ records: [unauthorized, digestMismatch], store: store, types: types })
+    await applyWith({ records: [unauthorized, digestMismatch], store, types })
     expect(retained).toEqual([older.opHash])
     expect(read('test.value', 'one')).toEqual(newer)
   })
@@ -1361,7 +1381,7 @@ describe('afterAuthorize hook', () => {
 test('apply rejects a record from another replay domain', async () => {
   const identity = randomIdentity()
   const claim = await claimFor(identity)
-  const signed = await signRecordOp({ identity: identity, claim: claim, opKind: 'a/op' })
+  const signed = await signRecordOp({ identity, claim, opKind: 'a/op' })
   const record = { ...claim, payload: new Uint8Array([1]), ...signed }
   const memory = memoryStore()
   const result = await applyWith({
@@ -1386,7 +1406,7 @@ test('authorizers receive the caller transport context by reference', async () =
     store: memoryStore().store,
     types: typesOf(
       valueType({
-        authorize: async (_op, ctx) => {
+        authorize: async ({ op: _op, ctx }) => {
           received = ctx.transportContext
           return true
         },
@@ -1414,27 +1434,27 @@ test.each([
   }
   const definition = valueType()
   if (hook === 'authorize')
-    definition.authorize = async (_op, ctx) => {
+    definition.authorize = async ({ op: _op, ctx }) => {
       mutate(ctx.record)
       return true
     }
   else if (hook === 'precheck')
-    definition.precheck = async (_op, received) => {
+    definition.precheck = async ({ op: _op, record: received }) => {
       mutate(received)
       return true
     }
   else if (hook === 'dependencies')
-    definition.dependencies = (received) => {
+    definition.dependencies = ({ record: received }) => {
       mutate(received)
       return []
     }
   else if (hook === 'lockKeys')
-    definition.lockKeys = async (received) => {
+    definition.lockKeys = async ({ incoming: received }) => {
       mutate(received)
       return []
     }
   else
-    definition[hook] = async (received) => {
+    definition[hook] = async ({ record: received }) => {
       mutate(received)
     }
   const result = await applyWith({

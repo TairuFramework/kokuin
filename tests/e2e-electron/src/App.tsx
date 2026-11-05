@@ -13,7 +13,7 @@ function useSignedDID(): [string | null, (keyID: string) => void] {
   const sign = (keyID: string) => {
     ;(window as unknown as KokuinWindow).kokuin
       .sign({ test: 'OK' }, keyID)
-      .then((signedToken) => verifyToken<Data>(signedToken))
+      .then((signedToken) => verifyToken<Data>({ token: signedToken }))
       .then((token) => {
         setDID((token.payload as SignedPayload).iss)
       })
@@ -36,7 +36,7 @@ export default function App() {
         <button
           type="button"
           onClick={() => {
-            verifyToken<Data>(signedToken).then(setVerifiedToken)
+            verifyToken<Data>({ token: signedToken }).then(setVerifiedToken)
           }}>
           Verify token
         </button>

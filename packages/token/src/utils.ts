@@ -2,7 +2,9 @@ import { b64uFromJSON, b64uToJSON } from '@sozai/codec'
 
 import type { SignedToken, Token } from './types.js'
 
-export function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+export type ConcatBytesParams = { a: Uint8Array; b: Uint8Array }
+
+export function concatBytes({ b, a }: ConcatBytesParams): Uint8Array {
   const out = new Uint8Array(a.length + b.length)
   out.set(a, 0)
   out.set(b, a.length)

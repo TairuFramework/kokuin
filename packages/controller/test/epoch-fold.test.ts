@@ -68,13 +68,13 @@ async function epochOf(params: FoldEpochParams): Promise<FoldEpochResult> {
 
 const seed = new Uint8Array(32).fill(1)
 const profile = 0
-const inception = await createInception(seed, profile)
+const inception = await createInception({ seed, profile })
 const did = didFromInception(inception.event)
 
 /** A member key pair from a fixed secret, so every run builds the same events and digests. */
 function memberKeyPair(fill: number): { privateKey: Uint8Array; key: string; did: string } {
   const privateKey = new Uint8Array(32).fill(fill)
-  const key = encodeKey(ed25519.getPublicKey(privateKey), 'EdDSA')
+  const key = encodeKey({ publicKey: ed25519.getPublicKey(privateKey), alg: 'EdDSA' })
   return { privateKey, key, did: `did:key:${key}` }
 }
 
@@ -97,7 +97,7 @@ const rot = await createRotate({
 const chain: Array<SignedEvent> = [inception, rot]
 
 async function chainFolded(events: Array<SignedEvent>): Promise<Extract<FoldResult, { ok: true }>> {
-  const result = await foldLog(did, { chain: events, events: [] })
+  const result = await foldLog({ did, input: { chain: events, events: [] } })
   if (!result.ok) {
     throw new Error(`fixture chain does not fold: ${result.reason}`)
   }
@@ -144,7 +144,10 @@ async function fold(
   events: Array<unknown>,
   presented: Array<SignedEvent> = chain,
 ): Promise<FoldResult> {
-  return await foldLog(did, { chain: presented, events: events as ControllerLog['events'] })
+  return await foldLog({
+    did,
+    input: { chain: presented, events: events as ControllerLog['events'] },
+  })
 }
 
 async function folded(events: Array<unknown>, presented?: Array<SignedEvent>) {
@@ -193,7 +196,7 @@ describe('the log shape', () => {
 
   test('anything else is a malformed log, not a throw', async () => {
     for (const log of [undefined, null, 7, 'log', chain, { chain }, { chain, events: 'x' }]) {
-      expect(await foldLog(did, log as unknown as ControllerLog)).toEqual({
+      expect(await foldLog({ did, input: log as unknown as ControllerLog })).toEqual({
         ok: false,
         reason: MALFORMED_LOG,
         index: 0,
@@ -748,9 +751,9 @@ describe('totality under hostile presentation', async () => {
       }
       default:
         event = await revoke({
-          signer: signer,
+          signer,
           target: pick() < 0.5 ? choose(targets) : `did:key:zGen${n}`,
-          parents: parents,
+          parents,
         })
     }
     pool.push(event)

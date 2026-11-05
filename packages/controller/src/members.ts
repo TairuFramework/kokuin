@@ -50,7 +50,11 @@ export function memberCarriesKey(did: string, key: string): boolean {
     return false
   }
   const [carried] = keys
-  return carried != null && carried.alg === 'EdDSA' && encodeKey(carried.publicKey, 'EdDSA') === key
+  return (
+    carried != null &&
+    carried.alg === 'EdDSA' &&
+    encodeKey({ publicKey: carried.publicKey, alg: 'EdDSA' }) === key
+  )
 }
 
 /**

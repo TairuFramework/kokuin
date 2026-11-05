@@ -59,7 +59,7 @@ function createStore(): BrowserKeyStore {
   return new BrowserKeyStore({ getStore: createMockGetStore().getStore })
 }
 
-function sameRecord(a: StoredKeyRecord, b: StoredKeyRecord): boolean {
+function sameRecord({ a, b }: { a: StoredKeyRecord; b: StoredKeyRecord }): boolean {
   // CryptoKeys are opaque and non-extractable; structured-clone round-trips preserve identity
   // through the mock's Map, so reference equality is the right comparison here.
   return a === b
@@ -107,7 +107,7 @@ describe('legacy ES256 records', () => {
   test('still sign via provideSigningIdentity', async () => {
     const store = await storeWithLegacyKey('legacy')
     const identity = await store.provideSigningIdentity('legacy')
-    const token = await identity.signToken({ sub: 'test' })
+    const token = await identity.signToken({ payload: { sub: 'test' } })
     expect(token.header.alg).toBe('ES256')
   })
 

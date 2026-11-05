@@ -65,7 +65,7 @@ GCM unwrap failures throw `VaultSecretRejected` with the original failure as `ca
 Missing factors and malformed descriptors retain their distinct validation errors.
 Entry authentication failures throw `VaultTampered` with the original cause.
 
-`createVaultKeyID(owner, unique)` hashes the exact owner bytes concatenated with unique bytes using BLAKE3.
+`createVaultKeyID({ owner, unique })` hashes the exact owner bytes concatenated with unique bytes using BLAKE3.
 Its base36 multibase encoding frames unsigned varints for namespace `0xb6`, key type `31`, and digest length `32`.
 Callers normalise owner DIDs before minting IDs used as equality keys.
 Recipient DIDs retain their resolvable long form. `wrappableDID` selects that form when available.
@@ -75,25 +75,25 @@ pure factor reconstruction and eligibility checks, a cloning TTL key cache, and 
 
 ## Crypto provider migration to 0.2.0
 
-All functions below accept appended `options?: CryptoOptions` and now require `await`.
+All functions below accept top-level `crypto?` in named params objects and now require `await`.
 
 | Export | Result |
 | --- | --- |
-| `digestParts(parts, options?)` | `Promise<string>` |
-| `vaultKeyDigest(key, options?)` | `Promise<string>` |
-| `vaultWrappingDigest(wrapping, options?)` | `Promise<string>` |
-| `vaultEntriesDigest(entries, options?)` | `Promise<string>` |
-| `vaultEntryDigest(entry, options?)` | `Promise<string>` |
-| `descriptorDigest(descriptors, options?)` | `Promise<string>` |
-| `createVaultKeyID(owner, unique, options?)` | `Promise<string>` |
-| `createVaultKeyReference(owner, unique, options?)` | `Promise<{ keyID: string; keyUnique: string }>` |
-| `vaultRecordMeta(type, claim, options?)` | `Promise<VaultRecordMetas[Type] \| null>` |
-| `decodeVaultRecord(record, recordMeta, options?)` | `Promise<DecodedVaultRecord>` |
+| `digestParts(params: DigestPartsParams)` | `Promise<string>` |
+| `vaultKeyDigest(params: VaultKeyDigestParams)` | `Promise<string>` |
+| `vaultWrappingDigest(params: VaultWrappingDigestParams)` | `Promise<string>` |
+| `vaultEntriesDigest(params: VaultEntriesDigestParams)` | `Promise<string>` |
+| `vaultEntryDigest(params: VaultEntryDigestParams)` | `Promise<string>` |
+| `descriptorDigest(params: DescriptorDigestParams)` | `Promise<string>` |
+| `createVaultKeyID(params: CreateVaultKeyIDParams)` | `Promise<string>` |
+| `createVaultKeyReference(params: CreateVaultKeyReferenceParams)` | `Promise<{ keyID: string; keyUnique: string }>` |
+| `vaultRecordMeta(params: VaultRecordMetaParams)` | `Promise<VaultRecordMetas[Type] \| null>` |
+| `decodeVaultRecord(params: DecodeVaultRecordParams)` | `Promise<DecodedVaultRecord>` |
 
 `checkDescriptorDigest({ descriptors, expectedDescriptorDigest, crypto? })` now returns `Promise<void>`.
 `VaultRecordTypeParams`, `WrapParams` and `UnwrapParams` gain `crypto?`.
 `vaultRecordTypes` and `vaultProofAuthorizer` capture provider options at construction.
-`vaultKeyVersionReader(store, { opKind, methods?, crypto? })` captures the provider and returns its existing asynchronous callback.
+`vaultKeyVersionReader({ store, opKind, methods?, crypto? })` captures the provider and returns its existing asynchronous callback.
 `vaultHolderTypes(types)`, `getSuite`, wrapping and unwrapping retain their return contracts.
 
 Public metadata validation still checks owner/key-ID commitments. Internal structural parsing does not replace that validation boundary.
@@ -102,9 +102,9 @@ Canonical IDs, digests and encrypted formats remain unchanged. Provider errors p
 SHA-256, X25519, HKDF, AES-GCM, BIP39 and randomness retain their existing implementations.
 
 ```ts
-const { keyID, keyUnique } = await createVaultKeyReference(ownerDID, unique, { crypto })
-const meta = await vaultRecordMeta('vault.key', claim, { crypto })
-const decoded = await decodeVaultRecord(record, recordMeta, { crypto })
+const { keyID, keyUnique } = await createVaultKeyReference({ owner: ownerDID, unique, crypto })
+const meta = await vaultRecordMeta({ type: 'vault.key', claim, crypto })
+const decoded = await decodeVaultRecord({ record, recordMeta, crypto })
 await checkDescriptorDigest({ descriptors, expectedDescriptorDigest, crypto })
 ```
 
@@ -126,3 +126,41 @@ See [provider adoption](../../docs/reference/crypto-provider.md) for selection a
 `VaultRecordPayloadErrorParams` names the existing constructor object without changing its fields.
 
 These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.
+
+Additional APIs use the same flat params convention.
+
+| Export | Named params type | Previous positional form |
+| --- | --- | --- |
+| `decodeVaultRecord` | `DecodeVaultRecordParams` | `decodeVaultRecord(params: DecodeVaultRecordParams)` |
+| `encodeVaultRecordPayload` | `EncodeVaultRecordPayloadParams` | `encodeVaultRecordPayload(type: Type, payload: VaultRecordPayloads[Type])` |
+| `vaultRecordMeta` | `VaultRecordMetaParams` | `vaultRecordMeta(params: VaultRecordMetaParams)` |
+| `vaultRevocationRecordID` | `VaultRevocationRecordIDParams` | `vaultRevocationRecordID(keyID: string, recipientDID: string)` |
+| `compareVaultBranches` | `CompareVaultBranchesParams` | `compareVaultBranches(left: VerifiedRecordOp, right: VerifiedRecordOp)` |
+| `digestParts` | `DigestPartsParams` | `digestParts(params: DigestPartsParams)` |
+| `vaultKeyDigest` | `VaultKeyDigestParams` | `vaultKeyDigest(params: VaultKeyDigestParams)` |
+| `vaultWrappingDigest` | `VaultWrappingDigestParams` | `vaultWrappingDigest(params: VaultWrappingDigestParams)` |
+| `vaultEntriesDigest` | `VaultEntriesDigestParams` | `vaultEntriesDigest(params: VaultEntriesDigestParams)` |
+| `vaultEntryDigest` | `VaultEntryDigestParams` | `vaultEntryDigest(params: VaultEntryDigestParams)` |
+| `descriptorDigest` | `DescriptorDigestParams` | `descriptorDigest(params: DescriptorDigestParams)` |
+| `wrappingNamesExcludedRecipient` | `WrappingNamesExcludedRecipientParams` | `wrappingNamesExcludedRecipient(wrapping: { recipientDID: string \| null; factors: ReadonlyArray<FactorDescriptor> }, excluded: ReadonlySet<string>)` |
+| `satisfiableFactors` | `SatisfiableFactorsParams` | `satisfiableFactors(descriptors: Array<FactorDescriptor>, identity: KeyAgreementIdentity \| null)` |
+| `factorsFromDescriptors` | `FactorsFromDescriptorsParams` | `factorsFromDescriptors(descriptors: Array<FactorDescriptor>, inputs?: FactorInputs)` |
+| `createVaultKeyID` | `CreateVaultKeyIDParams` | `createVaultKeyID(params: CreateVaultKeyIDParams)` |
+| `createVaultKeyReference` | `CreateVaultKeyReferenceParams` | `createVaultKeyReference(params: CreateVaultKeyReferenceParams)` |
+| `vaultKeyVersionReader` | `VaultKeyVersionReaderParams` | `vaultKeyVersionReader(store: RecordStoreAdapter, input: Pick<VaultRecordTypeParams, 'opKind' \| 'methods' \| 'crypto'>)` |
+| `vaultProofAuthorizer` | `VaultProofAuthorizerParams` | `vaultProofAuthorizer(input: VaultRecordTypeParams, store: RecordStoreAdapter, transportContext?: unknown)` |
+
+Method and callback contracts follow the same convention.
+
+| API | Named params type | Previous form |
+| --- | --- | --- |
+| `KeyCache.get` | `KeyCacheGetParams` | `get(keyID, keyVersion)` |
+| `KeyCache.has` | `KeyCacheHasParams` | `has(keyID, keyVersion)` |
+| `KeyCache.evictVersion` | `KeyCacheEvictVersionParams` | `evictVersion(keyID, keyVersion)` |
+| `VaultRecordHooks.validateConsumerMetadata` | `VaultRecordHooksValidateConsumerMetadataParams` | `validateConsumerMetadata(value, request)` |
+
+Existing params objects also flatten their options fields:
+
+| Existing params type | Updated params type | Field migration |
+| --- | --- | --- |
+| `DecodedAsParams` | `DecodedAsParams` | `Nested options fields → top-level fields` |

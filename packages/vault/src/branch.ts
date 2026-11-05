@@ -1,7 +1,9 @@
 import type { VerifiedRecordOp } from '@kokuin/records'
 
 /** Compare authenticated introducing ops by claim digest, then op hash. */
-export function compareVaultBranches(left: VerifiedRecordOp, right: VerifiedRecordOp): number {
+export type CompareVaultBranchesParams = { left: VerifiedRecordOp; right: VerifiedRecordOp }
+
+export function compareVaultBranches({ right, left }: CompareVaultBranchesParams): number {
   const a = left.contentDigest
   const b = right.contentDigest
 
@@ -20,6 +22,6 @@ export function selectWinningBranch(branches: ReadonlyArray<VerifiedRecordOp>): 
   if (branches.length === 0) throw new RangeError('At least one authenticated branch is required')
 
   return branches.reduce((winner, candidate) => {
-    return compareVaultBranches(candidate, winner) > 0 ? candidate : winner
+    return compareVaultBranches({ left: candidate, right: winner }) > 0 ? candidate : winner
   })
 }

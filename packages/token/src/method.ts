@@ -1,3 +1,8 @@
+export type DIDMethodResolverResolveParams = { did: string; header: ResolveIssuerHeader }
+export type DIDMethodResolverResolveHistoricParams = { did: string; header: ResolveIssuerHeader }
+export type DIDMethodResolverResolveMemberParams = { subject: string; member: MemberQuery }
+export type DIDMethodResolverResolveMemberHistoricParams = { subject: string; member: MemberQuery }
+
 import type { ResolveIssuerHeader } from './did.js'
 import type { SignatureAlgorithm } from './schemas.js'
 
@@ -40,7 +45,7 @@ export type DIDMethodResolver = {
    * authenticating a live signer asks whether *this* party can sign today, so a retired key must not
    * answer yes. {@link resolveHistoric} is the other question.
    */
-  resolve(did: string, header: ResolveIssuerHeader): Promise<ResolvedSigningKey>
+  resolve(params: DIDMethodResolverResolveParams): Promise<ResolvedSigningKey>
   /**
    * The key this subject signed with **at some point in the past**, for verifying an artefact it has
    * already issued — the explicit opt-in half of the split. It accepts a key the subject may have
@@ -53,7 +58,7 @@ export type DIDMethodResolver = {
    * refuses rather than falling back to {@link resolve}, which would answer a different question. A
    * method that can retire keys must implement it — including a *wrapper* around one that does.
    */
-  resolveHistoric?(did: string, header: ResolveIssuerHeader): Promise<ResolvedSigningKey>
+  resolveHistoric?(params: DIDMethodResolverResolveHistoricParams): Promise<ResolvedSigningKey>
   /**
    * Resolve the recipient's key agreement key set, in the method's order. Every entry with its
    * algorithm rather than one chosen key: the set is an OR set, and selection belongs to the
@@ -87,7 +92,7 @@ export type DIDMethodResolver = {
    * keys and would answer a different question. A member that is unknown, removed or lapsed must
    * reject, never resolve.
    */
-  resolveMember?(subject: string, member: MemberQuery): Promise<ResolvedMember>
+  resolveMember?(params: DIDMethodResolverResolveMemberParams): Promise<ResolvedMember>
   /**
    * Proves incarnation and generation, never signing time. A removed incarnation can still sign
    * new material claiming it. Its records require re-endorsement by effective members for new
@@ -97,16 +102,20 @@ export type DIDMethodResolver = {
    * resolving answer returns true, including entries found only in earlier chain states after pruning.
    * Removed incarnations resolve even after denial. Denied live incarnations and absence fail closed.
    */
-  resolveMemberHistoric?(subject: string, member: MemberQuery): Promise<ResolvedHistoricMember>
+  resolveMemberHistoric?(
+    params: DIDMethodResolverResolveMemberHistoricParams,
+  ): Promise<ResolvedHistoricMember>
 }
 
 export type MethodRegistry = ReadonlyArray<DIDMethodResolver>
 
 /** Total: a malformed DID yields `undefined` rather than throwing. */
-export function findMethodResolver(
-  registry: MethodRegistry,
-  did: string,
-): DIDMethodResolver | undefined {
+export type FindMethodResolverParams = { registry: MethodRegistry; did: string }
+
+export function findMethodResolver({
+  did,
+  registry,
+}: FindMethodResolverParams): DIDMethodResolver | undefined {
   const parts = did.split(':')
   if (parts.length < 3 || parts[0] !== 'did') {
     return undefined

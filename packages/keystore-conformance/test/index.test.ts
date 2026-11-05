@@ -58,12 +58,12 @@ class MemoryKeyStore implements KeyStore<Uint8Array, MemoryKeyEntry> {
   #keys = new Map<string, Uint8Array>()
 
   entry(keyID: string): MemoryKeyEntry {
-    this.#entries[keyID] ??= new MemoryKeyEntry({ keyID: keyID, keys: this.#keys })
+    this.#entries[keyID] ??= new MemoryKeyEntry({ keyID, keys: this.#keys })
     return this.#entries[keyID]
   }
 }
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+function sameBytes({ a, b }: { a: Uint8Array; b: Uint8Array }): boolean {
   return a.length === b.length && a.every((byte, i) => byte === b[i])
 }
 
@@ -128,7 +128,7 @@ class CollidingKeyStore implements KeyStore<Uint8Array, CollidingKeyEntry> {
   #keys = new Map<string, Uint8Array>()
   entry(keyID: string): CollidingKeyEntry {
     this.#entries[keyID] ??= new CollidingKeyEntry({
-      keyID: keyID,
+      keyID,
       keys: this.#keys,
       slot: 'shared-slot',
     })
@@ -140,7 +140,7 @@ class CollidingKeyStore implements KeyStore<Uint8Array, CollidingKeyEntry> {
 class UncachedEntryStore implements KeyStore<Uint8Array, MemoryKeyEntry> {
   #keys = new Map<string, Uint8Array>()
   entry(keyID: string): MemoryKeyEntry {
-    return new MemoryKeyEntry({ keyID: keyID, keys: this.#keys })
+    return new MemoryKeyEntry({ keyID, keys: this.#keys })
   }
 }
 
@@ -162,7 +162,7 @@ class RacyKeyStore implements KeyStore<Uint8Array, RacyKeyEntry> {
   #entries: Record<string, RacyKeyEntry> = Object.create(null)
   #keys = new Map<string, Uint8Array>()
   entry(keyID: string): RacyKeyEntry {
-    this.#entries[keyID] ??= new RacyKeyEntry({ keyID: keyID, keys: this.#keys })
+    this.#entries[keyID] ??= new RacyKeyEntry({ keyID, keys: this.#keys })
     return this.#entries[keyID]
   }
 }
@@ -177,7 +177,7 @@ describe('conformance suite', () => {
   test('a correct store passes every case', async () => {
     const cases = keyStoreConformanceCases({
       createStore: () => new MemoryKeyStore(),
-      isSameKey: sameBytes,
+      isSameKey: ({ a, b }) => sameBytes({ a, b }),
     })
     expect(cases.length).toBeGreaterThan(0)
     await runAll(cases)
@@ -186,7 +186,7 @@ describe('conformance suite', () => {
   test('a correct mutable store passes every mutable case', async () => {
     const cases = mutableKeyStoreConformanceCases({
       createStore: () => new MemoryKeyStore(),
-      isSameKey: sameBytes,
+      isSameKey: ({ a, b }) => sameBytes({ a, b }),
       createKey: () => crypto.getRandomValues(new Uint8Array(32)),
     })
     expect(cases.length).toBeGreaterThan(0)
@@ -196,7 +196,7 @@ describe('conformance suite', () => {
   test('rejects a store whose entry() does not round-trip the keyID', async () => {
     const cases = keyStoreConformanceCases({
       createStore: () => new WrongKeyIDStore(),
-      isSameKey: sameBytes,
+      isSameKey: ({ a, b }) => sameBytes({ a, b }),
     })
     await expect(runAll(cases)).rejects.toThrow(/keyID/)
   })
@@ -204,7 +204,7 @@ describe('conformance suite', () => {
   test('rejects a store where distinct keyIDs collide on one key', async () => {
     const cases = keyStoreConformanceCases({
       createStore: () => new CollidingKeyStore(),
-      isSameKey: sameBytes,
+      isSameKey: ({ a, b }) => sameBytes({ a, b }),
     })
     await expect(runAll(cases)).rejects.toThrow(/same key|vanished/)
   })
@@ -212,7 +212,7 @@ describe('conformance suite', () => {
   test('rejects a store whose entry() is not cached', async () => {
     const cases = keyStoreConformanceCases({
       createStore: () => new UncachedEntryStore(),
-      isSameKey: sameBytes,
+      isSameKey: ({ a, b }) => sameBytes({ a, b }),
     })
     await expect(runAll(cases)).rejects.toThrow(/cached|different object/)
   })
@@ -220,7 +220,7 @@ describe('conformance suite', () => {
   test('rejects a store whose provideAsync races', async () => {
     const cases = keyStoreConformanceCases({
       createStore: () => new RacyKeyStore(),
-      isSameKey: sameBytes,
+      isSameKey: ({ a, b }) => sameBytes({ a, b }),
     })
     await expect(runAll(cases)).rejects.toThrow(/concurrent/i)
   })

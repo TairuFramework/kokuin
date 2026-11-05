@@ -54,10 +54,10 @@ function provider(verify?: (items: Array<VerifyItem>) => Promise<Array<boolean>>
       counts.blake3Batch++
       return nobleCrypto.blake3Batch(...args)
     },
-    async signBatch(alg, items) {
+    async signBatch({ alg, items }) {
       counts.signBatch++
       signed.push(structuredClone(items))
-      return nobleCrypto.signBatch(alg, items)
+      return nobleCrypto.signBatch({ alg, items })
     },
     async verifyBatch(items) {
       counts.verifyBatch++
@@ -72,7 +72,7 @@ beforeEach(clearFoldMemo)
 
 test('signing and verification use ordered provider batches over canonical bytes', async () => {
   const p = provider()
-  const icp = await createInception(seed, 0, p)
+  const icp = await createInception({ seed, profile: 0, crypto: p.crypto })
   expect(p.signed).toHaveLength(1)
   expect(p.signed[0]?.[0]?.message).toEqual(canonicalBytes(icp.event))
   const keys = [new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)]
@@ -81,16 +81,22 @@ test('signing and verification use ordered provider batches over canonical bytes
     await Promise.all(
       keys.map(async (key) => {
         return base64urlnopad.encode(
-          await nobleCrypto.sign('EdDSA', key, canonicalBytes(icp.event)),
+          await nobleCrypto.sign({
+            alg: 'EdDSA',
+            privateKey: key,
+            message: canonicalBytes(icp.event),
+          }),
         )
       }),
     ),
   )
   expect(p.signed[1]?.map((item) => item.privateKey)).toEqual(keys)
-  expect(await verifyInception(icp, didFromInception(icp.event), p)).toBe(true)
+  expect(
+    await verifyInception({ signed: icp, did: didFromInception(icp.event), crypto: p.crypto }),
+  ).toBe(true)
   expect(p.verified).toHaveLength(1)
   expect(p.verified[0]?.[0]?.message).toEqual(canonicalBytes(icp.event))
-  await createReset({ seed: seed, profile: 0, gen: 1, snapshot: undefined, options: p })
+  await createReset({ seed, profile: 0, gen: 1, snapshot: undefined, crypto: p.crypto })
   expect(p.signed).toHaveLength(3)
   expect(p.counts).toEqual({
     sign: 0,
@@ -102,27 +108,38 @@ test('signing and verification use ordered provider batches over canonical bytes
   })
 })
 
+test('stray caller fields cannot displace the event a fold verifies', async () => {
+  const icp = await createInception({ seed, profile: 0 })
+  const did = didFromInception(icp.event)
+  const stray = { signed: [], event: icp.event, sigs: ['!'], keys: [] }
+  const result = await foldLog({ did, input: { chain: [icp], events: [] }, ...stray })
+  expect(result.ok).toBe(true)
+})
+
 test('provider failures escape verification and folds unchanged and remain retryable', async () => {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
   const sentinel = new Error('provider unavailable')
   const p = provider(async () => {
     throw sentinel
   })
   await expect(
-    verifySignatures({ event: icp.event, sigs: icp.sigs, keys: icp.event.k, options: p }),
+    verifySignatures({ event: icp.event, sigs: icp.sigs, keys: icp.event.k, crypto: p.crypto }),
   ).rejects.toBe(sentinel)
-  await expect(foldLog(did, { chain: [icp], events: [] }, p)).rejects.toBe(sentinel)
+  await expect(
+    foldLog({ did, input: { chain: [icp], events: [] }, crypto: p.crypto }),
+  ).rejects.toBe(sentinel)
   expect(
-    await verifySignatures({ event: icp.event, sigs: ['!'], keys: icp.event.k, options: p }),
+    await verifySignatures({ event: icp.event, sigs: ['!'], keys: icp.event.k, crypto: p.crypto }),
   ).toBe(false)
   const history = createMemoryLogStore()
   const resolver = createControllerResolver({
-    ...p,
+    crypto: p.crypto,
     history,
     loadLog: async () => ({ chain: [icp], events: [] }),
   })
-  for (let i = 0; i < 2; i++) await expect(resolver.resolve(did, {})).rejects.toBe(sentinel)
+  for (let i = 0; i < 2; i++)
+    await expect(resolver.resolve({ did, header: {} })).rejects.toBe(sentinel)
   expect(await history.get(did)).toBeUndefined()
   expect(p.verified).toHaveLength(4)
 })
@@ -131,7 +148,7 @@ for (const failure of [false, new Error('provider failed')]) {
   for (const withHistory of [false, true]) {
     for (const frozen of [false, true]) {
       test(`fold memo isolates provider policy with history=${withHistory}, frozen=${frozen}, failure=${String(failure)}`, async () => {
-        const icp = await createInception(seed, 0)
+        const icp = await createInception({ seed, profile: 0 })
         const did = didFromInception(icp.event)
         const log: ControllerLog = { chain: [icp], events: [] }
         const permissive = provider(async (items) => items.map(() => true))
@@ -145,7 +162,7 @@ for (const failure of [false, new Error('provider failed')]) {
           history,
           loadLog: async () => structuredClone(log),
         })
-        await first.resolve(did, {})
+        await first.resolve({ did, header: {} })
         expect(permissive.verified.length).toBeGreaterThan(0)
         const resolver = createControllerResolver({
           ...rejecting,
@@ -153,17 +170,20 @@ for (const failure of [false, new Error('provider failed')]) {
           loadLog: async () => structuredClone(log),
         })
         const view = frozen ? resolver.frozen() : resolver
-        const outcomes = await Promise.allSettled([view.resolve(did, {}), view.resolve(did, {})])
+        const outcomes = await Promise.allSettled([
+          view.resolve({ did, header: {} }),
+          view.resolve({ did, header: {} }),
+        ])
         expect(outcomes.map((result) => result.status)).toEqual(['rejected', 'rejected'])
         expect(rejecting.verified).toHaveLength(1)
-        await expect(view.resolve(did, {})).rejects.toThrow()
+        await expect(view.resolve({ did, header: {} })).rejects.toThrow()
         expect(rejecting.verified).toHaveLength(2)
         const second = createControllerResolver({
           ...rejecting,
           history,
           loadLog: async () => structuredClone(log),
         })
-        await expect(second.resolve(did, {})).rejects.toThrow()
+        await expect(second.resolve({ did, header: {} })).rejects.toThrow()
         expect(rejecting.verified).toHaveLength(3)
       })
     }
@@ -171,9 +191,9 @@ for (const failure of [false, new Error('provider failed')]) {
 }
 
 test('hostile epoch candidates stop at the failed signature budget in causal order', async () => {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
-  const folded = await foldLog(did, { chain: [icp], events: [] })
+  const folded = await foldLog({ did, input: { chain: [icp], events: [] } })
   if (!folded.ok) throw new Error(folded.reason)
   const events = await Promise.all(
     Array.from({ length: MAX_FAILED_SIGNATURES + 10 }, async (_, index) => {
@@ -189,7 +209,11 @@ test('hostile epoch candidates stop at the failed signature budget in causal ord
   const p = provider(async (items) => {
     return items.map((item) => new TextDecoder().decode(item.message).includes('"t":"icp"'))
   })
-  const result = await foldLog(did, { chain: [icp], events: events.toReversed() }, p)
+  const result = await foldLog({
+    did,
+    input: { chain: [icp], events: events.toReversed() },
+    crypto: p.crypto,
+  })
   expect(result).toEqual({ ok: false, reason: TOO_MANY_FAILED_SIGNATURES, index: -1 })
   expect(p.verified).toHaveLength(MAX_FAILED_SIGNATURES + 2)
   const order = events
@@ -208,9 +232,12 @@ test('profile enumeration stays synchronous without provider operations', () => 
     })
   })
   try {
-    const entries = enumerateProfiles(seed, 2)
+    const entries = enumerateProfiles({ seed, count: 2 })
     expect(Array.isArray(entries)).toBe(true)
-    expect(entries.map(({ did }) => did)).toEqual([didFor(seed, 0), didFor(seed, 1)])
+    expect(entries.map(({ did }) => did)).toEqual([
+      didFor({ seed, profile: 0 }),
+      didFor({ seed, profile: 1 }),
+    ])
     expect(spies.every((spy) => spy.mock.calls.length === 0)).toBe(true)
   } finally {
     spies.forEach((spy) => {
@@ -220,14 +247,14 @@ test('profile enumeration stays synchronous without provider operations', () => 
 })
 
 test('root signature sets verify in bounded ordered batches', async () => {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const privateKeys = Array.from({ length: 17 }, (_, index) => new Uint8Array(32).fill(index + 1))
-  const keys = privateKeys.map((key) => encodeKey(ed25519.getPublicKey(key), 'EdDSA'))
+  const keys = privateKeys.map((key) =>
+    encodeKey({ publicKey: ed25519.getPublicKey(key), alg: 'EdDSA' }),
+  )
   const sigs = await signEvent(icp.event, privateKeys)
   const p = provider()
-  expect(await verifySignatures({ event: icp.event, sigs: sigs, keys: keys, options: p })).toBe(
-    true,
-  )
+  expect(await verifySignatures({ event: icp.event, sigs, keys, crypto: p.crypto })).toBe(true)
   expect(p.verified.map((items) => items.length)).toEqual([4, 4, 4, 4, 1])
   expect(p.verified.flat().map((item) => item.publicKey)).toEqual(
     privateKeys.map((key) => ed25519.getPublicKey(key)),
@@ -236,14 +263,17 @@ test('root signature sets verify in bounded ordered batches', async () => {
 
 test('all controller builders and identity signers retain the selected provider', async () => {
   const p = provider()
-  const icp = await createInception(seed, 0, p)
+  const icp = await createInception({ seed, profile: 0, crypto: p.crypto })
   const did = didFromInception(icp.event)
   const log = { chain: [icp], events: [] }
-  const folded = await foldLog(did, log, p)
+  const folded = await foldLog({ did, input: log, crypto: p.crypto })
   if (!folded.ok) throw new Error(folded.reason)
-  const base = { ...p, did, head: folded.head, parents: [folded.head.epoch] }
+  const base = { crypto: p.crypto, did, head: folded.head, parents: [folded.head.epoch] }
   const signer = { root: { seed, profile: 0 } }
-  const key = encodeKey(ed25519.getPublicKey(new Uint8Array(32).fill(2)), 'EdDSA')
+  const key = encodeKey({
+    publicKey: ed25519.getPublicKey(new Uint8Array(32).fill(2)),
+    alg: 'EdDSA',
+  })
   const add = await createAdd({
     ...base,
     seed,
@@ -254,7 +284,7 @@ test('all controller builders and identity signers retain the selected provider'
   await createRemove({ ...base, signer, add: digestOf(add.event) })
   const rev = await createRevoke({ ...base, signer, target: 'did:key:revoked' })
   await createRotate({
-    ...p,
+    crypto: p.crypto,
     seed,
     profile: 0,
     did,
@@ -262,7 +292,7 @@ test('all controller builders and identity signers retain the selected provider'
     snapshot: { members: [], deny: [] },
   })
   const revoked = await createDeviceRevoke({
-    ...p,
+    crypto: p.crypto,
     seed,
     profile: 0,
     did,
@@ -270,61 +300,67 @@ test('all controller builders and identity signers retain the selected provider'
     subject: 'did:key:revoked',
   })
   expect(p.signed).toHaveLength(7)
-  const identity = await createControllerIdentity({ ...p, seed, profile: 0, log })
-  const privateKey = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA').privateKey
-  const keyed = await createControllerIdentityWithKey({ ...p, privateKey, log })
-  await identity.signToken({ example: true })
-  await keyed.signToken({ example: true })
+  const identity = await createControllerIdentity({ crypto: p.crypto, seed, profile: 0, log })
+  const privateKey = deriveKeyPair({
+    seed,
+    path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+    alg: 'EdDSA',
+  }).privateKey
+  const keyed = await createControllerIdentityWithKey({ crypto: p.crypto, privateKey, log })
+  await identity.signToken({ payload: { example: true } })
+  await keyed.signToken({ payload: { example: true } })
   expect(p.counts.sign).toBe(2)
   const history = createMemoryLogStore()
   const provisioned = await provideControllerIdentity({
-    ...p,
+    crypto: p.crypto,
     profile: 0,
     logStore: history,
     entry: { keyID: 'controller-root', getAsync: async () => seed, provideAsync: async () => seed },
   })
-  await provisioned.signToken({ example: true })
+  await provisioned.signToken({ payload: { example: true } })
   expect(p.counts.sign).toBe(3)
   expect(p.signed).toHaveLength(8)
   const seen = p.verified.length
-  expect(await epochHeads(did, { ...log, events: [rev] }, p)).toEqual([digestOf(rev.event)])
+  expect(await epochHeads({ did, log: { ...log, events: [rev] }, crypto: p.crypto })).toEqual([
+    digestOf(rev.event),
+  ])
   expect(
     await deviceRevokeIndex({
-      did: did,
+      did,
       chain: [icp, revoked],
       subject: 'did:key:revoked',
-      options: p,
+      crypto: p.crypto,
     }),
   ).toBe(1)
   expect(
     await deviceRevokeIndices({
-      did: did,
+      did,
       chain: [icp, revoked],
       subject: 'did:key:revoked',
-      options: p,
+      crypto: p.crypto,
     }),
   ).toEqual([1])
-  await mergeLogs({ did: did, left: log, right: { ...log, events: [rev] }, options: p })
-  await pruneLog(did, { ...log, events: [rev] }, p)
-  await resolveBranches(did, [[icp]], p)
-  await authoritativeLog({ ...p, did, loaded: log, seen: undefined, context: 'test' })
+  await mergeLogs({ did, left: log, right: { ...log, events: [rev] }, crypto: p.crypto })
+  await pruneLog({ did, input: { ...log, events: [rev] }, crypto: p.crypto })
+  await resolveBranches({ did, chains: [[icp]], crypto: p.crypto })
+  await authoritativeLog({ crypto: p.crypto, did, loaded: log, seen: undefined, context: 'test' })
   expect(p.verified.length).toBeGreaterThan(seen)
 })
 
 test('default controller verification refuses message-independent small-order forgeries', async () => {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const identityPoint = new Uint8Array(32)
   identityPoint[0] = 1
   const signature = new Uint8Array(64)
   signature[0] = 1
   const forged = {
-    event: { ...icp.event, k: [encodeKey(identityPoint, 'EdDSA')] },
+    event: { ...icp.event, k: [encodeKey({ publicKey: identityPoint, alg: 'EdDSA' })] },
     sigs: [base64urlnopad.encode(signature)],
   }
   const did = didFromInception(forged.event)
   expect(ed25519.verify(signature, canonicalBytes(forged.event), identityPoint)).toBe(true)
-  expect(await verifyInception(forged, did)).toBe(false)
-  expect(await foldLog(did, { chain: [forged], events: [] })).toEqual({
+  expect(await verifyInception({ signed: forged, did })).toBe(false)
+  expect(await foldLog({ did, input: { chain: [forged], events: [] } })).toEqual({
     ok: false,
     reason: 'invalid inception',
     index: 0,
@@ -350,11 +386,11 @@ function gatedProvider() {
     await gate
     return result
   })
-  return { ...p, waiting, release: () => release() }
+  return { crypto: p.crypto, waiting, release: () => release() }
 }
 
 test('folds retain authenticated inception, rotate and epoch bytes during suspension', async () => {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
   const rotate = await createRotate({
     seed,
@@ -363,7 +399,7 @@ test('folds retain authenticated inception, rotate and epoch bytes during suspen
     prior: icp.event,
     snapshot: { members: [], deny: [] },
   })
-  const folded = await foldLog(did, { chain: [icp, rotate], events: [] })
+  const folded = await foldLog({ did, input: { chain: [icp, rotate], events: [] } })
   if (!folded.ok) throw new Error(folded.reason)
   const revoke = await createRevoke({
     did,
@@ -373,12 +409,12 @@ test('folds retain authenticated inception, rotate and epoch bytes during suspen
     target: 'did:key:original',
   })
   const original = { chain: [icp, rotate], events: [revoke] }
-  const expected = await foldLog(did, structuredClone(original))
+  const expected = await foldLog({ did, input: structuredClone(original) })
   const mutableInception = structuredClone(icp)
   const mutableRotate = structuredClone(rotate)
   const log = { chain: [mutableInception, mutableRotate], events: [structuredClone(revoke)] }
   const p = gatedProvider()
-  const pending = foldLog(did, log, p)
+  const pending = foldLog({ did, input: log, crypto: p.crypto })
   await p.waiting
   mutableInception.event.k = [...mutableRotate.event.k]
   mutableRotate.event.d = ['did:key:forged']
@@ -390,37 +426,45 @@ test('folds retain authenticated inception, rotate and epoch bytes during suspen
 })
 
 test('memo keys, persisted logs and folded state share the authenticated snapshot', async () => {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
   const pristine = { chain: [icp], events: [] }
   let loaded = structuredClone(pristine)
   const p = gatedProvider()
   const history = createMemoryLogStore()
-  const resolver = createControllerResolver({ ...p, history, loadLog: async () => loaded })
-  const pending = resolver.resolve(did, {})
+  const resolver = createControllerResolver({
+    crypto: p.crypto,
+    history,
+    loadLog: async () => loaded,
+  })
+  const pending = resolver.resolve({ did, header: {} })
   await p.waiting
   const mutable = loaded.chain[0]
   if (mutable === undefined) throw new Error('missing inception fixture')
-  mutable.event.k = (await createInception(seed, 1)).event.k
+  mutable.event.k = (await createInception({ seed, profile: 1 })).event.k
   p.release()
   const expectedKey = ed25519.getPublicKey(
-    deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA').privateKey,
+    deriveKeyPair({ seed, path: authorityPath({ profile: 0, gen: 0, seq: 0 }), alg: 'EdDSA' })
+      .privateKey,
   )
   expect(await pending).toEqual({ alg: 'EdDSA', publicKey: expectedKey })
   expect(await history.get(did)).toEqual(pristine)
   loaded = structuredClone(pristine)
-  const second = createControllerResolver({ ...p, loadLog: async () => loaded })
-  expect(await second.resolve(did, {})).toEqual({ alg: 'EdDSA', publicKey: expectedKey })
+  const second = createControllerResolver({ crypto: p.crypto, loadLog: async () => loaded })
+  expect(await second.resolve({ did, header: {} })).toEqual({
+    alg: 'EdDSA',
+    publicKey: expectedKey,
+  })
 })
 
 test('branch winners own the authenticated chain during verification', async () => {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
   const pristine = structuredClone(icp)
   const p = gatedProvider()
-  const pending = resolveBranches(did, [[icp]], p)
+  const pending = resolveBranches({ did, chains: [[icp]], crypto: p.crypto })
   await p.waiting
-  icp.event.k = (await createInception(seed, 1)).event.k
+  icp.event.k = (await createInception({ seed, profile: 1 })).event.k
   p.release()
   expect(await pending).toEqual({ ok: true, winner: [pristine], superseded: 0 })
 })
@@ -428,14 +472,18 @@ test('branch winners own the authenticated chain during verification', async () 
 test('identity construction captures private material before verification suspends', async () => {
   for (const keyed of [false, true]) {
     const privateSeed = seed.slice()
-    const icp = await createInception(privateSeed, 0)
+    const icp = await createInception({ seed: privateSeed, profile: 0 })
     const did = didFromInception(icp.event)
-    const privateKey = deriveKeyPair(privateSeed, authorityPath(0, 0, 0), 'EdDSA').privateKey
+    const privateKey = deriveKeyPair({
+      seed: privateSeed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    }).privateKey
     const p = gatedProvider()
     const log = { chain: [icp], events: [] }
     const pending = keyed
-      ? createControllerIdentityWithKey({ ...p, privateKey, log })
-      : createControllerIdentity({ ...p, seed: privateSeed, profile: 0, log })
+      ? createControllerIdentityWithKey({ crypto: p.crypto, privateKey, log })
+      : createControllerIdentity({ crypto: p.crypto, seed: privateSeed, profile: 0, log })
     await p.waiting
     privateSeed.fill(0)
     privateKey.fill(0)
@@ -443,20 +491,26 @@ test('identity construction captures private material before verification suspen
     const identity = await pending
     expect(identity.id).toBe(did)
     expect(identity.publicKey).toEqual(
-      deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA').publicKey,
+      deriveKeyPair({
+        seed,
+        path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+        alg: 'EdDSA',
+      }).publicKey,
     )
   }
 })
 
 for (const invalidFirst of [true, false]) {
   test(`sixteen signatures stop at the first failed chunk with invalidFirst=${invalidFirst}`, async () => {
-    const icp = await createInception(seed, 0)
+    const icp = await createInception({ seed, profile: 0 })
     const privateKeys = Array.from({ length: 16 }, (_, index) => new Uint8Array(32).fill(index + 1))
-    const keys = privateKeys.map((key) => encodeKey(ed25519.getPublicKey(key), 'EdDSA'))
+    const keys = privateKeys.map((key) =>
+      encodeKey({ publicKey: ed25519.getPublicKey(key), alg: 'EdDSA' }),
+    )
     const sigs = await signEvent(icp.event, privateKeys)
     if (invalidFirst) sigs[0] = base64urlnopad.encode(new Uint8Array(64))
     const p = provider()
-    expect(await verifySignatures({ event: icp.event, sigs: sigs, keys: keys, options: p })).toBe(
+    expect(await verifySignatures({ event: icp.event, sigs, keys, crypto: p.crypto })).toBe(
       !invalidFirst,
     )
     expect(p.verified.map((items) => items.length)).toEqual(invalidFirst ? [4] : [4, 4, 4, 4])

@@ -7,8 +7,7 @@ type CurrentStateParams = {
   did: string
   log: ControllerLog
   context: string
-  options?: CryptoOptions
-}
+} & CryptoOptions
 
 /** The fold's last state, turning a fold failure into a throw. `context` names the caller. */
 function lastState(did: string, context: string, result: FoldResult): KeyState {
@@ -35,10 +34,14 @@ export async function currentState({
   did,
   log,
   context,
-  options = {},
+  ...options
 }: CurrentStateParams): Promise<KeyState> {
   if (!isControllerLog(log)) {
     throw new Error(`${context}: invalid log for ${did}: ${MALFORMED_LOG} at event 0`)
   }
-  return lastState(did, context, await foldLog(did, { chain: log.chain, events: [] }, options))
+  return lastState(
+    did,
+    context,
+    await foldLog({ ...options, did, input: { chain: log.chain, events: [] } }),
+  )
 }

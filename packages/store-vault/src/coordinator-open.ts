@@ -55,9 +55,11 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     if (params.mode !== 'replicated') return false
 
     const denied = await ctx.recordsFor(store).listRevocations(address)
-    const own = vaultRevocationRecordID(address.keyID, params.principal)
+    const own = vaultRevocationRecordID({ keyID: address.keyID, recipientDID: params.principal })
 
-    return denied.some((did) => vaultRevocationRecordID(address.keyID, did) === own)
+    return denied.some(
+      (did) => vaultRevocationRecordID({ keyID: address.keyID, recipientDID: did }) === own,
+    )
   }
 
   async function doOpen({
@@ -84,21 +86,21 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
     }
 
     const branch = await ctx.branch({
-      address: address,
-      version: version,
-      store: store,
-      specific: specific,
+      address,
+      version,
+      store,
+      specific,
     })
     const supplied = Object.values(address.inputs ?? {}).some((input) => input !== undefined)
 
     if (!supplied && wrappingID === undefined) {
-      const hit = cache.get(cacheID(address), version)
+      const hit = cache.get({ keyID: cacheID(address), keyVersion: version })
 
       if (hit !== null) {
         if (hit.branchID === branch.branchID) return { ...hit, version, suite: branch.suite }
 
         hit.contentKey.fill(0)
-        cache.evictVersion(cacheID(address), version)
+        cache.evictVersion({ keyID: cacheID(address), keyVersion: version })
       }
     }
 
@@ -110,7 +112,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
       if (wrappingID !== undefined && row.wrappingID !== wrappingID) continue
       if (params.mode === 'replicated' && row.provenance !== branch.branchID) continue
 
-      const needed = satisfiableFactors(row.descriptors, params.identity)
+      const needed = satisfiableFactors({ descriptors: row.descriptors, identity: params.identity })
 
       if (needed === null) continue
 
@@ -133,7 +135,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
         )
           cache.set({
             keyID: cacheID(address),
-            contentKey: contentKey,
+            contentKey,
             keyVersion: version,
             branchID: branch.branchID,
           })
@@ -157,7 +159,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
       wrappings.some((w) => {
         return (
           w.provenance !== branch.branchID &&
-          satisfiableFactors(w.descriptors, params.identity) !== null
+          satisfiableFactors({ descriptors: w.descriptors, identity: params.identity }) !== null
         )
       })
     )
@@ -191,11 +193,11 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
 
       try {
         const opened = await doOpen({
-          address: address,
-          store: store,
-          generation: generation,
-          specific: specific,
-          wrappingID: wrappingID,
+          address,
+          store,
+          generation,
+          specific,
+          wrappingID,
         })
 
         throttle.recordSuccess(id)
@@ -219,18 +221,18 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
       store !== params.store
     )
       return doOpen({
-        address: address,
-        store: store,
-        generation: generation,
-        specific: specific,
-        wrappingID: wrappingID,
+        address,
+        store,
+        generation,
+        specific,
+        wrappingID,
       })
 
     const flightID = JSON.stringify([cacheID(address), address.atVersion])
 
     while (inFlight.has(flightID)) await inFlight.get(flightID)
 
-    const run = doOpen({ address: address, store: store, generation: generation })
+    const run = doOpen({ address, store, generation })
     const gate = run.then(
       () => {},
       () => {},
@@ -254,7 +256,7 @@ export function createOpenFunctions(ctx: CoordinatorContext): OpenFunctions {
 
     const opened = await open({
       address: { ...address, atVersion: row.keyVersion },
-      store: store,
+      store,
       specific: specific ? row.provenance : undefined,
     })
 

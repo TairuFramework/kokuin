@@ -80,38 +80,38 @@ export const SIGN_SYNC_BATCH_ITEMS = 32
  */
 function napiProvider(binding: NapiBinding): CryptoProvider {
   return {
-    async sign(alg, seed, message) {
+    async sign({ alg, privateKey: seed, message }) {
       assertSigning(alg, seed, message)
-      return binding.sign(seed, message)
+      return binding.sign({ seed, message })
     },
-    async signBatch(alg, items) {
+    async signBatch({ alg, items }) {
       if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
       for (const item of items) assertSigning(alg, item.privateKey, item.message)
       if (items.length === 0) return []
       // Signing is cheap enough that the pool hop costs more than it saves for ordinary batches,
       // and the calling-thread route still takes half nodeCrypto's main-thread time.
       if (items.length <= SIGN_SYNC_BATCH_ITEMS) {
-        return items.map((item) => binding.sign(item.privateKey, item.message))
+        return items.map((item) => binding.sign({ seed: item.privateKey, message: item.message }))
       }
-      return await binding.signBatch(
-        items.map((item) => item.privateKey),
-        items.map((item) => item.message),
-      )
+      return await binding.signBatch({
+        seeds: items.map((item) => item.privateKey),
+        messages: items.map((item) => item.message),
+      })
     },
     async verify({ alg, signature, message, publicKey }: VerifyItem) {
-      assertVerifying({ alg: alg, signature: signature, message: message, publicKey: publicKey })
+      assertVerifying({ alg, signature, message, publicKey })
       if (alg === 'ES256')
         return await nodeCrypto.verify({
-          alg: alg,
-          signature: signature,
-          message: message,
-          publicKey: publicKey,
+          alg,
+          signature,
+          message,
+          publicKey,
         })
       return binding.verify({
         es256: false,
-        signature: signature,
-        message: message,
-        publicKey: publicKey,
+        signature,
+        message,
+        publicKey,
       })
     },
     async verifyBatch(items) {
@@ -163,19 +163,19 @@ function napiProvider(binding: NapiBinding): CryptoProvider {
         return alg === 'EdDSA' ? (edResults[ed++] as boolean) : (esResults[es++] as boolean)
       })
     },
-    async blake3(input, dkLen) {
+    async blake3({ input, dkLen }) {
       assertBytes(input)
       assertOutputLength(dkLen)
-      return binding.blake3(input, dkLen)
+      return binding.blake3({ input, length: dkLen })
     },
-    async blake3Batch(inputs, dkLen) {
+    async blake3Batch({ inputs, dkLen }) {
       assertOutputLength(dkLen)
       for (const input of inputs) assertBytes(input)
       if (inputs.length === 0) return []
       const total = inputs.reduce((sum, input) => sum + input.length, 0)
       if (total <= BLAKE3_SYNC_BATCH_BYTES)
-        return inputs.map((input) => binding.blake3(input, dkLen))
-      return await binding.blake3Batch(inputs, dkLen)
+        return inputs.map((input) => binding.blake3({ input, length: dkLen }))
+      return await binding.blake3Batch({ inputs, length: dkLen })
     },
   }
 }

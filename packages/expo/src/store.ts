@@ -48,7 +48,7 @@ export class ExpoKeyStore
    * `KeyStore` type does not have. Options now belong to the store.
    */
   entry(keyID: string): ExpoKeyEntry {
-    this.#entries[keyID] ??= new ExpoKeyEntry({ keyID, options: this.#options })
+    this.#entries[keyID] ??= new ExpoKeyEntry({ ...this.#options, keyID })
     return this.#entries[keyID]
   }
 
@@ -61,7 +61,7 @@ export class ExpoKeyStore
         const entry = this.entry(keyID)
         const existing = await entry.getAsync()
         const privateKey = existing ?? (await entry.provideAsync())
-        const identity = createFullIdentity(privateKey, { crypto: this.#crypto })
+        const identity = createFullIdentity({ privateKey, crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, existing == null)
         if (existing == null) {
@@ -82,7 +82,7 @@ export class ExpoKeyStore
         const entry = this.entry(keyID)
         const existing = entry.get()
         const privateKey = existing ?? entry.provide()
-        const identity = createFullIdentity(privateKey, { crypto: this.#crypto })
+        const identity = createFullIdentity({ privateKey, crypto: this.#crypto })
         span.setAttribute(KokuinAttributeKeys.AUTH_DID, identity.id)
         span.setAttribute(KokuinAttributeKeys.KEYSTORE_KEY_CREATED, existing == null)
         if (existing == null) {

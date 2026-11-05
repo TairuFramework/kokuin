@@ -10,7 +10,7 @@ export const vaultStoreDefinition: StoreDefinition<VaultStoreTables, VaultStoreA
   name: VAULT_STORE,
   dependsOn: [],
   migrations: getVaultMigrations,
-  createAPI: createVaultStore,
+  createAPI: (db, adapter, context) => createVaultStore({ db, adapter, context }),
 }
 
 export async function getVaultStore(provider: StoreProvider): Promise<VaultStoreAPI> {

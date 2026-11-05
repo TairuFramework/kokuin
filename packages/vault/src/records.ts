@@ -100,7 +100,12 @@ export class VaultRecordPayloadError extends Error {
   }
 }
 
-export function vaultRevocationRecordID(keyID: string, recipientDID: string): string {
+export type VaultRevocationRecordIDParams = { keyID: string; recipientDID: string }
+
+export function vaultRevocationRecordID({
+  recipientDID,
+  keyID,
+}: VaultRevocationRecordIDParams): string {
   return `${keyID.length}:${keyID}/${normalizeDID(recipientDID)}`
 }
 
@@ -228,7 +233,11 @@ export function parseVaultRecordMeta<Type extends VaultRecordType>(
       valid =
         !claim.deleted &&
         shape(m, { keyID, revokedDID: did, ...consumer }) &&
-        claim.id === vaultRevocationRecordID(m.keyID as string, m.revokedDID as string)
+        claim.id ===
+          vaultRevocationRecordID({
+            keyID: m.keyID as string,
+            recipientDID: m.revokedDID as string,
+          })
       break
     default:
       return null
@@ -237,18 +246,24 @@ export function parseVaultRecordMeta<Type extends VaultRecordType>(
   return valid ? (m as VaultRecordMetas[Type]) : null
 }
 
-export async function vaultRecordMeta<Type extends VaultRecordType>(
-  type: Type,
-  claim: RecordClaim,
-  options?: CryptoOptions,
-): Promise<VaultRecordMetas[Type] | null> {
+export type VaultRecordMetaParams<Type extends VaultRecordType> = {
+  type: Type
+  claim: RecordClaim
+} & CryptoOptions
+
+export async function vaultRecordMeta<Type extends VaultRecordType>({
+  claim,
+  type,
+  ...options
+}: VaultRecordMetaParams<Type>): Promise<VaultRecordMetas[Type] | null> {
   const { id, owner } = claim
   const parsed = parseVaultRecordMeta(type, claim)
   if (parsed === null) return null
   const meta: VaultRecordMetas[Type] = JSON.parse(JSON.stringify(parsed))
   if (type === 'vault.key') {
     const key = meta as VaultRecordMetas['vault.key']
-    if ((await createVaultKeyID(owner, fromB64U(key.keyUnique), options)) !== id) return null
+    if ((await createVaultKeyID({ ...options, owner, unique: fromB64U(key.keyUnique) })) !== id)
+      return null
   }
   return meta
 }
@@ -270,10 +285,15 @@ function wire(type: VaultRecordType, payload: VaultRecordPayloads[VaultRecordTyp
 }
 
 /** Canonical JSON with binary fields encoded as unpadded base64url. */
-export function encodeVaultRecordPayload<Type extends VaultRecordType>(
-  type: Type,
-  payload: VaultRecordPayloads[Type],
-): Uint8Array {
+export type EncodeVaultRecordPayloadParams<Type extends VaultRecordType> = {
+  type: Type
+  payload: VaultRecordPayloads[Type]
+}
+
+export function encodeVaultRecordPayload<Type extends VaultRecordType>({
+  payload,
+  type,
+}: EncodeVaultRecordPayloadParams<Type>): Uint8Array {
   return fromUTF(canonicalStringify(wire(type, payload)))
 }
 
@@ -350,13 +370,18 @@ function payloadOf(type: VaultRecordType, data: Uint8Array): VaultRecordPayloads
 }
 
 /** Pure codec. Signature and payload-digest verification belong to the caller. */
-export async function decodeVaultRecord(
-  record: Pick<SignedRecord, 'type' | 'id' | 'owner' | 'hlc' | 'payload'>,
-  recordMeta: Record<string, unknown>,
-  options?: CryptoOptions,
-): Promise<DecodedVaultRecord> {
+export type DecodeVaultRecordParams = {
+  record: Pick<SignedRecord, 'type' | 'id' | 'owner' | 'hlc' | 'payload'>
+  recordMeta: Record<string, unknown>
+} & CryptoOptions
+
+export async function decodeVaultRecord({
+  recordMeta,
+  record,
+  ...options
+}: DecodeVaultRecordParams): Promise<DecodedVaultRecord> {
   const { type, id, owner, hlc } = record
-  const captured = { crypto: options?.crypto ?? nobleCrypto }
+  const captured = { crypto: options.crypto ?? nobleCrypto }
   const payload = record.payload === null ? null : new Uint8Array(record.payload)
 
   let meta: Record<string, unknown>
@@ -371,14 +396,15 @@ export async function decodeVaultRecord(
       cause,
     })
   }
-  const payloadDigest = payload === null ? null : await recordPayloadDigest(payload, captured)
+  const payloadDigest =
+    payload === null ? null : await recordPayloadDigest({ ...captured, payload })
   const recordType = type as VaultRecordType
   const decodedMeta = (VAULT_RECORD_TYPES as ReadonlyArray<string>).includes(type)
-    ? await vaultRecordMeta(
-        recordType,
-        { type, id, owner, hlc, meta, deleted: false, payloadDigest },
-        captured,
-      )
+    ? await vaultRecordMeta({
+        ...captured,
+        type: recordType,
+        claim: { type, id, owner, hlc, meta, deleted: false, payloadDigest },
+      })
     : null
 
   try {

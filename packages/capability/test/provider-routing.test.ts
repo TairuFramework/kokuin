@@ -25,9 +25,9 @@ function provider(result: boolean | Error = true) {
 }
 
 async function fixture() {
-  const owner = createSigningIdentity(new Uint8Array(32).fill(71))
-  const delegate = createSigningIdentity(new Uint8Array(32).fill(72))
-  const recipient = createSigningIdentity(new Uint8Array(32).fill(73))
+  const owner = createSigningIdentity({ privateKey: new Uint8Array(32).fill(71) })
+  const delegate = createSigningIdentity({ privateKey: new Uint8Array(32).fill(72) })
+  const recipient = createSigningIdentity({ privateKey: new Uint8Array(32).fill(73) })
   const root = await createCapability({
     signer: owner,
     payload: {
@@ -48,18 +48,23 @@ test('parent creation, direct chains and capability checks forward the provider'
     signer: delegate,
     payload: { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
     header: undefined,
-    options: { parentCapability: raw, crypto: routed.crypto },
+    parentCapability: raw,
+    crypto: routed.crypto,
   })
   expect(routed.count()).toBe(1)
   const chainProvider = provider()
-  await checkDelegationChain(child.payload, [raw], { crypto: chainProvider.crypto })
+  await checkDelegationChain({
+    payload: child.payload,
+    capabilities: [raw],
+    crypto: chainProvider.crypto,
+  })
   expect(chainProvider.count()).toBe(1)
   const leafProvider = provider()
-  await checkCapability(
-    { act: 'read', res: '*' },
-    { iss: recipient.id, sub: owner.id, cap: [stringifyToken(child), raw] },
-    { crypto: leafProvider.crypto },
-  )
+  await checkCapability({
+    permission: { act: 'read', res: '*' },
+    payload: { iss: recipient.id, sub: owner.id, cap: [stringifyToken(child), raw] },
+    crypto: leafProvider.crypto,
+  })
   expect(leafProvider.count()).toBe(2)
   const rejected = provider(false)
   await expect(
@@ -67,25 +72,30 @@ test('parent creation, direct chains and capability checks forward the provider'
       signer: delegate,
       payload: { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
       header: undefined,
-      options: { parentCapability: raw, crypto: rejected.crypto },
+      parentCapability: raw,
+      crypto: rejected.crypto,
     }),
   ).rejects.toThrow('Invalid signature')
   await expect(
-    checkDelegationChain(child.payload, [raw], { crypto: rejected.crypto }),
+    checkDelegationChain({
+      payload: child.payload,
+      capabilities: [raw],
+      crypto: rejected.crypto,
+    }),
   ).rejects.toThrow('Invalid signature')
   await expect(
-    checkCapability(
-      { act: 'read', res: '*' },
-      { iss: recipient.id, sub: owner.id, cap: raw },
-      { crypto: rejected.crypto },
-    ),
+    checkCapability({
+      permission: { act: 'read', res: '*' },
+      payload: { iss: recipient.id, sub: owner.id, cap: raw },
+      crypto: rejected.crypto,
+    }),
   ).rejects.toThrow('Invalid signature')
   expect(rejected.count()).toBe(3)
 })
 
 test('revocation factories capture provider options and verify independently', async () => {
   const { owner, root } = await fixture()
-  const record = await createRevocationRecord(owner, 'root')
+  const record = await createRevocationRecord({ signer: owner, jti: 'root' })
   const routed = provider()
   const options = { crypto: routed.crypto }
   const backend = createMemoryRevocationBackend(options)
@@ -93,22 +103,25 @@ test('revocation factories capture provider options and verify independently', a
   await backend.add(record)
   expect(routed.count()).toBe(1)
   const checked = provider()
-  const checker = createRevocationChecker(backend, { crypto: checked.crypto })
-  await expect(checker(root, stringifyToken(root))).rejects.toThrow('Token revoked')
+  const checker = createRevocationChecker({ backend, crypto: checked.crypto })
+  await expect(checker({ token: root, raw: stringifyToken(root) })).rejects.toThrow('Token revoked')
   expect(checked.count()).toBe(1)
   const failed = provider(false)
   await expect(
     createMemoryRevocationBackend({ crypto: failed.crypto }).add(record),
   ).rejects.toThrow('Invalid signature')
   await expect(
-    createRevocationChecker(backend, { crypto: failed.crypto })(root, ''),
+    createRevocationChecker({ backend, crypto: failed.crypto })({
+      token: root,
+      raw: '',
+    }),
   ).resolves.toBeUndefined()
   expect(failed.count()).toBe(2)
 })
 
 test('provider operational failures propagate identically through every refusal boundary', async () => {
   const { owner, delegate, recipient, root, raw } = await fixture()
-  const record = await createRevocationRecord(owner, 'root')
+  const record = await createRevocationRecord({ signer: owner, jti: 'root' })
   const sentinel = new Error('provider offline')
   const routed = provider(sentinel)
   const options = { crypto: routed.crypto }
@@ -117,11 +130,16 @@ test('provider operational failures propagate identically through every refusal 
       signer: delegate,
       payload: { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
       header: undefined,
-      options: { ...options, parentCapability: raw },
+      ...options,
+      parentCapability: raw,
     }),
   ).rejects.toBe(sentinel)
   await expect(
-    checkDelegationChain({ ...root.payload, iss: delegate.id }, [raw], options),
+    checkDelegationChain({
+      payload: { ...root.payload, iss: delegate.id },
+      capabilities: [raw],
+      ...options,
+    }),
   ).rejects.toBe(sentinel)
   const backend = {
     async add() {},
@@ -131,7 +149,9 @@ test('provider operational failures propagate identically through every refusal 
   }
   for (let i = 0; i < 2; i++) {
     await expect(createMemoryRevocationBackend(options).add(record)).rejects.toBe(sentinel)
-    await expect(createRevocationChecker(backend, options)(root, '')).rejects.toBe(sentinel)
+    await expect(
+      createRevocationChecker({ backend, ...options })({ token: root, raw: '' }),
+    ).rejects.toBe(sentinel)
   }
   expect(routed.count()).toBe(6)
 })
@@ -141,8 +161,8 @@ test('ZIP-215-only capabilities and revocations fail strict default verification
   key[0] = 1
   const signature = new Uint8Array(64)
   signature[0] = 1
-  const did = getDID(CODECS.EdDSA, key)
-  const delegate = createSigningIdentity(new Uint8Array(32).fill(74))
+  const did = getDID({ codec: CODECS.EdDSA, publicKey: key })
+  const delegate = createSigningIdentity({ privateKey: new Uint8Array(32).fill(74) })
   const header = { typ: 'JWT' as const, alg: 'EdDSA' as const }
   const payload: CapabilityPayload = {
     iss: did,
@@ -153,11 +173,14 @@ test('ZIP-215-only capabilities and revocations fail strict default verification
     jti: 'forged',
   }
   const raw = `${b64uFromJSON(header)}.${b64uFromJSON(payload)}.${toB64U(signature)}`
-  await expect(checkDelegationChain({ ...payload, iss: delegate.id }, [raw])).rejects.toThrow(
-    'Invalid signature',
-  )
   await expect(
-    checkCapability({ act: 'read', res: '*' }, { iss: delegate.id, sub: did, cap: raw }),
+    checkDelegationChain({ payload: { ...payload, iss: delegate.id }, capabilities: [raw] }),
+  ).rejects.toThrow('Invalid signature')
+  await expect(
+    checkCapability({
+      permission: { act: 'read', res: '*' },
+      payload: { iss: delegate.id, sub: did, cap: raw },
+    }),
   ).rejects.toThrow('Invalid signature')
   const record = {
     header,
@@ -176,10 +199,15 @@ test('ZIP-215-only capabilities and revocations fail strict default verification
     },
   }
   await expect(
-    createRevocationChecker(backend)(
-      { header, payload, data: raw.slice(0, raw.lastIndexOf('.')), signature: toB64U(signature) },
-      '',
-    ),
+    createRevocationChecker({ backend })({
+      token: {
+        header,
+        payload,
+        data: raw.slice(0, raw.lastIndexOf('.')),
+        signature: toB64U(signature),
+      },
+      raw: '',
+    }),
   ).resolves.toBeUndefined()
 })
 
@@ -189,16 +217,16 @@ test('a suspended chain retains its captured provider and override policy', asyn
     signer: delegate,
     payload: { sub: owner.id, aud: recipient.id, act: 'read', res: '*' },
     header: undefined,
-    options: { parentCapability: raw },
+    parentCapability: raw,
   })
   const routed = provider()
   const rejected = provider(false)
   const options = { crypto: routed.crypto, verifiers: { ES256: () => false } }
-  const pending = checkCapability(
-    { act: 'read', res: '*' },
-    { iss: recipient.id, sub: owner.id, cap: [stringifyToken(child), raw] },
-    options,
-  )
+  const pending = checkCapability({
+    permission: { act: 'read', res: '*' },
+    payload: { iss: recipient.id, sub: owner.id, cap: [stringifyToken(child), raw] },
+    ...options,
+  })
   options.crypto = rejected.crypto
   await expect(pending).resolves.toBeUndefined()
   expect(routed.count()).toBe(2)
@@ -208,8 +236,8 @@ test('a suspended chain retains its captured provider and override policy', asyn
 test('concurrent revocation verification preserves batch operational failures', async () => {
   const { owner } = await fixture()
   const records = await Promise.all([
-    createRevocationRecord(owner, 'first'),
-    createRevocationRecord(owner, 'second'),
+    createRevocationRecord({ signer: owner, jti: 'first' }),
+    createRevocationRecord({ signer: owner, jti: 'second' }),
   ])
   const sentinel = new Error('batch offline')
   let batches = 0
@@ -232,7 +260,7 @@ test('concurrent revocation verification preserves batch operational failures', 
   }
   expect(batches).toBe(2)
   expect(singles).toBe(0)
-  expect(await backend.get('first', owner.id)).toBeUndefined()
+  expect(await backend.get({ jti: 'first', issuer: owner.id })).toBeUndefined()
   const tokens = await Promise.all(
     records.map((record) => {
       return createCapability({
@@ -247,18 +275,20 @@ test('concurrent revocation verification preserves batch operational failures', 
       })
     }),
   )
-  const checker = createRevocationChecker(
-    {
+  const checker = createRevocationChecker({
+    backend: {
       async add() {},
-      async get(jti) {
+      async get({ jti }) {
         return records.find((record) => record.payload.jti === jti)
       },
     },
-    { crypto },
-  )
+    crypto,
+  })
   for (let attempt = 0; attempt < 2; attempt++) {
     expect(
-      await Promise.allSettled(tokens.map((token) => checker(token, stringifyToken(token)))),
+      await Promise.allSettled(
+        tokens.map((token) => checker({ token, raw: stringifyToken(token) })),
+      ),
     ).toEqual(tokens.map(() => ({ status: 'rejected', reason: sentinel })))
   }
   expect(batches).toBe(4)

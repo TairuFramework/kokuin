@@ -40,7 +40,11 @@ function provider(overrides: Partial<CryptoProvider> = {}) {
 }
 
 function verify(crypto: CryptoProvider, item: VerifyItem) {
-  return getVerifier(item.alg, undefined, { crypto })(item.signature, item.message, item.publicKey)
+  return getVerifier({ algorithm: item.alg, verifiers: undefined, crypto })({
+    signature: item.signature,
+    message: item.message,
+    publicKey: item.publicKey,
+  })
 }
 
 beforeEach(() => {
@@ -84,7 +88,9 @@ test('success memo stays per provider and algorithm and hits skip provider opera
   expect(await verify(p.crypto, item)).toBe(true)
   expect(verify(p.crypto, item)).toBe(true)
   expect(p.crypto.verify).toHaveBeenCalledTimes(1)
-  expect(getVerifier('EdDSA', undefined, p)).toBe(getVerifier('EdDSA', undefined, p))
+  expect(getVerifier({ algorithm: 'EdDSA', verifiers: undefined, ...p })).toBe(
+    getVerifier({ algorithm: 'EdDSA', verifiers: undefined, ...p }),
+  )
   expect(await verify(p.crypto, { ...item, alg: 'ES256' })).toBe(true)
   expect(p.crypto.verify).toHaveBeenCalledTimes(2)
   const other = provider({ verify: vi.fn(async () => false) })
@@ -99,11 +105,11 @@ test('custom verifiers bypass memo batching and fairness routing on every call',
   const p = provider()
   const item = fixture('EdDSA')
   const custom = vi.fn(() => false)
-  const verifier = getVerifier('EdDSA', { EdDSA: custom }, p)
+  const verifier = getVerifier({ algorithm: 'EdDSA', verifiers: { EdDSA: custom }, ...p })
   expect(
     await Promise.all([
-      verifier(item.signature, item.message, item.publicKey),
-      verifier(item.signature, item.message, item.publicKey),
+      verifier({ signature: item.signature, message: item.message, publicKey: item.publicKey }),
+      verifier({ signature: item.signature, message: item.message, publicKey: item.publicKey }),
     ]),
   ).toEqual([false, false])
   expect(custom).toHaveBeenCalledTimes(2)

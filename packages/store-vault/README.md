@@ -7,7 +7,7 @@ All addresses require an explicit owner DID. Owners and recipients round-trip ve
 It reads matching base rows in local and replicated mode. Deleted rows and signed tombstones are excluded.
 The lookup only reads and joins the caller's transaction, including uncommitted rows.
 Results identify candidates without granting authority.
-Callers must verify each candidate, for example `await createVaultKeyID(owner, unique) === keyID`, and apply their own authority checks.
+Callers must verify each candidate, for example `await createVaultKeyID({ owner, unique }) === keyID`, and apply their own authority checks.
 
 Keys contain public suite, version and state metadata. Wrappings and entries contain opaque encrypted bytes.
 Entry `kind`, `label` and string attributes remain public. Filters combine exact kind/label equality with conjunctive attribute-subset matching.
@@ -33,7 +33,7 @@ The package supplies coordinators. The consumer supplies transport.
 ## Optional records
 
 Register `vaultRecordsStoreDefinition` alongside the base definition, then initialise it with
-`await getVaultRecordsStore(provider, opKind)` before opening caller transactions. It depends on `vault`.
+`await getVaultRecordsStore({ provider, opKind })` before opening caller transactions. It depends on `vault`.
 The base registration alone never creates records, decisions, candidates, branch proofs or revocations.
 
 `createVaultRecords({ store, opKind, authority, validateConsumerMetadata, nowMS, maxDriftMS })`
@@ -210,3 +210,18 @@ See [provider adoption](../../docs/reference/crypto-provider.md) for selection, 
 These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.
 
 `VaultSecretUnverifiableParams` names the existing `UnverifiableWrapping` constructor object without changing its shape.
+
+Additional APIs use the same flat params convention.
+
+| Export | Named params type | Previous positional form |
+| --- | --- | --- |
+| `createVaultStore` | `CreateVaultStoreParams` | `createVaultStore(db: Kysely<VaultStoreTables>, adapter: Adapter, context: StoreContext)` |
+| `getVaultRecordsStore` | `GetVaultRecordsStoreParams` | `getVaultRecordsStore(provider: StoreProvider, opKind?: string)` |
+
+Method and callback contracts follow the same convention.
+
+| API | Named params type | Previous form |
+| --- | --- | --- |
+| `VaultRecords.apply` | `VaultRecordsApplyParams` | `apply(records, transportContext?)` |
+| `VaultCoordinator.lockAll` | `VaultCoordinatorLockAllParams` | `lockAll(ownerDID, call?)` |
+| `VaultCoordinator.listKeys` | `VaultCoordinatorListKeysParams` | `listKeys(ownerDID, call?)` |

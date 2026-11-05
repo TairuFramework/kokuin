@@ -23,7 +23,7 @@ db.register(delegationStoreDefinition)
 const store = await getDelegationStore(db)
 
 // A `verifyToken` hook for `@kokuin/capability`'s `checkCapability`.
-const verifyToken = createDelegationRevocationChecker(store, { methods })
+const verifyToken = createDelegationRevocationChecker({ api: store, methods })
 ```
 
 Every write carries a caller-supplied `hlc` stamp, and the purge methods must be scheduled by the
@@ -31,7 +31,7 @@ consumer. See [docs/reference/stores.md](../../docs/reference/stores.md).
 
 ## Crypto provider migration to 0.4.0
 
-`createDelegationRevocationChecker(api, options?: RevocationOptions)` accepts `options.crypto?: CryptoProvider`.
+`createDelegationRevocationChecker(params: CreateDelegationRevocationCheckerParams)` accepts `options.crypto?: CryptoProvider`.
 It captures options and forwards the provider through tracked backend and resolver wrappers.
 `createDelegationRevocationBackend` retains its signature. Checker construction stays synchronous and its returned hook stays asynchronous.
 Strict default verification applies on reverification. Custom algorithm verifiers retain precedence and own their policy.
@@ -46,3 +46,24 @@ See [provider adoption](../../docs/reference/crypto-provider.md) for selection, 
 | `new VerifiedRevocationError` | `VerifiedRevocationErrorParams` | `message, options?` |
 
 These signature and typing changes preserve cryptographic results, error causes, ordering and storage behaviour.
+
+Additional APIs use the same flat params convention.
+
+| Export | Named params type | Previous positional form |
+| --- | --- | --- |
+| `createDelegationStore` | `CreateDelegationStoreParams` | `createDelegationStore(db: Kysely<DelegationStoreTables>, adapter: Adapter, context: StoreContext)` |
+| `createDelegationRevocationChecker` | `CreateDelegationRevocationCheckerParams` | `createDelegationRevocationChecker(params: CreateDelegationRevocationCheckerParams)` |
+
+Method and callback contracts follow the same convention.
+
+| API | Named params type | Previous form |
+| --- | --- | --- |
+| `DelegationStoreAPI.getRevocationByIssuer` | `DelegationStoreAPIGetRevocationByIssuerParams` | `getRevocationByIssuer(jti, issuer)` |
+| `DelegationStoreAPI.isRevokedBy` | `DelegationStoreAPIIsRevokedByParams` | `isRevokedBy(jti, issuer)` |
+| `DelegationStoreAPI.markRevocationVerified` | `DelegationStoreAPIMarkRevocationVerifiedParams` | `markRevocationVerified(jti, issuer, params)` |
+| `DelegationStoreAPI.getPendingRevocationByIssuer` | `DelegationStoreAPIGetPendingRevocationByIssuerParams` | `getPendingRevocationByIssuer(jti, issuer)` |
+| `DelegationStoreAPI.deletePendingRevocationsFromOtherIssuers` | `DelegationStoreAPIDeletePendingRevocationsFromOtherIssuersParams` | `deletePendingRevocationsFromOtherIssuers(jti, issuer)` |
+
+| API | Named params type | Previous form |
+| --- | --- | --- |
+| `createDelegationRevocationChecker(...).verdict` | `DelegationRevocationVerdictParams` | `verdict(token, raw)` |

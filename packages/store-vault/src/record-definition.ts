@@ -114,10 +114,12 @@ export const vaultRecordsStoreDefinition: StoreDefinition<VaultRecordsTables, Va
   createAPI: (db, adapter, context) => ({ db, adapter, context }),
 }
 
-export async function getVaultRecordsStore(
-  provider: StoreProvider,
-  opKind?: string,
-): Promise<VaultDatabase> {
+export type GetVaultRecordsStoreParams = { provider: StoreProvider; opKind?: string }
+
+export async function getVaultRecordsStore({
+  opKind,
+  provider,
+}: GetVaultRecordsStoreParams): Promise<VaultDatabase> {
   if (opKind !== undefined) {
     if (typeof opKind !== 'string' || opKind.length === 0)
       throw new TypeError('An explicit operation kind is required')

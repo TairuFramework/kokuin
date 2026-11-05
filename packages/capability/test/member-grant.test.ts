@@ -56,7 +56,7 @@ import {
 
 const seed = new Uint8Array(32).fill(71)
 const profile = 0
-const icp = await createInception(seed, profile)
+const icp = await createInception({ seed, profile })
 const did = didFromInception(icp.event)
 const root: EpochSigner = { root: { seed, profile } }
 
@@ -65,7 +65,7 @@ const T = 1_800_000_000
 const LEASE = T + 30 * 86_400
 
 async function headOf(log: ControllerLog): Promise<KeyState> {
-  const result = await foldLog(did, log)
+  const result = await foldLog({ did, input: log })
   if (!result.ok) {
     throw new Error(`fixture does not fold: ${result.reason}`)
   }
@@ -96,13 +96,17 @@ function peerDID(key: string): string {
 
 function memberOf(fill: number, form: 'key' | 'peer' = 'key'): Member {
   const privateKey = new Uint8Array(32).fill(fill)
-  const plain = createSigningIdentity(privateKey)
-  const key = encodeKey(plain.publicKey, 'EdDSA')
+  const plain = createSigningIdentity({ privateKey })
+  const key = encodeKey({ publicKey: plain.publicKey, alg: 'EdDSA' })
   if (form === 'key') {
     return { signer: plain, key, did: plain.id }
   }
   const long = peerDID(key)
-  return { signer: createSigningIdentityForDID(asDID(long), privateKey), key, did: long }
+  return {
+    signer: createSigningIdentityForDID({ id: asDID(long), privateKey }),
+    key,
+    did: long,
+  }
 }
 
 const digest = (signed: SignedEvent<EpochEvent>): string => digestOf(signed.event)
@@ -126,8 +130,8 @@ const peerAdded = await addOf(peer)
 const peerAdd = digest(peerAdded)
 const base: ControllerLog = { chain: [icp], events: [added, peerAdded] }
 
-const edge = createSigningIdentity(new Uint8Array(32).fill(61))
-const third = createSigningIdentity(new Uint8Array(32).fill(62))
+const edge = createSigningIdentity({ privateKey: new Uint8Array(32).fill(61) })
+const third = createSigningIdentity({ privateKey: new Uint8Array(32).fill(62) })
 const stranger = memberOf(63)
 
 /** A registry over `log`, frozen for one verification as `member.ts` asks callers to do. */
@@ -166,7 +170,7 @@ function claims(overrides: Claims = {}): Claims {
 /** Sign `payload` as `signer`, dropping every claim set to `undefined`. */
 async function grantOf(signer: SigningIdentity, payload: Claims): Promise<string> {
   const defined = Object.fromEntries(Object.entries(payload).filter(([, v]) => v !== undefined))
-  return stringifyToken(await signer.signToken(defined))
+  return stringifyToken(await signer.signToken({ payload: defined }))
 }
 
 const grant = async (overrides: Claims = {}, signer = m.signer) => {
@@ -175,7 +179,7 @@ const grant = async (overrides: Claims = {}, signer = m.signer) => {
 
 /** The signed payload of `raw`, as a caller that verified it would hand to `checkCapability`. */
 async function payloadOf(raw: string): Promise<CapabilityPayload> {
-  return (await verifyToken<CapabilityPayload>(raw, { atTime: T })).payload
+  return (await verifyToken<CapabilityPayload>({ token: raw, atTime: T })).payload
 }
 
 /** The unverified payload of `raw` — what a caller that skipped `verifyToken` would hand over. */
@@ -186,7 +190,7 @@ function rawPayloadOf(raw: string): CapabilityPayload {
 
 /** The edge holder's invocation of `chain`, the chain-root path. */
 async function invocation(chain: Array<string>, holder = edge): Promise<CapabilityPayload> {
-  const signed = await holder.signToken({ sub: did, cap: chain })
+  const signed = await holder.signToken({ payload: { sub: did, cap: chain } })
   return signed.payload as unknown as CapabilityPayload
 }
 
@@ -209,8 +213,8 @@ async function bothPaths(
   const direct = await payloadOf(raw)
   const invoked = await invocation([raw])
   return [
-    quiet(checkCapability(permission, direct, opts())),
-    quiet(checkCapability(permission, invoked, opts())),
+    quiet(checkCapability({ permission, payload: direct, ...opts() })),
+    quiet(checkCapability({ permission, payload: invoked, ...opts() })),
   ]
 }
 
@@ -224,9 +228,9 @@ describe('member-issued grants', () => {
       for (const check of await bothPaths(raw)) {
         await expect(check).resolves.toBeUndefined()
       }
-      await expect(checkDelegationChain(await payloadOf(raw), [], options())).resolves.toBe(
-        undefined,
-      )
+      await expect(
+        checkDelegationChain({ payload: await payloadOf(raw), capabilities: [], ...options() }),
+      ).resolves.toBe(undefined)
     }
     // The full default lifetime is inside the bound.
     const longest = await grant({ iat: T - 60, exp: T - 60 + DEFAULT_MEMBER_GRANT_LIFETIME })
@@ -237,22 +241,22 @@ describe('member-issued grants', () => {
 
   test('the presented grant must cover the request', async () => {
     const raw = await grant({ res: 'doc/2' })
-    await expect(checkCapability(permission, await payloadOf(raw), options())).rejects.toThrow(
-      'Invalid capability: permission not granted',
-    )
-    await expect(checkCapability(permission, await invocation([raw]), options())).rejects.toThrow(
-      'Invalid capability: permission mismatch',
-    )
+    await expect(
+      checkCapability({ permission, payload: await payloadOf(raw), ...options() }),
+    ).rejects.toThrow('Invalid capability: permission not granted')
+    await expect(
+      checkCapability({ permission, payload: await invocation([raw]), ...options() }),
+    ).rejects.toThrow('Invalid capability: permission mismatch')
   })
 
   test('a non-subject root without mbr is still refused as before', async () => {
     const raw = await grant({ mbr: undefined })
-    await expect(checkCapability(permission, await payloadOf(raw), options())).rejects.toThrow(
-      'Invalid payload: no capability',
-    )
-    await expect(checkCapability(permission, await invocation([raw]), options())).rejects.toThrow(
-      'Invalid capability: issuer should be subject',
-    )
+    await expect(
+      checkCapability({ permission, payload: await payloadOf(raw), ...options() }),
+    ).rejects.toThrow('Invalid payload: no capability')
+    await expect(
+      checkCapability({ permission, payload: await invocation([raw]), ...options() }),
+    ).rejects.toThrow('Invalid capability: issuer should be subject')
   })
 
   test('a malformed mbr claim is refused', async () => {
@@ -340,14 +344,18 @@ describe('member-issued grants', () => {
     const future = await grant({ iat: T + 60, exp: T + 3600 })
     // The signed token itself, as a caller presenting it directly holds it: `payloadOf` would
     // already refuse it.
-    await expect(checkCapability(permission, rawPayloadOf(future), options())).rejects.toThrow(
-      'Invalid token: issued in the future',
-    )
-    await expect(checkDelegationChain(rawPayloadOf(future), [], options())).rejects.toThrow(
-      'Invalid token: issued in the future',
-    )
     await expect(
-      checkCapability(permission, await invocation([future]), options()),
+      checkCapability({ permission, payload: rawPayloadOf(future), ...options() }),
+    ).rejects.toThrow('Invalid token: issued in the future')
+    await expect(
+      checkDelegationChain({ payload: rawPayloadOf(future), capabilities: [], ...options() }),
+    ).rejects.toThrow('Invalid token: issued in the future')
+    await expect(
+      checkCapability({
+        permission,
+        payload: await invocation([future]),
+        ...options(),
+      }),
     ).rejects.toThrow('Invalid token: issued in the future')
   })
 
@@ -359,8 +367,14 @@ describe('member-issued grants', () => {
     ]
     for (const [overrides, reason] of cases) {
       const raw = rawPayloadOf(await grant(overrides))
-      await expect(checkCapability(permission, raw, options()), reason).rejects.toThrow(reason)
-      await expect(checkDelegationChain(raw, [], options()), reason).rejects.toThrow(reason)
+      await expect(
+        checkCapability({ permission, payload: raw, ...options() }),
+        reason,
+      ).rejects.toThrow(reason)
+      await expect(
+        checkDelegationChain({ payload: raw, capabilities: [], ...options() }),
+        reason,
+      ).rejects.toThrow(reason)
     }
   })
 
@@ -380,8 +394,8 @@ describe('member-issued grants', () => {
           chain: [
             icp,
             await createReset({
-              seed: seed,
-              profile: profile,
+              seed,
+              profile,
               gen: 1,
               snapshot: {
                 members: [{ did: m.did, key: m.key, add, lease: LEASE }],
@@ -431,7 +445,12 @@ describe('member-issued grants', () => {
     ]
     for (const [label, methods] of registries) {
       await expect(
-        checkCapability(permission, await payloadOf(raw), { atTime: T, methods }),
+        checkCapability({
+          permission,
+          payload: await payloadOf(raw),
+          atTime: T,
+          methods,
+        }),
         label,
       ).rejects.toThrow(MEMBER_GRANT_NO_RESOLVER)
     }
@@ -447,42 +466,64 @@ describe('member-issued grants', () => {
     const forged = `${getPeer4ShortForm(peer.did)}${attackerLong.slice(getPeer4ShortForm(attackerLong).length)}`
     const { options: forgedOptions } = serving(base)
     await expect(
-      forgedOptions.methods?.[0]?.resolveMember?.(did, {
-        did: forged,
-        ...{ add: peerAdd, gen: 0 },
+      forgedOptions.methods?.[0]?.resolveMember?.({
+        subject: did,
+        member: {
+          did: forged,
+          add: peerAdd,
+          gen: 0,
+        },
       }),
     ).resolves.toMatchObject({ lease: LEASE })
     const forgery = await grantOf(
-      createSigningIdentityForDID(asDID(forged), new Uint8Array(32).fill(64)),
+      createSigningIdentityForDID({ id: asDID(forged), privateKey: new Uint8Array(32).fill(64) }),
       claims({ mbr }),
     )
     // A caller handing over the payload without checking the document's hash still gets a refusal:
     // the key the forged document carries is not the pin.
-    await expect(checkCapability(permission, rawPayloadOf(forgery), options())).rejects.toThrow(
-      MEMBER_GRANT_KEY_MISMATCH,
-    )
-    await expect(checkDelegationChain(rawPayloadOf(forgery), [], options())).rejects.toThrow(
-      MEMBER_GRANT_KEY_MISMATCH,
-    )
+    await expect(
+      checkCapability({ permission, payload: rawPayloadOf(forgery), ...options() }),
+    ).rejects.toThrow(MEMBER_GRANT_KEY_MISMATCH)
+    await expect(
+      checkDelegationChain({ payload: rawPayloadOf(forgery), capabilities: [], ...options() }),
+    ).rejects.toThrow(MEMBER_GRANT_KEY_MISMATCH)
     // As a chain root the signature is checked against the issuer before membership is asked, and
     // the forged document does not hash to the prefix.
     await expect(
-      checkCapability(permission, await invocation([forgery]), options()),
+      checkCapability({
+        permission,
+        payload: await invocation([forgery]),
+        ...options(),
+      }),
     ).rejects.toThrow('did:peer:4 hash mismatch')
 
     // The member's own short form carries no key: what signed it cannot be compared with the pin,
     // even when a cache supplies the document and the signature verifies.
     const short = getPeer4ShortForm(peer.did)
     const shortGrant = await grantOf(
-      createSigningIdentityForDID(asDID(short), new Uint8Array(32).fill(52)),
+      createSigningIdentityForDID({ id: asDID(short), privateKey: new Uint8Array(32).fill(52) }),
       claims({ mbr }),
     )
     const cache = createInMemoryDIDCache()
-    await cache.set(short, decodePeer4(peer.did).doc)
+    await cache.set({ shortForm: short, doc: decodePeer4({ longForm: peer.did }).doc })
     const shortInvocation = await invocation([shortGrant])
     for (const check of [
-      quiet(checkCapability(permission, rawPayloadOf(shortGrant), { ...options(), cache })),
-      quiet(checkCapability(permission, shortInvocation, { ...options(), cache })),
+      quiet(
+        checkCapability({
+          permission,
+          payload: rawPayloadOf(shortGrant),
+          ...options(),
+          cache,
+        }),
+      ),
+      quiet(
+        checkCapability({
+          permission,
+          payload: shortInvocation,
+          ...options(),
+          cache,
+        }),
+      ),
     ]) {
       await expect(check).rejects.toThrow(MEMBER_GRANT_KEY_MISMATCH)
     }
@@ -492,9 +533,16 @@ describe('member-issued grants', () => {
     }
 
     // A member's `did:key` issuer whose token another key signed never reaches membership.
-    const impostor = createSigningIdentityForDID(asDID(m.did), new Uint8Array(32).fill(64))
+    const impostor = createSigningIdentityForDID({
+      id: asDID(m.did),
+      privateKey: new Uint8Array(32).fill(64),
+    })
     await expect(
-      checkCapability(permission, await invocation([await grant({}, impostor)]), options()),
+      checkCapability({
+        permission,
+        payload: await invocation([await grant({}, impostor)]),
+        ...options(),
+      }),
     ).rejects.toThrow('Invalid signature')
     // Another DID claiming the member's incarnation is not that member.
     for (const check of await bothPaths(await grant({}, stranger.signer))) {
@@ -513,7 +561,8 @@ describe('member-issued grants', () => {
     const { resolveMember } = live
     const careless: DIDMethodResolver = {
       ...live,
-      resolveMember: (subject, query) => resolveMember(subject, { ...query, did: m.did }),
+      resolveMember: ({ subject, member: query }) =>
+        resolveMember({ subject, member: { ...query, did: m.did } }),
     }
     const lax = (): DelegationChainOptions => ({ atTime: T, methods: [careless] })
     // One Ed25519 key, well formed, just not the pinned one.
@@ -550,14 +599,19 @@ describe('member-issued grants', () => {
         signer: edge,
         payload: { sub: did, aud: third.id, act: 'write', res: 'doc/1', exp: T + 1800, ...payload },
         header: undefined,
-        options: { parentCapability: parent, methods: options().methods },
+        parentCapability: parent,
+        methods: options().methods,
       })
       return stringifyToken(child)
     }
     const child = await delegate({})
     const { options: once, loads } = serving(base)
     await expect(
-      checkCapability(permission, await invocation([child, parent], third), once),
+      checkCapability({
+        permission,
+        payload: await invocation([child, parent], third),
+        ...once,
+      }),
     ).resolves.toBeUndefined()
     // Membership, lease and every link's denial come from one fold of the log.
     expect(loads()).toBe(1)
@@ -582,19 +636,27 @@ describe('member-issued grants', () => {
     }
     const wider = await signedChild({ act: ['write', 'admin'] })
     await expect(
-      checkCapability(permission, await invocation([wider, parent], third), options()),
+      checkCapability({
+        permission,
+        payload: await invocation([wider, parent], third),
+        ...options(),
+      }),
     ).rejects.toThrow('Invalid capability: permission mismatch')
     const outliving = await signedChild({ exp: T + 7200 })
     await expect(
-      checkCapability(permission, await invocation([outliving, parent], third), options()),
+      checkCapability({
+        permission,
+        payload: await invocation([outliving, parent], third),
+        ...options(),
+      }),
     ).rejects.toThrow('Invalid capability: child expiry exceeds parent capability')
     // CONTROL — the same directly-signed child within the parent verifies.
     await expect(
-      checkCapability(
+      checkCapability({
         permission,
-        await invocation([await signedChild({}), parent], third),
-        options(),
-      ),
+        payload: await invocation([await signedChild({}), parent], third),
+        ...options(),
+      }),
     ).resolves.toBeUndefined()
 
     // Denying either holder on the chain refuses it.
@@ -604,7 +666,11 @@ describe('member-issued grants', () => {
         events: [added, await createRevoke({ signer: root, did, head, parents: [add], target })],
       }
       await expect(
-        checkCapability(permission, await invocation([child, parent], third), options(log)),
+        checkCapability({
+          permission,
+          payload: await invocation([child, parent], third),
+          ...options(log),
+        }),
         target,
       ).rejects.toThrow(AUDIENCE_REVOKED)
     }
@@ -615,8 +681,8 @@ describe('member-issued grants', () => {
     const usurpedPayload = await payloadOf(usurped)
     const usurpedInvocation = await invocation([usurped], third)
     for (const check of [
-      quiet(checkCapability(permission, usurpedPayload, options())),
-      quiet(checkCapability(permission, usurpedInvocation, options())),
+      quiet(checkCapability({ permission, payload: usurpedPayload, ...options() })),
+      quiet(checkCapability({ permission, payload: usurpedInvocation, ...options() })),
     ]) {
       await expect(check).rejects.toThrow(MEMBER_GRANT_NOT_MEMBER)
     }
@@ -633,11 +699,9 @@ describe('member-issued grants', () => {
     }
     const minted = await createCapability({
       signer: m.signer,
-      payload: payload,
+      payload,
       header: undefined,
-      options: {
-        member: { add, g: 0 },
-      },
+      member: { add, g: 0 },
     })
     expect(minted.payload).toMatchObject({ iss: m.did, mbr: { add, g: 0 }, iat: T - 60 })
     for (const check of await bothPaths(stringifyToken(minted))) {
@@ -651,7 +715,7 @@ describe('member-issued grants', () => {
           signer: m.signer,
           payload: partial,
           header: undefined,
-          options: { member: { add, g: 0 } },
+          member: { add, g: 0 },
         }),
         missing,
       ).rejects.toThrow('Invalid capability: a member grant requires exp and iat')
@@ -664,9 +728,9 @@ describe('member-issued grants', () => {
       await expect(
         createCapability({
           signer: m.signer,
-          payload: payload,
+          payload,
           header: undefined,
-          options: { member },
+          member,
         }),
         JSON.stringify(member),
       ).rejects.toThrow('Invalid capability: malformed mbr claim')
@@ -677,13 +741,11 @@ describe('member-issued grants', () => {
         signer: m.signer,
         payload: { ...payload, exp: T - 120 },
         header: undefined,
-        options: {
-          member: { add, g: 0 },
-        },
+        member: { add, g: 0 },
       }),
     ).rejects.toThrow('Invalid capability: a member grant expires before it is issued')
     // CONTROL — without the option, a non-subject signer still needs a parent.
-    await expect(createCapability({ signer: m.signer, payload: payload })).rejects.toThrow(
+    await expect(createCapability({ signer: m.signer, payload })).rejects.toThrow(
       'parentCapability required',
     )
   })

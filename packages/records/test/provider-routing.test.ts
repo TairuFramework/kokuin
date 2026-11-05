@@ -38,16 +38,16 @@ import { filterVisibleRecords, verifyHolderProof, visibilityRules } from '../src
 import { CONTENT, claimFixture } from './crypto-fixture.js'
 import { decisionOf } from './decision-fixture.js'
 
-const identity = createSigningIdentity(new Uint8Array(32).fill(7))
+const identity = createSigningIdentity({ privateKey: new Uint8Array(32).fill(7) })
 
 function provider(overrides: Partial<CryptoProvider> = {}) {
   const hashes: Array<Uint8Array> = []
   let verifications = 0
   const crypto: CryptoProvider = {
     ...nobleCrypto,
-    async blake3(input, length) {
+    async blake3({ input, dkLen: length }) {
       hashes.push(new Uint8Array(input))
-      return nobleCrypto.blake3(input, length)
+      return nobleCrypto.blake3({ input, dkLen: length })
     },
     async verify(...args) {
       verifications++
@@ -68,25 +68,27 @@ async function record(): Promise<SignedRecord> {
   return {
     ...claimFixture,
     payload: new Uint8Array([1, 2, 3]),
-    ...(await signRecordOp({ identity: identity, claim: claimFixture, opKind: 'test/op' })),
+    ...(await signRecordOp({ identity, claim: claimFixture, opKind: 'test/op' })),
   }
 }
 beforeEach(clearRecordOpMemo)
 
 test('canonical digest, op framing and empty fingerprint retain literal golden bytes', async () => {
   const p = provider()
-  expect(await recordClaimDigest(claimFixture, p)).toBe(CONTENT)
+  expect(await recordClaimDigest({ claim: claimFixture, ...p })).toBe(CONTENT)
   expect(
-    await recordClaimDigest({ ...claimFixture, meta: { ...claimFixture.meta, version: 2 } }, p),
+    await recordClaimDigest({
+      claim: { ...claimFixture, meta: { ...claimFixture.meta, version: 2 } },
+      ...p,
+    }),
   ).toBe('IJKJuqLYXQfjzOk1GBeNniNSOcZqh4MWjTEWlM_43ZM')
-  expect(await recordPayloadDigest(new Uint8Array(), p)).toBe(
+  expect(await recordPayloadDigest({ payload: new Uint8Array(), ...p })).toBe(
     'rxNJufX5oaagQE3qNtzJSZvLJcmtwRK3zJqTyuQfMmI',
   )
-  expect(await recordPayloadDigest(null, p)).toBeNull()
-  expect(await fingerprintRange([], p)).toBe('JFCXv71wSdsvuagATLBw8Q')
+  expect(await recordPayloadDigest({ payload: null, ...p })).toBeNull()
+  expect(await fingerprintRange({ leaves: [], ...p })).toBe('JFCXv71wSdsvuagATLBw8Q')
   expect(
-    (await signRecordOp({ identity: identity, claim: claimFixture, opKind: 'test/op', options: p }))
-      .opHash,
+    (await signRecordOp({ identity, claim: claimFixture, opKind: 'test/op', ...p })).opHash,
   ).toBe('FmNIB2Tr9nMt9t8Z6BwPwPGiExcwpqOoyTw1HVUSol8')
   expect(p.hashes).toHaveLength(5)
 })
@@ -98,7 +100,7 @@ test('cold verification carries its digest and warm verification skips signature
     record: row,
     opKind: 'test/op',
     methods: undefined,
-    options: p,
+    ...p,
   })
   expect(op?.contentDigest).toBe(CONTENT)
   expect(p.count()).toBe(1)
@@ -112,7 +114,7 @@ test('cold verification carries its digest and warm verification skips signature
     }).toThrow(TypeError)
   }
   expect(
-    (await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, options: p }))
+    (await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, ...p }))
       ?.contentDigest,
   ).toBe(CONTENT)
   expect(p.count()).toBe(1)
@@ -137,7 +139,7 @@ test('permissive providers cannot authorise rejecting providers, concurrently or
     record: row,
     opKind: 'test/op',
     methods: undefined,
-    options: accepting,
+    ...accepting,
   })
   expect(
     await Promise.all(
@@ -146,7 +148,7 @@ test('permissive providers cannot authorise rejecting providers, concurrently or
           record: row,
           opKind: 'test/op',
           methods: undefined,
-          options: rejecting,
+          ...rejecting,
         })
       }),
     ),
@@ -158,7 +160,7 @@ test('permissive providers cannot authorise rejecting providers, concurrently or
       record: row,
       opKind: 'test/op',
       methods: undefined,
-      options: rejecting,
+      ...rejecting,
     }),
   ).toBeNull()
   expect(calls).toBeGreaterThan(previous)
@@ -174,7 +176,7 @@ test('signature and hash operational rejections escape refusal and remain retrya
       throw sentinel
     },
   })
-  const verify = createRecordVerifier('test/op', undefined, p)
+  const verify = createRecordVerifier({ opKind: 'test/op', methods: undefined, ...p })
   for (let attempt = 0; attempt < 2; attempt++) await expect(verify(row)).rejects.toBe(sentinel)
   expect(calls).toBe(2)
   await expect(
@@ -182,7 +184,7 @@ test('signature and hash operational rejections escape refusal and remain retrya
       opJWT: row.opJWT,
       opKind: 'test/op',
       methods: undefined,
-      options: provider({
+      ...provider({
         async blake3() {
           throw sentinel
         },
@@ -195,17 +197,17 @@ test('claim hashing and Buffer payload checks own inputs before provider suspens
   const g = gate()
   const captured: Array<Uint8Array> = []
   const p = provider({
-    async blake3(input, length) {
+    async blake3({ input, dkLen: length }) {
       captured.push(input)
       await g.waiting
-      return nobleCrypto.blake3(input, length)
+      return nobleCrypto.blake3({ input, dkLen: length })
     },
   })
   const claim = structuredClone(claimFixture)
-  const pendingClaim = recordClaimDigest(claim, p)
+  const pendingClaim = recordClaimDigest({ claim, ...p })
   const bytes = Buffer.from([0, 1, 2, 3, 0])
   const row = { ...(await record()), payload: bytes.subarray(1, 4) }
-  const pendingPayload = recordPayloadMatches(row, claim, p)
+  const pendingPayload = recordPayloadMatches({ record: row, claim, ...p })
   claim.meta.version = 'changed'
   claim.payloadDigest = 'changed'
   bytes.fill(9)
@@ -224,14 +226,14 @@ test('record bindings and verifier options are captured before hashing suspends'
     entered = resolve
   })
   const p = provider({
-    async blake3(input, length) {
+    async blake3({ input, dkLen: length }) {
       entered()
       await g.waiting
-      return nobleCrypto.blake3(input, length)
+      return nobleCrypto.blake3({ input, dkLen: length })
     },
   })
   const options = { crypto: p.crypto }
-  const verify = createRecordVerifier('test/op', undefined, options)
+  const verify = createRecordVerifier({ opKind: 'test/op', methods: undefined, ...options })
   const pending = verify(row)
   await started
   row.id = 'changed'
@@ -260,20 +262,20 @@ test.each([false, true])(
     const first = {
       ...row,
       ...claim,
-      ...(await signRecordOp({ identity: identity, claim: claim, opKind: 'test/op' })),
+      ...(await signRecordOp({ identity, claim, opKind: 'test/op' })),
     }
     const secondClaim = { ...claim, id: 'second' }
     const second = {
       ...first,
       ...secondClaim,
-      ...(await signRecordOp({ identity: identity, claim: secondClaim, opKind: 'test/op' })),
+      ...(await signRecordOp({ identity, claim: secondClaim, opKind: 'test/op' })),
     }
     const sentinel = new Error('payload unavailable')
     let payloadCalls = 0
     const p = provider({
-      async blake3(input, length) {
+      async blake3({ input, dkLen: length }) {
         if (input.length === 3 && ++payloadCalls === 2) throw sentinel
-        return nobleCrypto.blake3(input, length)
+        return nobleCrypto.blake3({ input, dkLen: length })
       },
     })
     let rows = new Map<string, SignedRecord>()
@@ -366,27 +368,30 @@ test('holder-proof refusal preserves provider operational failures', async () =>
     },
   }
   await expect(
-    verifyHolderProof(row, {
-      ...p,
-      opKind: 'test/op',
-      requester: { peerDID: identity.id, controllerDID: null },
-      proofs: [],
-      store,
-      authorizeProof: async () => true,
-      currentKeyVersion: async () => 1,
-      isGroupMember: async () => false,
-      holderTypes: new Map([
-        [
-          'test.value',
-          {
-            type: 'test.value',
-            policy: { kind: 'lww' },
-            dependsOn: [],
-            dependencies: () => [],
-            authorize: async () => true,
-          },
-        ],
-      ]),
+    verifyHolderProof({
+      proof: row,
+      ctx: {
+        ...p,
+        opKind: 'test/op',
+        requester: { peerDID: identity.id, controllerDID: null },
+        proofs: [],
+        store,
+        authorizeProof: async () => true,
+        currentKeyVersion: async () => 1,
+        isGroupMember: async () => false,
+        holderTypes: new Map([
+          [
+            'test.value',
+            {
+              type: 'test.value',
+              policy: { kind: 'lww' },
+              dependsOn: [],
+              dependencies: () => [],
+              authorize: async () => true,
+            },
+          ],
+        ]),
+      },
     }),
   ).rejects.toBe(sentinel)
 })
@@ -396,24 +401,24 @@ test('signing snapshots nested claims and serialises hashing with hardware reque
   let hashing = false
   let calls = 0
   const p = provider({
-    async blake3(input, length) {
+    async blake3({ input, dkLen: length }) {
       hashing = true
       await g.waiting
       hashing = false
-      return nobleCrypto.blake3(input, length)
+      return nobleCrypto.blake3({ input, dkLen: length })
     },
   })
   const signer: SigningIdentity = {
     ...identity,
-    async signToken(payload, options) {
+    async signToken({ payload, ...options }) {
       expect(hashing).toBe(false)
       calls++
-      return identity.signToken(payload, options)
+      return identity.signToken({ payload, ...options })
     },
   }
   const claim = structuredClone(claimFixture)
-  const first = signRecordOp({ identity: signer, claim: claim, opKind: 'test/op', options: p })
-  const second = signRecordOp({ identity: signer, claim: claim, opKind: 'test/op', options: p })
+  const first = signRecordOp({ identity: signer, claim, opKind: 'test/op', ...p })
+  const second = signRecordOp({ identity: signer, claim, opKind: 'test/op', ...p })
   claim.meta.version = 'changed'
   for (let turn = 0; turn < 20 && !hashing; turn++) await Promise.resolve()
   expect(calls).toBe(1)
@@ -430,38 +435,40 @@ test('signing snapshots nested claims and serialises hashing with hardware reque
 test('ranges preserve golden leaf bytes, signer deduplication, lane sums and requester routing', async () => {
   const row = await record()
   const p = provider()
-  const leaf = await rangeLeaf(
-    {
+  const leaf = await rangeLeaf({
+    decision: {
       key: { type: row.type, owner: row.owner, id: row.id },
       decisionHLC: row.hlc,
       contentDigest: CONTENT,
       copies: [row, row],
     },
-    { kind: 'immutable' },
-    p,
-  )
+    policy: { kind: 'immutable' },
+    ...p,
+  })
   expect(leaf?.opHash).toBe('oiXwlZNyqiOW9l7PQpbdQP1PNgLJf8K4Uh9mur26xXw')
   expect(leaf?.signers).toEqual([identity.id])
   if (leaf === null) throw new Error('missing leaf')
-  expect(await fingerprintRange([leaf], p)).toBe('DldB859DFDMw4zhk5hCQHA')
+  expect(await fingerprintRange({ leaves: [leaf], ...p })).toBe('DldB859DFDMw4zhk5hCQHA')
   const leaves = [leaf, { ...leaf, id: 'a' }, { ...leaf, id: 'b' }]
-  expect(await fingerprintRange(leaves, p)).toBe('9RgshWkgnni8D6A8RkWJ_Q')
-  expect(await fingerprintRange([...leaves].reverse(), p)).toBe('9RgshWkgnni8D6A8RkWJ_Q')
+  expect(await fingerprintRange({ leaves, ...p })).toBe('9RgshWkgnni8D6A8RkWJ_Q')
+  expect(await fingerprintRange({ leaves: [...leaves].reverse(), ...p })).toBe(
+    '9RgshWkgnni8D6A8RkWJ_Q',
+  )
   const bounds = { type: row.type, lower: null, upper: null }
-  const summary = await summarizeRange(leaves, bounds, p)
+  const summary = await summarizeRange({ leaves, rangeBounds: bounds, ...p })
   expect(summary.fingerprint).toBe('9RgshWkgnni8D6A8RkWJ_Q')
   const children = await splitRange({
-    leaves: leaves,
+    leaves,
     rangeBounds: bounds,
     leafThreshold: 1,
-    cryptoOptions: p,
+    ...p,
   })
   expect(children).toHaveLength(3)
   const advanced = await advanceRecordPull({
     state: beginRecordPull([row.type]),
     local: leaves,
     response: summary,
-    options: p,
+    ...p,
   })
   expect(advanced.steps).toEqual([{ answer: 'matches', bounds }])
   expect(advanced.state.complete).toBe(true)
@@ -471,18 +478,18 @@ test('ranges preserve golden leaf bytes, signer deduplication, lane sums and req
 
 test('split summaries retain captured provider and bounds across suspension', async () => {
   const row = await record()
-  const leaf = await rangeLeaf(
-    { key: row, decisionHLC: row.hlc, contentDigest: CONTENT, copies: [row] },
-    { kind: 'immutable' },
-  )
+  const leaf = await rangeLeaf({
+    decision: { key: row, decisionHLC: row.hlc, contentDigest: CONTENT, copies: [row] },
+    policy: { kind: 'immutable' },
+  })
   if (leaf === null) throw new Error('missing leaf')
   const g = gate()
   let calls = 0
   const p = provider({
-    async blake3(input, length) {
+    async blake3({ input, dkLen: length }) {
       calls++
       await g.waiting
-      return nobleCrypto.blake3(input, length)
+      return nobleCrypto.blake3({ input, dkLen: length })
     },
   })
   const options = { crypto: p.crypto }
@@ -491,7 +498,7 @@ test('split summaries retain captured provider and bounds across suspension', as
     leaves: [leaf, { ...leaf, id: 'a' }],
     rangeBounds: bounds,
     leafThreshold: 1,
-    cryptoOptions: options,
+    ...options,
   })
   options.crypto = provider({
     async blake3() {
@@ -525,7 +532,7 @@ test('suspended signature verification cannot persist substituted record bytes o
   const row = {
     ...claim,
     payload: bytes.subarray(1, 4),
-    ...(await signRecordOp({ identity: identity, claim: claim, opKind: 'test/op' })),
+    ...(await signRecordOp({ identity, claim, opKind: 'test/op' })),
   }
   const original = { ...row, payload: new Uint8Array([1, 2, 3]) }
   let persisted: SignedRecord | undefined
@@ -579,7 +586,7 @@ test('suspended signature verification cannot persist substituted record bytes o
         record: original,
         opKind: 'test/op',
         methods: undefined,
-        options: p,
+        ...p,
       })
     )?.claim.id,
   ).toBe('雪')
@@ -591,18 +598,18 @@ test('failed carried-digest construction does not populate the operation memo', 
   let hashes = 0
   let failing = true
   const p = provider({
-    async blake3(input, length) {
+    async blake3({ input, dkLen: length }) {
       hashes++
       if (toUTF(input).startsWith('{') && failing) throw sentinel
-      return nobleCrypto.blake3(input, length)
+      return nobleCrypto.blake3({ input, dkLen: length })
     },
   })
   await expect(
-    verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, options: p }),
+    verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, ...p }),
   ).rejects.toBe(sentinel)
   failing = false
   expect(
-    (await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, options: p }))
+    (await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, ...p }))
       ?.contentDigest,
   ).toBe(CONTENT)
   expect(hashes).toBe(4)
@@ -612,17 +619,17 @@ test('method registry policy cannot change during suspended operation hashing', 
   const row = await record()
   const g = gate()
   const p = provider({
-    async blake3(input, length) {
+    async blake3({ input, dkLen: length }) {
       await g.waiting
-      return nobleCrypto.blake3(input, length)
+      return nobleCrypto.blake3({ input, dkLen: length })
     },
   })
   const methods: Array<MethodRegistry[number]> = []
   const pending = verifyRecordOp({
     opJWT: row.opJWT,
     opKind: 'test/op',
-    methods: methods,
-    options: p,
+    methods,
+    ...p,
   })
   methods.push({
     method: 'key',
@@ -642,7 +649,10 @@ test('strict verification refuses a correctly framed small-order corpus forgery'
     (entry) => entry.name === 'Ed25519 identity public key and R with S = 0',
   )
   if (vector === undefined) throw new Error('Missing identity corpus fixture')
-  const iss = getDID(CODECS.EdDSA, new Uint8Array(Buffer.from(vector.publicKey, 'hex')))
+  const iss = getDID({
+    codec: CODECS.EdDSA,
+    publicKey: new Uint8Array(Buffer.from(vector.publicKey, 'hex')),
+  })
   const data = `${b64uFromJSON({ typ: 'JWT', alg: 'EdDSA' })}.${b64uFromJSON({ iss, kind: 'test/op', claim: toB64U(canonicalRecordClaim(claimFixture)) })}`
   const token = `${data}.${toB64U(new Uint8Array(Buffer.from(vector.signature, 'hex')))}`
   expect(await verifyRecordOp({ opJWT: token, opKind: 'test/op' })).toBeNull()
@@ -652,7 +662,7 @@ test('strict verification refuses a correctly framed small-order corpus forgery'
         opJWT: token,
         opKind: 'test/op',
         methods: undefined,
-        options: provider({
+        ...provider({
           async verify() {
             return true
           },
@@ -665,16 +675,18 @@ test('strict verification refuses a correctly framed small-order corpus forgery'
 test('tombstone content keeps its golden digest without hashing an absent payload', async () => {
   const p = provider()
   const claim = { ...claimFixture, payloadDigest: null, deleted: true, meta: {} }
-  expect(await recordClaimDigest(claim, p)).toBe('pE0m65URmEuF_YYa7vsr-nEQwsYBBuOjCwhvP6BqTLo')
+  expect(await recordClaimDigest({ claim, ...p })).toBe(
+    'pE0m65URmEuF_YYa7vsr-nEQwsYBBuOjCwhvP6BqTLo',
+  )
   const row = {
     ...claim,
     payload: null,
-    ...(await signRecordOp({ identity: identity, claim: claim, opKind: 'test/op', options: p })),
+    ...(await signRecordOp({ identity, claim, opKind: 'test/op', ...p })),
   }
-  expect(await recordPayloadMatches(row, claim, p)).toBe(true)
+  expect(await recordPayloadMatches({ record: row, claim, ...p })).toBe(true)
   const before = p.hashes.length
   expect(
-    (await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, options: p }))
+    (await verifySignedRecord({ record: row, opKind: 'test/op', methods: undefined, ...p }))
       ?.contentDigest,
   ).toBe('pE0m65URmEuF_YYa7vsr-nEQwsYBBuOjCwhvP6BqTLo')
   expect(p.hashes).toHaveLength(before + 2)
@@ -709,9 +721,9 @@ test('visibility filtering returns authenticated snapshots when callers replace 
       return fn(store)
     },
   }
-  const pending = filterVisibleRecords(
-    input,
-    new Map([
+  const pending = filterVisibleRecords({
+    records: input,
+    types: new Map([
       [
         'test.value',
         {
@@ -724,7 +736,7 @@ test('visibility filtering returns authenticated snapshots when callers replace 
         },
       ],
     ]),
-    {
+    ctx: {
       ...p,
       opKind: 'test/op',
       requester: { peerDID: identity.id, controllerDID: null },
@@ -735,7 +747,7 @@ test('visibility filtering returns authenticated snapshots when callers replace 
       isGroupMember: async () => false,
       holderTypes: new Map(),
     },
-  )
+  })
   await started
   row.payload?.fill(9)
   row.id = 'changed'
@@ -749,7 +761,7 @@ test('filter key-version policy is captured before signature verification suspen
   const row = {
     ...(await record()),
     ...claim,
-    ...(await signRecordOp({ identity: identity, claim: claim, opKind: 'test/op' })),
+    ...(await signRecordOp({ identity, claim, opKind: 'test/op' })),
   }
   const g = gate()
   let entered = () => {}
@@ -795,7 +807,11 @@ test('filter key-version policy is captured before signature verification suspen
     isGroupMember: async () => false,
     holderTypes: new Map([['test.value', definition]]),
   }
-  const pending = filterVisibleRecords([row], new Map([['test.value', definition]]), ctx)
+  const pending = filterVisibleRecords({
+    records: [row],
+    types: new Map([['test.value', definition]]),
+    ctx,
+  })
   await started
   ctx.currentKeyVersion = async () => {
     throw new Error('replacement policy')
@@ -806,7 +822,7 @@ test('filter key-version policy is captured before signature verification suspen
 
 test('authenticated operations and nested metadata refuse mutation', async () => {
   const claim = { ...claimFixture, meta: { nested: { values: [1, 2] } } }
-  const signed = await signRecordOp({ identity: identity, claim: claim, opKind: 'test/op' })
+  const signed = await signRecordOp({ identity, claim, opKind: 'test/op' })
   const op = await verifyRecordOp({ opJWT: signed.opJWT, opKind: 'test/op' })
   if (op === null) throw new Error('fixture signature did not verify')
   expect(() => {
@@ -824,5 +840,5 @@ test('authenticated operations and nested metadata refuse mutation', async () =>
   expect(() => {
     Object.defineProperty(op, 'contentDigest', { value: 'substituted' })
   }).toThrow(TypeError)
-  expect(op.contentDigest).toBe(await recordClaimDigest(claim))
+  expect(op.contentDigest).toBe(await recordClaimDigest({ claim }))
 })

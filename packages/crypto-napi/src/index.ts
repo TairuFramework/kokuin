@@ -1,5 +1,9 @@
 export type {
   NapiBinding,
+  NapiBindingBlake3BatchParams,
+  NapiBindingBlake3Params,
+  NapiBindingSignBatchParams,
+  NapiBindingSignParams,
   NapiLoadFailure,
   NapiVerifyBatchParams,
   NapiVerifyParams,

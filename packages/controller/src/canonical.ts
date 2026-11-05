@@ -22,7 +22,9 @@ export const MAX_CANONICAL_DEPTH = 64
  * cannot produce but a caller can). Answers only the depth question; prefer {@link isCanonicalizable}
  * for untrusted input, since a non-finite number is reachable from `JSON.parse` and this ignores it.
  */
-export function withinCanonicalDepth(value: unknown, depth = 1): boolean {
+export type WithinCanonicalDepthParams = { value: unknown; depth?: number }
+
+export function withinCanonicalDepth({ depth = 1, value }: WithinCanonicalDepthParams): boolean {
   // Same comparison at the same point as `canonicalize`'s, so the two agree exactly on the boundary.
   if (depth > MAX_CANONICAL_DEPTH) {
     return false
@@ -31,7 +33,7 @@ export function withinCanonicalDepth(value: unknown, depth = 1): boolean {
     return true
   }
   const entries = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>)
-  return entries.every((entry) => withinCanonicalDepth(entry, depth + 1))
+  return entries.every((entry) => withinCanonicalDepth({ value: entry, depth: depth + 1 }))
 }
 
 /**
@@ -51,7 +53,9 @@ export function withinCanonicalDepth(value: unknown, depth = 1): boolean {
  * to one double before anything here sees them, so the shared digest names one value). Bounded by the
  * same constant, so it is safe even on a cyclic object.
  */
-export function isCanonicalizable(value: unknown, depth = 1): boolean {
+export type IsCanonicalizableParams = { value: unknown; depth?: number }
+
+export function isCanonicalizable({ depth = 1, value }: IsCanonicalizableParams): boolean {
   // Same comparison at the same point as `canonicalize`'s, so the two agree exactly on the boundary.
   if (depth > MAX_CANONICAL_DEPTH) {
     return false
@@ -66,7 +70,7 @@ export function isCanonicalizable(value: unknown, depth = 1): boolean {
     return true
   }
   if (Array.isArray(value)) {
-    return value.every((entry) => isCanonicalizable(entry, depth + 1))
+    return value.every((entry) => isCanonicalizable({ value: entry, depth: depth + 1 }))
   }
   if (typeof value === 'object') {
     const proto = Object.getPrototypeOf(value)
@@ -76,7 +80,7 @@ export function isCanonicalizable(value: unknown, depth = 1): boolean {
     // `undefined` members are dropped by `canonicalize` rather than encoded, so they are not a
     // reason to refuse — mirroring the `filter` there.
     return Object.values(value as Record<string, unknown>).every(
-      (entry) => entry === undefined || isCanonicalizable(entry, depth + 1),
+      (entry) => entry === undefined || isCanonicalizable({ value: entry, depth: depth + 1 }),
     )
   }
   return false
@@ -95,7 +99,7 @@ export function isCanonicalizable(value: unknown, depth = 1): boolean {
  * throw set exactly {@link isCanonicalizable}'s `false` set, the totality `verifyDigest` relies on.
  */
 export function canonicalBytes(value: unknown): Uint8Array {
-  if (!isCanonicalizable(value)) {
+  if (!isCanonicalizable({ value })) {
     throw new Error(
       'Canonicalization: value is not canonicalizable (non-finite, non-plain, unrepresentable, or ' +
         `nests deeper than ${MAX_CANONICAL_DEPTH})`,
@@ -118,15 +122,17 @@ export function digestOf(value: unknown): string {
  * {@link withinCanonicalDepth}, since a non-finite number is another way `canonicalize` throws.
  * `canonicalBytes` keeps its throw — its contract is "these exact bytes or nothing".
  */
-export function verifyDigest(digest: string, value: unknown): boolean {
+export type VerifyDigestParams = { digest: string; value: unknown }
+
+export function verifyDigest({ value, digest }: VerifyDigestParams): boolean {
   let expected: Uint8Array
   try {
     expected = decodeMultibase(digest)
   } catch {
     return false
   }
-  if (!isCanonicalizable(value)) {
+  if (!isCanonicalizable({ value })) {
     return false
   }
-  return verifyMultihash(expected, canonicalBytes(value))
+  return verifyMultihash({ multihash: expected, bytes: canonicalBytes(value) })
 }

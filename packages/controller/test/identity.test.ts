@@ -22,12 +22,19 @@ const seed = new Uint8Array(32).fill(7)
 const device = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
 function authorityKey(gen: number, seq: number): string {
-  return encodeKey(deriveKeyPair(seed, authorityPath(0, gen, seq), 'EdDSA').publicKey, 'EdDSA')
+  return encodeKey({
+    publicKey: deriveKeyPair({
+      seed,
+      path: authorityPath({ profile: 0, gen, seq }),
+      alg: 'EdDSA',
+    }).publicKey,
+    alg: 'EdDSA',
+  })
 }
 
 describe('createControllerIdentity()', () => {
   test('binds the identity to the did:kokuin: DID, not a did:key:', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
     const identity = await createControllerIdentity({
       seed,
@@ -37,7 +44,7 @@ describe('createControllerIdentity()', () => {
 
     expect(identity.id).toBe(did)
 
-    const signed = await identity.signToken({ hello: 'world' })
+    const signed = await identity.signToken({ payload: { hello: 'world' } })
     expect(signed.payload.iss).toBe(did)
   })
 
@@ -45,15 +52,17 @@ describe('createControllerIdentity()', () => {
     const identity = await createControllerIdentity({
       seed,
       profile: 0,
-      log: { chain: [await createInception(seed, 0)], events: [] },
+      log: { chain: [await createInception({ seed, profile: 0 })], events: [] },
     })
     await expect(
-      identity.signToken({ iss: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK' }),
+      identity.signToken({
+        payload: { iss: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK' },
+      }),
     ).rejects.toThrow(/issuer does not match signer/)
   })
 
   test('signs with the rotated key after a rotation, not the inception key', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
     const rotate = await createRotate({
       seed,
@@ -68,7 +77,7 @@ describe('createControllerIdentity()', () => {
       profile: 0,
       log: { chain: [inception, rotate], events: [] },
     })
-    const publicKey = encodeKey(identity.publicKey, 'EdDSA')
+    const publicKey = encodeKey({ publicKey: identity.publicKey, alg: 'EdDSA' })
 
     // The key the rotate published, which is the only one the resolver will answer with.
     expect(publicKey).toBe(rotate.event.k[0])
@@ -80,7 +89,7 @@ describe('createControllerIdentity()', () => {
   })
 
   test('refuses a log that does not fold rather than signing with a stale key', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
     const rotate = await createRotate({
       seed,
@@ -109,16 +118,16 @@ describe('createControllerIdentity()', () => {
   })
 
   test('refuses a bare event array, the shape a log had before epochs', async () => {
-    const legacy = [await createInception(seed, 0)] as unknown as ControllerLog
+    const legacy = [await createInception({ seed, profile: 0 })] as unknown as ControllerLog
     await expect(
       async () => await createControllerIdentity({ seed, profile: 0, log: legacy }),
     ).rejects.toThrow(/malformed log/)
   })
 
   test('signs from the chain whatever epoch events ride along', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
-    const head = await foldLog(did, { chain: [inception], events: [] })
+    const head = await foldLog({ did, input: { chain: [inception], events: [] } })
     if (!head.ok) throw new Error('did not fold')
     const revoke = await createRevoke({
       signer: { root: { seed, profile: 0 } },
@@ -141,7 +150,7 @@ describe('createControllerIdentity()', () => {
   })
 
   test('refuses a log whose first event is not an inception', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
     const rotate = await createRotate({
       seed,
@@ -161,7 +170,7 @@ describe('createControllerIdentity()', () => {
   })
 
   test('refuses a seed that does not control this log', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const other = new Uint8Array(32).fill(9)
 
     await expect(async () => {
@@ -174,7 +183,7 @@ describe('createControllerIdentity()', () => {
   })
 
   test('refuses the wrong profile index for this log', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
 
     await expect(async () => {
       return await createControllerIdentity({
@@ -186,7 +195,7 @@ describe('createControllerIdentity()', () => {
   })
 
   test('refuses a log carrying a chain revoke, which the root chain no longer has', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
     const revoke = {
       event: {
@@ -211,19 +220,19 @@ describe('createControllerIdentity()', () => {
 
 describe('createControllerIdentity() kid', () => {
   test('stamps the kid of the key it signs with', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const identity = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
     })
 
-    const signed = await identity.signToken({ hello: 'world' })
+    const signed = await identity.signToken({ payload: { hello: 'world' } })
     expect(signed.header.kid).toBe(`#${inception.event.k[0]}`)
   })
 
   test('stamps the rotated key after a rotation, not the retired one', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const did = didFromInception(inception.event)
     const rotate = await createRotate({
       seed,
@@ -238,7 +247,7 @@ describe('createControllerIdentity() kid', () => {
       profile: 0,
       log: { chain: [inception, rotate], events: [] },
     })
-    const signed = await identity.signToken({ hello: 'world' })
+    const signed = await identity.signToken({ payload: { hello: 'world' } })
 
     expect(signed.header.kid).toBe(`#${rotate.event.k[0]}`)
     expect(signed.header.kid).not.toBe(`#${inception.event.k[0]}`)
@@ -253,8 +262,8 @@ describe('createControllerIdentity() kid', () => {
       log: { chain: log, events: [] },
     })
 
-    expect(encodeKey(identity.publicKey, 'EdDSA')).toBe(controllerKey)
-    const signed = await identity.signToken({ hello: 'world' })
+    expect(encodeKey({ publicKey: identity.publicKey, alg: 'EdDSA' })).toBe(controllerKey)
+    const signed = await identity.signToken({ payload: { hello: 'world' } })
     expect(signed.header.kid).toBe(`#${controllerKey}`)
     // `keys[0]` is the co-signer's, whose private key this identity does not hold: stamping it
     // would name a key the token was not signed with.
@@ -262,23 +271,23 @@ describe('createControllerIdentity() kid', () => {
   })
 
   test('keeps caller header fields alongside the kid', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const identity = await createControllerIdentity({
       seed,
       profile: 0,
       log: { chain: [inception], events: [] },
     })
 
-    const signed = await identity.signToken(
-      { hello: 'world' },
-      { header: { cty: 'application/x' } },
-    )
+    const signed = await identity.signToken({
+      payload: { hello: 'world' },
+      header: { cty: 'application/x' },
+    })
     expect(signed.header.cty).toBe('application/x')
     expect(signed.header.kid).toBe(`#${inception.event.k[0]}`)
   })
 
   test('an explicit undefined kid in the caller header does not erase the stamp', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const identity = await createControllerIdentity({
       seed,
       profile: 0,
@@ -288,12 +297,15 @@ describe('createControllerIdentity() kid', () => {
     // Pins the spread order: under `{ kid, ...options.header }` a header carrying an explicit
     // `undefined` kid overwrites the stamp — and the mismatch guard does not fire, since
     // `undefined != null` is false — so the token would name no key at all.
-    const signed = await identity.signToken({ hello: 'world' }, { header: { kid: undefined } })
+    const signed = await identity.signToken({
+      payload: { hello: 'world' },
+      header: { kid: undefined },
+    })
     expect(signed.header.kid).toBe(`#${inception.event.k[0]}`)
   })
 
   test('accepts a caller kid that names the key it signs with', async () => {
-    const inception = await createInception(seed, 0)
+    const inception = await createInception({ seed, profile: 0 })
     const identity = await createControllerIdentity({
       seed,
       profile: 0,
@@ -301,7 +313,7 @@ describe('createControllerIdentity() kid', () => {
     })
     const kid = `#${inception.event.k[0]}`
 
-    const signed = await identity.signToken({ hello: 'world' }, { header: { kid } })
+    const signed = await identity.signToken({ payload: { hello: 'world' }, header: { kid } })
     expect(signed.header.kid).toBe(kid)
   })
 
@@ -317,7 +329,10 @@ describe('createControllerIdentity() kid', () => {
     // identity cannot sign with it. Silently dropping the caller's kid would mint a token whose
     // header names a key that did not produce the signature.
     await expect(
-      identity.signToken({ hello: 'world' }, { header: { kid: `#${cosignerKey}` } }),
+      identity.signToken({
+        payload: { hello: 'world' },
+        header: { kid: `#${cosignerKey}` },
+      }),
     ).rejects.toThrow(
       `Controller identity: cannot sign under kid #${cosignerKey}, this identity holds #${controllerKey}`,
     )
@@ -335,7 +350,7 @@ describe('createControllerIdentity() kid', () => {
     // underneath ignores it outright. Ignoring it here would be the same silent mis-selection as
     // dropping a header kid, one spelling over.
     await expect(
-      identity.signToken({ hello: 'world' }, { kid: `#${cosignerKey}` }),
+      identity.signToken({ payload: { hello: 'world' }, kid: `#${cosignerKey}` }),
     ).rejects.toThrow(
       `Controller identity: cannot sign under kid #${cosignerKey}, this identity holds #${controllerKey}`,
     )
@@ -346,7 +361,7 @@ describe('controller identity is a FullIdentity', () => {
   test('the seed path yields signing and key agreement bound to the controller DID', async () => {
     const seed = new Uint8Array(32).fill(11)
     const profile = 0
-    const inception = await createInception(seed, profile)
+    const inception = await createInception({ seed, profile })
     const did = didFromInception(inception.event)
 
     const identity = await createControllerIdentity({
@@ -358,7 +373,7 @@ describe('controller identity is a FullIdentity', () => {
     expect(identity.id).toBe(did)
     expect(isFullIdentity(identity)).toBe(true)
     // Signing still stamps the authority kid. `event.k[0]` is already the multibase-encoded key.
-    const token = await identity.signToken({ sub: 'x' })
+    const token = await identity.signToken({ payload: { sub: 'x' } })
     expect(token.header.kid).toBe(`#${inception.event.k[0]}`)
   })
 
@@ -368,26 +383,34 @@ describe('controller identity is a FullIdentity', () => {
     // Hand-built and re-signed (see `two-key-log.ts`), publishing a valid-but-foreign agreement
     // key: mutating `ka` on an already-signed inception without re-signing would fail the fold's
     // signature check first, not the agreement-membership check this test targets.
-    const current = deriveKeyPair(seed, authorityPath(profile, 0, 0), 'EdDSA')
-    const next = deriveKeyPair(seed, authorityPath(profile, 0, 1), 'EdDSA')
-    const recovery = deriveKeyPair(seed, recoveryPath(profile), 'EdDSA')
-    const foreignAgreement = deriveKeyPair(
-      new Uint8Array(32).fill(13),
-      agreementPath(profile, 0, 0),
-      'X25519',
-    )
+    const current = deriveKeyPair({
+      seed,
+      path: authorityPath({ profile, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    })
+    const next = deriveKeyPair({
+      seed,
+      path: authorityPath({ profile, gen: 0, seq: 1 }),
+      alg: 'EdDSA',
+    })
+    const recovery = deriveKeyPair({ seed, path: recoveryPath(profile), alg: 'EdDSA' })
+    const foreignAgreement = deriveKeyPair({
+      seed: new Uint8Array(32).fill(13),
+      path: agreementPath({ profile, gen: 0, seq: 0 }),
+      alg: 'X25519',
+    })
     const event: InceptionEvent = {
       v: 1,
       t: 'icp',
       g: 0,
       s: 0,
       crit: true,
-      k: [encodeKey(current.publicKey, 'EdDSA')],
-      ka: [encodeKey(foreignAgreement.publicKey, 'X25519')],
-      n: [digestOf(encodeKey(next.publicKey, 'EdDSA'))],
+      k: [encodeKey({ publicKey: current.publicKey, alg: 'EdDSA' })],
+      ka: [encodeKey({ publicKey: foreignAgreement.publicKey, alg: 'X25519' })],
+      n: [digestOf(encodeKey({ publicKey: next.publicKey, alg: 'EdDSA' }))],
       kt: 1,
       nt: 1,
-      r: digestOf(encodeKey(recovery.publicKey, 'EdDSA')),
+      r: digestOf(encodeKey({ publicKey: recovery.publicKey, alg: 'EdDSA' })),
     }
     const tampered = { event, sigs: await signEvent(event, [current.privateKey]) }
 

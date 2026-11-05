@@ -31,7 +31,7 @@ function createHDMockTransport(seed: Uint8Array): LedgerTransport {
       components.push(`${val & 0x7fffffff}'`)
     }
     const path = `m/${components.join('/')}`
-    return derivePrivateKey(seed, path)
+    return derivePrivateKey({ seed, path })
   }
 
   return {
@@ -72,8 +72,8 @@ function createHDMockTransport(seed: Uint8Array): LedgerTransport {
 
 describe('HD keystore + Ledger identity cross-compatibility', () => {
   test('same mnemonic produces same DID', async () => {
-    const hdStore = HDKeyStore.fromMnemonic(MNEMONIC)
-    const ledgerProvider = createLedgerIdentityProvider(createHDMockTransport(SEED))
+    const hdStore = HDKeyStore.fromMnemonic({ mnemonic: MNEMONIC })
+    const ledgerProvider = createLedgerIdentityProvider({ transport: createHDMockTransport(SEED) })
 
     const hdIdentity = await hdStore.provideIdentity('0')
     const ledgerIdentity = await ledgerProvider.provideIdentity('0')
@@ -82,17 +82,19 @@ describe('HD keystore + Ledger identity cross-compatibility', () => {
   })
 
   test('HD-signed token verifiable, Ledger-signed token verifiable', async () => {
-    const hdStore = HDKeyStore.fromMnemonic(MNEMONIC)
-    const ledgerProvider = createLedgerIdentityProvider(createHDMockTransport(SEED))
+    const hdStore = HDKeyStore.fromMnemonic({ mnemonic: MNEMONIC })
+    const ledgerProvider = createLedgerIdentityProvider({ transport: createHDMockTransport(SEED) })
 
     const hdIdentity = await hdStore.provideIdentity('0')
     const ledgerIdentity = await ledgerProvider.provideIdentity('0')
 
-    const hdToken = await hdIdentity.signToken({ source: 'hd' })
-    const ledgerToken = await ledgerIdentity.signToken({ source: 'ledger' })
+    const hdToken = await hdIdentity.signToken({ payload: { source: 'hd' } })
+    const ledgerToken = await ledgerIdentity.signToken({ payload: { source: 'ledger' } })
 
-    const hdVerified = await verifyToken(`${hdToken.data}.${hdToken.signature}`)
-    const ledgerVerified = await verifyToken(`${ledgerToken.data}.${ledgerToken.signature}`)
+    const hdVerified = await verifyToken({ token: `${hdToken.data}.${hdToken.signature}` })
+    const ledgerVerified = await verifyToken({
+      token: `${ledgerToken.data}.${ledgerToken.signature}`,
+    })
 
     expect(hdVerified.payload.source).toBe('hd')
     expect(ledgerVerified.payload.source).toBe('ledger')
@@ -100,8 +102,8 @@ describe('HD keystore + Ledger identity cross-compatibility', () => {
   })
 
   test('ECDH key agreement produces same shared secret', async () => {
-    const hdStore = HDKeyStore.fromMnemonic(MNEMONIC)
-    const ledgerProvider = createLedgerIdentityProvider(createHDMockTransport(SEED))
+    const hdStore = HDKeyStore.fromMnemonic({ mnemonic: MNEMONIC })
+    const ledgerProvider = createLedgerIdentityProvider({ transport: createHDMockTransport(SEED) })
 
     const hdIdentity = await hdStore.provideIdentity('0')
     const ledgerIdentity = await ledgerProvider.provideIdentity('0')
@@ -109,8 +111,8 @@ describe('HD keystore + Ledger identity cross-compatibility', () => {
     const ephPriv = x25519.utils.randomSecretKey()
     const ephPub = x25519.getPublicKey(ephPriv)
 
-    const hdShared = await hdIdentity.agreeKey(ephPub)
-    const ledgerShared = await ledgerIdentity.agreeKey(ephPub)
+    const hdShared = await hdIdentity.agreeKey({ ephemeralPublicKey: ephPub })
+    const ledgerShared = await ledgerIdentity.agreeKey({ ephemeralPublicKey: ephPub })
 
     expect(hdShared).toEqual(ledgerShared)
   })

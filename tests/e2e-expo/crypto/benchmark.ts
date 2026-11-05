@@ -41,10 +41,10 @@ const currentNoble: CryptoProvider = {
       }
     })
   },
-  async blake3(input, dkLen) {
+  async blake3({ input, dkLen }) {
     return blake3(input, { dkLen })
   },
-  async blake3Batch(inputs, dkLen) {
+  async blake3Batch({ inputs, dkLen }) {
     return inputs.map((input) => blake3(input, { dkLen }))
   },
 }
@@ -62,14 +62,14 @@ function prepare(
   if (cell.operation === 'sign') {
     const items = seeds.map((privateKey) => ({ privateKey, message }))
     return cell.mode === 'single'
-      ? () => provider.sign('EdDSA', seeds[0] as Uint8Array, message)
-      : () => provider.signBatch('EdDSA', items)
+      ? () => provider.sign({ alg: 'EdDSA', privateKey: seeds[0] as Uint8Array, message })
+      : () => provider.signBatch({ alg: 'EdDSA', items })
   }
   if (cell.operation === 'blake3') {
     const inputs = seeds.map(() => message)
     return cell.mode === 'single'
-      ? () => provider.blake3(message, cell.outputLength)
-      : () => provider.blake3Batch(inputs, cell.outputLength)
+      ? () => provider.blake3({ input: message, dkLen: cell.outputLength })
+      : () => provider.blake3Batch({ inputs, dkLen: cell.outputLength })
   }
   const alg = cell.operation === 'verify-ed25519' ? 'EdDSA' : 'ES256'
   const curve = alg === 'EdDSA' ? ed25519 : p256

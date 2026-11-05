@@ -22,10 +22,14 @@ const at = <TValue>(items: ReadonlyArray<TValue>, i: number): TValue => {
 const seed = new Uint8Array(32).fill(1)
 const stolen = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 /** The key an inception establishes: gen 0, derivation index 0. */
-const authorityKey = deriveKeyPair(seed, authorityPath(0, 0, 0), 'EdDSA')
+const authorityKey = deriveKeyPair({
+  seed,
+  path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+  alg: 'EdDSA',
+})
 
 async function build() {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
   const rot = await createRotate({
     seed,
@@ -52,7 +56,7 @@ async function settle(did: string, prior: SignedEvent['event'], deny: Array<stri
 describe('foldLog()', () => {
   test('folds inception alone', async () => {
     const { did, icp } = await build()
-    const result = await foldLog(did, { chain: [icp], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp], events: [] } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 0).keys).toEqual(icp.event.k)
@@ -65,22 +69,24 @@ describe('foldLog()', () => {
     // coincide for every inception this package builds, so only a forged one can tell them apart —
     // and a forged one is buildable, because an inception is self-certifying: the DID is the hash
     // of the body, so a body with any `s` is a valid log for the DID it hashes to.
-    const event = { ...(await createInception(seed, 0)).event, s: 3 }
+    const event = { ...(await createInception({ seed, profile: 0 })).event, s: 3 }
     const forgedDID = didFromInception(event)
     const forged = { event, sigs: await signEvent(event, [authorityKey.privateKey]) }
 
-    const result = await foldLog(forgedDID, { chain: [forged], events: [] })
+    const result = await foldLog({ did: forgedDID, input: { chain: [forged], events: [] } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 0).seq).toBe(3)
     expect(at(result.states, 0).keySeq).toBe(0)
     // The index really does name the published key, which is what the identity derives from.
-    expect(at(result.states, 0).keys).toEqual([encodeKey(authorityKey.publicKey, 'EdDSA')])
+    expect(at(result.states, 0).keys).toEqual([
+      encodeKey({ publicKey: authorityKey.publicKey, alg: 'EdDSA' }),
+    ])
   })
 
   test('applies a rotate, replacing the key set', async () => {
     const { did, icp, rot } = await build()
-    const result = await foldLog(did, { chain: [icp, rot], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp, rot], events: [] } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 1).keys).toEqual(rot.event.k)
@@ -89,20 +95,23 @@ describe('foldLog()', () => {
 
   test('a rotate replaces the deny set with its snapshot', async () => {
     const { did, icp, rot, denying } = await build()
-    const result = await foldLog(did, { chain: [icp, rot, denying], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp, rot, denying], events: [] } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect([...at(result.states, 2).deny]).toEqual([stolen])
     expect(at(result.states, 2).keys).toEqual(denying.event.k)
     // And the next settlement replaces it again: nothing before a rotate contributes.
     const cleared = await settle(did, denying.event, [])
-    const after = await foldLog(did, { chain: [icp, rot, denying, cleared], events: [] })
+    const after = await foldLog({
+      did,
+      input: { chain: [icp, rot, denying, cleared], events: [] },
+    })
     expect(after.ok && at(after.states, 3).deny.size).toBe(0)
   })
 
   test('rejects a log whose first event is not an inception', async () => {
     const { did, rot } = await build()
-    const result = await foldLog(did, { chain: [rot], events: [] })
+    const result = await foldLog({ did, input: { chain: [rot], events: [] } })
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.reason).toMatch(/inception/)
@@ -110,14 +119,14 @@ describe('foldLog()', () => {
 
   test('rejects an inception whose hash is not the DID', async () => {
     const { icp } = await build()
-    const result = await foldLog('did:kokuin:zWRONG', { chain: [icp], events: [] })
+    const result = await foldLog({ did: 'did:kokuin:zWRONG', input: { chain: [icp], events: [] } })
     expect(result.ok).toBe(false)
   })
 
   test('rejects a sequence gap', async () => {
     const { did, icp, rot } = await build()
     const gapped = { ...rot, event: { ...rot.event, s: 5 } }
-    const result = await foldLog(did, { chain: [icp, gapped], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp, gapped], events: [] } })
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.index).toBe(1)
@@ -126,15 +135,18 @@ describe('foldLog()', () => {
   test('rejects an event that does not chain to the previous digest', async () => {
     const { did, icp, rot } = await build()
     const orphan = { ...rot, event: { ...rot.event, p: 'zNOTTHEPRIOR' } }
-    const result = await foldLog(did, { chain: [icp, orphan], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp, orphan], events: [] } })
     expect(result.ok).toBe(false)
   })
 
   test('a reset increments the generation and clears the deny set', async () => {
     const { did, icp, rot, denying } = await build()
     // Anchored to the inception, not to the head.
-    const reset = await createReset({ seed: seed, profile: 0, gen: 1 })
-    const result = await foldLog(did, { chain: [icp, rot, denying, reset], events: [] })
+    const reset = await createReset({ seed, profile: 0, gen: 1 })
+    const result = await foldLog({
+      did,
+      input: { chain: [icp, rot, denying, reset], events: [] },
+    })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 3).gen).toBe(1)
@@ -144,7 +156,7 @@ describe('foldLog()', () => {
 
   test('the inception seeds the agreement set', async () => {
     const { did, icp } = await build()
-    const result = await foldLog(did, { chain: [icp], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp], events: [] } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 0).agreement).toEqual(icp.event.ka)
@@ -152,7 +164,7 @@ describe('foldLog()', () => {
 
   test('a rotate replaces the agreement set', async () => {
     const { did, icp, rot } = await build()
-    const result = await foldLog(did, { chain: [icp, rot], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp, rot], events: [] } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 1).agreement).toEqual(rot.event.ka)
@@ -168,7 +180,7 @@ describe('foldLog() and a revoke naming a key', () => {
     // The key the inception established, which the rotate has since retired.
     const retired = keyTarget(at(icp.event.k, 0))
     const next = await settle(did, rot.event, [retired])
-    const result = await foldLog(did, { chain: [icp, rot, next], events: [] })
+    const result = await foldLog({ did, input: { chain: [icp, rot, next], events: [] } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(at(result.states, 1).deny.has(retired)).toBe(false)
@@ -183,7 +195,7 @@ describe('foldLog() and a revoke naming a key', () => {
     const { did, icp, rot } = await build()
     for (const key of [at(rot.event.k, 0), at(rot.event.ka, 0)]) {
       const selfDenying = await settle(did, icp.event, [keyTarget(key)])
-      const result = await foldLog(did, { chain: [icp, selfDenying], events: [] })
+      const result = await foldLog({ did, input: { chain: [icp, selfDenying], events: [] } })
       expect(result.ok).toBe(false)
       if (result.ok) return
       expect(result.reason).toMatch(/rotate establishes a denied key/)
@@ -195,7 +207,7 @@ describe('foldLog() and a revoke naming a key', () => {
       keyTarget(at(icp.event.k, 0)),
       keyTarget(at(icp.event.ka, 0)),
     ])
-    expect((await foldLog(did, { chain: [icp, other], events: [] })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: [icp, other], events: [] } })).ok).toBe(true)
   })
 
   test('a denial of the committed next key leaves the generation no rotate that folds', async () => {
@@ -204,17 +216,23 @@ describe('foldLog() and a revoke naming a key', () => {
     // keeps the denial (and establishes a denied key) or drops it (and drops a retirement the chain
     // has now seen the key for). Pre-rotation leaves no other key to reveal, so only a reset goes on.
     const { did, icp, rot } = await build()
-    const committedKey = encodeKey(
-      deriveKeyPair(seed, authorityPath(0, 0, 3), 'EdDSA').publicKey,
-      'EdDSA',
-    )
+    const committedKey = encodeKey({
+      publicKey: deriveKeyPair({
+        seed,
+        path: authorityPath({ profile: 0, gen: 0, seq: 3 }),
+        alg: 'EdDSA',
+      }).publicKey,
+      alg: 'EdDSA',
+    })
     const committed = keyTarget(committedKey)
     const denied = await settle(did, rot.event, [committed])
-    expect((await foldLog(did, { chain: [icp, rot, denied], events: [] })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: [icp, rot, denied], events: [] } })).ok).toBe(true)
 
     const keeping = await settle(did, denied.event, [committed])
     expect(keeping.event.k).toEqual([committedKey])
-    expect(await foldLog(did, { chain: [icp, rot, denied, keeping], events: [] })).toMatchObject({
+    expect(
+      await foldLog({ did, input: { chain: [icp, rot, denied, keeping], events: [] } }),
+    ).toMatchObject({
       ok: false,
       index: 3,
     })
@@ -222,7 +240,9 @@ describe('foldLog() and a revoke naming a key', () => {
       /rotate establishes a denied key/,
     )
     const dropping = await settle(did, denied.event, [])
-    expect(await foldLog(did, { chain: [icp, rot, denied, dropping], events: [] })).toEqual({
+    expect(
+      await foldLog({ did, input: { chain: [icp, rot, denied, dropping], events: [] } }),
+    ).toEqual({
       ok: false,
       index: 3,
       reason: 'snapshot drops a retired key denial',
@@ -233,9 +253,12 @@ describe('foldLog() and a revoke naming a key', () => {
     const other = await settle(did, rot.event, [stolen])
     expect(
       (
-        await foldLog(did, {
-          chain: [icp, rot, other, await settle(did, other.event, [])],
-          events: [],
+        await foldLog({
+          did,
+          input: {
+            chain: [icp, rot, other, await settle(did, other.event, [])],
+            events: [],
+          },
         })
       ).ok,
     ).toBe(true)
@@ -243,26 +266,31 @@ describe('foldLog() and a revoke naming a key', () => {
 })
 
 async function foldReasonOf(did: string, log: Array<SignedEvent>): Promise<string | undefined> {
-  const result = await foldLog(did, { chain: log, events: [] })
+  const result = await foldLog({ did, input: { chain: log, events: [] } })
   return result.ok ? undefined : result.reason
 }
 
 describe('keyStateAt()', () => {
   test('returns the state after the event at that position', async () => {
     const { did, icp, rot, denying } = await build()
-    const result = await foldLog(did, { chain: [icp, rot, denying], events: [] })
-    expect(keyStateAt(result, 1)?.keys).toEqual(rot.event.k)
+    const result = await foldLog({ did, input: { chain: [icp, rot, denying], events: [] } })
+    expect(keyStateAt({ result, position: 1 })?.keys).toEqual(rot.event.k)
   })
 
   test('a device denied later is not denied at an earlier position', async () => {
     const { did, icp, rot, denying } = await build()
-    const result = await foldLog(did, { chain: [icp, rot, denying], events: [] })
-    expect(keyStateAt(result, 1)?.deny.has(stolen)).toBe(false)
-    expect(keyStateAt(result, 2)?.deny.has(stolen)).toBe(true)
+    const result = await foldLog({ did, input: { chain: [icp, rot, denying], events: [] } })
+    expect(keyStateAt({ result, position: 1 })?.deny.has(stolen)).toBe(false)
+    expect(keyStateAt({ result, position: 2 })?.deny.has(stolen)).toBe(true)
   })
 
   test('returns undefined past the end of the log', async () => {
     const { did, icp } = await build()
-    expect(keyStateAt(await foldLog(did, { chain: [icp], events: [] }), 9)).toBeUndefined()
+    expect(
+      keyStateAt({
+        result: await foldLog({ did, input: { chain: [icp], events: [] } }),
+        position: 9,
+      }),
+    ).toBeUndefined()
   })
 })

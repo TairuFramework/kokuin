@@ -255,8 +255,8 @@ describe('provider capture', () => {
     const options: { name: string; crypto: CryptoProvider } = { name: 'provider-sign', crypto }
     const store = new ElectronKeyStore(options)
     options.crypto = { ...nobleCrypto }
-    await store.provideIdentitySync('sync').signToken({ value: 1 })
-    await (await store.provideIdentity('async')).signToken({ value: 2 })
+    await store.provideIdentitySync('sync').signToken({ payload: { value: 1 } })
+    await (await store.provideIdentity('async')).signToken({ payload: { value: 2 } })
     expect(sign).toHaveBeenCalledTimes(2)
   })
 })

@@ -30,7 +30,7 @@ vi.mock('expo-crypto', () => {
 
 const { ExpoKeyStore } = await import('../src/store.js')
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+function sameBytes({ a, b }: { a: Uint8Array; b: Uint8Array }): boolean {
   return a.length === b.length && a.every((byte, i) => byte === b[i])
 }
 
@@ -45,7 +45,7 @@ beforeEach(() => {
 describe('ExpoKeyStore conformance', () => {
   const cases = mutableKeyStoreConformanceCases({
     createStore: () => new ExpoKeyStore(),
-    isSameKey: sameBytes,
+    isSameKey: ({ a, b }) => sameBytes({ a, b }),
     createKey: () => crypto.getRandomValues(new Uint8Array(32)),
   })
 

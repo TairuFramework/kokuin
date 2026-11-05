@@ -139,10 +139,17 @@ async function buildEvent<TEvent extends EpochEvent>({
   let privateKey: Uint8Array
   if ('root' in signer) {
     const { seed, profile } = signer.root
-    const pair = deriveKeyPair(seed, authorityPath(profile, head.keyGen, head.keySeq), 'EdDSA')
-    const derived = encodeKey(pair.publicKey, 'EdDSA')
+    const pair = deriveKeyPair({
+      seed,
+      path: authorityPath({ profile, gen: head.keyGen, seq: head.keySeq }),
+      alg: 'EdDSA',
+    })
+    const derived = encodeKey({ publicKey: pair.publicKey, alg: 'EdDSA' })
     // Exactly the one key: the verifier checks n-of-n, and this generator signs with one.
-    if (didFor(seed, profile) === did && !(head.keys.length === 1 && head.keys[0] === derived)) {
+    if (
+      didFor({ seed, profile }) === did &&
+      !(head.keys.length === 1 && head.keys[0] === derived)
+    ) {
       throw new Error(
         `Epoch event: the key at (gen ${head.keyGen}, seq ${head.keySeq}) is not the head's only ` +
           'published key -- pass the folded head, whose keyGen / keySeq name the active authority key',
@@ -209,7 +216,7 @@ export async function createRenew({
 }: CreateRenewParams): Promise<SignedEvent<RenewEvent>> {
   return await buildEvent<RenewEvent>({
     t: 'ren',
-    signer: signer,
+    signer,
     options2: base,
     fields: { add, lease },
   })
@@ -223,7 +230,7 @@ export async function createRemove({
 }: CreateRemoveParams): Promise<SignedEvent<RemoveEvent>> {
   return await buildEvent<RemoveEvent>({
     t: 'rmv',
-    signer: signer,
+    signer,
     options2: base,
     fields: { add },
   })
@@ -240,7 +247,7 @@ export async function createRevoke({
 }: CreateRevokeParams): Promise<SignedEvent<RevokeEvent>> {
   return await buildEvent<RevokeEvent>({
     t: 'rev',
-    signer: signer,
+    signer,
     options2: base,
     fields: { x: target },
   })
@@ -320,7 +327,7 @@ export function isEpochEventShape(value: unknown): value is SignedEvent<EpochEve
     return false
   }
   // Last: the only check whose cost grows with the body, and the one that needs the rest settled.
-  return isCanonicalizable(event) && canonicalBytes(event).length <= MAX_EVENT_BYTES
+  return isCanonicalizable({ value: event }) && canonicalBytes(event).length <= MAX_EVENT_BYTES
 }
 
 /**
@@ -333,11 +340,16 @@ export function isEpochEventShape(value: unknown): value is SignedEvent<EpochEve
  * over `rootKeys` (via `verifySignatures`); a member signs alone, so exactly one signature, under the
  * pinned key. Total: a malformed body or signature is `false`.
  */
-export async function verifyEpochSignature(
-  signed: SignedEvent<EpochEvent>,
-  signer: EpochSignatureSigner,
-  options: CryptoOptions = {},
-): Promise<boolean> {
+export type VerifyEpochSignatureParams = {
+  signed: SignedEvent<EpochEvent>
+  signer: EpochSignatureSigner
+} & CryptoOptions
+
+export async function verifyEpochSignature({
+  signer,
+  signed,
+  ...options
+}: VerifyEpochSignatureParams): Promise<boolean> {
   const { event, sigs } = signed
   if (!isRecord(event) || !Array.isArray(sigs) || sigs.length > MAX_EVENT_SIGNATURES) {
     return false
@@ -346,10 +358,10 @@ export async function verifyEpochSignature(
     return (
       event.by === undefined &&
       (await verifySignatures({
-        event: event,
-        sigs: sigs,
+        ...options,
+        event,
+        sigs,
         keys: signer.rootKeys,
-        options: options,
       }))
     )
   }
@@ -358,10 +370,10 @@ export async function verifyEpochSignature(
     sigs.length === 1 &&
     typeof event.by === 'string' &&
     (await verifySignatures({
-      event: event,
-      sigs: sigs,
+      ...options,
+      event,
+      sigs,
       keys: [signer.memberKey],
-      options: options,
     }))
   )
 }

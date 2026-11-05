@@ -21,7 +21,7 @@ const thiefSeed = new Uint8Array(32).fill(66)
 const victim = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 
 async function build(seed: Uint8Array) {
-  const icp = await createInception(seed, 0)
+  const icp = await createInception({ seed, profile: 0 })
   const did = didFromInception(icp.event)
   return { icp, did }
 }
@@ -37,17 +37,24 @@ describe('pre-rotation bypass attempts', async () => {
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 1), 'EdDSA')
-    const body: RotateEvent = { ...honest.event, k: [encodeKey(thief.publicKey, 'EdDSA')] }
+    const thief = deriveKeyPair({
+      seed: thiefSeed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 1 }),
+      alg: 'EdDSA',
+    })
+    const body: RotateEvent = {
+      ...honest.event,
+      k: [encodeKey({ publicKey: thief.publicKey, alg: 'EdDSA' })],
+    }
     const forged: SignedEvent<RotateEvent> = {
       event: body,
       sigs: await signEvent(body, [thief.privateKey]),
     }
     // The signature is VALID over these bytes and matches the key the event publishes — the only
     // thing wrong is that `n` never committed it.
-    expect((await foldLog(did, { chain: [icp, forged], events: [] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain: [icp, forged], events: [] } })).ok).toBe(false)
     // CONTROL: the honest rotate, same position, same shape.
-    expect((await foldLog(did, { chain: [icp, honest], events: [] })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: [icp, honest], events: [] } })).ok).toBe(true)
   })
 
   test('a rotate re-revealing the CURRENT key (no rotation at all) is refused', async () => {
@@ -58,13 +65,17 @@ describe('pre-rotation bypass attempts', async () => {
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const current = deriveKeyPair(seedA, authorityPath(0, 0, 0), 'EdDSA')
+    const current = deriveKeyPair({
+      seed: seedA,
+      path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    })
     const body: RotateEvent = { ...honest.event, k: [...icp.event.k] }
     const forged: SignedEvent<RotateEvent> = {
       event: body,
       sigs: await signEvent(body, [current.privateKey]),
     }
-    expect((await foldLog(did, { chain: [icp, forged], events: [] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain: [icp, forged], events: [] } })).ok).toBe(false)
   })
 
   test('the commitment cannot be satisfied by a differently-encoded spelling of the same key', async () => {
@@ -90,15 +101,23 @@ describe('pre-rotation bypass attempts', async () => {
       prior: icp.event,
       snapshot: { members: [], deny: [] },
     })
-    const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 0), 'EdDSA')
-    const thiefKey = encodeKey(thief.publicKey, 'EdDSA')
+    const thief = deriveKeyPair({
+      seed: thiefSeed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    })
+    const thiefKey = encodeKey({ publicKey: thief.publicKey, alg: 'EdDSA' })
     const body: RotateEvent = { ...honest.event, k: [...honest.event.k, thiefKey] }
-    const revealed = deriveKeyPair(seedA, authorityPath(0, 0, 1), 'EdDSA')
+    const revealed = deriveKeyPair({
+      seed: seedA,
+      path: authorityPath({ profile: 0, gen: 0, seq: 1 }),
+      alg: 'EdDSA',
+    })
     const forged: SignedEvent<RotateEvent> = {
       event: body,
       sigs: await signEvent(body, [revealed.privateKey, thief.privateKey]),
     }
-    expect((await foldLog(did, { chain: [icp, forged], events: [] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain: [icp, forged], events: [] } })).ok).toBe(false)
   })
 })
 
@@ -113,7 +132,9 @@ describe('splicing, truncation, replay', () => {
       prior: b.icp.event,
       snapshot: { members: [], deny: [] },
     })
-    expect((await foldLog(a.did, { chain: [a.icp, foreignRotate], events: [] })).ok).toBe(false)
+    expect(
+      (await foldLog({ did: a.did, input: { chain: [a.icp, foreignRotate], events: [] } })).ok,
+    ).toBe(false)
   })
 
   test("another DID's reset, relabelled with our `i`, is refused (anchor + recovery)", async () => {
@@ -123,7 +144,9 @@ describe('splicing, truncation, replay', () => {
       ...foreignReset,
       event: { ...foreignReset.event, i: a.did, p: digestOf(a.icp.event) },
     }
-    expect((await foldLog(a.did, { chain: [a.icp, relabelled], events: [] })).ok).toBe(false)
+    expect(
+      (await foldLog({ did: a.did, input: { chain: [a.icp, relabelled], events: [] } })).ok,
+    ).toBe(false)
   })
 
   test('a rotate replayed at a later position is refused', async () => {
@@ -142,9 +165,9 @@ describe('splicing, truncation, replay', () => {
       prior: rot1.event,
       snapshot: { members: [], deny: [victim] },
     })
-    expect((await foldLog(did, { chain: [icp, rot1, rot2], events: [] })).ok).toBe(true)
-    expect((await foldLog(did, { chain: [icp, rot1, rot1], events: [] })).ok).toBe(false)
-    expect((await foldLog(did, { chain: [icp, rot2], events: [] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain: [icp, rot1, rot2], events: [] } })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: [icp, rot1, rot1], events: [] } })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain: [icp, rot2], events: [] } })).ok).toBe(false)
   })
 
   test('reordering two valid events is refused', async () => {
@@ -163,8 +186,8 @@ describe('splicing, truncation, replay', () => {
       prior: rot.event,
       snapshot: { members: [], deny: [victim] },
     })
-    expect((await foldLog(did, { chain: [icp, rot, next], events: [] })).ok).toBe(true)
-    expect((await foldLog(did, { chain: [icp, next, rot], events: [] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain: [icp, rot, next], events: [] } })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: [icp, next, rot], events: [] } })).ok).toBe(false)
   })
 
   test('a prefix truncation folds (by design) but loses branch selection on (gen, seq)', async () => {
@@ -184,8 +207,8 @@ describe('splicing, truncation, replay', () => {
       snapshot: { members: [], deny: [victim] },
     })
     const honest = [icp, rot, denying]
-    expect((await foldLog(did, { chain: [icp], events: [] })).ok).toBe(true)
-    const r = await resolveBranches(did, [[icp], honest])
+    expect((await foldLog({ did, input: { chain: [icp], events: [] } })).ok).toBe(true)
+    const r = await resolveBranches({ did, chains: [[icp], honest] })
     expect(r.ok && r.winner).toBe(honest)
   })
 })
@@ -195,7 +218,11 @@ describe('superseding recovery abuse', () => {
     const { icp, did } = await build(seedA)
     // The chain holds only `icp`/`rot`, and a rotate must reveal the pre-committed key: the only
     // other thing a current-key holder can sign is an event of a type the chain does not carry.
-    const current = deriveKeyPair(seedA, authorityPath(0, 0, 0), 'EdDSA')
+    const current = deriveKeyPair({
+      seed: seedA,
+      path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    })
     const revokeBody = {
       v: 1,
       t: 'rev',
@@ -210,7 +237,9 @@ describe('superseding recovery abuse', () => {
       event: revokeBody,
       sigs: await signEvent(revokeBody as never, [current.privateKey]),
     } as unknown as SignedEvent
-    expect((await foldLog(did, { chain: [icp, thiefRevoke], events: [] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain: [icp, thiefRevoke], events: [] } })).ok).toBe(
+      false,
+    )
     const ownerRotate = await createRotate({
       seed: seedA,
       profile: 0,
@@ -228,7 +257,7 @@ describe('superseding recovery abuse', () => {
         [icp, thiefRevoke],
       ],
     ]) {
-      const r = await resolveBranches(did, order)
+      const r = await resolveBranches({ did, chains: order })
       expect(r.ok && r.winner[1]).toBe(ownerRotate)
     }
   })
@@ -237,40 +266,53 @@ describe('superseding recovery abuse', () => {
     const { icp, did } = await build(seedA)
     const reset1 = await createReset({ seed: seedA, profile: 0, gen: 1 })
     const reset2 = await createReset({ seed: seedA, profile: 0, gen: 2 })
-    const r = await resolveBranches(did, [
-      [icp, reset2],
-      [icp, reset1],
-    ])
+    const r = await resolveBranches({
+      did,
+      chains: [
+        [icp, reset2],
+        [icp, reset1],
+      ],
+    })
     expect(r.ok && r.winner[1]?.event.g).toBe(2)
     // And replaying the lower reset after the higher one does not fold.
-    expect((await foldLog(did, { chain: [icp, reset2, reset1], events: [] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain: [icp, reset2, reset1], events: [] } })).ok).toBe(
+      false,
+    )
   })
 
   test('a reset a non-root forges is refused — the recovery key is unpublished', async () => {
     const { icp, did } = await build(seedA)
     const honest = await createReset({ seed: seedA, profile: 0, gen: 1 })
-    const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 0), 'EdDSA')
+    const thief = deriveKeyPair({
+      seed: thiefSeed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    })
     const forged: SignedEvent<RotateEvent> = {
       event: honest.event,
       sigs: await signEvent(honest.event, [thief.privateKey]),
-      recoveryKey: encodeKey(thief.publicKey, 'EdDSA'),
+      recoveryKey: encodeKey({ publicKey: thief.publicKey, alg: 'EdDSA' }),
     }
-    expect((await foldLog(did, { chain: [icp, forged], events: [] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain: [icp, forged], events: [] } })).ok).toBe(false)
     // CONTROL: identical body, the real recovery key.
-    expect((await foldLog(did, { chain: [icp, honest], events: [] })).ok).toBe(true)
+    expect((await foldLog({ did, input: { chain: [icp, honest], events: [] } })).ok).toBe(true)
   })
 
   test('a reset revealing the right recovery key but a forged signature is refused', async () => {
     const { icp, did } = await build(seedA)
     const honest = await createReset({ seed: seedA, profile: 0, gen: 1 })
-    const thief = deriveKeyPair(thiefSeed, authorityPath(0, 0, 0), 'EdDSA')
+    const thief = deriveKeyPair({
+      seed: thiefSeed,
+      path: authorityPath({ profile: 0, gen: 0, seq: 0 }),
+      alg: 'EdDSA',
+    })
     // The revealed key matches `inception.r`; only the signature is somebody else's.
     const forged: SignedEvent<RotateEvent> = {
       event: honest.event,
       sigs: await signEvent(honest.event, [thief.privateKey]),
       recoveryKey: honest.recoveryKey,
     }
-    expect((await foldLog(did, { chain: [icp, forged], events: [] })).ok).toBe(false)
+    expect((await foldLog({ did, input: { chain: [icp, forged], events: [] } })).ok).toBe(false)
   })
 })
 
@@ -278,7 +320,7 @@ describe('self-certification', () => {
   test('a log whose inception is not the one the DID hashes is refused', async () => {
     const a = await build(seedA)
     const b = await build(seedB)
-    expect((await foldLog(a.did, { chain: [b.icp], events: [] })).ok).toBe(false)
+    expect((await foldLog({ did: a.did, input: { chain: [b.icp], events: [] } })).ok).toBe(false)
   })
 
   test('mutating any inception member changes the DID, so no two bodies share one', async () => {

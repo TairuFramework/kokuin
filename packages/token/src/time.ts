@@ -31,10 +31,9 @@ export type TimeClaimsPayload = {
  * Validate time-based claims in a token payload.
  * @throws Error if token is expired or not yet valid
  */
-export function assertTimeClaimsValid(
-  payload: TimeClaimsPayload,
-  options: TimeValidationOptions = {},
-): void {
+export type AssertTimeClaimsValidParams = { payload: TimeClaimsPayload } & TimeValidationOptions
+
+export function assertTimeClaimsValid({ payload, ...options }: AssertTimeClaimsValidParams): void {
   const time = options.atTime ?? now()
   const tolerance = options.clockTolerance ?? 0
 

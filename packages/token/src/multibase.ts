@@ -29,7 +29,9 @@ export function multihashSHA256(bytes: Uint8Array): Uint8Array {
   return out
 }
 
-export function verifyMultihash(multihash: Uint8Array, bytes: Uint8Array): boolean {
+export type VerifyMultihashParams = { multihash: Uint8Array; bytes: Uint8Array }
+
+export function verifyMultihash({ bytes, multihash }: VerifyMultihashParams): boolean {
   if (multihash.length !== 2 + MULTIHASH_SHA256_LENGTH) return false
   if (multihash[0] !== MULTIHASH_SHA256_CODE) return false
   if (multihash[1] !== MULTIHASH_SHA256_LENGTH) return false

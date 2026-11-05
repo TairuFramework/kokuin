@@ -23,8 +23,12 @@ test('passes every pinned upstream vector', { timeout: 120_000 }, async () => {
 test('batch inputs are copied before the Promise returns', async () => {
   const seed = new Uint8Array(32).fill(9)
   const message = new Uint8Array(64).fill(3)
-  const expected = await provider.sign('EdDSA', seed.slice(), message.slice())
-  const pending = provider.signBatch('EdDSA', [{ privateKey: seed, message }])
+  const expected = await provider.sign({
+    alg: 'EdDSA',
+    privateKey: seed.slice(),
+    message: message.slice(),
+  })
+  const pending = provider.signBatch({ alg: 'EdDSA', items: [{ privateKey: seed, message }] })
   seed.fill(0)
   message.fill(0)
   expect(await pending).toEqual([expected])
@@ -41,7 +45,7 @@ test('a large batch leaves the event loop free while it computes', async () => {
   let ticks = 0
   const timer = setInterval(() => ticks++, 1)
   try {
-    const signatures = await provider.signBatch('EdDSA', items)
+    const signatures = await provider.signBatch({ alg: 'EdDSA', items })
     expect(signatures).toHaveLength(2000)
   } finally {
     clearInterval(timer)
