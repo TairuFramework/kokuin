@@ -6,7 +6,7 @@
 npm install @kokuin/jwe
 ```
 
-## Crypto provider migration to 0.2.0
+## Crypto provider migration to 0.7.0
 
 `UnwrapOptions` gains `crypto?: CryptoProvider` for `unwrapEnvelope`.
 Signed verification forwards it through JWS, JWS-in-JWE and JWE-in-JWS modes.

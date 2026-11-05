@@ -218,7 +218,7 @@ Leaf lists request missing decisions, later decisions, greater equal-order conte
 A requester-only record causes no fetch in this direction. The reverse pass handles the other direction.
 Fetched records still require `applyRecordChunk` with the same `opKind` and authorization policy.
 
-### Records migration to 0.3.0
+### Records migration to 0.7.0
 
 `VerifiedRecordOp` now requires `contentDigest: string`. Verification computes it before returning the operation.
 Verified operations contain frozen, owned claims and a protected digest. Synchronous decisions consume this carried digest.

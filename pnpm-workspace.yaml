@@ -20,6 +20,30 @@ nodeLinker: hoisted
 versioning:
   changelog:
     storage: repository
+  # All published packages move as one version, so downstream adopters can read one number.
+  # Globs are not supported, so the group is listed by exact name.
+  fixed:
+    - - '@kokuin/browser'
+      - '@kokuin/capability'
+      - '@kokuin/controller'
+      - '@kokuin/crypto'
+      - '@kokuin/crypto-napi'
+      - '@kokuin/crypto-native'
+      - '@kokuin/crypto-node'
+      - '@kokuin/deterministic'
+      - '@kokuin/electron'
+      - '@kokuin/expo'
+      - '@kokuin/jwe'
+      - '@kokuin/ledger-device'
+      - '@kokuin/node'
+      - '@kokuin/oauth'
+      - '@kokuin/otel'
+      - '@kokuin/records'
+      - '@kokuin/store-controller'
+      - '@kokuin/store-delegation'
+      - '@kokuin/store-vault'
+      - '@kokuin/token'
+      - '@kokuin/vault'
   # Private packages are never released. They must be listed by exact name --
   # `versioning.ignore` does not accept globs, and leaving one out makes
   # `pnpm change status` / `pnpm version -r` fail once a bump has to propagate

@@ -23,7 +23,7 @@ The synchronous `entry.provide()` cannot hold a cross-process lock (a file lock 
 acquired synchronously), so it throws when the store was opened with a `lockPath`; use
 `provideAsync()` instead.
 
-## Crypto provider migration to 0.5.0
+## Crypto provider migration to 0.7.0
 
 `ElectronKeyStoreParams` gains `crypto?: CryptoProvider` for construction and `ElectronKeyStore.open(params?)`.
 Software identities capture that provider for asynchronous signing. Omission selects strict `nobleCrypto`.

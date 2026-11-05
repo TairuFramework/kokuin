@@ -4,7 +4,7 @@
 
 `@kokuin/crypto-node` runs Ed25519 signing and ES256 verification on `node:crypto` with a JavaScript low-S check. It delegates Ed25519 verification and blake3 to strict noble.
 `@kokuin/crypto-napi` runs the Rust core through Node-API. Today it builds from source for the CI host only.
-Both packages float independently, like `@kokuin/crypto-native`.
+Both packages share the fixed release group, like `@kokuin/crypto-native`.
 
 `@kokuin/crypto-napi` falls back to `@kokuin/crypto-node` when no prebuilt binary loads. The choice happens once, at provider construction.
 This differs from the mobile no-fallback rule on purpose: Node has a conformant pure-JavaScript route, and an unsupported platform must not fail installation.

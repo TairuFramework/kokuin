@@ -184,7 +184,7 @@ Propagate errors out of the host transaction so it rolls back. Temporary keys an
 `nextHLC` belongs to the host. It must provide canonical, increasing stamps and any required restart floor.
 Crypto-only hosts continue to use `@kokuin/vault` directly.
 
-## Crypto provider migration to 0.3.0
+## Crypto provider migration to 0.7.0
 
 `VaultRecordsParams` and `VaultCoordinatorParams` gain `crypto?: CryptoProvider`.
 `createVaultRecords(params)` and `createVaultCoordinator(params)` remain synchronous and capture provider options.

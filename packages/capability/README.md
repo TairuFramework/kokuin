@@ -6,7 +6,7 @@
 npm install @kokuin/capability
 ```
 
-## Crypto provider migration to 0.6.0
+## Crypto provider migration to 0.7.0
 
 `CreateCapabilityOptions`, `DelegationChainOptions` and `RevocationOptions` gain `crypto?: CryptoProvider`.
 `createCapability`, `checkDelegationChain` and `checkCapability` forward it through parent and chain verification.

@@ -6,7 +6,7 @@
 npm install @kokuin/controller
 ```
 
-## Crypto provider migration to 0.3.0
+## Crypto provider migration to 0.7.0
 
 Signing, verification, folding, history, log helpers, device revocation and controller identity construction now return Promises.
 Positional APIs append `CryptoOptions`. Existing builder parameter objects gain `crypto?: CryptoProvider`.

@@ -19,7 +19,7 @@ seconds will abort every signature before it can be approved.
 
 Rejecting a review throws `LedgerUserRejectedError` (status word `0x6985`).
 
-## Verification dependency update to 0.2.6
+## Verification dependency update to 0.7.0
 
 This dependency patch joins the strict-token cutover. Hardware APDU signing, construction options and the device protocol remain unchanged.
 Ledger construction gains no crypto option. Verification selects providers through token, capability or controller options.

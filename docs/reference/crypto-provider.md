@@ -4,7 +4,7 @@
 `@kokuin/crypto-native` exports `createNativeCrypto()` for explicit Nitro construction.
 `@kokuin/crypto-node` exports `nodeCrypto`, which runs part of the contract on `node:crypto` (see [Node provider](#node-provider)).
 `@kokuin/crypto-napi` exports `createNapiCrypto()`, the Rust core through Node-API (see [Node-API provider](#node-api-provider)).
-All four packages are prepared at version 0.1.0. Publishing is a separate step.
+All four packages first release at 0.7.0, with the rest of the fixed group. Publishing is a separate step.
 
 Token identities, token verification, capabilities, revocations and JWE envelope verification accept provider injection.
 Controller, records, vault and software identity stores also accept provider injection.
@@ -25,12 +25,12 @@ Local tarball installations must override the unpublished portable dependency:
 ```yaml
 # Consumer pnpm-workspace.yaml
 overrides:
-  '@kokuin/crypto': 'file:./kokuin-crypto-0.1.0.tgz'
+  '@kokuin/crypto': 'file:./kokuin-crypto-0.7.0.tgz'
 ```
 
 ```sh
-pnpm add ./kokuin-crypto-0.1.0.tgz
-pnpm add ./kokuin-crypto-native-0.1.0.tgz react-native-nitro-modules@0.37.1
+pnpm add ./kokuin-crypto-0.7.0.tgz
+pnpm add ./kokuin-crypto-native-0.7.0.tgz react-native-nitro-modules@0.37.1
 ```
 
 Portable applications require only the first command.
@@ -360,10 +360,10 @@ Internal `createControllerResolverWithin` remains synchronous and accepts the ex
 
 | Package target | Provider entry points |
 | --- | --- |
-| node 0.5.0 | `NodeKeyStoreParams.crypto?`, constructor and `NodeKeyStore.open(params)` |
-| electron 0.5.0 | `ElectronKeyStoreParams.crypto?`, constructor and `ElectronKeyStore.open(params?)` |
-| expo 0.5.0 | Constructor and `ExpoKeyStore.open(options?)` accept `StoreEntryOptions & { crypto?: CryptoProvider }` |
-| deterministic 0.3.0 | `HDKeyStoreParams.crypto?`, constructor, `fromSeed({ seed, basePath?, crypto? })`, `fromMnemonic({ mnemonic, basePath?, crypto? })` |
+| node 0.7.0 | `NodeKeyStoreParams.crypto?`, constructor and `NodeKeyStore.open(params)` |
+| electron 0.7.0 | `ElectronKeyStoreParams.crypto?`, constructor and `ElectronKeyStore.open(params?)` |
+| expo 0.7.0 | Constructor and `ExpoKeyStore.open(options?)` accept `StoreEntryOptions & { crypto?: CryptoProvider }` |
+| deterministic 0.7.0 | `HDKeyStoreParams.crypto?`, constructor, `fromSeed({ seed, basePath?, crypto? })`, `fromMnemonic({ mnemonic, basePath?, crypto? })` |
 
 HD factory options retain `basePath?` alongside `crypto?`.
 Node, Electron and Expo reject reopening cached stores with a different resolved provider reference.

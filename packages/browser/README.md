@@ -19,7 +19,7 @@ WebCrypto will not let an ECDSA key do `deriveBits`, so a legacy record cannot d
 since it promises decryption. Legacy records are never silently re-keyed, since that would
 change the identity's DID.
 
-## Verification alignment to 0.3.0
+## Verification alignment to 0.7.0
 
 This release joins the coordinated strict-token cutover. Browser identity construction and WebCrypto signing retain their existing contracts.
 Browser constructors gain no crypto option. Verification selects providers through token, capability or controller options.

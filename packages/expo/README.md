@@ -6,7 +6,7 @@
 npm install @kokuin/expo
 ```
 
-## Crypto provider migration to 0.5.0
+## Crypto provider migration to 0.7.0
 
 The constructor and `ExpoKeyStore.open(options?)` accept `StoreEntryOptions & { crypto?: CryptoProvider }`.
 Identities capture the provider for asynchronous software signing. Omission selects strict `nobleCrypto`.

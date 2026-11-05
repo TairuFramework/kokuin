@@ -6,7 +6,7 @@
 npm install @kokuin/deterministic
 ```
 
-## Crypto provider migration to 0.3.0
+## Crypto provider migration to 0.7.0
 
 `HDKeyStoreParams` gains `crypto?: CryptoProvider`.
 `HDKeyStore.fromSeed({ seed, basePath?, crypto? })` and `HDKeyStore.fromMnemonic({ mnemonic, basePath?, crypto? })` accept `crypto?` alongside `basePath?`.

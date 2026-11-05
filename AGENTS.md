@@ -31,10 +31,8 @@ See the `kigu:conventions` skill. Repo-specific only:
 - Every private package must be listed in `versioning.ignore` by exact name -- globs are not
   supported, and an omitted one makes `pnpm change status` / `pnpm version -r` crash as soon as a
   bump has to propagate into it.
-- token, capability, browser, node, and deterministic are bumped together by releaser judgement,
-  not a `versioning.fixed` group -- pnpm cascades a patch through the internal workspace
-  dependency graph on its own. `expo`, `electron`, and `ledger-device` are SDK/hardware-bound and
-  float independently.
+- Every published package moves as one version under `versioning.fixed`, so downstream adopters
+  read one number. Add each new published package to the group by exact name.
 - Store methods (`@kokuin/store-*`) use `withStoreTransaction` from `@hozon/db`, never
   `.transaction()`: it joins an enclosing transaction instead of nesting one. No statement binds
   more than 500 parameters.

@@ -33,7 +33,7 @@ The standalone providers came from the [standalone delivery](2026-10-27-crypto-c
 - records: async claim, payload, range and reconciliation hashing with carried content digests.
 - vault, store-vault and store-delegation: provider-routed digests, key IDs, metadata validation, decoding, wrapping, coordinator and revocation wrappers.
 - node, electron, expo and deterministic: provider capture and reopen-conflict rejection.
-- Migration notes in each package README, a provider adoption section in the crypto provider reference, and minor release intents per the release matrix. `@kokuin/crypto` is unpublished, so it first releases at 0.1.0 with the validation cache.
+- Migration notes in each package README, a provider adoption section in the crypto provider reference, and minor release intents per the release matrix. Every published package joins `versioning.fixed` and levels to 0.7.0, so downstream adopters read one version. `@kokuin/crypto` first releases there with the validation cache.
 - Downstream handoffs: [enkaku](../next/2026-11-04-enkaku-crypto-provider-handoff.md) and [kumiai](../next/2026-11-04-kumiai-crypto-provider-handoff.md).
 
 Verification: workspace build and type checks, the full unit suite and Biome pass. CPU-heavy controller suites need normal scheduling priority to stay inside their timeouts.

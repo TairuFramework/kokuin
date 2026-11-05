@@ -73,7 +73,7 @@ Recipient DIDs retain their resolvable long form. `wrappableDID` selects that fo
 The package also exports the public key, wrapping, entry-set and descriptor digest helpers,
 pure factor reconstruction and eligibility checks, a cloning TTL key cache, and an optional in-memory PIN throttle.
 
-## Crypto provider migration to 0.2.0
+## Crypto provider migration to 0.7.0
 
 All functions below accept top-level `crypto?` in named params objects and now require `await`.
 

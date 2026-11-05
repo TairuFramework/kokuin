@@ -24,31 +24,32 @@ A permissive provider must never prime acceptance for a rejecting provider.
 These are manifest-based release targets, not claims that publication has completed.
 These ranges include the pending breaking signature intents. Recompute the release preview before upgrading.
 Cross-repository dependencies use published `^` ranges, never `workspace:`.
+Every published kokuin package moves together under `versioning.fixed`, so this release is 0.7.0 throughout.
 
 | Package | Target range |
 | --- | --- |
 | `@kokuin/token` | `^0.7.0` |
-| `@kokuin/capability` | `^0.6.0` |
-| `@kokuin/controller` | `^0.3.0` |
-| `@kokuin/records` | `^0.3.0` |
-| `@kokuin/vault` | `^0.2.0` |
-| `@kokuin/store-vault` | `^0.3.0` |
-| `@kokuin/store-controller` | `^0.5.0` |
-| `@kokuin/store-delegation` | `^0.4.0` |
-| `@kokuin/jwe` | `^0.2.0` |
-| `@kokuin/node` | `^0.5.0` |
-| `@kokuin/browser` | `^0.3.0` |
-| `@kokuin/deterministic` | `^0.3.0` |
-| `@kokuin/electron` | `^0.5.0` |
-| `@kokuin/expo` | `^0.5.0` |
-| `@kokuin/ledger-device` | `^0.3.0` |
-| `@kokuin/crypto` | `^0.2.0` |
-| `@kokuin/crypto-native` | `^0.2.0`, only for explicit native construction |
+| `@kokuin/capability` | `^0.7.0` |
+| `@kokuin/controller` | `^0.7.0` |
+| `@kokuin/records` | `^0.7.0` |
+| `@kokuin/vault` | `^0.7.0` |
+| `@kokuin/store-vault` | `^0.7.0` |
+| `@kokuin/store-controller` | `^0.7.0` |
+| `@kokuin/store-delegation` | `^0.7.0` |
+| `@kokuin/jwe` | `^0.7.0` |
+| `@kokuin/node` | `^0.7.0` |
+| `@kokuin/browser` | `^0.7.0` |
+| `@kokuin/deterministic` | `^0.7.0` |
+| `@kokuin/electron` | `^0.7.0` |
+| `@kokuin/expo` | `^0.7.0` |
+| `@kokuin/ledger-device` | `^0.7.0` |
+| `@kokuin/crypto` | `^0.7.0` |
+| `@kokuin/crypto-native` | `^0.7.0`, only for explicit native construction |
 
 Upgrade applicable packages only. Token, capability, browser, node and deterministic share the coordinated release window.
 Controller, records and portable store migrations join that window. Electron and Expo retain independent SDK qualification.
 Ledger has a minor intent for named error constructors. Its signing protocol is unchanged.
-OAuth has a minor intent targeting 0.2.0 for its named error constructor. Private conformance packages remain unpublished.
+OAuth has a minor intent for its named error constructor. Private conformance packages remain unpublished.
 The crypto validation-cache patch intent accompanies the breaking provider minor intent.
 
 ## Token, capability and envelope API differences
@@ -127,10 +128,10 @@ Internal `createControllerResolverWithin` remains synchronous and accepts the ex
 
 | Package target | Provider entry points |
 | --- | --- |
-| node 0.5.0 | `NodeKeyStoreParams.crypto?`, constructor and `NodeKeyStore.open(params)` |
-| electron 0.5.0 | `ElectronKeyStoreParams.crypto?`, constructor and `ElectronKeyStore.open(params?)` |
-| expo 0.5.0 | Constructor and `ExpoKeyStore.open(options?)` accept `StoreEntryOptions & { crypto?: CryptoProvider }` |
-| deterministic 0.3.0 | `HDKeyStoreParams.crypto?`, constructor, `fromSeed({ seed, basePath?, crypto? })`, `fromMnemonic({ mnemonic, basePath?, crypto? })` |
+| node 0.7.0 | `NodeKeyStoreParams.crypto?`, constructor and `NodeKeyStore.open(params)` |
+| electron 0.7.0 | `ElectronKeyStoreParams.crypto?`, constructor and `ElectronKeyStore.open(params?)` |
+| expo 0.7.0 | Constructor and `ExpoKeyStore.open(options?)` accept `StoreEntryOptions & { crypto?: CryptoProvider }` |
+| deterministic 0.7.0 | `HDKeyStoreParams.crypto?`, constructor, `fromSeed({ seed, basePath?, crypto? })`, `fromMnemonic({ mnemonic, basePath?, crypto? })` |
 
 HD factory options retain `basePath?` alongside `crypto?`.
 Node, Electron and Expo reject reopening cached stores with a different resolved provider reference.

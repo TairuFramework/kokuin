@@ -43,7 +43,7 @@ Unchanged `merge` calls still write nothing and require an explicit `markObserve
 
 See [docs/reference/stores.md](../../docs/reference/stores.md).
 
-## Controller contract alignment to 0.5.0
+## Controller contract alignment to 0.7.0
 
 The store retains its existing factory signatures and asynchronous merge callbacks.
 Controller verification now returns Promises. Merge callbacks must await `authoritativeLog` before reading its `.log` result.

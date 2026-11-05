@@ -2,7 +2,7 @@
 
 ## Context
 
-`@kokuin/crypto` and `@kokuin/crypto-native` are prepared at 0.1.0 and verified through independent tarball consumers.
+`@kokuin/crypto` and `@kokuin/crypto-native` first release at 0.7.0 with the fixed group. They were verified at 0.1.0 through independent tarball consumers.
 The [completed delivery](../completed/2026-10-27-crypto-consumer-packages.complete.md) records the implementation boundary.
 Publishing remains a separately authorised action.
 The expanded adversarial corpus and remaining runtime checks precede production-readiness claims.
