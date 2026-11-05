@@ -37,6 +37,8 @@ See the `kigu:conventions` skill. Repo-specific only:
   float independently. Aligning every published package at 0.7.0 was a one-off exception.
 - Run `pnpm run release` on macOS with Xcode and Android NDK 27.1.12297006. It rebuilds stale
   `@kokuin/crypto-native` binaries before publishing anything, so a failed build publishes nothing.
+  It also needs a successful `crypto-napi-prebuilds.yml` run for the exact release commit, and an
+  authenticated `gh`. It downloads those binaries and verifies their attestations.
 - Store methods (`@kokuin/store-*`) use `withStoreTransaction` from `@hozon/db`, never
   `.transaction()`: it joins an enclosing transaction instead of nesting one. No statement binds
   more than 500 parameters.

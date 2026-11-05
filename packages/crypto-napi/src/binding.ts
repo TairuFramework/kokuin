@@ -86,10 +86,21 @@ export function napiTarget(): string {
   return process.platform === 'linux' ? `${base}-${libc()}` : base
 }
 
-/** Where the binary for this platform is expected: `native/kokuin-crypto-napi.<target>.node`. */
+/**
+ * The binary for this platform: `native/kokuin-crypto-napi.<target>.node` beside this package when
+ * present (a local build, or a copy made for a bundle), otherwise the installed
+ * `@kokuin/crypto-napi-<target>` package. Returns the `native/` path when neither exists.
+ */
 export function napiBindingPath(): string {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-  return join(root, 'native', `kokuin-crypto-napi.${napiTarget()}.node`)
+  const local = join(root, 'native', `kokuin-crypto-napi.${napiTarget()}.node`)
+  if (existsSync(local)) return local
+  try {
+    return createRequire(import.meta.url).resolve(`@kokuin/crypto-napi-${napiTarget()}`)
+  } catch {
+    // Unsupported platform, or an install that omitted optional dependencies.
+    return local
+  }
 }
 
 let cached: { binding: NapiBinding | null; failure?: NapiLoadFailure } | undefined

@@ -449,6 +449,47 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.6
+    optionalDependencies:
+      '@kokuin/crypto-napi-darwin-arm64':
+        specifier: workspace:*
+        version: link:../crypto-napi-darwin-arm64
+      '@kokuin/crypto-napi-darwin-x64':
+        specifier: workspace:*
+        version: link:../crypto-napi-darwin-x64
+      '@kokuin/crypto-napi-linux-arm64-gnu':
+        specifier: workspace:*
+        version: link:../crypto-napi-linux-arm64-gnu
+      '@kokuin/crypto-napi-linux-arm64-musl':
+        specifier: workspace:*
+        version: link:../crypto-napi-linux-arm64-musl
+      '@kokuin/crypto-napi-linux-x64-gnu':
+        specifier: workspace:*
+        version: link:../crypto-napi-linux-x64-gnu
+      '@kokuin/crypto-napi-linux-x64-musl':
+        specifier: workspace:*
+        version: link:../crypto-napi-linux-x64-musl
+      '@kokuin/crypto-napi-win32-arm64':
+        specifier: workspace:*
+        version: link:../crypto-napi-win32-arm64
+      '@kokuin/crypto-napi-win32-x64':
+        specifier: workspace:*
+        version: link:../crypto-napi-win32-x64
+
+  packages/crypto-napi-darwin-arm64: {}
+
+  packages/crypto-napi-darwin-x64: {}
+
+  packages/crypto-napi-linux-arm64-gnu: {}
+
+  packages/crypto-napi-linux-arm64-musl: {}
+
+  packages/crypto-napi-linux-x64-gnu: {}
+
+  packages/crypto-napi-linux-x64-musl: {}
+
+  packages/crypto-napi-win32-arm64: {}
+
+  packages/crypto-napi-win32-x64: {}
 
   packages/crypto-native:
     dependencies:

@@ -20,6 +20,17 @@ nodeLinker: hoisted
 versioning:
   changelog:
     storage: repository
+  # crypto-napi pins its binaries exactly, so they must always release together.
+  fixed:
+    - - '@kokuin/crypto-napi'
+      - '@kokuin/crypto-napi-darwin-arm64'
+      - '@kokuin/crypto-napi-darwin-x64'
+      - '@kokuin/crypto-napi-linux-arm64-gnu'
+      - '@kokuin/crypto-napi-linux-arm64-musl'
+      - '@kokuin/crypto-napi-linux-x64-gnu'
+      - '@kokuin/crypto-napi-linux-x64-musl'
+      - '@kokuin/crypto-napi-win32-arm64'
+      - '@kokuin/crypto-napi-win32-x64'
   # Private packages are never released. They must be listed by exact name --
   # `versioning.ignore` does not accept globs, and leaving one out makes
   # `pnpm change status` / `pnpm version -r` fail once a bump has to propagate

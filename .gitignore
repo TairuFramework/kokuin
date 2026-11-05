@@ -11,3 +11,4 @@ packages/crypto-native/android/build
 tests/e2e-expo/android
 lib
 packages/crypto-napi/native
+packages/crypto-napi-*/*.node

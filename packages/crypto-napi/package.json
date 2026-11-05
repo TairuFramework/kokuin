@@ -41,6 +41,16 @@
     "@noble/hashes": "catalog:",
     "@types/node": "catalog:"
   },
+  "optionalDependencies": {
+    "@kokuin/crypto-napi-darwin-arm64": "workspace:*",
+    "@kokuin/crypto-napi-darwin-x64": "workspace:*",
+    "@kokuin/crypto-napi-linux-arm64-gnu": "workspace:*",
+    "@kokuin/crypto-napi-linux-arm64-musl": "workspace:*",
+    "@kokuin/crypto-napi-linux-x64-gnu": "workspace:*",
+    "@kokuin/crypto-napi-linux-x64-musl": "workspace:*",
+    "@kokuin/crypto-napi-win32-arm64": "workspace:*",
+    "@kokuin/crypto-napi-win32-x64": "workspace:*"
+  },
   "engines": {
     "node": ">=22"
   },

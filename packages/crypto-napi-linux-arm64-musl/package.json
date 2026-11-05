@@ -1,0 +1,31 @@
+{
+  "name": "@kokuin/crypto-napi-linux-arm64-musl",
+  "version": "0.7.1",
+  "description": "Prebuilt Node-API binary of @kokuin/crypto-napi for linux-arm64-musl",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TairuFramework/kokuin",
+    "directory": "packages/crypto-napi-linux-arm64-musl"
+  },
+  "license": "MIT",
+  "main": "kokuin-crypto-napi.linux-arm64-musl.node",
+  "exports": {
+    ".": "./kokuin-crypto-napi.linux-arm64-musl.node"
+  },
+  "files": [
+    "kokuin-crypto-napi.linux-arm64-musl.node",
+    "LICENSE"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "musl"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

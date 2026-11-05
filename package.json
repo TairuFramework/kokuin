@@ -11,7 +11,7 @@
     "format": "biome format --write .",
     "lint": "biome check --write ./packages ./tests",
     "prepare": "git config core.hooksPath .githooks",
-    "release": "pnpm run build && node scripts/ensure-crypto-native.mjs && pnpm publish -r",
+    "release": "pnpm run build && node scripts/ensure-crypto-native.mjs && node scripts/ensure-crypto-napi.mjs && pnpm publish -r",
     "test": "turbo run test:types test:unit",
     "test:integration": "pnpm run --filter integration-tests test",
     "test:types": "turbo run test:types"
