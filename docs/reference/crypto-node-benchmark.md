@@ -7,7 +7,7 @@ Each job uploads its JSON report and writes a summary table to the run.
 
 ```sh
 pnpm --filter @kokuin/crypto-napi... build
-node scripts/build-crypto-napi.mjs
+pnpm --filter @kokuin/crypto-napi run build:native
 node scripts/bench-crypto-node.mjs --runs 5 --out report.json
 ```
 

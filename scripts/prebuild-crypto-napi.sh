@@ -12,6 +12,6 @@ command -v pnpm >/dev/null || corepack enable
 
 pnpm install --frozen-lockfile --ignore-scripts
 pnpm --filter "@kokuin/crypto-napi..." build
-node scripts/build-crypto-napi.mjs --package
+pnpm --filter @kokuin/crypto-napi run build:native
 pnpm --filter @kokuin/crypto-napi run test:native
 node scripts/smoke-crypto-napi.mjs

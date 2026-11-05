@@ -1,8 +1,16 @@
 // Installs the packed packages into an empty directory, as a consumer would, and checks the backend
 // on this host: `napi` with the platform package, `node` when optional dependencies are omitted.
-// The platform package must already hold its binary (build-crypto-napi.mjs --package).
+// Needs this host's binary in packages/crypto-napi/native (pnpm run build:native).
 import { execSync } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -25,7 +33,14 @@ function pack(directory) {
 
 const crypto = pack(join(root, 'packages/crypto'))
 const cryptoNode = pack(join(root, 'packages/crypto-node'))
-const binary = pack(join(root, `packages/crypto-napi-${napiTarget()}`))
+const platformDirectory = join(root, 'packages/crypto-napi/npm', napiTarget())
+const binaryName = `kokuin-crypto-napi.${napiTarget()}.node`
+copyFileSync(
+  join(root, 'packages/crypto-napi/native', binaryName),
+  join(platformDirectory, binaryName),
+)
+const binary = pack(platformDirectory)
+rmSync(join(platformDirectory, binaryName))
 
 // The other platforms' packages are not on the registry until this version is released.
 const napiSource = join(work, 'napi-source')

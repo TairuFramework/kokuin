@@ -3,7 +3,7 @@
 //
 //   node scripts/bench-crypto-node.mjs [--out report.json] [--runs 5] [--quick]
 //
-// Build first: `pnpm --filter @kokuin/crypto-napi... build` and `node scripts/build-crypto-napi.mjs`.
+// Build first: `pnpm --filter @kokuin/crypto-napi... build` and `pnpm --filter @kokuin/crypto-napi run build:native`.
 //
 // A run passes when crypto-napi's median wall time is at least 10% below nodeCrypto's and its p95 is
 // at most 10% (plus 20 µs) above nodeCrypto's, allowing for GC and timer noise on shared runners. A cell passes when all but at most one run pass

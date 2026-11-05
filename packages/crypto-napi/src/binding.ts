@@ -80,10 +80,11 @@ function libc(): string {
   return header?.glibcVersionRuntime ? 'gnu' : 'musl'
 }
 
-/** The platform suffix of the binary file name, such as `linux-x64-gnu` or `darwin-arm64`. */
+/** The napi-rs platform suffix of the binary, such as `linux-x64-gnu` or `win32-x64-msvc`. */
 export function napiTarget(): string {
   const base = `${process.platform}-${process.arch}`
-  return process.platform === 'linux' ? `${base}-${libc()}` : base
+  if (process.platform === 'linux') return `${base}-${libc()}`
+  return process.platform === 'win32' ? `${base}-msvc` : base
 }
 
 /**

@@ -34,7 +34,7 @@ against the Rust core, strict noble, `nodeCrypto` and this provider.
 
 Prebuilt binaries install through `optionalDependencies` for linux x64 and arm64 (glibc 2.31 or later, and musl), macOS x64 and arm64,
 and Windows x64 and arm64. Other platforms, and installs that omit optional dependencies, use `nodeCrypto`.
-In this repository, `pnpm --filter @kokuin/crypto-napi run build:native` compiles one for the current host into `native/`,
+In this repository, `pnpm --filter @kokuin/crypto-napi run build:native` uses `@napi-rs/cli` to compile one for the current host into `native/`,
 which takes precedence over an installed package. Requires Node.js 22 or later.
 
 A bundle that moves this package away from `node_modules` must copy `napiBindingPath()` to `native/` next to its output's parent directory,

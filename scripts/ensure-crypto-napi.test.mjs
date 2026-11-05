@@ -6,13 +6,13 @@ import { test } from 'node:test'
 
 import { ensureCryptoNapi } from './ensure-crypto-napi.mjs'
 
-const TARGETS = ['darwin-arm64', 'win32-x64']
+const TARGETS = ['darwin-arm64', 'win32-x64-msvc']
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'kokuin-ensure-napi-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   for (const target of TARGETS) {
-    const directory = join(root, 'packages', `crypto-napi-${target}`)
+    const directory = join(root, 'packages/crypto-napi/npm', target)
     mkdirSync(directory, { recursive: true })
     writeFileSync(
       join(directory, 'package.json'),
@@ -22,7 +22,12 @@ function fixture(t) {
   return root
 }
 
-function fakeRun({ published = [], runs = [{ databaseId: 7 }], artifact = true, attested = true }) {
+function fakeRun({
+  published = [],
+  runs = [{ databaseId: 7 }],
+  artifacts = true,
+  attested = true,
+}) {
   const calls = []
   const run = (command, args) => {
     calls.push([command, ...args].join(' '))
@@ -32,17 +37,8 @@ function fakeRun({ published = [], runs = [{ databaseId: 7 }], artifact = true, 
     }
     if (command === 'git') return 'abc123\n'
     if (args[0] === 'run' && args[1] === 'list') return JSON.stringify(runs)
-    if (args[0] === 'run' && args[1] === 'download') {
-      const target = args[args.indexOf('--name') + 1].slice('crypto-napi-'.length)
-      if (artifact) {
-        writeFileSync(
-          join(args[args.indexOf('--dir') + 1], `kokuin-crypto-napi.${target}.node`),
-          '',
-        )
-      }
-      return ''
-    }
     if (args[0] === 'attestation' && !attested) throw new Error('Verification failed')
+    if (args.includes('artifacts') && !artifacts) throw new Error('Missing artifacts')
     return ''
   }
   return { calls, run }
@@ -63,6 +59,7 @@ test('fetches and verifies every binary when one package is unpublished', (t) =>
   )
   assert.equal(calls.filter((call) => call.includes('run download 7')).length, 2)
   assert.equal(calls.filter((call) => call.includes('attestation verify')).length, 2)
+  assert.match(calls.at(-1), /napi artifacts --output-dir .+ --npm-dir npm/)
 })
 
 test('stops without a successful run for this commit', (t) => {
@@ -70,9 +67,9 @@ test('stops without a successful run for this commit', (t) => {
   assert.throws(() => ensureCryptoNapi(fixture(t), run), /No successful .* run for abc123/)
 })
 
-test('stops when an artifact lacks its binary', (t) => {
-  const { run } = fakeRun({ artifact: false })
-  assert.throws(() => ensureCryptoNapi(fixture(t), run), /did not contain/)
+test('stops when a target has no binary', (t) => {
+  const { run } = fakeRun({ artifacts: false })
+  assert.throws(() => ensureCryptoNapi(fixture(t), run), /Missing artifacts/)
 })
 
 test('stops when an attestation does not verify', (t) => {

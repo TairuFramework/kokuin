@@ -1,8 +1,9 @@
 // Puts the attested binaries of this exact commit into their platform packages before a release.
-// They cannot be built on one machine, so CI builds them. Publishing without them would ship empty
-// packages, so any missing or unverifiable binary stops the release.
+// They cannot be built on one machine, so CI builds them. `napi artifacts` then fails unless every
+// configured target has its binary, so a missing one stops the release before anything publishes.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -10,10 +11,7 @@ const WORKFLOW = 'crypto-napi-prebuilds.yml'
 const REPOSITORY = 'TairuFramework/kokuin'
 
 export function platformTargets(root) {
-  return readdirSync(join(root, 'packages'))
-    .filter((name) => name.startsWith('crypto-napi-'))
-    .map((name) => name.slice('crypto-napi-'.length))
-    .sort()
+  return readdirSync(join(root, 'packages/crypto-napi/npm')).sort()
 }
 
 function isPublished(run, name, version) {
@@ -27,8 +25,8 @@ function isPublished(run, name, version) {
 export function ensureCryptoNapi(root, run) {
   const targets = platformTargets(root)
   const allPublished = targets.every((target) => {
-    const directory = join(root, 'packages', `crypto-napi-${target}`)
-    const { name, version } = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'))
+    const manifest = join(root, 'packages/crypto-napi/npm', target, 'package.json')
+    const { name, version } = JSON.parse(readFileSync(manifest, 'utf8'))
     return isPublished(run, name, version)
   })
   if (allPublished) return false
@@ -57,22 +55,36 @@ export function ensureCryptoNapi(root, run) {
       `No successful ${WORKFLOW} run for ${commit}. Run: gh workflow run ${WORKFLOW} --ref main`,
     )
   }
-  for (const target of targets) {
-    const directory = join(root, 'packages', `crypto-napi-${target}`)
-    const binary = join(directory, `kokuin-crypto-napi.${target}.node`)
-    run('gh', [
-      'run',
-      'download',
-      String(latest.databaseId),
-      '--repo',
-      REPOSITORY,
-      '--name',
-      `crypto-napi-${target}`,
-      '--dir',
-      directory,
+  const downloads = mkdtempSync(join(tmpdir(), 'crypto-napi-artifacts-'))
+  try {
+    for (const target of targets) {
+      const binary = join(downloads, `kokuin-crypto-napi.${target}.node`)
+      run('gh', [
+        'run',
+        'download',
+        String(latest.databaseId),
+        '--repo',
+        REPOSITORY,
+        '--name',
+        `crypto-napi-${target}`,
+        '--dir',
+        downloads,
+      ])
+      run('gh', ['attestation', 'verify', binary, '--repo', REPOSITORY])
+    }
+    run('pnpm', [
+      '--filter',
+      '@kokuin/crypto-napi',
+      'exec',
+      'napi',
+      'artifacts',
+      '--output-dir',
+      downloads,
+      '--npm-dir',
+      'npm',
     ])
-    if (!existsSync(binary)) throw new Error(`The artifact did not contain ${binary}`)
-    run('gh', ['attestation', 'verify', binary, '--repo', REPOSITORY])
+  } finally {
+    rmSync(downloads, { recursive: true, force: true })
   }
   return true
 }

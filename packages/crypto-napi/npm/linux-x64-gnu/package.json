@@ -5,17 +5,16 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/TairuFramework/kokuin",
-    "directory": "packages/crypto-napi-linux-x64-gnu"
+    "directory": "packages/crypto-napi/npm/linux-x64-gnu"
   },
   "license": "MIT",
-  "exports": {
-    ".": "./kokuin-crypto-napi.linux-x64-gnu.node"
-  },
   "main": "kokuin-crypto-napi.linux-x64-gnu.node",
   "files": [
-    "kokuin-crypto-napi.linux-x64-gnu.node",
-    "LICENSE"
+    "kokuin-crypto-napi.linux-x64-gnu.node"
   ],
+  "engines": {
+    "node": ">=22"
+  },
   "os": [
     "linux"
   ],

@@ -13,8 +13,6 @@ on:
       - "packages/crypto/**"
       - "packages/crypto-node/**"
       - "packages/crypto-napi/**"
-      - "packages/crypto-napi-*/**"
-      - "scripts/build-crypto-napi.mjs"
       - "scripts/ensure-crypto-napi*.mjs"
       - "scripts/prebuild-crypto-napi.sh"
       - "scripts/smoke-crypto-napi.mjs"
@@ -52,8 +50,8 @@ jobs:
           - { target: linux-arm64-musl, runner: ubuntu-24.04-arm, image: "node:24-alpine" }
           - { target: darwin-x64, runner: macos-15-intel }
           - { target: darwin-arm64, runner: macos-latest }
-          - { target: win32-x64, runner: windows-latest }
-          - { target: win32-arm64, runner: windows-11-arm }
+          - { target: win32-x64-msvc, runner: windows-latest }
+          - { target: win32-arm64-msvc, runner: windows-11-arm }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
@@ -76,14 +74,15 @@ jobs:
           docker create --name prebuild -i -w /work -e CI=true "${{ matrix.image }}" \
             sh -c 'tar x && sh scripts/prebuild-crypto-napi.sh'
           git archive HEAD | docker start -ai prebuild
-          docker cp "prebuild:/work/packages/crypto-napi-${{ matrix.target }}/kokuin-crypto-napi.${{ matrix.target }}.node" \
-            "packages/crypto-napi-${{ matrix.target }}/"
+          mkdir -p packages/crypto-napi/native
+          docker cp "prebuild:/work/packages/crypto-napi/native/kokuin-crypto-napi.${{ matrix.target }}.node" \
+            packages/crypto-napi/native/
       - uses: actions/upload-artifact@v7
         with:
           name: crypto-napi-${{ matrix.target }}
-          path: packages/crypto-napi-${{ matrix.target }}/*.node
+          path: packages/crypto-napi/native/*.node
           if-no-files-found: error
       - if: github.event_name != 'pull_request'
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: packages/crypto-napi-${{ matrix.target }}/*.node
+          subject-path: packages/crypto-napi/native/*.node

@@ -1,0 +1,27 @@
+{
+  "name": "@kokuin/crypto-napi-win32-arm64-msvc",
+  "version": "0.7.1",
+  "description": "Prebuilt Node-API binary of @kokuin/crypto-napi for win32-arm64-msvc",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TairuFramework/kokuin",
+    "directory": "packages/crypto-napi/npm/win32-arm64-msvc"
+  },
+  "license": "MIT",
+  "main": "kokuin-crypto-napi.win32-arm64-msvc.node",
+  "files": [
+    "kokuin-crypto-napi.win32-arm64-msvc.node"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -5,17 +5,16 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/TairuFramework/kokuin",
-    "directory": "packages/crypto-napi-darwin-x64"
+    "directory": "packages/crypto-napi/npm/darwin-x64"
   },
   "license": "MIT",
-  "exports": {
-    ".": "./kokuin-crypto-napi.darwin-x64.node"
-  },
   "main": "kokuin-crypto-napi.darwin-x64.node",
   "files": [
-    "kokuin-crypto-napi.darwin-x64.node",
-    "LICENSE"
+    "kokuin-crypto-napi.darwin-x64.node"
   ],
+  "engines": {
+    "node": ">=22"
+  },
   "os": [
     "darwin"
   ],
