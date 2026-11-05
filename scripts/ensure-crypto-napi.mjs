@@ -1,36 +1,17 @@
-// Puts the attested binaries of this exact commit into their platform packages before a release.
-// They cannot be built on one machine, so CI builds them. `napi artifacts` then fails unless every
-// configured target has its binary, so a missing one stops the release before anything publishes.
+// Runs from a platform package's prepublishOnly, so every publish path gets the attested binary of
+// this exact commit. They cannot be built on one machine, so CI builds them. Any failure stops the
+// publish: npm versions cannot be replaced afterwards.
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const WORKFLOW = 'crypto-napi-prebuilds.yml'
 const REPOSITORY = 'TairuFramework/kokuin'
 
-export function platformTargets(root) {
-  return readdirSync(join(root, 'packages/crypto-napi/npm')).sort()
-}
-
-function isPublished(run, name, version) {
-  try {
-    return run('npm', ['view', `${name}@${version}`, 'version']).trim() === version
-  } catch {
-    return false
-  }
-}
-
-export function ensureCryptoNapi(root, run) {
-  const targets = platformTargets(root)
-  const allPublished = targets.every((target) => {
-    const manifest = join(root, 'packages/crypto-napi/npm', target, 'package.json')
-    const { name, version } = JSON.parse(readFileSync(manifest, 'utf8'))
-    return isPublished(run, name, version)
-  })
-  if (allPublished) return false
-
+export function ensureCryptoNapi(directory, run) {
+  const { main } = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'))
   const commit = run('git', ['rev-parse', 'HEAD']).trim()
   const [latest] = JSON.parse(
     run('gh', [
@@ -52,49 +33,34 @@ export function ensureCryptoNapi(root, run) {
   )
   if (latest == null) {
     throw new Error(
-      `No successful ${WORKFLOW} run for ${commit}. Run: gh workflow run ${WORKFLOW} --ref main`,
+      `No successful ${WORKFLOW} run for ${commit}. Wait for it, or run: gh workflow run ${WORKFLOW} --ref main`,
     )
   }
-  const downloads = mkdtempSync(join(tmpdir(), 'crypto-napi-artifacts-'))
+  const downloads = mkdtempSync(join(tmpdir(), 'crypto-napi-artifact-'))
   try {
-    for (const target of targets) {
-      const binary = join(downloads, `kokuin-crypto-napi.${target}.node`)
-      run('gh', [
-        'run',
-        'download',
-        String(latest.databaseId),
-        '--repo',
-        REPOSITORY,
-        '--name',
-        `crypto-napi-${target}`,
-        '--dir',
-        downloads,
-      ])
-      run('gh', ['attestation', 'verify', binary, '--repo', REPOSITORY])
-    }
-    run('pnpm', [
-      '--filter',
-      '@kokuin/crypto-napi',
-      'exec',
-      'napi',
-      'artifacts',
-      '--output-dir',
+    const binary = join(downloads, main)
+    run('gh', [
+      'run',
+      'download',
+      String(latest.databaseId),
+      '--repo',
+      REPOSITORY,
+      '--name',
+      `crypto-napi-${basename(directory)}`,
+      '--dir',
       downloads,
-      '--npm-dir',
-      'npm',
     ])
+    run('gh', ['attestation', 'verify', binary, '--repo', REPOSITORY])
+    // Overwrites: a binary left by an earlier release is not this commit's.
+    copyFileSync(binary, join(directory, main))
   } finally {
     rmSync(downloads, { recursive: true, force: true })
   }
-  return true
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-  const fetched = ensureCryptoNapi(root, (command, args) => {
-    return execFileSync(command, args, { cwd: root, encoding: 'utf8' })
+  const directory = process.cwd()
+  ensureCryptoNapi(directory, (command, args) => {
+    return execFileSync(command, args, { cwd: directory, encoding: 'utf8' })
   })
-  console.log(
-    fetched ? 'Fetched and verified crypto-napi binaries' : 'crypto-napi binaries are published',
-  )
 }
