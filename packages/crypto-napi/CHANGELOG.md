@@ -1,5 +1,11 @@
 # @kokuin/crypto-napi
 
+## 0.7.1
+
+### Patch Changes
+
+- Fall back to `nodeCrypto` when a CJS bundle leaves the binary path unresolvable, instead of throwing from `createNapiCrypto()`. `NapiLoadFailure.path` is now optional.
+
 ## 0.7.0
 
 ### Minor Changes

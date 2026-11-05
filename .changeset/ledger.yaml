@@ -66,6 +66,10 @@
   dir: packages/crypto-napi
   intents:
     - crypto-napi-crypto-provider
+"@kokuin/crypto-napi@0.7.1":
+  dir: packages/crypto-napi
+  intents:
+    - crypto-napi-unresolved-binding-path
 "@kokuin/crypto-native@0.7.0":
   dir: packages/crypto-native
   intents:
