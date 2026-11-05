@@ -12,6 +12,9 @@
   "files": [
     "kokuin-crypto-napi.linux-x64-musl.node"
   ],
+  "scripts": {
+    "prepublishOnly": "node ../../../../scripts/ensure-crypto-napi.mjs"
+  },
   "engines": {
     "node": ">=22"
   },
