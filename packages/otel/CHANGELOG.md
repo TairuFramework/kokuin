@@ -1,5 +1,7 @@
 # @kokuin/otel
 
+## 0.7.0
+
 ## 0.3.1
 
 ### Patch Changes

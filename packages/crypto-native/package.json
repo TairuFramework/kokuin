@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/crypto-native",
-  "version": "0.1.0",
+  "version": "0.7.0",
   "description": "Explicit asynchronous native crypto provider for React Native",
   "repository": {
     "type": "git",
@@ -51,8 +51,8 @@
     "@kokuin/crypto": "workspace:^"
   },
   "devDependencies": {
-    "nitrogen": "0.37.1",
-    "react-native-nitro-modules": "0.37.1"
+    "nitrogen": "catalog:",
+    "react-native-nitro-modules": "catalog:"
   },
   "peerDependencies": {
     "react-native": "^0.88.0",

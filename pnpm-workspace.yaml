@@ -20,30 +20,6 @@ nodeLinker: hoisted
 versioning:
   changelog:
     storage: repository
-  # All published packages move as one version, so downstream adopters can read one number.
-  # Globs are not supported, so the group is listed by exact name.
-  fixed:
-    - - '@kokuin/browser'
-      - '@kokuin/capability'
-      - '@kokuin/controller'
-      - '@kokuin/crypto'
-      - '@kokuin/crypto-napi'
-      - '@kokuin/crypto-native'
-      - '@kokuin/crypto-node'
-      - '@kokuin/deterministic'
-      - '@kokuin/electron'
-      - '@kokuin/expo'
-      - '@kokuin/jwe'
-      - '@kokuin/ledger-device'
-      - '@kokuin/node'
-      - '@kokuin/oauth'
-      - '@kokuin/otel'
-      - '@kokuin/records'
-      - '@kokuin/store-controller'
-      - '@kokuin/store-delegation'
-      - '@kokuin/store-vault'
-      - '@kokuin/token'
-      - '@kokuin/vault'
   # Private packages are never released. They must be listed by exact name --
   # `versioning.ignore` does not accept globs, and leaving one out makes
   # `pnpm change status` / `pnpm version -r` fail once a bump has to propagate
@@ -62,14 +38,14 @@ versioning:
 catalog:
   '@electron-forge/cli': ^8.0.1
   '@electron-forge/plugin-vite': ^8.0.1
-  '@hozon/adapter': ^0.2.1
-  '@hozon/db': ^0.5.0
-  '@hozon/node-sqlite': ^0.2.0
-  '@hozon/postgres': ^0.2.0
+  '@hozon/adapter': ^0.3.0
+  '@hozon/db': ^0.5.1
+  '@hozon/node-sqlite': ^0.3.0
+  '@hozon/postgres': ^0.2.1
   '@opentelemetry/api': ^1.10.0
   '@opentelemetry/sdk-trace': ^3.0.0
   '@sozai/async': ^0.4.3
-  '@sozai/codec': ^0.4.3
+  '@sozai/codec': ^0.4.4
   '@sozai/hlc': ^0.1.0
   '@sozai/json': ^0.3.0
   '@sozai/lock': ^0.1.2
@@ -89,51 +65,35 @@ catalog:
   '@types/node': ^26.6.6
   '@types/react': ^19.3.0
   '@types/react-dom': ^19.3.0
-  '@vitejs/plugin-react': ^6.1.2
-  electron: ^45.2.1
+  '@vitejs/plugin-react': ^6.2.1
+  electron: ^45.2.2
   electron-store: ^12.0.0
-  expo: ^58.0.22
+  expo: ^58.0.23
   expo-crypto: ^58.0.7
   expo-file-system: ~58.0.10
-  expo-sharing: ~58.0.20
+  expo-sharing: ~58.0.22
   expo-secure-store: ^58.0.2
   expo-status-bar: ^58.0.4
-  kysely: ^0.29.7
+  kysely: ^0.29.8
   micro-key-producer: ^0.10.2
   postgres: ^3.4.8
   react: 19.3.0
   react-dom: 19.3.0
-  react-native: 0.88.0
+  react-native: 0.88.1
   react-native-web: 0.21.4
   typescript: ^6.0.3
   uint8arrays: ^6.1.1
   vite: ^8.3.5
-  '@kigu/dev': ^0.3.4
+  '@kigu/dev': ^0.3.5
+  nitrogen: 0.37.2
+  react-native-nitro-modules: 0.37.2
 
 catalogMode: prefer
-
-overrides:
-  # extract-zip 2.0.1 (via @electron/packager) pulls yauzl 2.10.0, whose
-  # extraction lets Node exit 0 mid-package on some runtimes (node 24.17, 26).
-  # yauzl 3.x keeps the event loop alive through extraction. See e2e-desktop.
-  yauzl: ^3.4.0
 
 minimumReleaseAgeExclude:
   - '@hozon/*'
   - '@kigu/*'
   - '@sozai/*'
-  - '@expo/cli@57.0.2'
-  - '@expo/fingerprint@0.20.1'
-  - '@expo/inline-modules@0.1.1'
-  - '@expo/local-build-cache-provider@57.0.1'
-  - '@expo/metro-config@57.0.2'
-  - '@expo/prebuild-config@57.0.2'
-  - '@expo/router-server@57.0.1'
-  - babel-preset-expo@57.0.1
-  - expo-asset@57.0.2
-  - expo-constants@57.0.2
-  - expo-modules-autolinking@57.0.2
-  - expo@57.0.0
 
 supportedArchitectures:
   cpu: [ current ]

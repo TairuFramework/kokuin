@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/vault",
-  "version": "0.1.0",
+  "version": "0.7.0",
   "description": "Database-free content keys, ordered factor wrapping and authenticated byte encryption",
   "keywords": [
     "vault",

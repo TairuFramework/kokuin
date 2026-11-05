@@ -1,5 +1,23 @@
 # @kokuin/capability
 
+## 0.7.0
+
+### Minor Changes
+
+- Add crypto to capability, delegation-chain and revocation options. Forward providers through parent and historic revocation verification. Default reverification rejects crafted ZIP-215-only signatures.
+
+  Use named params objects for public signatures and constructors. Export their named types. Preserve behaviour and update migration references.
+
+  `createCapability` takes `{ signer, payload, header?, crypto? }`.
+
+  All public APIs with two or more arguments now take one flat params object. Options fields sit at the top level.
+
+### Patch Changes
+
+- Updated dependencies:
+  - @kokuin/crypto@0.7.0
+  - @kokuin/token@0.7.0
+
 ## 0.5.2
 
 ### Patch Changes

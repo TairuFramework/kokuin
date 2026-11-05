@@ -2,6 +2,10 @@
   dir: packages/browser
   intents:
     - fresh-crabs-flow
+"@kokuin/browser@0.7.0":
+  dir: packages/browser
+  intents:
+    - browser-crypto-provider
 "@kokuin/capability@0.2.2":
   dir: packages/capability
   intents:
@@ -30,6 +34,10 @@
   dir: packages/capability
   intents:
     - canonical-deny-set
+"@kokuin/capability@0.7.0":
+  dir: packages/capability
+  intents:
+    - capability-crypto-provider
 "@kokuin/controller@0.1.0":
   dir: packages/controller
   intents:
@@ -50,22 +58,63 @@
   dir: packages/controller
   intents:
     - smart-tables-dress
+"@kokuin/controller@0.7.0":
+  dir: packages/controller
+  intents:
+    - controller-crypto-provider
+"@kokuin/crypto-napi@0.7.0":
+  dir: packages/crypto-napi
+  intents:
+    - crypto-napi-crypto-provider
+"@kokuin/crypto-native@0.7.0":
+  dir: packages/crypto-native
+  intents:
+    - crypto-native-crypto-provider
+"@kokuin/crypto-node@0.7.0":
+  dir: packages/crypto-node
+  intents:
+    - crypto-node-crypto-provider
+"@kokuin/crypto@0.7.0":
+  dir: packages/crypto
+  intents:
+    - crypto-crypto-provider
+    - crypto-point-validation-cache
 "@kokuin/deterministic@0.2.4":
   dir: packages/deterministic
   intents:
     - fresh-crabs-flow
+"@kokuin/deterministic@0.7.0":
+  dir: packages/deterministic
+  intents:
+    - deterministic-crypto-provider
 "@kokuin/electron@0.4.4":
   dir: packages/electron
   intents:
     - fresh-crabs-flow
+"@kokuin/electron@0.7.0":
+  dir: packages/electron
+  intents:
+    - electron-crypto-provider
 "@kokuin/expo@0.4.2":
   dir: packages/expo
   intents:
     - fresh-crabs-flow
+"@kokuin/expo@0.7.0":
+  dir: packages/expo
+  intents:
+    - expo-crypto-provider
+"@kokuin/jwe@0.7.0":
+  dir: packages/jwe
+  intents:
+    - jwe-crypto-provider
 "@kokuin/ledger-device@0.2.5":
   dir: packages/ledger-device
   intents:
     - fresh-crabs-flow
+"@kokuin/ledger-device@0.7.0":
+  dir: packages/ledger-device
+  intents:
+    - ledger-device-crypto-provider
 "@kokuin/node@0.4.0":
   dir: packages/node
   intents:
@@ -74,6 +123,14 @@
   dir: packages/node
   intents:
     - fresh-crabs-flow
+"@kokuin/node@0.7.0":
+  dir: packages/node
+  intents:
+    - node-crypto-provider
+"@kokuin/oauth@0.7.0":
+  dir: packages/oauth
+  intents:
+    - oauth-crypto-provider
 "@kokuin/otel@0.3.1":
   dir: packages/otel
   intents:
@@ -82,6 +139,10 @@
   dir: packages/records
   intents:
     - record-reads-and-verification
+"@kokuin/records@0.7.0":
+  dir: packages/records
+  intents:
+    - records-crypto-provider
 "@kokuin/store-controller@0.2.0":
   dir: packages/store-controller
   intents:
@@ -94,6 +155,10 @@
   dir: packages/store-controller
   intents:
     - controller-host-operations
+"@kokuin/store-controller@0.7.0":
+  dir: packages/store-controller
+  intents:
+    - store-controller-crypto-provider
 "@kokuin/store-delegation@0.1.1":
   dir: packages/store-delegation
   intents:
@@ -102,6 +167,10 @@
   dir: packages/store-delegation
   intents:
     - wet-mice-repair
+"@kokuin/store-delegation@0.7.0":
+  dir: packages/store-delegation
+  intents:
+    - store-delegation-crypto-provider
 "@kokuin/store-vault@0.1.1":
   dir: packages/store-vault
   intents:
@@ -130,6 +199,10 @@
   dir: packages/store-vault
   intents:
     - vault-provider-scoped-methods
+"@kokuin/store-vault@0.7.0":
+  dir: packages/store-vault
+  intents:
+    - store-vault-crypto-provider
 "@kokuin/token@0.4.0":
   dir: packages/token
   intents:
@@ -161,3 +234,11 @@
   intents:
     - proud-trees-pretend
     - spicy-jobs-hug
+"@kokuin/token@0.7.0":
+  dir: packages/token
+  intents:
+    - token-crypto-provider
+"@kokuin/vault@0.7.0":
+  dir: packages/vault
+  intents:
+    - vault-crypto-provider

@@ -1,5 +1,21 @@
 # @kokuin/browser
 
+## 0.7.0
+
+### Minor Changes
+
+- Align token verification with the strict provider release. Browser identities retain WebCrypto signing and their existing construction API.
+
+  Use named params objects for public signatures and constructors. Export their named types. Preserve behaviour and update migration references.
+
+  All public APIs with two or more arguments now take one flat params object. Options fields sit at the top level.
+
+### Patch Changes
+
+- Updated dependencies:
+  - @kokuin/otel@0.7.0
+  - @kokuin/token@0.7.0
+
 ## 0.2.4
 
 ### Patch Changes

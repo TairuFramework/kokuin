@@ -28,7 +28,7 @@
     "expo-status-bar": "catalog:",
     "react": "catalog:",
     "react-native": "catalog:",
-    "react-native-nitro-modules": "0.37.1"
+    "react-native-nitro-modules": "catalog:"
   },
   "devDependencies": {
     "@types/react": "catalog:",

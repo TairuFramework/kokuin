@@ -1,5 +1,23 @@
 # @kokuin/token
 
+## 0.7.0
+
+### Minor Changes
+
+- Pass crypto through identity and verification options. Identities capture signing providers and verification caches isolate policies. Default reverification rejects crafted ZIP-215-only signatures without a historical rescan or version gate.
+
+  Coalesce concurrent cold token verifications per provider across algorithms into verifyBatch calls. Preserve single verification calls for lone misses and success-only provider-isolated memoisation.
+
+  Use named params objects for public signatures and constructors. Export their named types. Preserve behaviour and update migration references.
+
+  All public APIs with two or more arguments now take one flat params object. Options fields sit at the top level.
+
+### Patch Changes
+
+- Updated dependencies:
+  - @kokuin/crypto@0.7.0
+  - @kokuin/otel@0.7.0
+
 ## 0.6.3
 
 ### Patch Changes

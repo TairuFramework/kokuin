@@ -1,5 +1,19 @@
 # @kokuin/records
 
+## 0.7.0
+
+### Minor Changes
+
+- Await claim and payload digests, payload matching, range helpers and requester reconciliation. Pass crypto alongside method registries in flat params objects. VerifiedRecordOp now requires authenticated contentDigest for synchronous comparisons.
+
+  Use named params objects for public signatures and constructors. Export their named types. Preserve behaviour and update migration references.
+
+### Patch Changes
+
+- Updated dependencies:
+  - @kokuin/crypto@0.7.0
+  - @kokuin/token@0.7.0
+
 ## 0.2.0
 
 ### Minor Changes

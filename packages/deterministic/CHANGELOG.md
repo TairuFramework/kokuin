@@ -1,5 +1,20 @@
 # @kokuin/deterministic
 
+## 0.7.0
+
+### Minor Changes
+
+- Pass crypto alongside basePath to seed and mnemonic factories, or through HDKeyStoreParams. Factories remain synchronous and returned identities capture the software signing provider.
+
+  All public APIs with two or more arguments now take one flat params object. Options fields sit at the top level.
+
+### Patch Changes
+
+- Updated dependencies:
+  - @kokuin/crypto@0.7.0
+  - @kokuin/otel@0.7.0
+  - @kokuin/token@0.7.0
+
 ## 0.2.4
 
 ### Patch Changes
