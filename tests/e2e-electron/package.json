@@ -5,11 +5,12 @@
   "description": "Kokuin electron keystore e2e",
   "main": ".vite/build/main.cjs",
   "scripts": {
-    "package": "electron-forge package",
+    "package": "pnpm --filter @kokuin/crypto-napi run build:native && electron-forge package",
     "start": "electron-forge start",
     "test": "playwright test"
   },
   "dependencies": {
+    "@kokuin/crypto-napi": "workspace:^",
     "@kokuin/electron": "workspace:^",
     "@kokuin/token": "workspace:^",
     "react": "catalog:",

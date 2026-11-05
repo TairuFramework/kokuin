@@ -13,6 +13,8 @@ execFileSync(
   {
     cwd: root,
     stdio: 'inherit',
+    // pnpm is a .cmd shim on Windows, which only a shell can run.
+    shell: process.platform === 'win32',
   },
 )
 const library = {

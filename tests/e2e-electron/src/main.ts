@@ -1,13 +1,30 @@
 import path from 'node:path'
+import { createNapiCrypto, type NapiCrypto } from '@kokuin/crypto-napi'
 import { ElectronKeyStore } from '@kokuin/electron'
 import { stringifyToken } from '@kokuin/token'
 import { app, BrowserWindow, ipcMain } from 'electron'
 
+const nativeCrypto = createNapiCrypto()
+let signCount = 0
+// Counted so a test can tell the keystore signs through this provider: a loaded binding alone
+// would stay green if the keystore fell back to its default.
+const crypto: NapiCrypto = {
+  ...nativeCrypto,
+  sign: (params) => {
+    signCount++
+    return nativeCrypto.sign(params)
+  },
+}
+
 ipcMain.handle('sign', async (_event, payload: Record<string, unknown>, keyID?: string) => {
-  const store = ElectronKeyStore.open({ name: 'KokuinKeystore' })
+  const store = ElectronKeyStore.open({ name: 'KokuinKeystore', crypto })
   const identity = await store.provideIdentity(keyID ?? 'test')
   const token = await identity.signToken({ payload })
   return stringifyToken(token)
+})
+
+ipcMain.handle('crypto-status', () => {
+  return { backend: crypto.backend, failure: crypto.failure, signCount }
 })
 
 const createWindow = () => {
