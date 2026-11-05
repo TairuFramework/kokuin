@@ -85,8 +85,8 @@ catalog:
   uint8arrays: ^6.1.1
   vite: ^8.3.5
   '@kigu/dev': ^0.3.5
-  nitrogen: 0.37.2
-  react-native-nitro-modules: 0.37.2
+  nitrogen: 0.37.1
+  react-native-nitro-modules: 0.37.1
 
 catalogMode: prefer
 
