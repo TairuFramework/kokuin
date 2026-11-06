@@ -115,7 +115,7 @@ export type RecordAuthorizeContext = RecordReceiveContext & {
  * record, the same as a missing one, until a later op satisfies it.
  */
 export type RecordDependency = RecordKey & {
-  satisfiedBy?: (stored: VerifiedRecordOp) => boolean
+  satisfiedBy?: (stored: VerifiedRecordOp) => boolean | Promise<boolean>
 }
 
 /**
@@ -450,14 +450,24 @@ export async function isDependencyUnsatisfiedBy({
     if (result.status === 'rejected') throw result.reason
     return result.value
   })
-  return !ops.some((op) => {
-    return (
+  return !(await anyOpSatisfies(dependency, ops))
+}
+
+async function anyOpSatisfies(
+  dependency: RecordDependency,
+  ops: Array<VerifiedRecordOp | null>,
+): Promise<boolean> {
+  for (const op of ops) {
+    if (
       op?.claim.type === dependency.type &&
       op.claim.owner === dependency.owner &&
       op.claim.id === dependency.id &&
-      (dependency.satisfiedBy?.(op) ?? true)
-    )
-  })
+      (await (dependency.satisfiedBy?.(op) ?? true))
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 async function isParked(candidate: Candidate, ctx: ChunkContext): Promise<boolean> {
@@ -474,14 +484,10 @@ async function isParked(candidate: Candidate, ctx: ChunkContext): Promise<boolea
     const satisfied =
       stored !== null &&
       stored.key.owner === dependency.owner &&
-      snapshot.verified.some(({ op }) => {
-        return (
-          op?.claim.type === dependency.type &&
-          op.claim.owner === dependency.owner &&
-          op.claim.id === dependency.id &&
-          (dependency.satisfiedBy?.(op) ?? true)
-        )
-      })
+      (await anyOpSatisfies(
+        dependency,
+        snapshot.verified.map(({ op }) => op),
+      ))
     if (!satisfied) {
       return true
     }

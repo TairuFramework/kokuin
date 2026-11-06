@@ -923,6 +923,47 @@ describe('dependencies and parking', () => {
       return { keyV2, keyV3, wrapping }
     }
 
+    test('an asynchronous satisfiedBy that answers false parks the record', async () => {
+      const identity = randomIdentity()
+      const { keyV2, wrapping } = await keyAndWrapping(identity)
+      const { store, read } = memoryStore([keyV2])
+      const base = wrappingType()
+      const authorize = vi.fn(ownerBinding)
+      const types = typesOf(keyType(), {
+        ...base,
+        authorize,
+        dependencies: (params) => {
+          return base.dependencies(params).map((dependency) => {
+            return { ...dependency, satisfiedBy: async () => false }
+          })
+        },
+      })
+
+      const result = await applyWith({ records: [wrapping], store, types })
+      expect(result).toEqual({ applied: 0, parked: [wrapping], rejected: [], conflicts: [] })
+      expect(authorize).not.toHaveBeenCalled()
+      expect(read('test.wrapping', 'w')).toBeNull()
+    })
+
+    test('an asynchronous satisfiedBy that answers true applies the record', async () => {
+      const identity = randomIdentity()
+      const { keyV2, wrapping } = await keyAndWrapping(identity)
+      const { store, read } = memoryStore([keyV2])
+      const base = wrappingType()
+      const types = typesOf(keyType(), {
+        ...base,
+        dependencies: (params) => {
+          return base.dependencies(params).map((dependency) => {
+            return { ...dependency, satisfiedBy: async () => true }
+          })
+        },
+      })
+
+      const result = await applyWith({ records: [wrapping], store, types })
+      expect(result).toEqual({ applied: 1, parked: [], rejected: [], conflicts: [] })
+      expect(read('test.wrapping', 'w')).toEqual(wrapping)
+    })
+
     test('parks, and applies once a later chunk stores the version it needs', async () => {
       const identity = randomIdentity()
       const { keyV2, keyV3, wrapping } = await keyAndWrapping(identity)
