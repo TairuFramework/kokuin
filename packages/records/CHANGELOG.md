@@ -1,5 +1,11 @@
 # @kokuin/records
 
+## 0.7.1
+
+### Patch Changes
+
+- RecordDependency.satisfiedBy may be asynchronous, so a dependency can bind to a record digest.
+
 ## 0.7.0
 
 ### Minor Changes

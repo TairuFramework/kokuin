@@ -155,6 +155,10 @@
   dir: packages/records
   intents:
     - records-crypto-provider
+"@kokuin/records@0.7.1":
+  dir: packages/records
+  intents:
+    - ancient-deers-sell
 "@kokuin/store-controller@0.2.0":
   dir: packages/store-controller
   intents:
