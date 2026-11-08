@@ -8,15 +8,14 @@ import type {
   SignItem,
   VerifyItem,
 } from '@kokuin/crypto'
+import { assertUnsharedBytes } from '@kokuin/crypto'
 
 import type { ByteView, Crypto, CryptoRequest } from './Crypto.nitro.js'
 
 const EMPTY = new Uint8Array()
 
 function view(value: Uint8Array): ByteView {
-  if (!(value instanceof Uint8Array) || !(value.buffer instanceof ArrayBuffer))
-    throw new TypeError('Expected an unshared Uint8Array')
-  new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+  assertUnsharedBytes(value)
   return { buffer: value.buffer, offset: value.byteOffset, length: value.byteLength }
 }
 

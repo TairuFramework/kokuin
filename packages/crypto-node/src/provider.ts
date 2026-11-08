@@ -6,7 +6,12 @@ import {
   verify as nodeVerify,
 } from 'node:crypto'
 import type { VerifyItem } from '@kokuin/crypto'
-import { type CryptoAlgorithm, type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
+import {
+  assertUnsharedBytes,
+  type CryptoAlgorithm,
+  type CryptoProvider,
+  nobleCrypto,
+} from '@kokuin/crypto'
 
 type VerifyOneParams = {
   alg: CryptoAlgorithm
@@ -26,18 +31,10 @@ const SPKI_P256_PREFIX = Uint8Array.from([
 ])
 const P256_HALF_ORDER = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n >> 1n
 
-function assertBytes(value: Uint8Array): void {
-  if (!(value instanceof Uint8Array) || !(value.buffer instanceof ArrayBuffer)) {
-    throw new TypeError('Expected an unshared Uint8Array')
-  }
-  // Throws TypeError on a detached buffer.
-  new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
-}
-
 function sign(alg: 'EdDSA', seed: Uint8Array, message: Uint8Array): Uint8Array {
   if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
-  assertBytes(seed)
-  assertBytes(message)
+  assertUnsharedBytes(seed)
+  assertUnsharedBytes(message)
   if (seed.length !== 32) throw new TypeError('Expected a 32-byte Ed25519 seed')
   const der = new Uint8Array(PKCS8_ED25519_PREFIX.length + 32)
   der.set(PKCS8_ED25519_PREFIX)
@@ -59,7 +56,7 @@ function bigIntBE(bytes: Uint8Array): bigint {
 }
 
 function verifyES256(signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array): boolean {
-  for (const bytes of [signature, message, publicKey]) assertBytes(bytes)
+  for (const bytes of [signature, message, publicKey]) assertUnsharedBytes(bytes)
   if (signature.length !== 64) return false
   if (
     !(

@@ -1,4 +1,5 @@
 import { createPublicKey, ECDH, verify as opensslVerify, randomBytes } from 'node:crypto'
+import { runInNewContext } from 'node:vm'
 import { nobleCrypto } from '@kokuin/crypto'
 import { corpus, cryptoConformance, externalConformance } from '@kokuin/crypto-conformance'
 import { p256 } from '@noble/curves/nist.js'
@@ -186,5 +187,25 @@ test('a batch with several invalid items rejects once, leaving no unhandled reje
     expect(unhandled).toEqual([])
   } finally {
     process.off('unhandledRejection', record)
+  }
+})
+
+test('accepts byte inputs from another realm', async () => {
+  const provider = nodeCrypto
+  const input: Uint8Array = runInNewContext('new Uint8Array([1, 2, 3])')
+  expect(input instanceof Uint8Array).toBe(false)
+  const local = new Uint8Array([1, 2, 3])
+  expect(
+    await provider.sign({ alg: 'EdDSA', privateKey: new Uint8Array(32), message: input }),
+  ).toEqual(await provider.sign({ alg: 'EdDSA', privateKey: new Uint8Array(32), message: local }))
+})
+
+test('rejects shared byte inputs from any realm', async () => {
+  const provider = nodeCrypto
+  const foreign: Uint8Array = runInNewContext('new Uint8Array(new SharedArrayBuffer(3))')
+  for (const input of [new Uint8Array(new SharedArrayBuffer(3)), foreign]) {
+    await expect(
+      provider.sign({ alg: 'EdDSA', privateKey: new Uint8Array(32), message: input }),
+    ).rejects.toThrow('Expected an unshared Uint8Array')
   }
 })

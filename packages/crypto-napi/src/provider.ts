@@ -1,4 +1,5 @@
 import type { CryptoAlgorithm, CryptoProvider, VerifyItem } from '@kokuin/crypto'
+import { assertUnsharedBytes } from '@kokuin/crypto'
 import { nodeCrypto } from '@kokuin/crypto-node'
 
 import { loadNapiBinding, type NapiBinding, type NapiLoadFailure } from './binding.js'
@@ -22,24 +23,16 @@ export type NapiCryptoOptions = {
   binding?: NapiBinding | null
 }
 
-function assertBytes(value: Uint8Array): void {
-  if (!(value instanceof Uint8Array) || !(value.buffer instanceof ArrayBuffer)) {
-    throw new TypeError('Expected an unshared Uint8Array')
-  }
-  // Throws TypeError on a detached buffer.
-  new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
-}
-
 function assertSigning(alg: 'EdDSA', seed: Uint8Array, message: Uint8Array): void {
   if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
-  assertBytes(seed)
-  assertBytes(message)
+  assertUnsharedBytes(seed)
+  assertUnsharedBytes(message)
   if (seed.length !== 32) throw new TypeError('Expected a 32-byte Ed25519 seed')
 }
 
 function assertVerifying({ alg, signature, message, publicKey }: AssertVerifyingParams): void {
   if (alg !== 'EdDSA' && alg !== 'ES256') throw new TypeError('Unsupported verification algorithm')
-  for (const bytes of [signature, message, publicKey]) assertBytes(bytes)
+  for (const bytes of [signature, message, publicKey]) assertUnsharedBytes(bytes)
 }
 
 function assertOutputLength(dkLen: number): void {
@@ -175,13 +168,13 @@ function napiProvider(binding: NapiBinding): CryptoProvider {
       })
     },
     async blake3({ input, dkLen }) {
-      assertBytes(input)
+      assertUnsharedBytes(input)
       assertOutputLength(dkLen)
       return binding.blake3({ input, length: dkLen })
     },
     async blake3Batch({ inputs, dkLen }) {
       assertOutputLength(dkLen)
-      for (const input of inputs) assertBytes(input)
+      for (const input of inputs) assertUnsharedBytes(input)
       if (inputs.length === 0) return []
       const total = inputs.reduce((sum, input) => sum + input.length, 0)
       if (total <= BLAKE3_SYNC_BATCH_BYTES)

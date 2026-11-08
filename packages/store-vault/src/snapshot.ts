@@ -1,6 +1,11 @@
 /** Own mutable data while preserving opaque runtime objects and callbacks. */
 export function snapshotData<Value>(value: Value): Value {
-  if (value instanceof Uint8Array) return new Uint8Array(value) as Value
+  if (
+    ArrayBuffer.isView(value) &&
+    Object.prototype.toString.call(value) === '[object Uint8Array]'
+  ) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice() as Value
+  }
   if (Array.isArray(value)) return value.map(snapshotData) as Value
   if (
     value !== null &&
