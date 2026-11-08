@@ -1,5 +1,11 @@
 # @kokuin/store-vault
 
+## 0.7.1
+
+### Patch Changes
+
+- Accept Uint8Arrays from other realms in snapshot clones.
+
 ## 0.7.0
 
 ### Minor Changes

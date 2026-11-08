@@ -1,5 +1,21 @@
 # @kokuin/crypto-napi
 
+## 0.7.4
+
+### Patch Changes
+
+- Accept Uint8Arrays from other realms in byte guards.
+
+- Updated dependencies:
+  - @kokuin/crypto-napi-darwin-arm64@0.7.4
+  - @kokuin/crypto-napi-darwin-x64@0.7.4
+  - @kokuin/crypto-napi-linux-arm64-gnu@0.7.4
+  - @kokuin/crypto-napi-linux-arm64-musl@0.7.4
+  - @kokuin/crypto-napi-linux-x64-gnu@0.7.4
+  - @kokuin/crypto-napi-linux-x64-musl@0.7.4
+  - @kokuin/crypto-napi-win32-arm64-msvc@0.7.4
+  - @kokuin/crypto-napi-win32-x64-msvc@0.7.4
+
 ## 0.7.3
 
 ### Patch Changes

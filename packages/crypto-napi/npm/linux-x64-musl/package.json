@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/crypto-napi-linux-x64-musl",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "Prebuilt Node-API binary of @kokuin/crypto-napi for linux-x64-musl",
   "repository": {
     "type": "git",

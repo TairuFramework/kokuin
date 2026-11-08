@@ -78,19 +78,35 @@
   dir: packages/crypto-napi
   intents:
     - crypto-napi-binaries
+"@kokuin/crypto-napi@0.7.4":
+  dir: packages/crypto-napi
+  intents:
+    - crypto-napi-cross-realm-bytes
 "@kokuin/crypto-native@0.7.0":
   dir: packages/crypto-native
   intents:
     - crypto-native-crypto-provider
+"@kokuin/crypto-native@0.7.1":
+  dir: packages/crypto-native
+  intents:
+    - crypto-native-cross-realm-bytes
 "@kokuin/crypto-node@0.7.0":
   dir: packages/crypto-node
   intents:
     - crypto-node-crypto-provider
+"@kokuin/crypto-node@0.7.1":
+  dir: packages/crypto-node
+  intents:
+    - crypto-node-cross-realm-bytes
 "@kokuin/crypto@0.7.0":
   dir: packages/crypto
   intents:
     - crypto-crypto-provider
     - crypto-point-validation-cache
+"@kokuin/crypto@0.7.1":
+  dir: packages/crypto
+  intents:
+    - crypto-cross-realm-bytes
 "@kokuin/deterministic@0.2.4":
   dir: packages/deterministic
   intents:
@@ -219,6 +235,10 @@
   dir: packages/store-vault
   intents:
     - store-vault-crypto-provider
+"@kokuin/store-vault@0.7.1":
+  dir: packages/store-vault
+  intents:
+    - store-vault-cross-realm-bytes
 "@kokuin/token@0.4.0":
   dir: packages/token
   intents:

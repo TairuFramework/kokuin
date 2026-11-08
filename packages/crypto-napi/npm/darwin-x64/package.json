@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/crypto-napi-darwin-x64",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "Prebuilt Node-API binary of @kokuin/crypto-napi for darwin-x64",
   "repository": {
     "type": "git",

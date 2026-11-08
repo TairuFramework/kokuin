@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/crypto-node",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Strict asynchronous crypto provider using node:crypto where it matches the strict contract",
   "repository": {
     "type": "git",

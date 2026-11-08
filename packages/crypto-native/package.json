@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/crypto-native",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Explicit asynchronous native crypto provider for React Native",
   "repository": {
     "type": "git",
