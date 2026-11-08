@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { expect, test } from 'vitest'
 
 import type { Crypto } from '../src/Crypto.nitro.js'
@@ -93,4 +94,33 @@ test('hash batch membership ignores later caller removals', async () => {
   const operation = provider.blake3Batch({ inputs, dkLen: 32 })
   inputs.pop()
   expect(await operation).toEqual([new Uint8Array(32).fill(3)])
+})
+
+function echoProvider() {
+  return providerFor({
+    abiVersion: 1,
+    execute: async (requests) =>
+      requests.map(({ message }) => {
+        return new Uint8Array(message.buffer, message.offset, message.length).slice().buffer
+      }),
+  })
+}
+
+test('accepts byte inputs from another realm', async () => {
+  const provider = echoProvider()
+  const input: Uint8Array = runInNewContext('new Uint8Array([1, 2, 3])')
+  expect(input instanceof Uint8Array).toBe(false)
+  expect(await provider.blake3({ input, dkLen: 3 })).toEqual(
+    await provider.blake3({ input: new Uint8Array([1, 2, 3]), dkLen: 3 }),
+  )
+})
+
+test('rejects shared byte inputs from any realm', async () => {
+  const provider = echoProvider()
+  const foreign: Uint8Array = runInNewContext('new Uint8Array(new SharedArrayBuffer(3))')
+  for (const input of [new Uint8Array(new SharedArrayBuffer(3)), foreign]) {
+    await expect(provider.blake3({ input, dkLen: 3 })).rejects.toThrow(
+      'Expected an unshared Uint8Array',
+    )
+  }
 })

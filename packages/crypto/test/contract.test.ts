@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { hexToBytes } from '@noble/hashes/utils.js'
 import { expect, test } from 'vitest'
 
@@ -58,4 +59,24 @@ test('validates algorithms and lengths even for empty batches', async () => {
   }
   expect(await nobleCrypto.blake3Batch({ inputs: [], dkLen: 65536 })).toEqual([])
   expect(await nobleCrypto.verifyBatch([])).toEqual([])
+})
+
+test('accepts byte inputs from another realm', async () => {
+  const provider = nobleCrypto
+  const input: Uint8Array = runInNewContext('new Uint8Array([1, 2, 3])')
+  expect(input instanceof Uint8Array).toBe(false)
+  const local = new Uint8Array([1, 2, 3])
+  expect(await provider.blake3({ input, dkLen: 32 })).toEqual(
+    await provider.blake3({ input: local, dkLen: 32 }),
+  )
+})
+
+test('rejects shared byte inputs from any realm', async () => {
+  const provider = nobleCrypto
+  const foreign: Uint8Array = runInNewContext('new Uint8Array(new SharedArrayBuffer(3))')
+  for (const input of [new Uint8Array(new SharedArrayBuffer(3)), foreign]) {
+    await expect(provider.blake3({ input, dkLen: 32 })).rejects.toThrow(
+      'Expected an unshared Uint8Array',
+    )
+  }
 })

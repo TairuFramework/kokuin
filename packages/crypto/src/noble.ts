@@ -3,19 +3,13 @@ import { p256 } from '@noble/curves/nist.js'
 import { blake3 } from '@noble/hashes/blake3.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
 
+import { assertUnsharedBytes } from './bytes.js'
 import type { CryptoProvider, VerifyItem } from './types.js'
-
-function assertBytes(value: Uint8Array): void {
-  if (!(value instanceof Uint8Array) || !(value.buffer instanceof ArrayBuffer)) {
-    throw new TypeError('Expected an unshared Uint8Array')
-  }
-  new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
-}
 
 function sign(alg: 'EdDSA', seed: Uint8Array, message: Uint8Array): Uint8Array {
   if (alg !== 'EdDSA') throw new TypeError('Unsupported signing algorithm')
-  assertBytes(seed)
-  assertBytes(message)
+  assertUnsharedBytes(seed)
+  assertUnsharedBytes(message)
   if (seed.length !== 32) throw new TypeError('Expected a 32-byte Ed25519 seed')
   return ed25519.sign(message, seed)
 }
@@ -48,7 +42,7 @@ function strictPublicKey(bytes: Uint8Array): boolean {
 
 function verify({ alg, signature, message, publicKey }: VerifyItem): boolean {
   if (alg !== 'EdDSA' && alg !== 'ES256') throw new TypeError('Unsupported verification algorithm')
-  for (const bytes of [signature, message, publicKey]) assertBytes(bytes)
+  for (const bytes of [signature, message, publicKey]) assertUnsharedBytes(bytes)
   if (signature.length !== 64) return false
   try {
     if (alg === 'EdDSA') {
@@ -82,7 +76,7 @@ function assertOutputLength(dkLen: number): void {
 }
 
 function hash(input: Uint8Array, dkLen: number): Uint8Array {
-  assertBytes(input)
+  assertUnsharedBytes(input)
   assertOutputLength(dkLen)
   return blake3(input, { dkLen })
 }

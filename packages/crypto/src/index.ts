@@ -1,3 +1,4 @@
+export { assertUnsharedBytes } from './bytes.js'
 export { nobleCrypto } from './noble.js'
 export type {
   CryptoAlgorithm,
