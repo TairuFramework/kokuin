@@ -1,6 +1,7 @@
 import type { CryptoOptions } from '@kokuin/token'
 
 import { digestOf } from './canonical.js'
+import { cloneData } from './clone-data.js'
 import { type EpochEvent, isEpochEventShape, verifyEpochSignature } from './epoch-events.js'
 import { keyFromTarget, type MemberEntry, type SignedEvent } from './events.js'
 import type { KeyState, MemberState } from './fold.js'
@@ -391,7 +392,7 @@ export async function foldEpochDetailed(
   params: FoldEpochParams,
 ): Promise<FoldEpochDetail | FoldEpochRefusal> {
   const { did } = params
-  const chainStates = structuredClone(params.chainStates)
+  const chainStates = cloneData(params.chainStates)
   const events = snapshotEntries(params.events)
   const maxEvents = params.limits?.MAX_EPOCH_EVENTS ?? DEFAULT_EPOCH_LIMITS.MAX_EPOCH_EVENTS
   const anchor = chainStates[chainStates.length - 1] as KeyState
