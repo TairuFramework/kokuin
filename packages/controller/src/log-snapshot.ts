@@ -1,4 +1,5 @@
 import { digestOf, isCanonicalizable } from './canonical.js'
+import { cloneData } from './clone-data.js'
 import { type ControllerLog, isControllerLog } from './log.js'
 
 /** Own canonical bodies before verification suspends; malformed entries still reach refusal guards. */
@@ -7,7 +8,7 @@ export function snapshotEntries(entries: Array<unknown>): Array<unknown> {
     if (entry === null || typeof entry !== 'object') return entry
     const { event, sigs, recoveryKey } = entry as Record<string, unknown>
     return {
-      event: isCanonicalizable({ value: event }) ? structuredClone(event) : undefined,
+      event: isCanonicalizable({ value: event }) ? cloneData(event) : undefined,
       sigs: Array.isArray(sigs) ? [...sigs] : sigs,
       recoveryKey,
     }

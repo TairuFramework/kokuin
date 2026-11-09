@@ -3,6 +3,7 @@ import type { CryptoOptions, DIDString } from '@kokuin/token'
 import { base64urlnopad } from '@scure/base'
 
 import { canonicalBytes, digestOf, isCanonicalizable } from './canonical.js'
+import { cloneData } from './clone-data.js'
 import { agreementPath, authorityPath, deriveKeyPair, recoveryPath } from './derivation.js'
 import type { EpochEventCommon } from './epoch-events.js'
 import { encodeKey, tryDecodeKey } from './keys.js'
@@ -489,8 +490,8 @@ export async function createRotate({
     kt: 1,
     nt: 1,
     a: seal,
-    m: structuredClone(snapshot.members),
-    u: snapshot.removed === undefined ? undefined : structuredClone(snapshot.removed),
+    m: cloneData(snapshot.members),
+    u: snapshot.removed === undefined ? undefined : cloneData(snapshot.removed),
     d: [...snapshot.deny],
   }
 
@@ -636,7 +637,7 @@ export async function createReset({
     // to a blind reset rather than a second encoding of it.
     event.d = []
   } else {
-    event.m = structuredClone(snapshot.members)
+    event.m = cloneData(snapshot.members)
     event.d = [...snapshot.deny]
   }
 
