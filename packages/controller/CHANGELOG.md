@@ -1,5 +1,11 @@
 # @kokuin/controller
 
+## 0.7.1
+
+### Patch Changes
+
+- Restore runtime-neutral controller folding and identity construction without structuredClone while preserving deep snapshot isolation.
+
 ## 0.7.0
 
 ### Minor Changes

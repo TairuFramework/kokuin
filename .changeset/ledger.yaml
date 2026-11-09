@@ -62,6 +62,10 @@
   dir: packages/controller
   intents:
     - controller-crypto-provider
+"@kokuin/controller@0.7.1":
+  dir: packages/controller
+  intents:
+    - tough-tables-smoke
 "@kokuin/crypto-napi@0.7.0":
   dir: packages/crypto-napi
   intents:
