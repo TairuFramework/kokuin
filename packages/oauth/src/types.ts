@@ -8,6 +8,7 @@ export type OAuthProviderDefinition = {
   name: string
   authorizationEndpoint: string
   tokenEndpoint: string
+  deviceAuthorizationEndpoint?: string
   baseScopes?: Array<string>
 } & OAuthClientMode
 

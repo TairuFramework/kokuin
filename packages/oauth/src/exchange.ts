@@ -92,7 +92,7 @@ function assertExchangeableConfig(definition: OAuthProviderDefinition): void {
   }
 }
 
-function validateTokenResponse(value: unknown): TokenResponse {
+export function validateTokenResponse(value: unknown): TokenResponse {
   if (typeof value !== 'object' || value === null) {
     throw new Error('OAuth token response was not an object')
   }

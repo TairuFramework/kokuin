@@ -1,4 +1,5 @@
 export { buildAuthorizationURL } from './authorization.js'
+export { type DeviceAuthorization, pollDeviceToken, startDeviceAuthorization } from './device.js'
 export { exchangeCode, refreshToken } from './exchange.js'
 export { type FetchOAuthJSONParams, fetchOAuthJSON } from './http.js'
 export {
