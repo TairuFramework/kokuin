@@ -55,3 +55,27 @@ export type RequestOptions = {
   timeoutMs?: number
   maxBytes?: number
 }
+
+export type BrokerAuthorizeParams = {
+  provider: string
+  appRedirect: string
+  codeChallenge?: string
+  scopes?: Array<string>
+  authorizationParams?: Record<string, string>
+} & RequestOptions
+
+export type BrokerAuthorizeResult = {
+  url: string
+  state: string
+  transactionToken: string
+}
+
+export type BrokerTokenParams = {
+  provider: string
+  body: Record<string, string>
+} & RequestOptions
+
+export type OAuthBrokerTransport = {
+  authorize(params: BrokerAuthorizeParams): Promise<BrokerAuthorizeResult>
+  token(params: BrokerTokenParams): Promise<unknown>
+}
