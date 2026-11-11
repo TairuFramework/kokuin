@@ -269,6 +269,38 @@ describe('HTTP broker transport', () => {
     expect(signal?.aborted).toBe(true)
   })
 
+  test('baseURL resolver is called per request', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockImplementation(async () => Response.json({ ok: true }))
+    const resolver = vi
+      .fn<() => string | Promise<string>>()
+      .mockReturnValueOnce('https://one.example/')
+      .mockResolvedValueOnce('https://two.example')
+    const broker = createHTTPBrokerTransport({ baseURL: resolver, fetch })
+    await broker.token({ provider: 'example', body: {} })
+    await broker.token({ provider: 'example', body: {} })
+    expect(resolver).toHaveBeenCalledTimes(2)
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://one.example/oauth/example/token')
+    expect(fetch.mock.calls[1]?.[0]).toBe('https://two.example/oauth/example/token')
+  })
+
+  test('baseURL resolver rejection propagates', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+    const failure = new Error('no hub')
+    const broker = createHTTPBrokerTransport({
+      baseURL: async () => {
+        throw failure
+      },
+      fetch,
+    })
+    await expect(broker.token({ provider: 'example', body: {} })).rejects.toBe(failure)
+    await expect(
+      broker.authorize({ provider: 'example', appRedirect: 'app://callback' }),
+    ).rejects.toBe(failure)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   test('rejects malformed authorize responses', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

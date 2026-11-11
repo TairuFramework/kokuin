@@ -2,14 +2,18 @@ import { fetchOAuthJSON } from './http.js'
 import type { BrokerAuthorizeResult, OAuthBrokerTransport } from './types.js'
 
 export type CreateHTTPBrokerTransportParams = {
-  baseURL: string
+  /** A resolver runs on every request, so the URL can change after the transport is created. */
+  baseURL: string | (() => string | Promise<string>)
   fetch: typeof globalThis.fetch
 }
 
 export function createHTTPBrokerTransport(
   params: CreateHTTPBrokerTransportParams,
 ): OAuthBrokerTransport {
-  const baseURL = params.baseURL.replace(/\/+$/, '')
+  const resolveBaseURL = async (): Promise<string> => {
+    const value = typeof params.baseURL === 'function' ? await params.baseURL() : params.baseURL
+    return value.replace(/\/+$/, '')
+  }
   const runtime = { fetch: params.fetch }
   return {
     async authorize({
@@ -20,6 +24,7 @@ export function createHTTPBrokerTransport(
       authorizationParams,
       ...options
     }) {
+      const baseURL = await resolveBaseURL()
       const raw = await fetchOAuthJSON({
         runtime,
         url: `${baseURL}/oauth/${encodeURIComponent(provider)}/authorize`,
@@ -29,7 +34,8 @@ export function createHTTPBrokerTransport(
       })
       return validateBrokerAuthorizeResult(raw)
     },
-    token({ provider, body, ...options }) {
+    async token({ provider, body, ...options }) {
+      const baseURL = await resolveBaseURL()
       return fetchOAuthJSON({
         runtime,
         url: `${baseURL}/oauth/${encodeURIComponent(provider)}/token`,
