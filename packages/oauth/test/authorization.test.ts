@@ -94,3 +94,20 @@ describe('buildAuthorizationURL()', () => {
     expect(url).toEqual(expect.any(String))
   })
 })
+
+describe('buildAuthorizationURL() without scopes', () => {
+  test('omits scope when no scopes are requested', () => {
+    const url = new URL(
+      buildAuthorizationURL({
+        definition,
+        redirectURL: 'https://app/callback',
+        scopes: [],
+        state: 'STATE',
+        codeChallenge: 'CHALLENGE',
+        authorizationParams: { scope: 'injected', resource: 'https://mcp.example/api' },
+      }),
+    )
+    expect(url.searchParams.has('scope')).toBe(false)
+    expect(url.searchParams.get('resource')).toBe('https://mcp.example/api')
+  })
+})
