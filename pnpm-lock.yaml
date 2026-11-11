@@ -224,6 +224,9 @@ catalogs:
     '@sozai/hlc':
       specifier: ^0.1.0
       version: 0.1.0
+    '@sozai/http-util':
+      specifier: ^0.1.0
+      version: 0.1.0
     '@sozai/json':
       specifier: ^0.3.0
       version: 0.3.0
@@ -719,6 +722,9 @@ importers:
       '@sozai/codec':
         specifier: 'catalog:'
         version: 0.4.4
+      '@sozai/http-util':
+        specifier: 'catalog:'
+        version: 0.1.0
       '@sozai/runtime':
         specifier: 'catalog:'
         version: 0.1.0
@@ -3186,6 +3192,9 @@ packages:
 
   '@sozai/hlc@0.1.0':
     resolution: {integrity: sha512-DudiJ1oyqO4VNnjrsQXPoGy5OsbQYnaOgtlH4DTzr2C51XyxrxYgm5l2WhGv/x0Mz0uL2Zxwn6xa00SQlBiFvQ==}
+
+  '@sozai/http-util@0.1.0':
+    resolution: {integrity: sha512-2UsbynlRxF6ZdWzBwyYS9IsP8r1M6L/3i6riPcgTqEcpLeaeVBqoxlF7B+NIDmhxexOQM+YpFaznZfU9L+vlGw==}
 
   '@sozai/json@0.3.0':
     resolution: {integrity: sha512-ArThPadz4kZjDqVnHI+UROwervbL9riIEYQ4b0g9e9mtA22EZ54lvNgsNvEUHL+oK53tlhgmHsgO2w5FwCTrhg==}
@@ -8522,6 +8531,8 @@ snapshots:
       '@sozai/json': 0.3.0
 
   '@sozai/hlc@0.1.0': {}
+
+  '@sozai/http-util@0.1.0': {}
 
   '@sozai/json@0.3.0': {}
 

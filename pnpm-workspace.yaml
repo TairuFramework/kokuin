@@ -59,6 +59,7 @@ catalog:
   '@sozai/async': ^0.4.3
   '@sozai/codec': ^0.4.4
   '@sozai/hlc': ^0.1.0
+  '@sozai/http-util': ^0.1.0
   '@sozai/json': ^0.3.0
   '@sozai/lock': ^0.1.2
   '@sozai/log': ^0.4.0

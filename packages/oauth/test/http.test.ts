@@ -1,7 +1,7 @@
 import type { Runtime } from '@sozai/runtime'
 import { describe, expect, test } from 'vitest'
 
-import { fetchOAuthJSON, OAuthTokenError } from '../src/index.js'
+import { fetchOAuthJSON, OAuthTokenError, requestOAuthJSON } from '../src/index.js'
 import { fakeRuntime } from './fake-runtime.js'
 
 function baseParams(runtime: Runtime) {
@@ -155,11 +155,11 @@ describe('fetchOAuthJSON() GET and loopback', () => {
     expect(capturedInit?.redirect).toBe('error')
   })
 
-  test('accepts an http *.localhost endpoint', async () => {
+  test('refuses an http *.localhost endpoint', async () => {
     const runtime = fakeRuntime()
     await expect(
       fetchOAuthJSON({ runtime, url: 'http://auth.localhost:8080/token', method: 'GET' }),
-    ).resolves.toEqual({})
+    ).rejects.toThrow(/https/i)
   })
 })
 
@@ -191,5 +191,124 @@ describe('fetchOAuthJSON() empty success body', () => {
   test('a non-JSON non-empty 200 body still rejects', async () => {
     const runtime = fakeRuntime({ fetch: async () => new Response('ok', { status: 200 }) })
     await expect(fetchOAuthJSON(post(runtime))).rejects.toThrow('OAuth response was not valid JSON')
+  })
+})
+
+describe('requestOAuthJSON()', () => {
+  const post = (runtime: Runtime) => ({
+    runtime,
+    url: 'https://as/token',
+    body: 'a=b',
+    contentType: 'application/x-www-form-urlencoded',
+  })
+
+  test('returns status and body for a non-2xx response without throwing', async () => {
+    const runtime = fakeRuntime({
+      fetch: async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }),
+    })
+    await expect(requestOAuthJSON(post(runtime))).resolves.toEqual({
+      status: 400,
+      body: { error: 'invalid_grant' },
+    })
+  })
+
+  test('returns status and parsed body for a 2xx response', async () => {
+    const runtime = fakeRuntime({
+      fetch: async () => new Response(JSON.stringify({ ok: true }), { status: 201 }),
+    })
+    await expect(requestOAuthJSON(post(runtime))).resolves.toEqual({
+      status: 201,
+      body: { ok: true },
+    })
+  })
+
+  test('sends custom headers; accept and content-type win over caller values', async () => {
+    let capturedInit: RequestInit | undefined
+    const runtime = fakeRuntime({
+      fetch: async (_url, init) => {
+        capturedInit = init
+        return new Response('{}')
+      },
+    })
+    await requestOAuthJSON({
+      ...post(runtime),
+      headers: {
+        authorization: 'Basic abc',
+        'Content-Type': 'text/plain',
+        Accept: 'text/html',
+      },
+    })
+    const headers = new Headers(capturedInit?.headers)
+    expect(headers.get('authorization')).toBe('Basic abc')
+    expect(headers.get('content-type')).toBe('application/x-www-form-urlencoded')
+    expect(headers.get('accept')).toBe('application/json')
+  })
+
+  test('non-2xx non-JSON body gives undefined body', async () => {
+    const runtime = fakeRuntime({
+      fetch: async () => new Response('gateway timeout', { status: 504 }),
+    })
+    await expect(requestOAuthJSON(post(runtime))).resolves.toEqual({
+      status: 504,
+      body: undefined,
+    })
+  })
+
+  test('non-2xx empty body gives undefined body, even with allowEmpty: false', async () => {
+    const runtime = fakeRuntime({ fetch: async () => new Response('', { status: 500 }) })
+    await expect(requestOAuthJSON({ ...post(runtime), allowEmpty: false })).resolves.toEqual({
+      status: 500,
+      body: undefined,
+    })
+  })
+
+  test('2xx non-JSON body rejects', async () => {
+    const runtime = fakeRuntime({ fetch: async () => new Response('ok', { status: 200 }) })
+    await expect(requestOAuthJSON(post(runtime))).rejects.toThrow(
+      'OAuth response was not valid JSON',
+    )
+  })
+
+  test('2xx empty body resolves undefined by default and rejects with allowEmpty: false', async () => {
+    const runtime = fakeRuntime({ fetch: async () => new Response('', { status: 200 }) })
+    await expect(requestOAuthJSON(post(runtime))).resolves.toEqual({
+      status: 200,
+      body: undefined,
+    })
+    await expect(requestOAuthJSON({ ...post(runtime), allowEmpty: false })).rejects.toThrow(
+      'OAuth response was not valid JSON',
+    )
+  })
+
+  test('GET sends no body or content-type', async () => {
+    let capturedInit: RequestInit | undefined
+    const runtime = fakeRuntime({
+      fetch: async (_url, init) => {
+        capturedInit = init
+        return new Response('{}')
+      },
+    })
+    await requestOAuthJSON({ runtime, url: 'https://as/meta', method: 'GET' })
+    expect(capturedInit?.method).toBe('GET')
+    expect(new Headers(capturedInit?.headers).has('content-type')).toBe(false)
+  })
+
+  test('applies the maxBytes cap', async () => {
+    const runtime = fakeRuntime({ fetch: async () => new Response('x'.repeat(64)) })
+    await expect(requestOAuthJSON({ ...post(runtime), maxBytes: 16 })).rejects.toThrow(/exceeded/i)
+  })
+
+  test('refuses an http endpoint before calling fetch', async () => {
+    let called = false
+    const runtime = fakeRuntime({
+      fetch: async () => {
+        called = true
+        return new Response('{}')
+      },
+    })
+    await expect(
+      requestOAuthJSON({ ...post(runtime), url: 'http://token.example/token' }),
+    ).rejects.toThrow(/https/i)
+    expect(called).toBe(false)
   })
 })

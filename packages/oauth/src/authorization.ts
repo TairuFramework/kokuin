@@ -11,14 +11,17 @@ const PROTECTED_PARAMS = new Set([
   'code_challenge_method',
 ])
 
-export function buildAuthorizationURL(params: {
+export type BuildAuthorizationURLParams = {
   definition: OAuthProviderDefinition
   redirectURL: string
   scopes: Array<string>
   state: string
-  codeChallenge: string
+  /** PKCE S256 challenge. When absent, no `code_challenge` params are set. */
+  codeChallenge?: string
   authorizationParams?: Record<string, string>
-}): string {
+}
+
+export function buildAuthorizationURL(params: BuildAuthorizationURLParams): string {
   const { definition, redirectURL, scopes, state, codeChallenge, authorizationParams } = params
 
   assertSecureURL(definition.authorizationEndpoint)
@@ -41,8 +44,10 @@ export function buildAuthorizationURL(params: {
     search.set('scope', scopes.join(' '))
   }
   search.set('state', state)
-  search.set('code_challenge', codeChallenge)
-  search.set('code_challenge_method', 'S256')
+  if (codeChallenge != null) {
+    search.set('code_challenge', codeChallenge)
+    search.set('code_challenge_method', 'S256')
+  }
 
   return url.toString()
 }

@@ -111,3 +111,19 @@ describe('buildAuthorizationURL() without scopes', () => {
     expect(url.searchParams.get('resource')).toBe('https://mcp.example/api')
   })
 })
+
+describe('buildAuthorizationURL() without PKCE', () => {
+  test('omits code_challenge and code_challenge_method when no codeChallenge is given', () => {
+    const url = new URL(
+      buildAuthorizationURL({
+        definition,
+        redirectURL: 'https://app/callback',
+        scopes: ['openid'],
+        state: 'STATE',
+      }),
+    )
+    expect(url.searchParams.has('code_challenge')).toBe(false)
+    expect(url.searchParams.has('code_challenge_method')).toBe(false)
+    expect(url.searchParams.get('state')).toBe('STATE')
+  })
+})

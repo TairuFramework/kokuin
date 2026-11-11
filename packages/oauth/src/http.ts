@@ -28,10 +28,29 @@ export type FetchOAuthJSONParams = {
 ) &
   RequestOptions
 
+export type RequestOAuthJSONParams = FetchOAuthJSONParams & {
+  /**
+   * Extra request headers, such as `authorization: Basic …`. `accept` and, when there is a body,
+   * `content-type` are always set from the other params and win over the same names here
+   * (case-insensitive).
+   */
+  headers?: Record<string, string>
+}
+
+export type OAuthJSONResponse = {
+  status: number
+  /** The parsed JSON body, or `undefined` for an empty body or a non-JSON non-2xx body. */
+  body: unknown
+}
+
 const DEFAULT_MAX_BYTES = 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 30_000
 
-export async function fetchOAuthJSON(params: FetchOAuthJSONParams): Promise<unknown> {
+/**
+ * Send an OAuth request and return the status with the parsed JSON body. Unlike `fetchOAuthJSON`,
+ * it does not throw on a non-2xx status.
+ */
+export async function requestOAuthJSON(params: RequestOAuthJSONParams): Promise<OAuthJSONResponse> {
   const {
     runtime,
     url,
@@ -39,6 +58,7 @@ export async function fetchOAuthJSON(params: FetchOAuthJSONParams): Promise<unkn
     allowEmpty = true,
     body,
     contentType,
+    headers,
     signal,
     maxBytes = DEFAULT_MAX_BYTES,
     timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -49,12 +69,15 @@ export async function fetchOAuthJSON(params: FetchOAuthJSONParams): Promise<unkn
   const timeoutSignal = AbortSignal.timeout(timeoutMs)
   const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
 
+  const requestHeaders = new Headers(headers)
+  requestHeaders.set('accept', 'application/json')
+  if (contentType != null) {
+    requestHeaders.set('content-type', contentType)
+  }
+
   const response = await runtime.fetch(url, {
     method,
-    headers:
-      contentType == null
-        ? { accept: 'application/json' }
-        : { 'content-type': contentType, accept: 'application/json' },
+    headers: Object.fromEntries(requestHeaders),
     body,
     redirect: 'error',
     signal: combinedSignal,
@@ -62,38 +85,43 @@ export async function fetchOAuthJSON(params: FetchOAuthJSONParams): Promise<unkn
 
   const text = await readCappedText(response, maxBytes)
 
-  if (!response.ok) {
-    throw parseOAuthError(response.status, text)
-  }
-
-  if (allowEmpty && text.trim() === '') {
-    return undefined
+  if (text.trim() === '') {
+    if (response.ok && !allowEmpty) {
+      throw new Error('OAuth response was not valid JSON')
+    }
+    return { status: response.status, body: undefined }
   }
 
   try {
-    return JSON.parse(text) as unknown
+    return { status: response.status, body: JSON.parse(text) as unknown }
   } catch {
+    if (!response.ok) {
+      return { status: response.status, body: undefined }
+    }
     // biome-ignore lint/style/useErrorCause: no parsed error object to attach as cause
     throw new Error('OAuth response was not valid JSON')
   }
 }
 
-function parseOAuthError(status: number, text: string): OAuthTokenError {
+export async function fetchOAuthJSON(params: FetchOAuthJSONParams): Promise<unknown> {
+  const { status, body } = await requestOAuthJSON(params)
+  if (status < 200 || status > 299) {
+    throw toOAuthError(status, body)
+  }
+  return body
+}
+
+function toOAuthError(status: number, body: unknown): OAuthTokenError {
   let code: string | undefined
   let description: string | undefined
-  try {
-    const parsed = JSON.parse(text) as unknown
-    if (parsed != null && typeof parsed === 'object') {
-      const record = parsed as Record<string, unknown>
-      if (typeof record.error === 'string') {
-        code = record.error
-      }
-      if (typeof record.error_description === 'string') {
-        description = record.error_description
-      }
+  if (body != null && typeof body === 'object') {
+    const record = body as Record<string, unknown>
+    if (typeof record.error === 'string') {
+      code = record.error
     }
-  } catch {
-    // non-JSON / empty error body → code undefined (treated as transient by callers)
+    if (typeof record.error_description === 'string') {
+      description = record.error_description
+    }
   }
   return new OAuthTokenError({ status, code, description })
 }
