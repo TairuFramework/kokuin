@@ -216,3 +216,47 @@ describe('refreshToken()', () => {
     ).rejects.toThrow('broker mode requires a broker transport')
   })
 })
+
+describe('token request extra params', () => {
+  test('exchangeCode sends extraParams without overriding protected fields', async () => {
+    const captured: Captured = {}
+    await exchangeCode({
+      definition: native,
+      runtime: tokenRuntime(captured),
+      code: 'CODE',
+      redirectURL: 'https://app/cb',
+      codeVerifier: 'CV',
+      extraParams: {
+        resource: 'https://mcp.example/api',
+        code: 'EVIL',
+        client_id: 'evil',
+        client_secret: 'evil',
+      },
+    })
+    const form = new URLSearchParams(captured.body)
+    expect(form.get('resource')).toBe('https://mcp.example/api')
+    expect(form.get('code')).toBe('CODE')
+    expect(form.get('client_id')).toBe('cid')
+    expect(form.has('client_secret')).toBe(false)
+  })
+
+  test('refreshToken sends extraParams without overriding protected fields', async () => {
+    const captured: Captured = {}
+    await refreshToken({
+      definition: native,
+      runtime: tokenRuntime(captured),
+      refreshToken: 'RT',
+      extraParams: {
+        resource: 'https://mcp.example/api',
+        scope: 'read write',
+        grant_type: 'password',
+        refresh_token: 'EVIL',
+      },
+    })
+    const form = new URLSearchParams(captured.body)
+    expect(form.get('resource')).toBe('https://mcp.example/api')
+    expect(form.get('scope')).toBe('read write')
+    expect(form.get('grant_type')).toBe('refresh_token')
+    expect(form.get('refresh_token')).toBe('RT')
+  })
+})
