@@ -1,8 +1,14 @@
-export { buildAuthorizationURL } from './authorization.js'
+export { type BuildAuthorizationURLParams, buildAuthorizationURL } from './authorization.js'
 export { type CreateHTTPBrokerTransportParams, createHTTPBrokerTransport } from './broker.js'
 export { type DeviceAuthorization, pollDeviceToken, startDeviceAuthorization } from './device.js'
 export { exchangeCode, type RefreshTokenParams, refreshToken } from './exchange.js'
-export { type FetchOAuthJSONParams, fetchOAuthJSON } from './http.js'
+export {
+  type FetchOAuthJSONParams,
+  fetchOAuthJSON,
+  type OAuthJSONResponse,
+  type RequestOAuthJSONParams,
+  requestOAuthJSON,
+} from './http.js'
 export {
   type CompleteAuthorizationParams,
   completeAuthorization,

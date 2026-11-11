@@ -36,6 +36,7 @@
   "dependencies": {
     "@noble/hashes": "catalog:",
     "@sozai/codec": "catalog:",
+    "@sozai/http-util": "catalog:",
     "@sozai/runtime": "catalog:"
   },
   "publishConfig": {
