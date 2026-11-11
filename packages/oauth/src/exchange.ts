@@ -15,17 +15,31 @@ export async function exchangeCode(
     code: string
     redirectURL: string
     codeVerifier: string
+    /**
+     * Additional form fields, such as `resource` (RFC 8707). They never override the grant's own
+     * fields (`grant_type`, `code`, `redirect_uri`, `client_id`, `code_verifier`, `client_secret`).
+     */
+    extraParams?: Record<string, string>
   } & RequestOptions,
 ): Promise<TokenResponse> {
-  const { definition, runtime, code, redirectURL, codeVerifier, signal, timeoutMs, maxBytes } =
-    params
+  const {
+    definition,
+    runtime,
+    code,
+    redirectURL,
+    codeVerifier,
+    extraParams,
+    signal,
+    timeoutMs,
+    maxBytes,
+  } = params
 
   if (definition.mode === 'broker') {
     throw new Error('broker token exchange is not implemented')
   }
   assertExchangeableConfig(definition)
 
-  const form = new URLSearchParams()
+  const form = extraForm(extraParams, CODE_GRANT_FIELDS)
   form.set('grant_type', 'authorization_code')
   form.set('code', code)
   form.set('redirect_uri', redirectURL)
@@ -52,10 +66,17 @@ export type RefreshTokenParams = {
   runtime: Runtime
   refreshToken: string
   broker?: OAuthBrokerTransport
+  /**
+   * Additional form fields, such as `resource` (RFC 8707) or `scope`. They never override the
+   * grant's own fields (`grant_type`, `refresh_token`, `client_id`, `client_secret`). Not sent in
+   * broker mode.
+   */
+  extraParams?: Record<string, string>
 } & RequestOptions
 
 export async function refreshToken(params: RefreshTokenParams): Promise<TokenResponse> {
-  const { definition, runtime, refreshToken, signal, timeoutMs, maxBytes, broker } = params
+  const { definition, runtime, refreshToken, extraParams, signal, timeoutMs, maxBytes, broker } =
+    params
 
   if (definition.mode === 'broker') {
     if (!broker) {
@@ -72,7 +93,7 @@ export async function refreshToken(params: RefreshTokenParams): Promise<TokenRes
   }
   assertExchangeableConfig(definition)
 
-  const form = new URLSearchParams()
+  const form = extraForm(extraParams, REFRESH_GRANT_FIELDS)
   form.set('grant_type', 'refresh_token')
   form.set('refresh_token', refreshToken)
   form.set('client_id', definition.clientID)
@@ -90,6 +111,28 @@ export async function refreshToken(params: RefreshTokenParams): Promise<TokenRes
     maxBytes,
   })
   return validateTokenResponse(raw)
+}
+
+const CODE_GRANT_FIELDS = new Set([
+  'grant_type',
+  'code',
+  'redirect_uri',
+  'client_id',
+  'code_verifier',
+  'client_secret',
+])
+const REFRESH_GRANT_FIELDS = new Set(['grant_type', 'refresh_token', 'client_id', 'client_secret'])
+
+/** A form holding the caller's extra fields, minus the fields the grant itself owns. */
+function extraForm(
+  extraParams: Record<string, string> | undefined,
+  protectedFields: ReadonlySet<string>,
+): URLSearchParams {
+  const form = new URLSearchParams()
+  for (const [key, value] of Object.entries(extraParams ?? {})) {
+    if (!protectedFields.has(key)) form.set(key, value)
+  }
+  return form
 }
 
 function assertExchangeableConfig(definition: OAuthProviderDefinition): void {

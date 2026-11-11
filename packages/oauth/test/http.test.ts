@@ -133,3 +133,32 @@ describe('fetchOAuthJSON()', () => {
     await expect(promise).rejects.toThrow('aborted')
   })
 })
+
+describe('fetchOAuthJSON() GET and loopback', () => {
+  test('GETs without a body or content-type when method is GET', async () => {
+    let capturedInit: RequestInit | undefined
+    const runtime = fakeRuntime({
+      fetch: async (_url, init) => {
+        capturedInit = init
+        return new Response(JSON.stringify({ issuer: 'https://as' }))
+      },
+    })
+    const result = await fetchOAuthJSON({
+      runtime,
+      url: 'https://as/.well-known/oauth-authorization-server',
+      method: 'GET',
+    })
+    expect(result).toEqual({ issuer: 'https://as' })
+    expect(capturedInit?.method).toBe('GET')
+    expect(capturedInit?.body).toBeUndefined()
+    expect(new Headers(capturedInit?.headers).has('content-type')).toBe(false)
+    expect(capturedInit?.redirect).toBe('error')
+  })
+
+  test('accepts an http *.localhost endpoint', async () => {
+    const runtime = fakeRuntime()
+    await expect(
+      fetchOAuthJSON({ runtime, url: 'http://auth.localhost:8080/token', method: 'GET' }),
+    ).resolves.toEqual({})
+  })
+})

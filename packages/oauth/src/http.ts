@@ -6,9 +6,21 @@ import { OAuthTokenError, type RequestOptions } from './types.js'
 export type FetchOAuthJSONParams = {
   runtime: Pick<Runtime, 'fetch'>
   url: string
-  body: string
-  contentType: string
-} & RequestOptions
+} & (
+  | {
+      /** Defaults to `POST`. */
+      method?: 'POST'
+      body: string
+      contentType: string
+    }
+  | {
+      /** A metadata read: no body and no content type. */
+      method: 'GET'
+      body?: undefined
+      contentType?: undefined
+    }
+) &
+  RequestOptions
 
 const DEFAULT_MAX_BYTES = 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 30_000
@@ -17,6 +29,7 @@ export async function fetchOAuthJSON(params: FetchOAuthJSONParams): Promise<unkn
   const {
     runtime,
     url,
+    method = 'POST',
     body,
     contentType,
     signal,
@@ -30,8 +43,11 @@ export async function fetchOAuthJSON(params: FetchOAuthJSONParams): Promise<unkn
   const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
 
   const response = await runtime.fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': contentType, accept: 'application/json' },
+    method,
+    headers:
+      contentType == null
+        ? { accept: 'application/json' }
+        : { 'content-type': contentType, accept: 'application/json' },
     body,
     redirect: 'error',
     signal: combinedSignal,
