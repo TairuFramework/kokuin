@@ -8,6 +8,7 @@ export type OAuthProviderDefinition = {
   name: string
   authorizationEndpoint: string
   tokenEndpoint: string
+  deviceAuthorizationEndpoint?: string
   baseScopes?: Array<string>
 } & OAuthClientMode
 
@@ -53,4 +54,28 @@ export type RequestOptions = {
   signal?: AbortSignal
   timeoutMs?: number
   maxBytes?: number
+}
+
+export type BrokerAuthorizeParams = {
+  provider: string
+  appRedirect: string
+  codeChallenge?: string
+  scopes?: Array<string>
+  authorizationParams?: Record<string, string>
+} & RequestOptions
+
+export type BrokerAuthorizeResult = {
+  url: string
+  state: string
+  transactionToken: string
+}
+
+export type BrokerTokenParams = {
+  provider: string
+  body: Record<string, string>
+} & RequestOptions
+
+export type OAuthBrokerTransport = {
+  authorize(params: BrokerAuthorizeParams): Promise<BrokerAuthorizeResult>
+  token(params: BrokerTokenParams): Promise<unknown>
 }

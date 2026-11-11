@@ -210,9 +210,9 @@ describe('refreshToken()', () => {
     expect(form.has('client_secret')).toBe(false)
   })
 
-  test('broker throws not implemented', async () => {
+  test('broker requires a transport', async () => {
     await expect(
       refreshToken({ definition: broker, runtime: throwingRuntime(), refreshToken: 'RT' }),
-    ).rejects.toThrow(/not implemented/i)
+    ).rejects.toThrow('broker mode requires a broker transport')
   })
 })

@@ -1,7 +1,12 @@
 import type { Runtime } from '@sozai/runtime'
 
 import { fetchOAuthJSON } from './http.js'
-import type { OAuthProviderDefinition, RequestOptions, TokenResponse } from './types.js'
+import type {
+  OAuthBrokerTransport,
+  OAuthProviderDefinition,
+  RequestOptions,
+  TokenResponse,
+} from './types.js'
 
 export async function exchangeCode(
   params: {
@@ -42,17 +47,28 @@ export async function exchangeCode(
   return validateTokenResponse(raw)
 }
 
-export async function refreshToken(
-  params: {
-    definition: OAuthProviderDefinition
-    runtime: Runtime
-    refreshToken: string
-  } & RequestOptions,
-): Promise<TokenResponse> {
-  const { definition, runtime, refreshToken, signal, timeoutMs, maxBytes } = params
+export type RefreshTokenParams = {
+  definition: OAuthProviderDefinition
+  runtime: Runtime
+  refreshToken: string
+  broker?: OAuthBrokerTransport
+} & RequestOptions
+
+export async function refreshToken(params: RefreshTokenParams): Promise<TokenResponse> {
+  const { definition, runtime, refreshToken, signal, timeoutMs, maxBytes, broker } = params
 
   if (definition.mode === 'broker') {
-    throw new Error('broker token refresh is not implemented')
+    if (!broker) {
+      throw new Error('broker mode requires a broker transport')
+    }
+    const raw = await broker.token({
+      provider: definition.name,
+      body: { grant_type: 'refresh_token', refresh_token: refreshToken },
+      signal,
+      timeoutMs,
+      maxBytes,
+    })
+    return validateTokenResponse(raw)
   }
   assertExchangeableConfig(definition)
 
@@ -92,7 +108,7 @@ function assertExchangeableConfig(definition: OAuthProviderDefinition): void {
   }
 }
 
-function validateTokenResponse(value: unknown): TokenResponse {
+export function validateTokenResponse(value: unknown): TokenResponse {
   if (typeof value !== 'object' || value === null) {
     throw new Error('OAuth token response was not an object')
   }

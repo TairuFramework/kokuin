@@ -1,13 +1,19 @@
 import type { Runtime } from '@sozai/runtime'
 
 import { buildAuthorizationURL } from './authorization.js'
-import { exchangeCode } from './exchange.js'
+import { exchangeCode, validateTokenResponse } from './exchange.js'
 import { deriveCodeChallenge, generateCodeVerifier, generateState } from './pkce.js'
-import type { OAuthProviderDefinition, RequestOptions, TokenResponse } from './types.js'
+import type {
+  OAuthBrokerTransport,
+  OAuthProviderDefinition,
+  RequestOptions,
+  TokenResponse,
+} from './types.js'
 
 export type PendingAuthRecord<TExtra> = {
   state: string
   codeVerifier: string
+  transactionToken?: string
   provider: string
   redirectURL: string
   scopes: Array<string>
@@ -52,7 +58,7 @@ export function createMemoryPendingAuthStore<TExtra>(): PendingAuthStore<TExtra>
   }
 }
 
-export async function startAuthorization<TExtra>(params: {
+export type StartAuthorizationParams<TExtra> = {
   runtime: Runtime
   definition: OAuthProviderDefinition
   store: PendingAuthStore<TExtra>
@@ -61,8 +67,17 @@ export async function startAuthorization<TExtra>(params: {
   extra: TExtra
   ttlMs?: number
   authorizationParams?: Record<string, string>
-}): Promise<{ url: string; state: string }> {
-  const { runtime, definition, store, redirectURL, scopes, extra, authorizationParams } = params
+  broker?: OAuthBrokerTransport
+} & RequestOptions
+
+export async function startAuthorization<TExtra>(
+  params: StartAuthorizationParams<TExtra>,
+): Promise<{ url: string; state: string }> {
+  const { runtime, definition, store, redirectURL, scopes, extra, authorizationParams, broker } =
+    params
+  if (definition.mode === 'broker' && !broker) {
+    throw new Error('broker mode requires a broker transport')
+  }
   const ttlMs = params.ttlMs ?? DEFAULT_TTL_MS
   const now = Date.now()
   const expiresAt = now + ttlMs
@@ -73,24 +88,42 @@ export async function startAuthorization<TExtra>(params: {
     // best-effort cleanup: a sweep failure must not block starting a new flow
   }
 
-  const state = generateState(runtime)
   const codeVerifier = generateCodeVerifier(runtime)
   const codeChallenge = deriveCodeChallenge(codeVerifier)
-
-  // build (and thereby validate the authorization endpoint, fix #4) BEFORE create,
-  // so a bad endpoint does not leave a stale pending record
-  const url = buildAuthorizationURL({
-    definition,
-    redirectURL,
-    scopes,
-    state,
-    codeChallenge,
-    authorizationParams,
-  })
+  let state: string
+  let url: string
+  let transactionToken: string | undefined
+  if (definition.mode === 'broker' && broker) {
+    const authorization = await broker.authorize({
+      provider: definition.name,
+      appRedirect: redirectURL,
+      codeChallenge,
+      scopes,
+      authorizationParams,
+      signal: params.signal,
+      timeoutMs: params.timeoutMs,
+      maxBytes: params.maxBytes,
+    })
+    state = authorization.state
+    url = authorization.url
+    transactionToken = authorization.transactionToken
+  } else {
+    state = generateState(runtime)
+    // Validate the endpoint before persisting a pending flow.
+    url = buildAuthorizationURL({
+      definition,
+      redirectURL,
+      scopes,
+      state,
+      codeChallenge,
+      authorizationParams,
+    })
+  }
 
   await store.create({
     state,
     codeVerifier,
+    ...(transactionToken === undefined ? {} : { transactionToken }),
     provider: definition.name,
     redirectURL,
     scopes,
@@ -102,18 +135,35 @@ export async function startAuthorization<TExtra>(params: {
   return { url, state }
 }
 
+export type CompleteAuthorizationParams<TExtra> = {
+  runtime: Runtime
+  definition: OAuthProviderDefinition
+  store: PendingAuthStore<TExtra>
+  state: string
+  code: string
+  redirectURL: string
+  broker?: OAuthBrokerTransport
+} & RequestOptions
+
 export async function completeAuthorization<TExtra>(
-  params: {
-    runtime: Runtime
-    definition: OAuthProviderDefinition
-    store: PendingAuthStore<TExtra>
-    state: string
-    code: string
-    redirectURL: string
-  } & RequestOptions,
+  params: CompleteAuthorizationParams<TExtra>,
 ): Promise<{ tokens: TokenResponse; record: PendingAuthRecord<TExtra> }> {
-  const { runtime, definition, store, state, code, redirectURL, signal, timeoutMs, maxBytes } =
-    params
+  const {
+    runtime,
+    definition,
+    store,
+    state,
+    code,
+    redirectURL,
+    signal,
+    timeoutMs,
+    maxBytes,
+    broker,
+  } = params
+
+  if (definition.mode === 'broker' && !broker) {
+    throw new Error('broker mode requires a broker transport')
+  }
 
   const record = await store.consume(state)
   if (record == null) {
@@ -127,6 +177,26 @@ export async function completeAuthorization<TExtra>(
   }
   if (record.redirectURL !== redirectURL) {
     throw new Error('redirect URI mismatch')
+  }
+
+  if (definition.mode === 'broker' && broker) {
+    if (!record.transactionToken) {
+      throw new Error('broker authorization requires a transactionToken')
+    }
+    const raw = await broker.token({
+      provider: definition.name,
+      body: {
+        grant_type: 'authorization_code',
+        code,
+        code_verifier: record.codeVerifier,
+        transactionToken: record.transactionToken,
+        state,
+      },
+      signal,
+      timeoutMs,
+      maxBytes,
+    })
+    return { tokens: validateTokenResponse(raw), record }
   }
 
   const tokens = await exchangeCode({
