@@ -162,3 +162,34 @@ describe('fetchOAuthJSON() GET and loopback', () => {
     ).resolves.toEqual({})
   })
 })
+
+describe('fetchOAuthJSON() empty success body', () => {
+  const post = (runtime: Runtime) => ({
+    runtime,
+    url: 'https://as/revoke',
+    body: 'token=t',
+    contentType: 'application/x-www-form-urlencoded',
+  })
+
+  test('resolves undefined for an empty 200 body by default (RFC 7009)', async () => {
+    const runtime = fakeRuntime({ fetch: async () => new Response('', { status: 200 }) })
+    await expect(fetchOAuthJSON(post(runtime))).resolves.toBeUndefined()
+  })
+
+  test('resolves undefined for a whitespace-only 200 body', async () => {
+    const runtime = fakeRuntime({ fetch: async () => new Response('  \n', { status: 200 }) })
+    await expect(fetchOAuthJSON(post(runtime))).resolves.toBeUndefined()
+  })
+
+  test('allowEmpty: false rejects an empty 200 body', async () => {
+    const runtime = fakeRuntime({ fetch: async () => new Response('', { status: 200 }) })
+    await expect(fetchOAuthJSON({ ...post(runtime), allowEmpty: false })).rejects.toThrow(
+      'OAuth response was not valid JSON',
+    )
+  })
+
+  test('a non-JSON non-empty 200 body still rejects', async () => {
+    const runtime = fakeRuntime({ fetch: async () => new Response('ok', { status: 200 }) })
+    await expect(fetchOAuthJSON(post(runtime))).rejects.toThrow('OAuth response was not valid JSON')
+  })
+})

@@ -6,6 +6,12 @@ import { OAuthTokenError, type RequestOptions } from './types.js'
 export type FetchOAuthJSONParams = {
   runtime: Pick<Runtime, 'fetch'>
   url: string
+  /**
+   * Accept an empty (or whitespace-only) success body, resolving `undefined`. Defaults to `true`:
+   * RFC 7009 token revocation answers `200` with no content. Set `false` to reject it as invalid
+   * JSON.
+   */
+  allowEmpty?: boolean
 } & (
   | {
       /** Defaults to `POST`. */
@@ -30,6 +36,7 @@ export async function fetchOAuthJSON(params: FetchOAuthJSONParams): Promise<unkn
     runtime,
     url,
     method = 'POST',
+    allowEmpty = true,
     body,
     contentType,
     signal,
@@ -57,6 +64,10 @@ export async function fetchOAuthJSON(params: FetchOAuthJSONParams): Promise<unkn
 
   if (!response.ok) {
     throw parseOAuthError(response.status, text)
+  }
+
+  if (allowEmpty && text.trim() === '') {
+    return undefined
   }
 
   try {
