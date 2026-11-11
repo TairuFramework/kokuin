@@ -171,6 +171,10 @@
   dir: packages/oauth
   intents:
     - oauth-mcp-client-needs
+"@kokuin/oauth@0.7.3":
+  dir: packages/oauth
+  intents:
+    - oauth-empty-success-body
 "@kokuin/otel@0.3.1":
   dir: packages/otel
   intents:
