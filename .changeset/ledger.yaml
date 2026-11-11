@@ -163,6 +163,10 @@
   dir: packages/oauth
   intents:
     - oauth-crypto-provider
+"@kokuin/oauth@0.7.1":
+  dir: packages/oauth
+  intents:
+    - oauth-device-broker
 "@kokuin/otel@0.3.1":
   dir: packages/otel
   intents:
