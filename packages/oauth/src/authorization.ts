@@ -37,7 +37,9 @@ export function buildAuthorizationURL(params: {
   search.set('client_id', definition.clientID)
   search.set('redirect_uri', redirectURL)
   search.set('response_type', 'code')
-  search.set('scope', scopes.join(' '))
+  if (scopes.length > 0) {
+    search.set('scope', scopes.join(' '))
+  }
   search.set('state', state)
   search.set('code_challenge', codeChallenge)
   search.set('code_challenge_method', 'S256')
