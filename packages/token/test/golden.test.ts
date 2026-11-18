@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
 import { expect, test } from 'vitest'
 
@@ -65,6 +66,28 @@ async function tokenCases(): Promise<Array<GoldenCase>> {
         verified: isVerifiedToken(verified),
         publicKey: Buffer.from(verified.verifiedPublicKey).toString('hex'),
         payload: verified.payload,
+      },
+    })
+
+    // Sign the received JSON bytes directly, preserving whitespace and key order.
+    const receivedHeader = `{ "typ": "JWT", "alg": "EdDSA" }`
+    const receivedPayload = JSON.stringify(payload, null, 2)
+    const receivedData = `${Buffer.from(receivedHeader).toString('base64url')}.${Buffer.from(receivedPayload).toString('base64url')}`
+    const receivedSignature = ed25519.sign(
+      Buffer.from(receivedData),
+      Buffer.from(seeds[index], 'hex'),
+    )
+    const receivedToken = `${receivedData}.${Buffer.from(receivedSignature).toString('base64url')}`
+    const receivedVerified = await verifyToken({ token: receivedToken })
+    expect(isVerifiedToken(receivedVerified)).toBe(true)
+    expect(receivedVerified.payload).toEqual(payload)
+    cases.push({
+      name: `Ed25519 seed ${index + 1}: verify signed non-canonical JSON`,
+      input: { token: receivedToken },
+      expected: {
+        verified: isVerifiedToken(receivedVerified),
+        publicKey: Buffer.from(receivedVerified.verifiedPublicKey).toString('hex'),
+        payload: receivedVerified.payload,
       },
     })
 
