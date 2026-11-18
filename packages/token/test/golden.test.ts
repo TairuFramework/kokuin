@@ -83,7 +83,7 @@ async function tokenCases(): Promise<Array<GoldenCase>> {
     const receivedData = `${Buffer.from(receivedHeader).toString('base64url')}.${Buffer.from(receivedPayload).toString('base64url')}`
     const receivedSignature = ed25519.sign(
       Buffer.from(receivedData),
-      Buffer.from(seeds[index], 'hex'),
+      Buffer.from(seeds[index] as string, 'hex'),
     )
     const receivedToken = `${receivedData}.${Buffer.from(receivedSignature).toString('base64url')}`
     const receivedVerified = await verifyToken({ token: receivedToken })
