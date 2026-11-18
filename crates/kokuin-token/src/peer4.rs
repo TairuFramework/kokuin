@@ -28,6 +28,10 @@ pub struct DIDDoc(Value);
 
 impl DIDDoc {
     /// Validate a JSON value against the document schema.
+    ///
+    /// Callers must first bound `value` with `sozai_codec::json::check_value_depth` at
+    /// `MAX_DEPTH`. This schema check is shallow; violating that precondition can overflow
+    /// the stack when this value (accepted or refused) is dropped recursively.
     pub fn new(value: Value) -> Result<Self, TokenError> {
         if validate_did_doc(&value) {
             Ok(Self(value))

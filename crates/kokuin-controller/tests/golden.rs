@@ -184,7 +184,7 @@ fn resolver(input: &Value, history: bool) -> Result<ControllerResolver, String> 
     if history {
         let store = Arc::new(MemoryLogStore::default());
         if let Some(seen) = seen(input)? {
-            store.put(str_of(input, "did")?, seen);
+            assert!(store.put(str_of(input, "did")?, seen));
         }
         resolver = resolver.with_history(store);
     }

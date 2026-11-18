@@ -46,6 +46,7 @@ impl MemoryLogStore {
     /// itself. A log with an entry nesting deeper than `MAX_INPUT_DEPTH` containers is refused and
     /// taken apart without recursion (`false`), since the store clones, compares and drops what it
     /// holds recursively.
+    #[must_use]
     pub fn put(&self, did: &str, log: ControllerLog) -> bool {
         if !log.chain.iter().chain(&log.events).all(within_input_depth) {
             log.chain.into_iter().chain(log.events).for_each(dismantle);

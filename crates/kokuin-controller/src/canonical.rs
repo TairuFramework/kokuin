@@ -54,44 +54,13 @@ pub(crate) fn digest_of(value: &Value) -> String {
     digest.unwrap_or_default()
 }
 
-/// The deepest nesting, in containers, an entry point accepts in a caller's JSON value: the bound
-/// `@sozai/json` `parse` puts on JSON text, so any log that arrived through it passes. A log event
-/// is at most 64 levels deep (`MAX_CANONICAL_DEPTH`) under 3 levels of log, so nothing a fold could
-/// accept is refused.
-pub const MAX_INPUT_DEPTH: usize = 128;
+/// Shared JSON input bound; retained as part of the controller's public API.
+pub use sozai_codec::json::MAX_DEPTH as MAX_INPUT_DEPTH;
+pub(crate) use sozai_codec::json::dismantle;
 
-/// Whether `value` nests no deeper than [`MAX_INPUT_DEPTH`] containers. Iterative, so an
-/// arbitrarily deep value cannot exhaust the stack: every recursive path over a caller's value
-/// (clone, comparison, canonicalization, drop) must come after this check.
+/// Bound caller-provided JSON before any recursive processing.
 pub(crate) fn within_input_depth(value: &Value) -> bool {
-    let mut stack = vec![(value, 0usize)];
-    while let Some((value, depth)) = stack.pop() {
-        let depth = depth + 1;
-        match value {
-            Value::Array(items) if depth <= MAX_INPUT_DEPTH => {
-                stack.extend(items.iter().map(|item| (item, depth)));
-            }
-            Value::Object(map) if depth <= MAX_INPUT_DEPTH => {
-                stack.extend(map.values().map(|item| (item, depth)));
-            }
-            Value::Array(_) | Value::Object(_) => return false,
-            _ => {}
-        }
-    }
-    true
-}
-
-/// Drop a value without recursion, for one [`within_input_depth`] refused: the default drop
-/// recurses once per level.
-pub(crate) fn dismantle(value: Value) {
-    let mut stack = vec![value];
-    while let Some(value) = stack.pop() {
-        match value {
-            Value::Array(items) => stack.extend(items),
-            Value::Object(map) => stack.extend(map.into_iter().map(|(_, item)| item)),
-            _ => {}
-        }
-    }
+    sozai_codec::json::check_value_depth(value, MAX_INPUT_DEPTH)
 }
 
 /// [`digest_of`] a JSON string, as `digestOf(key)` reads an encoded key.
