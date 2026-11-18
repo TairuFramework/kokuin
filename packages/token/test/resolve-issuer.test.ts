@@ -14,7 +14,7 @@ import {
 } from '../src/did.js'
 import type { DIDMethodResolver } from '../src/method.js'
 import { encodeMultibase } from '../src/multibase.js'
-import { encodePeer4 } from '../src/peer4.js'
+import { type DIDDoc, encodePeer4 } from '../src/peer4.js'
 
 describe('resolveIssuer', () => {
   it('resolves a did:key issuer to alg + pubkey without a resolver', async () => {
@@ -320,6 +320,37 @@ describe('resolveIssuerWithDoc', () => {
     }).catch((error: unknown) => error)
     expect(isUnresolvableIssuerError(thrown)).toBe(true)
     expect((thrown as Error).message).toMatch(/too many verification methods/i)
+  })
+
+  it('types a resolver doc that fails the document schema as unresolvable', async () => {
+    // Under the size bound, but no usable document: encodePeer4 refuses it before any hashing.
+    const resolver = () => ({ verificationMethod: [] }) as unknown as DIDDoc
+    const thrown = await resolveIssuerWithDoc({
+      iss: 'did:peer:4zAAAAAAAAAAAAAAAAAAAAAA',
+      header: { kid: '#key-0' },
+      resolver,
+    }).catch((error: unknown) => error)
+    expect(isUnresolvableIssuerError(thrown)).toBe(true)
+    expect((thrown as Error).message).toBe('did:peer:4 doc failed schema validation')
+  })
+
+  it('types a resolver doc too large to encode as unresolvable', async () => {
+    // Within the 4 KiB size bound but past the 2048-byte base58 encode limit, so no short form
+    // can hash to it: an unusable answer like any other.
+    const resolver = (): DIDDoc => {
+      return {
+        verificationMethod: [{ id: '#key-0', type: 'Multikey', publicKeyMultibase: 'z' }],
+        authentication: ['#key-0'],
+        service: 'x'.repeat(2500),
+      }
+    }
+    const thrown = await resolveIssuerWithDoc({
+      iss: 'did:peer:4zAAAAAAAAAAAAAAAAAAAAAA',
+      header: { kid: '#key-0' },
+      resolver,
+    }).catch((error: unknown) => error)
+    expect(isUnresolvableIssuerError(thrown)).toBe(true)
+    expect((thrown as Error).message).toBe('invalid length')
   })
 
   it("does not type a method resolver's key-not-found as unresolvable", async () => {

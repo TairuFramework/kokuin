@@ -2,7 +2,8 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "types": ["node"],
-    "rootDir": ".",
+    "rootDir": "../..",
+    "allowImportingTsExtensions": true,
     "noEmit": true
   },
   "include": ["./src/**/*", "./test/**/*"]

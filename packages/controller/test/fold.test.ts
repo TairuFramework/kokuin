@@ -64,22 +64,25 @@ describe('foldLog()', () => {
     expect(at(result.states, 0).seq).toBe(0)
   })
 
-  test('an inception names the derivation index 0, whatever `s` it published', async () => {
-    // `keySeq` is the derivation index, and an inception opens the schedule at 0. The two numbers
-    // coincide for every inception this package builds, so only a forged one can tell them apart —
-    // and a forged one is buildable, because an inception is self-certifying: the DID is the hash
-    // of the body, so a body with any `s` is a valid log for the DID it hashes to.
+  test('an inception publishing any position but (0, 0) does not fold', async () => {
+    // An inception is self-certifying: the DID is the hash of the body, so a body with any `s` was
+    // once a valid log for the DID it hashes to, folding to a state at `seq` 3 whose derivation
+    // index was still 0. Every inception this package builds is at (0, 0), so nothing else is one:
+    // `verifyInception` refuses it, and `keySeq` and `seq` never disagree at the inception.
     const event = { ...(await createInception({ seed, profile: 0 })).event, s: 3 }
     const forgedDID = didFromInception(event)
     const forged = { event, sigs: await signEvent(event, [authorityKey.privateKey]) }
 
     const result = await foldLog({ did: forgedDID, input: { chain: [forged], events: [] } })
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(at(result.states, 0).seq).toBe(3)
-    expect(at(result.states, 0).keySeq).toBe(0)
+    expect(result).toEqual({ ok: false, reason: 'invalid inception', index: 0 })
+
+    const { did, icp } = await build()
+    const genuine = await foldLog({ did, input: { chain: [icp], events: [] } })
+    expect(genuine.ok).toBe(true)
+    if (!genuine.ok) return
+    expect(at(genuine.states, 0).keySeq).toBe(0)
     // The index really does name the published key, which is what the identity derives from.
-    expect(at(result.states, 0).keys).toEqual([
+    expect(at(genuine.states, 0).keys).toEqual([
       encodeKey({ publicKey: authorityKey.publicKey, alg: 'EdDSA' }),
     ])
   })

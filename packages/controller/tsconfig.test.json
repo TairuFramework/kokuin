@@ -3,7 +3,8 @@
   "compilerOptions": {
     "lib": ["es2025", "dom"],
     "types": ["node"],
-    "rootDir": ".",
+    "rootDir": "../..",
+    "allowImportingTsExtensions": true,
     "noEmit": true
   },
   "include": ["./src/**/*", "./test/**/*"]

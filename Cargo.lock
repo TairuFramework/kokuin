@@ -568,6 +568,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "kokuin-controller"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "kokuin-crypto",
+ "kokuin-token",
+ "serde_json",
+ "sozai-codec",
+]
+
+[[package]]
 name = "kokuin-crypto"
 version = "0.0.0"
 dependencies = [
@@ -598,6 +609,20 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "zeroize",
+]
+
+[[package]]
+name = "kokuin-token"
+version = "0.0.0"
+dependencies = [
+ "ed25519-dalek",
+ "hex",
+ "kokuin-crypto",
+ "p256",
+ "serde_core",
+ "serde_json",
+ "sha2",
+ "sozai-codec",
 ]
 
 [[package]]
@@ -832,6 +857,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ryu-js"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd29631678d6fb0903b69223673e122c32e9ae559d0960a38d574695ebc0ea15"
+
+[[package]]
 name = "sec1"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -935,6 +966,15 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "sozai-codec"
+version = "0.0.0"
+source = "git+https://github.com/TairuFramework/sozai#3dfaee63c4cdda24c17b0ab898518f194ab4edf0"
+dependencies = [
+ "ryu-js",
+ "serde_json",
+]
 
 [[package]]
 name = "strsim"

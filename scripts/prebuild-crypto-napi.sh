@@ -4,7 +4,8 @@
 set -eu
 
 if [ -f /etc/alpine-release ]; then
-  apk add --no-cache gcc musl-dev
+  # git: cargo fetches git dependencies (sozai-codec) during the build.
+  apk add --no-cache gcc musl-dev git
   # musl targets link statically by default, which rules out a cdylib.
   export RUSTFLAGS="-C target-feature=-crt-static"
   # napi defaults arm64 musl to a cross linker; Alpine builds natively.

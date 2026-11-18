@@ -315,7 +315,18 @@ export async function resolveIssuerWithDoc({
         options: { cause },
       })
     }
-    const expected = encodePeer4(doc).shortForm
+    // The same holds for a doc encodePeer4 refuses: one failing the document schema, or past the
+    // 2048-byte base58 encode limit (below the 4 KiB size bound). No short form hashes to it.
+    let expected: string
+    try {
+      expected = encodePeer4(doc).shortForm
+    } catch (cause) {
+      // biome-ignore lint/style/useErrorCause: the params object forwards options.cause.
+      throw new UnresolvableIssuerError({
+        message: cause instanceof Error ? cause.message : `Unknown DID: ${shortForm}`,
+        options: { cause },
+      })
+    }
     if (expected !== shortForm) {
       throw new UnresolvableIssuerError({ message: 'DIDResolver: short form/doc hash mismatch' })
     }
