@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 
+use crate::canonical::{dismantle, within_input_depth};
 use crate::epoch::EpochLimits;
 use crate::fold::{FoldFailure, Folded, KeyState, fold_chain_only};
 use crate::limits::MAX_LOG_EVENTS;
@@ -41,9 +42,17 @@ pub struct MemoryLogStore {
 }
 
 impl MemoryLogStore {
-    /// Store `log` for `did` as accepted, unchecked: for seeding memory this party built itself.
-    pub fn put(&self, did: &str, log: ControllerLog) {
+    /// Store `log` for `did` as accepted, unauthenticated: for seeding memory this party built
+    /// itself. A log with an entry nesting deeper than `MAX_INPUT_DEPTH` containers is refused and
+    /// taken apart without recursion (`false`), since the store clones, compares and drops what it
+    /// holds recursively.
+    pub fn put(&self, did: &str, log: ControllerLog) -> bool {
+        if !log.chain.iter().chain(&log.events).all(within_input_depth) {
+            log.chain.into_iter().chain(log.events).for_each(dismantle);
+            return false;
+        }
         self.lock().insert(did.to_owned(), log);
+        true
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, ControllerLog>> {
@@ -168,4 +177,32 @@ pub fn authoritative_log(
         log: ControllerLog { chain, events },
         result: held.result,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn put_refuses_an_over_deep_log_without_recursion() {
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(|| {
+                let mut deep = Value::Null;
+                for _ in 0..200_000 {
+                    deep = Value::Array(vec![deep]);
+                }
+                let store = MemoryLogStore::default();
+                let log = ControllerLog {
+                    chain: Vec::new(),
+                    events: vec![deep],
+                };
+                assert!(!store.put("did:kokuin:zX", log));
+                assert_eq!(store.get("did:kokuin:zX"), None);
+                assert!(store.put("did:kokuin:zX", ControllerLog::default()));
+            })
+            .expect("spawn")
+            .join()
+            .expect("no panic");
+    }
 }

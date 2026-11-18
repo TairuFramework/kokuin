@@ -80,27 +80,28 @@ impl ControllerResolver {
         if !did.starts_with(DID_PREFIX) {
             return Err(unknown());
         }
+        // This resolver owns the loaded value, and it is untrusted: held in a guard that takes it
+        // apart without recursion however this function returns, the early returns included.
         let log = match (self.load_log)(did).map_err(ControllerError::plain)? {
             None | Some(Value::Null) => return Err(unknown()),
-            Some(log) => log,
+            Some(log) => Dismantled(log),
         };
-        if prop(&log, "events").is_some_and(Value::is_array)
-            && prop(&log, "chain")
+        let log = &log.0;
+        if prop(log, "events").is_some_and(Value::is_array)
+            && prop(log, "chain")
                 .and_then(Value::as_array)
                 .is_some_and(Vec::is_empty)
         {
             return Err(unknown());
         }
-        // This resolver owns the loaded value and drops it, so one too deep for a recursive drop is
-        // taken apart here and refused as `authoritative_log` refuses it.
-        if !within_input_depth(&log) {
-            dismantle(log);
+        // Refused as `authoritative_log` refuses it, before anything recurses over it.
+        if !within_input_depth(log) {
             return Err(ControllerError::plain(format!(
                 "{CONTEXT}: invalid log for {did}: {MALFORMED_LOG} at event 0"
             )));
         }
         let Some(history) = &self.history else {
-            let settled = authoritative_log(did, &log, None, CONTEXT, self.limits)?;
+            let settled = authoritative_log(did, log, None, CONTEXT, self.limits)?;
             return Ok(FoldedView {
                 states: settled.result.states,
                 head: settled.result.head,
@@ -108,7 +109,7 @@ impl ControllerResolver {
         };
         let mut view = None;
         history.merge(did, &mut |seen| {
-            let settled = authoritative_log(did, &log, seen, CONTEXT, self.limits)?;
+            let settled = authoritative_log(did, log, seen, CONTEXT, self.limits)?;
             view = Some(FoldedView {
                 states: settled.result.states,
                 head: settled.result.head,
@@ -120,6 +121,15 @@ impl ControllerResolver {
                 "{CONTEXT}: the log store did not run the merge for {did}"
             ))
         })
+    }
+}
+
+/// An untrusted JSON value this crate owns, dropped without recursion on every path.
+struct Dismantled(Value);
+
+impl Drop for Dismantled {
+    fn drop(&mut self) {
+        dismantle(std::mem::take(&mut self.0));
     }
 }
 
@@ -308,6 +318,69 @@ mod tests {
             error.message(),
             "Controller resolver: invalid log for did:kokuin:zX: malformed log at event 0"
         );
+    }
+
+    fn nested(depth: usize) -> Value {
+        let mut inner = json!(0);
+        for _ in 0..depth {
+            inner = Value::Array(vec![inner]);
+        }
+        inner
+    }
+
+    /// A log with an empty chain and one over-deep value under `key`.
+    fn empty_chain_with_deep(key: &str) -> Value {
+        let mut log = serde_json::Map::new();
+        log.insert("chain".into(), json!([]));
+        log.insert("events".into(), json!([]));
+        let deep = nested(200_000);
+        match key {
+            "events" => log.insert(key.into(), Value::Array(vec![deep])),
+            _ => log.insert(key.into(), deep),
+        };
+        Value::Object(log)
+    }
+
+    /// Run `body` on a 512 KiB stack, where a recursive drop of a 200 000-deep value overflows.
+    fn on_small_stack(body: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(body)
+            .expect("spawn")
+            .join()
+            .expect("no panic");
+    }
+
+    #[test]
+    fn every_path_drops_a_loaded_log_without_recursion() {
+        for key in ["events", "extra"] {
+            on_small_stack(move || {
+                let resolver = ControllerResolver::new(Box::new(move |_| {
+                    Ok(Some(empty_chain_with_deep(key)))
+                }));
+                let header = ResolveIssuerHeader::default();
+                let error = resolver.signing_key("did:kokuin:zX", &header, false);
+                assert_eq!(
+                    error.unwrap_err().message(),
+                    "Unknown DID: did:kokuin:zX",
+                    "{key}"
+                );
+                let error = resolver
+                    .frozen()
+                    .signing_key("did:kokuin:zX", &header, true);
+                assert_eq!(error.unwrap_err().message(), "Unknown DID: did:kokuin:zX");
+            });
+        }
+        on_small_stack(|| {
+            let store = Arc::new(crate::MemoryLogStore::default());
+            let resolver = ControllerResolver::new(Box::new(|_| Ok(Some(deep_log(200_000)))))
+                .with_history(store);
+            let error = resolver.deny_set("did:kokuin:zX").unwrap_err();
+            assert_eq!(
+                error.message(),
+                "Controller resolver: invalid log for did:kokuin:zX: malformed log at event 0"
+            );
+        });
     }
 
     #[test]
