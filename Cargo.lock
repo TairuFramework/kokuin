@@ -970,7 +970,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 [[package]]
 name = "sozai-codec"
 version = "0.0.0"
-source = "git+https://github.com/TairuFramework/sozai#2e3ca88bcfd25b9e1f3495e432b90e66d656f1d5"
+source = "git+https://github.com/TairuFramework/sozai#8db42da62cdbc24f4c4f6f8397c94270d83ed0fb"
 dependencies = [
  "ryu-js",
  "serde_json",
