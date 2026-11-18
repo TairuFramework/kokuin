@@ -147,6 +147,26 @@ describe('verifyInception()', () => {
     expect(await verifyInception({ signed: tampered, did })).toBe(false)
   })
 
+  // `g` and `s` seed the folded state's generation and sequence, and every later event is judged
+  // against them. Every inception this package builds is at (0, 0), so nothing else is one: a
+  // self-certifying body naming another position, or a non-number, is refused here rather than
+  // folded into a `KeyState` whose `gen`/`seq` are not numbers.
+  for (const [label, patch] of [
+    ['a string generation', { g: '0' }],
+    ['an object generation', { g: {} }],
+    ['an absent generation', { g: undefined }],
+    ['a non-zero generation', { g: 1 }],
+    ['a non-zero sequence', { s: 1 }],
+    ['a fractional sequence', { s: 0.5 }],
+    ['an absent sequence', { s: undefined }],
+  ] as Array<[string, Record<string, unknown>]>) {
+    test(`rejects an inception with ${label}`, async () => {
+      const { event } = await createInception({ seed: seedA, profile: 0 })
+      const { did, ...tampered } = await resign({ ...event, ...patch } as InceptionEvent)
+      expect(await verifyInception({ signed: tampered, did })).toBe(false)
+    })
+  }
+
   test('rejects an inception whose ka holds an untagged or malformed value', async () => {
     const { event } = await createInception({ seed: seedA, profile: 0 })
     const { did, ...tampered } = await resign({ ...event, ka: ['zBOGUS'] })

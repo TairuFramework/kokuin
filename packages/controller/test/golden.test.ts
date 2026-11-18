@@ -1,7 +1,13 @@
 import { readFileSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { HDKeyStore } from '@kokuin/deterministic'
-import { createSigningIdentity, type MemberQuery, verifyToken } from '@kokuin/token'
+import {
+  createSigningIdentity,
+  type DIDDoc,
+  encodePeer4,
+  type MemberQuery,
+  verifyToken,
+} from '@kokuin/token'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { expect, test } from 'vitest'
 
@@ -1010,7 +1016,7 @@ async function controllerCases(): Promise<Array<GoldenCase>> {
     ['token: current key without kid verifies', tokenAt(0, 2, {}), rotated, false],
     ['token: rotated-away key is refused live', tokenAt(0, 1), rotated, false],
     ['token: rotated-away key verifies historic', tokenAt(0, 1), rotated, true],
-    ['token: revoked device key is refused historic', tokenAt(0, 0), rotated, true],
+    ['token: retired root key is refused historic', tokenAt(0, 0), rotated, true],
     [
       'token: key of a superseded generation is refused',
       tokenAt(0, 1),
@@ -1078,13 +1084,188 @@ async function controllerCases(): Promise<Array<GoldenCase>> {
       expected: await deviceRevokeIndices(input),
     })
   }
+  // --- A rotated-away key revoked by an epoch `rev` ---------------------------------------------
+  // The device-revocation path for a key the chain no longer publishes: no settlement, only a root
+  // revoke in the current epoch, which the historic scan must honour.
+  const rotatedOnce = await foldLog({ did, input: { chain: [icp, rot1], events: [] } })
+  if (!rotatedOnce.ok) throw new Error('rotation does not fold')
+  const epochRevoke = await createRevoke({
+    did,
+    head: rotatedOnce.head,
+    parents: [rotatedOnce.head.epoch],
+    signer: root,
+    target: keyTarget(rootEncoded(0, 0)),
+  })
+  const epochRevoked = { chain: [icp, rot1], events: [epochRevoke] }
+  cases.push(
+    await tokenCase('token: rotated-away key revoked in the epoch is refused historic', {
+      token: tokenAt(0, 0),
+      logs: logs(epochRevoked),
+      historic: true,
+    }),
+  )
+  cases.push(
+    await tokenCase('token: rotated-away key verifies historic before the epoch revoke', {
+      token: tokenAt(0, 0),
+      logs: logs({ chain: [icp, rot1], events: [] }),
+      historic: true,
+    }),
+  )
+  cases.push(
+    await resolveCase('resolveHistoric: rotated-away key revoked in the epoch', {
+      did,
+      logs: logs(epochRevoked),
+      call: { method: 'resolveHistoric', header: kid(rootEncoded(0, 0)) },
+    }),
+  )
+
+  // --- Inception position ---------------------------------------------------------------------
+  // `verifyInception` refuses any position but (0, 0), and anything that is not a number there.
+  const k00 = rootKey(0, 0)
+  for (const [label, patch] of [
+    ['a string generation', { g: '0' }],
+    ['an object generation', { g: {} }],
+    ['a non-zero sequence', { s: 1 }],
+  ] as Array<[string, Record<string, unknown>]>) {
+    const forged = await signed(json({ ...icp.event, ...patch }), [k00.privateKey])
+    cases.push(
+      await foldCase(
+        `genesis: inception with ${label} is refused`,
+        didFromInception(forged.event as never),
+        { chain: [forged], events: [] },
+      ),
+    )
+  }
+
+  // --- did:peer:4 members (after @kokuin/controller-conformance) --------------------------------
+  const peerDoc = (keys: Array<string>): DIDDoc => {
+    return {
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      verificationMethod: keys.map((key, index) => {
+        return { id: `#key-${index}`, type: 'Multikey', publicKeyMultibase: key }
+      }),
+      authentication: keys.map((_, index) => `#key-${index}`),
+    } as DIDDoc
+  }
+  const peerOf = (keys: Array<string>) => encodePeer4(peerDoc(keys)).longForm
+  const d4 = await device('4')
+  const peer4 = peerOf([d4.key])
+  const peer4Short = peer4.slice(0, peer4.indexOf(':', 'did:peer:4'.length))
+  // A second authentication key carrying an Ed25519 codec over the wrong length: one short enough
+  // to be read (two keys, so not the pin alone), and one past the 64-character bound, never read.
+  const oddKey = (length: number) =>
+    encodeKey({ publicKey: new Uint8Array(length).fill(5), alg: 'EdDSA' })
+  expect(oddKey(40).length).toBeLessThanOrEqual(64)
+  expect(oddKey(48).length).toBeGreaterThan(64)
+  const peerAdd = (memberDID: string, parents: Array<string> = [epoch0], key = d4.key) =>
+    createAdd({ ...base, parents, seed, profile, member: { did: memberDID, key, lease: LEASE } })
+  const peerLong = await peerAdd(peer4)
+  const peerShort = await peerAdd(peer4Short)
+  const peerTwoKeys = await peerAdd(peerOf([d4.key, oddKey(40)]))
+  const peerLongSecond = await peerAdd(peerOf([d4.key, oddKey(48)]))
+  const asKey = await peerAdd(d4.did)
+  const aliasAfter = await peerAdd(peer4, [digestOf(asKey.event)])
+  cases.push(
+    await epochCase(
+      'peer members: short form and a readable second key are refused, an over-long second key is skipped',
+      {
+        did,
+        chain: [icp],
+        events: [peerShort, peerTwoKeys, peerLongSecond],
+      },
+    ),
+  )
+  cases.push(
+    await epochCase('peer members: one key admitted concurrently as did:key and peer', {
+      did,
+      chain: [icp],
+      events: [asKey, peerLong],
+    }),
+  )
+  cases.push(
+    await epochCase('peer members: one key admitted as peer after did:key is refused', {
+      did,
+      chain: [icp],
+      events: [asKey, aliasAfter],
+    }),
+  )
+  cases.push(
+    await epochCase('peer members: long form applies alone', {
+      did,
+      chain: [icp],
+      events: [peerLong],
+    }),
+  )
+  const peerLog = { chain: [icp], events: [peerLong] }
+  const peerAddDigest = digestOf(peerLong.event)
+  for (const [name, call] of [
+    [
+      'resolveMember: peer member by its long form',
+      { method: 'resolveMember', member: { did: peer4, add: peerAddDigest, gen: 0 } },
+    ],
+    [
+      'resolveMember: peer member by its short form',
+      { method: 'resolveMember', member: { did: peer4Short, add: peerAddDigest, gen: 0 } },
+    ],
+    [
+      'resolveMember: peer member asked as its did:key',
+      { method: 'resolveMember', member: { did: d4.did, add: peerAddDigest, gen: 0 } },
+    ],
+    [
+      'resolveMemberHistoric: peer member by its short form',
+      {
+        method: 'resolveMemberHistoric',
+        member: { did: peer4Short, add: peerAddDigest, gen: 0 },
+      },
+    ],
+  ] as Array<[string, ResolveCall]>) {
+    cases.push(await resolveCase(name, { did, logs: logs(peerLog), call }))
+  }
+  cases.push(
+    await resolveCase('resolveDenySet: a long-form peer denial adds its short form', {
+      did,
+      logs: logs({
+        chain: [icp],
+        events: [await createRevoke({ ...base, parents: [epoch0], signer: root, target: peer4 })],
+      }),
+      call: { method: 'resolveDenySet' },
+    }),
+  )
+  const peerSnapshot = (memberDID: string) =>
+    signed(
+      json({
+        ...rot1.event,
+        m: [{ did: memberDID, key: d4.key, add: peerAddDigest, lease: LEASE }],
+      }),
+      [k01.privateKey],
+    )
+  cases.push(
+    await foldCase('chain: snapshot member as a long-form peer', did, {
+      chain: [icp, await peerSnapshot(peer4)],
+      events: [],
+    }),
+  )
+  cases.push(
+    await foldCase('chain: snapshot member as a short-form peer', did, {
+      chain: [icp, await peerSnapshot(peer4Short)],
+      events: [],
+    }),
+  )
+
   expect(cases.length).toBeGreaterThan(60)
   return cases
 }
 
-test('golden: controller fold and did:kokuin resolution', async () => {
-  checkGolden(file, await controllerCases())
-})
+// The whole suite folds a few hundred logs; under a parallel package run it outlasts the default.
+const TIMEOUT = 60_000
+
+test(
+  'golden: controller fold and did:kokuin resolution',
+  async () => {
+    checkGolden(file, await controllerCases())
+  },
+  TIMEOUT,
+)
 
 test.skipIf(process.env.UPDATE_GOLDEN === '1')(
   'golden: verification does not write the vector file',
@@ -1094,4 +1275,5 @@ test.skipIf(process.env.UPDATE_GOLDEN === '1')(
     expect(readFileSync(file, 'utf8')).toBe(before.content)
     expect(statSync(file).mtimeMs).toBe(before.mtime)
   },
+  TIMEOUT,
 )

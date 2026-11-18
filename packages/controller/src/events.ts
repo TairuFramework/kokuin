@@ -284,6 +284,12 @@ export async function verifyInception({
   if (signed.event.t !== 'icp' || signed.event.i !== undefined) {
     return false
   }
+  // `g`/`s` seed the folded state's position, and every later event is judged against them. Every
+  // inception is at (0, 0) -- `createInception` writes nothing else -- so a body naming another
+  // position, or a non-number, is refused rather than folded into a state whose `gen`/`seq` lie.
+  if (signed.event.g !== 0 || signed.event.s !== 0) {
+    return false
+  }
   // An inception is self-certifying: *any* body an attacker writes is a valid log for the DID it
   // hashes to, which is why the thresholds and key lists it publishes must mean something. `k`/`n`/`r`
   // go straight into the folded state where the next event reads them.
