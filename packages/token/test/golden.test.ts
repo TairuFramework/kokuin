@@ -8,6 +8,7 @@ import { expect, test } from 'vitest'
 import { checkGolden, type GoldenCase } from '../../../scripts/golden.ts'
 import { CODECS, getDID, getSignatureInfo, normalizeDID } from '../src/did.ts'
 import { createIdentity, createSigningIdentity } from '../src/identity.ts'
+import { encodeMultibase, multihashSHA256 } from '../src/multibase.ts'
 import {
   assertDocWithinMaxSize,
   type DIDDoc,
@@ -177,6 +178,19 @@ function signRaw(header: Record<string, unknown>, payload: Record<string, unknow
   return `${data}.${Buffer.from(signature).toString('base64url')}`
 }
 
+const p256Seed = '05'.repeat(32)
+
+// ES256 over the signing input: SHA-256 prehash, RFC 6979 nonces, low-S, compact r || s.
+function signRawES256(
+  header: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  secret: string,
+) {
+  const data = `${Buffer.from(canonicalStringify(header)).toString('base64url')}.${Buffer.from(canonicalStringify(payload)).toString('base64url')}`
+  const signature = p256.sign(Buffer.from(data), Buffer.from(secret, 'hex'))
+  return `${data}.${Buffer.from(signature).toString('base64url')}`
+}
+
 async function verifiedCase(
   name: string,
   input: { token: string; resolver?: Record<string, DIDDoc> },
@@ -341,6 +355,71 @@ async function peer4Cases(otherDoc: DIDDoc): Promise<Array<GoldenCase>> {
     await rejectedCase('did:peer:4: reject resolver doc with too many verification methods', {
       token: shortToken,
       resolver: { [shortForm]: crowded },
+    }),
+  )
+
+  // Resolver documents the encoder refuses are unusable answers too.
+  const unencodable: DIDDoc = { ...doc, service: 'x'.repeat(2500) }
+  expect(Buffer.byteLength(canonicalStringify(unencodable))).toBeLessThan(4096)
+  cases.push(
+    await rejectedCase('did:peer:4: reject resolver doc over the encode limit', {
+      token: shortToken,
+      resolver: { [shortForm]: unencodable },
+    }),
+  )
+  cases.push(
+    await rejectedCase('did:peer:4: reject resolver doc failing the document schema', {
+      token: shortToken,
+      resolver: { [shortForm]: { ...doc, verificationMethod: [] } as unknown as DIDDoc },
+    }),
+  )
+
+  // A hash-correct long form whose doc nests past the 128-level JSON bound.
+  const deepJSON = `{"verificationMethod":[{"id":"#k","type":"Multikey","publicKeyMultibase":"z"}],"x":${'['.repeat(200)}${']'.repeat(200)}}`
+  const deepEncoded = encodeMultibase(new Uint8Array([0x80, 0x04, ...Buffer.from(deepJSON)]))
+  const deepLongForm = `did:peer:4${encodeMultibase(multihashSHA256(Buffer.from(deepEncoded)))}:${deepEncoded}`
+  cases.push({
+    name: 'did:peer:4: reject long form nested past the JSON depth bound',
+    input: { longForm: deepLongForm },
+    expected: await rejectionOf(() => decodePeer4({ longForm: deepLongForm })),
+  })
+
+  // ES256 keys: a did:key issuer, and a did:peer:4 document holding a P-256 key.
+  const p256Secret = Buffer.from(p256Seed, 'hex')
+  const p256Public = p256.getPublicKey(p256Secret, true)
+  const p256DID = getDID({ codec: CODECS.ES256, publicKey: p256Public })
+  cases.push(
+    await verifiedCase('P-256: verify compact token', {
+      token: signRawES256({ typ: 'JWT', alg: 'ES256' }, { typ: 'note', iss: p256DID }, p256Seed),
+    }),
+  )
+  const p256Doc: DIDDoc = {
+    verificationMethod: [
+      {
+        id: '#key-0',
+        type: 'Multikey',
+        publicKeyMultibase: encodeMultibase(new Uint8Array([...CODECS.ES256, ...p256Public])),
+      },
+    ],
+    authentication: ['#key-0'],
+  }
+  const p256Peer = encodePeer4(p256Doc)
+  cases.push(
+    await verifiedCase('did:peer:4: verify token from an ES256 key', {
+      token: signRawES256(
+        { typ: 'JWT', alg: 'ES256', kid: '#key-0' },
+        { typ: 'note', iss: p256Peer.longForm },
+        p256Seed,
+      ),
+    }),
+  )
+  cases.push(
+    await rejectedCase('P-256: reject token signed by another key', {
+      token: signRawES256(
+        { typ: 'JWT', alg: 'ES256' },
+        { typ: 'note', iss: p256DID },
+        '06'.repeat(32),
+      ),
     }),
   )
 

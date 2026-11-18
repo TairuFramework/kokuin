@@ -1,4 +1,4 @@
-import { canonicalStringify, fromUTF, toUTF } from '@sozai/codec'
+import { b64uToJSON, canonicalStringify, fromUTF, toB64U, toUTF } from '@sozai/codec'
 import { createValidator, type FromSchema, isType, type Schema } from '@sozai/schema'
 
 import { decodeMultibase, encodeMultibase, multihashSHA256, verifyMultihash } from './multibase.js'
@@ -188,7 +188,10 @@ export function decodePeer4({ longForm, ...options }: DecodePeer4Params): {
     throw new Error(`did:peer:4 doc too large: ${docBytes.length} > ${maxSize}`)
   }
 
-  const doc = JSON.parse(toUTF(docBytes)) as unknown
+  // The doc is attacker-chosen and its hash binds only its bytes, not its shape, so parse it with
+  // the `@sozai/json` nesting bound (128) like every other untrusted JSON here. `b64uToJSON` is the
+  // codec's entry to that parser: strict UTF-8, then `parse` with default options.
+  const doc = b64uToJSON<unknown>(toB64U(docBytes))
   if (!validateDIDDoc(doc)) {
     throw new Error('did:peer:4 doc failed schema validation')
   }

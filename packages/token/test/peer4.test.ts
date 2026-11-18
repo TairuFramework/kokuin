@@ -237,6 +237,18 @@ describe('decodePeer4 bounds', () => {
     const { longForm } = encodePeer4(validDoc)
     expect(decodePeer4({ longForm, maxDocSize: 8 * 1024 }).doc).toEqual(validDoc)
   })
+
+  it('rejects an embedded doc nested deeper than 128 levels, hash correct', () => {
+    // The hash binds the doc segment, not its shape: a hash-correct long form can carry any JSON.
+    const deepDoc = `{"verificationMethod":[{"id":"#k","type":"Multikey","publicKeyMultibase":"z"}],"x":${'['.repeat(128)}${']'.repeat(128)}}`
+    const tagged = new Uint8Array([0x80, 0x04, ...new TextEncoder().encode(deepDoc)])
+    const encodedDoc = multibase.encodeMultibase(tagged)
+    const hash = multibase.encodeMultibase(
+      multibase.multihashSHA256(new TextEncoder().encode(encodedDoc)),
+    )
+    const longForm = `did:peer:4${hash}:${encodedDoc}`
+    expect(() => decodePeer4({ longForm })).toThrow('JSON exceeds maximum nesting depth of 128')
+  })
 })
 
 describe('isPeer4 / getPeer4ShortForm', () => {
