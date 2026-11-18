@@ -142,6 +142,10 @@ pub(crate) fn verify_inception(event: &Value, sigs: &[Value], did: &str) -> bool
     if !prop_is(event, "t", "icp") || prop(event, "i").is_some() {
         return false;
     }
+    // Every inception is at (0, 0); any other position, or a non-number, is refused.
+    if !strict_eq_number(prop(event, "g"), 0.0) || !strict_eq_number(prop(event, "s"), 0.0) {
+        return false;
+    }
     let (Some(k), Some(n), Some(Value::String(_))) = (
         key_list(prop(event, "k")),
         key_list(prop(event, "n")),

@@ -12,10 +12,12 @@ use kokuin_token::{
 use serde_json::Value;
 
 use crate::ControllerError;
+use crate::canonical::{dismantle, within_input_depth};
 use crate::epoch::EpochLimits;
 use crate::events::DID_PREFIX;
 use crate::history::{LogStore, authoritative_log};
 use crate::js::prop;
+use crate::log::MALFORMED_LOG;
 use crate::state_resolver::{
     DID_METHOD, EPOCH_SATURATED, FoldedView, agreement_keys_from, deny_set_from,
     historic_member_from, member_from, signing_key_from,
@@ -25,6 +27,9 @@ const CONTEXT: &str = "Controller resolver";
 
 /// Loads a controller's whole log as JSON, `None` when the DID is unknown (`loadLog`). An error is
 /// reported as a plain error carrying its message.
+///
+/// The value may be untrusted: one nesting deeper than `MAX_INPUT_DEPTH` containers is taken apart
+/// without recursion and refused as `malformed log`, before anything clones, compares or drops it.
 pub type LoadLog = Box<dyn Fn(&str) -> Result<Option<Value>, String>>;
 
 /// A `did:kokuin:` resolver (`createControllerResolver`).
@@ -85,6 +90,14 @@ impl ControllerResolver {
                 .is_some_and(Vec::is_empty)
         {
             return Err(unknown());
+        }
+        // This resolver owns the loaded value and drops it, so one too deep for a recursive drop is
+        // taken apart here and refused as `authoritative_log` refuses it.
+        if !within_input_depth(&log) {
+            dismantle(log);
+            return Err(ControllerError::plain(format!(
+                "{CONTEXT}: invalid log for {did}: {MALFORMED_LOG} at event 0"
+            )));
         }
         let Some(history) = &self.history else {
             let settled = authoritative_log(did, &log, None, CONTEXT, self.limits)?;
@@ -258,3 +271,53 @@ macro_rules! answers {
 
 answers!(ControllerResolver);
 answers!(FrozenResolver<'_>);
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::canonical::MAX_INPUT_DEPTH;
+    use crate::fold::fold_log;
+
+    /// A log whose one chain entry nests `depth` arrays deep, built without recursion.
+    fn deep_log(depth: usize) -> Value {
+        let mut inner = json!(0);
+        for _ in 0..depth {
+            inner = Value::Array(vec![inner]);
+        }
+        // Not `json!`: it serializes an interpolated value, recursively.
+        let mut log = serde_json::Map::new();
+        log.insert("chain".into(), Value::Array(vec![inner]));
+        log.insert("events".into(), json!([]));
+        Value::Object(log)
+    }
+
+    #[test]
+    fn over_deep_logs_are_malformed_without_recursion() {
+        let deep = deep_log(200_000);
+        let failure = fold_log("did:kokuin:zX", &deep).unwrap_err();
+        assert_eq!((failure.reason.as_str(), failure.index), (MALFORMED_LOG, 0));
+        dismantle(deep);
+
+        let resolver = ControllerResolver::new(Box::new(|_| Ok(Some(deep_log(200_000)))));
+        let error = resolver
+            .signing_key("did:kokuin:zX", &ResolveIssuerHeader::default(), false)
+            .unwrap_err();
+        assert_eq!(
+            error.message(),
+            "Controller resolver: invalid log for did:kokuin:zX: malformed log at event 0"
+        );
+    }
+
+    #[test]
+    fn a_log_within_the_bound_refuses_only_its_over_deep_entry() {
+        // Object, chain array and entry use three levels, so this nests exactly to the bound.
+        let log = deep_log(MAX_INPUT_DEPTH - 2);
+        let failure = fold_log("did:kokuin:zX", &log).unwrap_err();
+        assert_eq!(
+            (failure.reason.as_str(), failure.index),
+            ("malformed event", 0)
+        );
+    }
+}

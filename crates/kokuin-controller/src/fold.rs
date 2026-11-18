@@ -351,8 +351,7 @@ fn init_fold(did: &str, events: &[Value]) -> Result<KeyState, FoldFailure> {
     if !verify_inception(event, sigs_of(first), did) {
         return Err(FoldFailure::new("invalid inception", 0));
     }
-    // Divergence: TS seeds `gen`/`seq` with whatever JSON the self-certifying inception carries.
-    // This port holds them as numbers, so an inception whose `g` or `s` is not one is refused.
+    // `verify_inception` admits only `g === 0` and `s === 0`, so both are numbers here.
     let (Some(generation), Some(seq)) = (
         prop(event, "g").and_then(Value::as_f64),
         prop(event, "s").and_then(Value::as_f64),
@@ -416,7 +415,10 @@ pub(crate) fn fold_chain_only(did: &str, chain: &[Value]) -> Result<Vec<KeyState
 }
 
 /// Fold a controller log into per-position key state and the head the current epoch makes of the
-/// last one (`foldLog`). `input` is untrusted: anything that is not a log fails `malformed log`.
+/// last one (`foldLog`). `input` is untrusted: anything that is not a log fails `malformed log`,
+/// including a value nesting deeper than `MAX_INPUT_DEPTH` containers (see
+/// [`ControllerLog::from_value`]). The caller still owns `input` and drops it: one too deep for the
+/// default recursive drop is the caller's to take apart.
 pub fn fold_log(did: &str, input: &Value) -> FoldOutcome {
     let Some(log) = ControllerLog::from_value(input) else {
         return Err(FoldFailure::new(MALFORMED_LOG, 0));
@@ -424,7 +426,8 @@ pub fn fold_log(did: &str, input: &Value) -> FoldOutcome {
     fold_controller_log(did, &log)
 }
 
-/// [`fold_log`] over a log already in hand.
+/// [`fold_log`] over a log already in hand, which must satisfy [`ControllerLog`]'s depth
+/// precondition.
 pub fn fold_controller_log(did: &str, log: &ControllerLog) -> FoldOutcome {
     if log.events.len() > MAX_LOG_EVENTS {
         return Err(FoldFailure::new(LOG_TOO_LARGE, -1));

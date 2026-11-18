@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Value, json};
 
-use crate::canonical::{digest_of, is_canonicalizable};
+use crate::canonical::{digest_of, is_canonicalizable, within_input_depth};
 use crate::epoch::{EpochLimits, fold_epoch_detailed};
 use crate::fold::{FoldFailure, Folded, KeyState};
 use crate::js::prop;
@@ -21,6 +21,10 @@ pub const LOG_FORKED: &str = "the loaded log and the one already seen are a fork
 
 /// A controller's log: the root chain and the current epoch's events (`ControllerLog`). Entries are
 /// kept as the untrusted JSON they arrived as; the fold checks each one.
+///
+/// Build one from untrusted JSON with [`ControllerLog::from_value`], which bounds its depth. A log
+/// assembled by hand must keep every entry within `MAX_INPUT_DEPTH` containers: the fold clones,
+/// compares and drops entries recursively.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ControllerLog {
     /// The root chain.
@@ -31,7 +35,18 @@ pub struct ControllerLog {
 
 impl ControllerLog {
     /// The log `value` is, if it has the two lists a log is made of (`isControllerLog`).
+    ///
+    /// A value nesting deeper than [`MAX_INPUT_DEPTH`] containers is no log either: it is refused
+    /// before anything clones or compares it, since those recurse once per level. That is the
+    /// bound `@sozai/json` `parse` puts on JSON text, so a log that arrived as text through it is
+    /// never refused here; one TS received through bare `JSON.parse` could be, where TS would
+    /// refuse only its over-deep entries.
+    ///
+    /// [`MAX_INPUT_DEPTH`]: crate::MAX_INPUT_DEPTH
     pub fn from_value(value: &Value) -> Option<Self> {
+        if !within_input_depth(value) {
+            return None;
+        }
         Some(Self {
             chain: prop(value, "chain")?.as_array()?.clone(),
             events: prop(value, "events")?.as_array()?.clone(),

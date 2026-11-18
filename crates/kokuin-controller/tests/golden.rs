@@ -294,7 +294,7 @@ fn same(actual: &Value, expected: &Value) -> bool {
 #[test]
 fn golden_controller() {
     let cases = load();
-    assert_eq!(cases.len(), 80, "case count");
+    assert_eq!(cases.len(), 97, "case count");
     let failures: Vec<String> = cases
         .iter()
         .filter_map(|case| match run(case) {

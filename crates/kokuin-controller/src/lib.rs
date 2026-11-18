@@ -30,7 +30,7 @@ mod resolver;
 mod state_resolver;
 mod supersede;
 
-pub use canonical::{MAX_CANONICAL_DEPTH, digest_of, is_canonicalizable};
+pub use canonical::{MAX_CANONICAL_DEPTH, MAX_INPUT_DEPTH, is_canonicalizable, try_digest_of};
 pub use device_revoke::device_revoke_indices;
 pub use epoch::{
     ADD_DID_MISMATCH, ADD_KEY_ALREADY_MEMBER, ADD_KEY_DENIED, ADD_KEY_IS_ROOT, ADD_NOT_ROOT,

@@ -98,6 +98,10 @@ fn recall(did: &str, seen: Option<&ControllerLog>) -> Option<(ControllerLog, Key
 /// The loaded chain must extend the seen one or win against it under branch resolution; a chain
 /// that loses is refused (`LOG_NOT_AUTHORITATIVE`), a fork too (`LOG_FORKED`). The epoch is the
 /// union of what was seen and loaded; seen events are trusted, loaded ones checked.
+///
+/// `loaded` is untrusted and bounded as [`ControllerLog::from_value`] bounds it: one nesting deeper
+/// than `MAX_INPUT_DEPTH` containers fails `malformed log`. The caller still owns and drops it.
+/// `seen` is this party's own memory and must satisfy [`ControllerLog`]'s depth precondition.
 pub fn authoritative_log(
     did: &str,
     loaded: &Value,

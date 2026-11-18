@@ -34,14 +34,64 @@ pub fn canonical_text(value: &Value) -> Option<String> {
     canonical::stringify(value).ok()
 }
 
-/// Self-addressing digest: multibase(multihash(canonical bytes)) (`digestOf`).
-///
-/// Every caller has checked the value is canonicalizable, where TS would throw otherwise; a value
-/// that is not digests to the empty string, which names no event and no key.
-pub fn digest_of(value: &Value) -> String {
+/// Self-addressing digest: multibase(multihash(canonical bytes)), or `None` for a value
+/// [`is_canonicalizable`] refuses (`digestOf`, which throws there).
+pub fn try_digest_of(value: &Value) -> Option<String> {
     canonical_text(value)
         .and_then(|text| multibase::encode(&multibase::multihash_sha256(text.as_bytes())).ok())
-        .unwrap_or_default()
+}
+
+/// [`try_digest_of`] for a value the caller has already checked is canonicalizable.
+///
+/// Every call site checks first, where TS would throw otherwise. Should one ever reach it with a
+/// value that is not, it digests to the empty string, which names no event and no key.
+pub(crate) fn digest_of(value: &Value) -> String {
+    let digest = try_digest_of(value);
+    debug_assert!(
+        digest.is_some(),
+        "digest_of called on an uncanonicalizable value"
+    );
+    digest.unwrap_or_default()
+}
+
+/// The deepest nesting, in containers, an entry point accepts in a caller's JSON value: the bound
+/// `@sozai/json` `parse` puts on JSON text, so any log that arrived through it passes. A log event
+/// is at most 64 levels deep (`MAX_CANONICAL_DEPTH`) under 3 levels of log, so nothing a fold could
+/// accept is refused.
+pub const MAX_INPUT_DEPTH: usize = 128;
+
+/// Whether `value` nests no deeper than [`MAX_INPUT_DEPTH`] containers. Iterative, so an
+/// arbitrarily deep value cannot exhaust the stack: every recursive path over a caller's value
+/// (clone, comparison, canonicalization, drop) must come after this check.
+pub(crate) fn within_input_depth(value: &Value) -> bool {
+    let mut stack = vec![(value, 0usize)];
+    while let Some((value, depth)) = stack.pop() {
+        let depth = depth + 1;
+        match value {
+            Value::Array(items) if depth <= MAX_INPUT_DEPTH => {
+                stack.extend(items.iter().map(|item| (item, depth)));
+            }
+            Value::Object(map) if depth <= MAX_INPUT_DEPTH => {
+                stack.extend(map.values().map(|item| (item, depth)));
+            }
+            Value::Array(_) | Value::Object(_) => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Drop a value without recursion, for one [`within_input_depth`] refused: the default drop
+/// recurses once per level.
+pub(crate) fn dismantle(value: Value) {
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            Value::Array(items) => stack.extend(items),
+            Value::Object(map) => stack.extend(map.into_iter().map(|(_, item)| item)),
+            _ => {}
+        }
+    }
 }
 
 /// [`digest_of`] a JSON string, as `digestOf(key)` reads an encoded key.
@@ -56,12 +106,23 @@ mod tests {
     use super::*;
 
     fn nest(depth: usize) -> Value {
-        (1..depth).fold(json!(0), |inner, _| json!([inner]))
+        // Not `json!([inner])`: it serializes the interpolated value, recursively.
+        (1..depth).fold(json!(0), |inner, _| Value::Array(vec![inner]))
     }
 
     #[test]
     fn depth_bound_matches_typescript() {
         assert!(is_canonicalizable(&nest(64)));
         assert!(!is_canonicalizable(&nest(65)));
+    }
+
+    #[test]
+    fn input_depth_counts_containers_and_dismantles_deep_values() {
+        // `nest(n)` is n - 1 arrays around a number.
+        assert!(within_input_depth(&nest(MAX_INPUT_DEPTH + 1)));
+        assert!(!within_input_depth(&nest(MAX_INPUT_DEPTH + 2)));
+        let deep = nest(200_000);
+        assert!(!within_input_depth(&deep));
+        dismantle(deep);
     }
 }
