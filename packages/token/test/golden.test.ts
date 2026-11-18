@@ -2,12 +2,19 @@ import { readFileSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
+import { canonicalStringify } from '@sozai/codec'
 import { expect, test } from 'vitest'
 
 import { checkGolden, type GoldenCase } from '../../../scripts/golden.ts'
-import { CODECS, getDID, getSignatureInfo } from '../src/did.ts'
-import { createSigningIdentity } from '../src/identity.ts'
-import { type DIDDoc, decodePeer4, encodePeer4 } from '../src/peer4.ts'
+import { CODECS, getDID, getSignatureInfo, normalizeDID } from '../src/did.ts'
+import { createIdentity, createSigningIdentity } from '../src/identity.ts'
+import {
+  assertDocWithinMaxSize,
+  type DIDDoc,
+  decodePeer4,
+  encodePeer4,
+  getPeer4ShortForm,
+} from '../src/peer4.ts'
 import { createUnsignedToken, isVerifiedToken, signToken, verifyToken } from '../src/token.ts'
 import { stringifyToken } from '../src/utils.ts'
 
@@ -148,6 +155,201 @@ async function tokenCases(): Promise<Array<GoldenCase>> {
     input: { seed: seeds[0], doc },
     expected: { longForm, shortForm },
   })
+  cases.push(...(await peer4Cases(doc)))
+  return cases
+}
+
+type Rejection = { error: string; message: string }
+
+async function rejectionOf(run: () => unknown): Promise<Rejection> {
+  try {
+    await run()
+  } catch (error) {
+    if (!(error instanceof Error)) throw error
+    return { error: error.name, message: error.message }
+  }
+  throw new Error('Expected a rejection')
+}
+
+function signRaw(header: Record<string, unknown>, payload: Record<string, unknown>, seed: string) {
+  const data = `${Buffer.from(canonicalStringify(header)).toString('base64url')}.${Buffer.from(canonicalStringify(payload)).toString('base64url')}`
+  const signature = ed25519.sign(Buffer.from(data), Buffer.from(seed, 'hex'))
+  return `${data}.${Buffer.from(signature).toString('base64url')}`
+}
+
+async function verifiedCase(
+  name: string,
+  input: { token: string; resolver?: Record<string, DIDDoc> },
+): Promise<GoldenCase> {
+  const docs = input.resolver
+  const verified = await verifyToken({
+    token: input.token,
+    resolver: docs === undefined ? undefined : (did) => docs[did],
+  })
+  expect(isVerifiedToken(verified)).toBe(true)
+  return {
+    name,
+    input,
+    expected: {
+      verified: isVerifiedToken(verified),
+      publicKey: Buffer.from(verified.verifiedPublicKey).toString('hex'),
+      header: verified.header,
+      payload: verified.payload,
+    },
+  }
+}
+
+async function rejectedCase(
+  name: string,
+  input: { token: string; resolver?: Record<string, DIDDoc> },
+): Promise<GoldenCase> {
+  const docs = input.resolver
+  const expected = await rejectionOf(() =>
+    verifyToken({
+      token: input.token,
+      resolver: docs === undefined ? undefined : (did) => docs[did],
+    }),
+  )
+  return { name, input, expected }
+}
+
+async function peer4Cases(otherDoc: DIDDoc): Promise<Array<GoldenCase>> {
+  const cases: Array<GoldenCase> = []
+  const sigSeed = '03'.repeat(32)
+  const kemSeed = '04'.repeat(32)
+  const identity = await createIdentity({
+    didMethod: 'peer:4',
+    keys: [
+      { purpose: 'sig', alg: 'EdDSA', privateKey: Buffer.from(sigSeed, 'hex') },
+      { purpose: 'kem', alg: 'X25519', privateKey: Buffer.from(kemSeed, 'hex') },
+    ],
+  })
+  const { longForm, id: shortForm, doc } = identity
+  expect(longForm).not.toBe(shortForm)
+
+  // Decoding.
+  const decoded = decodePeer4({ longForm })
+  expect(decoded).toEqual({ longForm, shortForm, doc })
+  cases.push({
+    name: 'did:peer:4: long-form decode',
+    input: { sigSeed, kemSeed, longForm },
+    expected: { shortForm: decoded.shortForm, doc: decoded.doc },
+  })
+  cases.push({
+    name: 'did:peer:4: short form of either form',
+    input: { longForm, shortForm },
+    expected: {
+      fromLong: getPeer4ShortForm(longForm),
+      fromShort: getPeer4ShortForm(shortForm),
+      normalizedLong: normalizeDID(longForm),
+      normalizedShort: normalizeDID(shortForm),
+    },
+  })
+  cases.push({
+    name: 'did:peer:4: short form is not decodable alone',
+    input: { longForm: shortForm },
+    expected: await rejectionOf(() => decodePeer4({ longForm: shortForm })),
+  })
+  const otherEncoded = encodePeer4(otherDoc).longForm.split(':').at(-1)
+  const tampered = `${shortForm}:${otherEncoded}`
+  cases.push({
+    name: 'did:peer:4: reject long form whose doc does not match its hash',
+    input: { longForm: tampered },
+    expected: await rejectionOf(() => decodePeer4({ longForm: tampered })),
+  })
+
+  // Size limits on the embedded document.
+  const docSize = Buffer.byteLength(canonicalStringify(doc))
+  const tooSmall = await rejectionOf(() => decodePeer4({ longForm, maxDocSize: docSize - 1 }))
+  expect(tooSmall.message).toBe(`did:peer:4 doc too large: ${docSize} > ${docSize - 1}`)
+  cases.push({
+    name: 'did:peer:4: reject doc over maxDocSize',
+    input: { longForm, maxDocSize: docSize - 1 },
+    expected: tooSmall,
+  })
+  const encodedTooLarge = await rejectionOf(() => decodePeer4({ longForm, maxDocSize: 16 }))
+  expect(encodedTooLarge.message).toMatch(/^did:peer:4 encoded doc too large/)
+  cases.push({
+    name: 'did:peer:4: reject encoded doc over maxDocSize',
+    input: { longForm, maxDocSize: 16 },
+    expected: encodedTooLarge,
+  })
+
+  // Tokens from a did:peer:4 issuer.
+  const payload = { typ: 'note', sub: 'did:example:subject' }
+  const longSigned = await identity.signToken({ payload, embedLongForm: true })
+  const longToken = stringifyToken(longSigned)
+  cases.push(await verifiedCase('did:peer:4: verify long-form issuer token', { token: longToken }))
+
+  const shortSigned = await identity.signToken({ payload, embedLongForm: false })
+  const shortToken = stringifyToken(shortSigned)
+  cases.push(
+    await verifiedCase('did:peer:4: verify short-form issuer token through a resolver', {
+      token: shortToken,
+      resolver: { [shortForm]: doc },
+    }),
+  )
+  cases.push(
+    await rejectedCase('did:peer:4: reject short-form issuer without a resolver', {
+      token: shortToken,
+    }),
+  )
+  cases.push(
+    await rejectedCase('did:peer:4: reject resolver doc with another hash', {
+      token: shortToken,
+      resolver: { [shortForm]: otherDoc },
+    }),
+  )
+
+  const header = { typ: 'JWT', alg: 'EdDSA', kid: '#key-0' }
+  const longPayload = { ...payload, iss: longForm }
+  cases.push(
+    await rejectedCase('did:peer:4: reject token signed by another key', {
+      token: signRaw(header, longPayload, seeds[1] as string),
+    }),
+  )
+  cases.push(
+    await rejectedCase('did:peer:4: reject kid that is not an authentication method', {
+      token: signRaw({ ...header, kid: '#key-1' }, longPayload, sigSeed),
+    }),
+  )
+  cases.push(
+    await rejectedCase('did:peer:4: reject unknown kid', {
+      token: signRaw({ ...header, kid: '#key-9' }, longPayload, sigSeed),
+    }),
+  )
+
+  // Resolver documents over the size and entry limits.
+  const oversized: DIDDoc = { ...doc, service: 'x'.repeat(4096) }
+  const oversizedRejection = await rejectionOf(() => assertDocWithinMaxSize(oversized))
+  expect(oversizedRejection.message).toMatch(/^did:peer:4 resolver doc too large/)
+  cases.push(
+    await rejectedCase('did:peer:4: reject resolver doc over the size limit', {
+      token: shortToken,
+      resolver: { [shortForm]: oversized },
+    }),
+  )
+  const crowded: DIDDoc = {
+    ...doc,
+    verificationMethod: Array.from({ length: 104 }, (_, index) => {
+      return { id: `#k${index}`, type: 'Multikey', publicKeyMultibase: 'z' }
+    }),
+  }
+  const crowdedRejection = await rejectionOf(() => assertDocWithinMaxSize(crowded))
+  expect(crowdedRejection.message).toMatch(/too many verification methods: 104 > 103$/)
+  cases.push(
+    await rejectedCase('did:peer:4: reject resolver doc with too many verification methods', {
+      token: shortToken,
+      resolver: { [shortForm]: crowded },
+    }),
+  )
+
+  // A payload without `iss` fails schema validation before any issuer is resolved.
+  cases.push(
+    await rejectedCase('Ed25519 seed 1: reject payload without iss', {
+      token: signRaw({ typ: 'JWT', alg: 'EdDSA' }, { typ: 'note' }, seeds[0] as string),
+    }),
+  )
   return cases
 }
 
