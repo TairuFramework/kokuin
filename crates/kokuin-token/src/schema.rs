@@ -15,13 +15,13 @@ fn is_string_array(value: &Value) -> bool {
 ///
 /// The message names the first issue the way `@sozai/schema` reports Ajv's first error: the root
 /// type, then the `required` keyword, then each property in schema order.
-pub(crate) fn validate_signed_payload(payload: &Value) -> Result<&Map<String, Value>, TokenError> {
+pub(crate) fn validate_signed_payload(payload: Value) -> Result<Map<String, Value>, TokenError> {
     let fail = |path: &str, keyword: &str| {
         TokenError::Validation(format!(
             "Validation failed for schema object ({path} {keyword})"
         ))
     };
-    let Some(object) = payload.as_object() else {
+    let Value::Object(object) = payload else {
         return Err(fail("/", "type"));
     };
     if !object.contains_key("iss") {
@@ -82,7 +82,7 @@ mod tests {
     use super::*;
 
     fn message(payload: Value) -> String {
-        validate_signed_payload(&payload).unwrap_err().to_string()
+        validate_signed_payload(payload).unwrap_err().to_string()
     }
 
     #[test]
@@ -103,7 +103,7 @@ mod tests {
             message(json!({ "iss": "a", "exp": "1" })),
             "Validation failed for schema object (/exp type)"
         );
-        assert!(validate_signed_payload(&json!({ "iss": "a", "cap": ["x"], "exp": 1.5 })).is_ok());
+        assert!(validate_signed_payload(json!({ "iss": "a", "cap": ["x"], "exp": 1.5 })).is_ok());
     }
 
     #[test]

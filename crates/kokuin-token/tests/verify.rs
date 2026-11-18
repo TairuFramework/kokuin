@@ -26,7 +26,7 @@ fn public_key(seed: [u8; 32]) -> Vec<u8> {
 impl Signer {
     fn did_key(seed: [u8; 32]) -> Self {
         Self {
-            id: did_key::encode(SignatureAlgorithm::EdDSA, &public_key(seed)),
+            id: did_key::encode(SignatureAlgorithm::EdDSA, &public_key(seed)).unwrap(),
             seed,
             kid: None,
         }
@@ -60,7 +60,7 @@ impl TokenSigner for Signer {
 
 fn token(signer: &Signer, payload: Value) -> String {
     let payload = payload.as_object().cloned().unwrap_or_default();
-    stringify_token(&sign_token(signer, Map::new(), payload).unwrap())
+    stringify_token(&sign_token(signer, Map::new(), payload).unwrap()).unwrap()
 }
 
 fn error(token: &str, options: &VerifyOptions<'_>) -> TokenError {
@@ -313,5 +313,143 @@ fn header_and_format_rejections() {
     assert_eq!(
         mismatched.unwrap_err().to_string(),
         "Invalid payload: issuer does not match signer"
+    );
+}
+
+/// A cache that answers every short form with one fixed document, as a corrupted or hostile
+/// store would.
+struct LyingCache(Value);
+
+impl DIDCache for LyingCache {
+    fn get(&self, _short_form: &str) -> Option<Value> {
+        Some(self.0.clone())
+    }
+
+    fn set(&self, _short_form: &str, _doc: &Value) -> Result<(), TokenError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn cache_answer_is_checked_against_the_short_form() {
+    let (_, forms) = peer4_identity([9; 32]);
+    // The cached document names the attacker's key, and the token is signed with it.
+    let attacker = [10; 32];
+    let (attacker_doc, _) = peer4_identity(attacker);
+    let cache = LyingCache(attacker_doc);
+    let options = VerifyOptions {
+        cache: Some(&cache),
+        ..VerifyOptions::default()
+    };
+    let forged = token(&Signer::with_id(attacker, &forms.short_form), json!({}));
+    assert_eq!(
+        error(&forged, &options),
+        TokenError::UnresolvableIssuer("DIDResolver: short form/doc hash mismatch".into())
+    );
+}
+
+#[test]
+fn non_object_segments_are_errors() {
+    let payload = segment(json!({ "iss": "did:key:z" }));
+    // TS reads `.typ` of a null header and throws a TypeError.
+    let null_header = error(
+        &format!("{}.{payload}.", segment(Value::Null)),
+        &VerifyOptions::default(),
+    );
+    assert_eq!(null_header.name(), "TypeError");
+    assert_eq!(
+        null_header.to_string(),
+        "Cannot read properties of null (reading 'typ')"
+    );
+    // Any other non-object header has no `typ`.
+    assert_eq!(
+        error(
+            &format!("{}.{payload}.", segment(json!([]))),
+            &VerifyOptions::default()
+        )
+        .to_string(),
+        "Invalid token header type"
+    );
+    // A non-object payload fails the payload schema.
+    let header = segment(json!({ "typ": "JWT", "alg": "EdDSA" }));
+    let array_payload = error(
+        &format!("{header}.{}.AA", segment(json!([1]))),
+        &VerifyOptions::default(),
+    );
+    assert_eq!(array_payload.name(), "AggregateError");
+    assert_eq!(
+        array_payload.to_string(),
+        "Validation failed for schema object (/ type)"
+    );
+    // Decoding without verification refuses rather than inventing an empty object.
+    for token in [
+        format!("{}.{payload}.AA", segment(json!("text"))),
+        format!("{header}.{}.AA", segment(Value::Null)),
+    ] {
+        assert!(
+            kokuin_token::decode_signed_token(&token).is_err(),
+            "{token}"
+        );
+    }
+    let decoded = kokuin_token::decode_signed_token(&format!("{header}.{payload}.AA")).unwrap();
+    assert_eq!(decoded.payload["iss"], json!("did:key:z"));
+}
+
+/// A resolver whose document is a parsed value nested far past the JSON depth bound, built
+/// without recursion, as a resolver that lifted serde's recursion limit could return.
+struct DeepResolver(usize);
+
+impl kokuin_token::DIDResolver for DeepResolver {
+    fn resolve(&self, _did: &str) -> Result<Option<Value>, String> {
+        let mut deep = Value::Array(Vec::new());
+        for _ in 0..self.0 {
+            deep = Value::Array(vec![deep]);
+        }
+        let mut doc = json!({
+            "verificationMethod": [{ "id": "#key-0", "type": "Multikey", "publicKeyMultibase": "z" }],
+            "authentication": ["#key-0"],
+        });
+        doc["x"] = deep;
+        Ok(Some(doc))
+    }
+}
+
+#[test]
+fn deep_resolver_document_is_unresolvable_on_a_small_stack() {
+    let seed = [9; 32];
+    let (_, forms) = peer4_identity(seed);
+    let signed = token(&Signer::with_id(seed, &forms.short_form), json!({}));
+    // 512 KiB, the iOS secondary thread stack. Canonicalizing, cloning or dropping this document
+    // recursively would abort the process.
+    let result = std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(move || {
+            let resolver = DeepResolver(200_000);
+            let options = VerifyOptions {
+                resolver: Some(&resolver),
+                ..VerifyOptions::default()
+            };
+            verify_token(&signed, &options).map(|_| ())
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(
+        result,
+        Err(TokenError::UnresolvableIssuer(
+            "JSON exceeds maximum nesting depth of 128".into()
+        ))
+    );
+    // The bound is the parse bound: a cache refuses such a document too.
+    let cache = InMemoryDIDCache::default();
+    let shallow = kokuin_token::DIDResolver::resolve(&DeepResolver(200), "")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        cache
+            .set(&forms.short_form, &shallow)
+            .unwrap_err()
+            .to_string(),
+        "JSON exceeds maximum nesting depth of 128"
     );
 }

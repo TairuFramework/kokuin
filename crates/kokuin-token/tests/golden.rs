@@ -59,7 +59,7 @@ impl SeedSigner {
     fn new(seed: [u8; 32]) -> Self {
         let public_key = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
         Self {
-            id: did_key::encode(SignatureAlgorithm::EdDSA, &public_key),
+            id: did_key::encode(SignatureAlgorithm::EdDSA, &public_key).expect("did:key"),
             seed,
         }
     }
@@ -98,7 +98,9 @@ fn compact_token(input: &Value) -> Result<Value, String> {
     let signer = SeedSigner::new(seed(&input["seed"]));
     let signed = sign_token(&signer, object(&input["header"]), object(&input["payload"]))
         .map_err(|error| error.to_string())?;
-    Ok(Value::String(stringify_token(&signed)))
+    Ok(Value::String(
+        stringify_token(&signed).map_err(|e| e.to_string())?,
+    ))
 }
 
 fn verify(input: &Value, with_header: bool) -> Value {
@@ -145,7 +147,7 @@ fn did_key_case(input: &Value) -> Result<Value, String> {
         }
         other => return Err(format!("unknown algorithm {other:?}")),
     };
-    let did = did_key::encode(algorithm, &public_key);
+    let did = did_key::encode(algorithm, &public_key).map_err(|e| e.to_string())?;
     let (decoded_algorithm, decoded_key) = did_key::decode(&did).map_err(|e| e.to_string())?;
     if decoded_key != public_key || decoded_algorithm != algorithm {
         return Err("did:key does not round-trip".into());
@@ -214,7 +216,7 @@ fn run(case: &Case) -> Result<Value, String> {
 #[test]
 fn golden_tokens() {
     let cases = load();
-    assert_eq!(cases.len(), 28, "case count");
+    assert_eq!(cases.len(), 34, "case count");
     let failures: Vec<String> = cases
         .iter()
         .filter_map(|case| match run(case) {

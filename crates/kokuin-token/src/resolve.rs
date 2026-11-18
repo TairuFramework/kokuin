@@ -2,6 +2,7 @@
 
 use serde_json::Value;
 
+use crate::json::dismantle;
 use crate::method::{DIDMethodResolver, MethodError, ResolveIssuerHeader, find_method_resolver};
 use crate::multibase::{self, js_length};
 use crate::peer4::{self, DEFAULT_MAX_DOC_SIZE, DIDDoc};
@@ -93,16 +94,23 @@ pub fn resolve_issuer(
             Ok(Some(doc)) if !doc.is_null() => doc,
             _ => return Err(unknown()),
         };
-        // An unusable answer (oversized, or not hashing to the DID asked for) is unresolvable.
-        peer4::assert_doc_within_max_size(&doc, DEFAULT_MAX_DOC_SIZE)
-            .map_err(|error| TokenError::UnresolvableIssuer(error.to_string()))?;
-        // As in TS, a document the encoder refuses (schema, base58 length) fails as itself.
-        if peer4::encode(&doc)?.short_form != short_form {
+        // An unusable answer (oversized, nested past the depth bound, or not hashing to the DID
+        // asked for) is unresolvable. The document arrives already parsed, so the parse-time
+        // depth bound never saw it: the size check bounds its depth before anything recurses over
+        // it, and a refused one is taken apart without recursing.
+        if let Err(error) = peer4::assert_doc_within_max_size(&doc, DEFAULT_MAX_DOC_SIZE) {
+            dismantle(doc);
+            return Err(TokenError::UnresolvableIssuer(error.to_string()));
+        }
+        // So is one the encoder refuses: it fails the document schema, or exceeds the 2048-byte
+        // base58 encode limit (below the 4 KiB size bound). No short form hashes to it.
+        let unusable = |error: TokenError| TokenError::UnresolvableIssuer(error.to_string());
+        if peer4::encode(&doc).map_err(unusable)?.short_form != short_form {
             return Err(TokenError::UnresolvableIssuer(
                 "DIDResolver: short form/doc hash mismatch".into(),
             ));
         }
-        let doc = DIDDoc::new(doc)?;
+        let doc = DIDDoc::new(doc).map_err(unusable)?;
         let (alg, public_key) = resolve_kid_or_auth(&doc, header.kid.as_ref())?;
         return Ok(ResolvedIssuer {
             alg,

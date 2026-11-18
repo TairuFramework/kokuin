@@ -19,6 +19,9 @@ pub enum TokenError {
     IssuerKeyNotFound(String),
     /// Bytes that are not UTF-8 where text is expected (a `TypeError` from `toUTF`).
     InvalidUTF8,
+    /// A value of the wrong JSON type where TS dereferences it (a `TypeError`), such as a `null`
+    /// header.
+    InvalidType(String),
     /// Text that is not JSON (a `SyntaxError` from `JSON.parse`). The message is serde_json's,
     /// not the JavaScript engine's.
     InvalidJSON(String),
@@ -35,7 +38,7 @@ impl TokenError {
             Self::InvalidSignature | Self::Invalid(_) => "Error",
             Self::UnresolvableIssuer(_) => "UnresolvableIssuerError",
             Self::IssuerKeyNotFound(_) => "IssuerKeyNotFoundError",
-            Self::InvalidUTF8 => "TypeError",
+            Self::InvalidUTF8 | Self::InvalidType(_) => "TypeError",
             Self::InvalidJSON(_) => "SyntaxError",
             Self::Validation(_) => "AggregateError",
         }
@@ -58,6 +61,7 @@ impl fmt::Display for TokenError {
             Self::InvalidUTF8 => f.write_str("The encoded data was not valid for encoding utf-8"),
             Self::UnresolvableIssuer(message)
             | Self::IssuerKeyNotFound(message)
+            | Self::InvalidType(message)
             | Self::InvalidJSON(message)
             | Self::Validation(message)
             | Self::Invalid(message) => f.write_str(message),

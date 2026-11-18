@@ -93,7 +93,8 @@ impl DIDCache for InMemoryDIDCache {
                 "DIDCache: short form must be a did:peer:4 identifier",
             ));
         }
-        // Bound the resolver-supplied document before the linear encode below.
+        // A caller may hand in any value: this bounds its depth before anything recurses over it,
+        // then its size before the linear encode below.
         peer4::assert_doc_within_max_size(doc, DEFAULT_MAX_DOC_SIZE)?;
         if peer4::encode(doc)?.short_form != short_form {
             return Err(TokenError::invalid(

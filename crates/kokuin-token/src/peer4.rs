@@ -4,7 +4,7 @@
 use serde_json::Value;
 
 use crate::TokenError;
-use crate::json::{canonical, parse_unbounded, to_utf8};
+use crate::json::{canonical, check_value_depth, parse, to_utf8};
 use crate::multibase::{self, js_length, multihash_sha256, verify_multihash};
 use crate::schema::validate_did_doc;
 
@@ -138,6 +138,9 @@ pub fn assert_doc_within_max_size(doc: &Value, max_size: usize) -> Result<(), To
             methods.len()
         )));
     }
+    // Not in TS, whose documents all come from `JSON.parse`: a caller-built value can nest past
+    // the parse bound, and canonicalization recurses once per level.
+    check_value_depth(doc)?;
     let size = canonical(doc)?.len();
     if size > max_size {
         return Err(TokenError::invalid(format!(
@@ -195,7 +198,7 @@ pub fn decode(long_form: &str, max_doc_size: Option<usize>) -> Result<DecodedPee
             doc_bytes.len()
         )));
     }
-    let doc = parse_unbounded(&to_utf8(doc_bytes.to_vec())?)?;
+    let doc = parse(&to_utf8(doc_bytes.to_vec())?)?;
     let doc = DIDDoc::new(doc)?;
     Ok(DecodedPeer4 {
         long_form: long_form.to_owned(),
@@ -209,6 +212,8 @@ pub fn decode(long_form: &str, max_doc_size: Option<usize>) -> Result<DecodedPee
 /// As in TS, a document whose tagged canonical bytes exceed 2048 cannot be base58 encoded and
 /// fails with `invalid length`, although decoding accepts up to [`DEFAULT_MAX_DOC_SIZE`].
 pub fn encode(doc: &Value) -> Result<Peer4, TokenError> {
+    // Before the clone and canonicalization below, both of which recurse once per level.
+    check_value_depth(doc)?;
     let doc = DIDDoc::new(doc.clone())?;
     let mut tagged = JSON_MULTICODEC.to_vec();
     tagged.extend_from_slice(canonical(doc.as_value())?.as_bytes());
@@ -273,6 +278,64 @@ mod tests {
             "did:peer:4 doc failed schema validation"
         );
         assert!(decode(&encoded.long_form, Some(0)).is_err());
+    }
+
+    /// Base58 without the 2048-byte encode limit, to build long forms TS could not produce but an
+    /// attacker can: decoding accepts up to 4096 characters.
+    fn base58_unbounded(bytes: &[u8]) -> String {
+        let alphabet = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        let zeros = bytes.iter().take_while(|&&byte| byte == 0).count();
+        let mut digits: Vec<u32> = Vec::new();
+        for &byte in &bytes[zeros..] {
+            let mut carry = u32::from(byte);
+            for digit in digits.iter_mut() {
+                carry += *digit << 8;
+                *digit = carry % 58;
+                carry /= 58;
+            }
+            while carry > 0 {
+                digits.push(carry % 58);
+                carry /= 58;
+            }
+        }
+        let mut out = "1".repeat(zeros);
+        out.extend(
+            digits
+                .iter()
+                .rev()
+                .map(|&d| char::from(alphabet[d as usize])),
+        );
+        out
+    }
+
+    #[test]
+    fn deep_embedded_doc_is_refused_on_a_small_stack() {
+        // A hash-correct long form nesting 1450 levels: just under the 4096-character decode limit.
+        let depth = 1450;
+        let json = format!(
+            r##"{{"verificationMethod":[{{"id":"#k","type":"Multikey","publicKeyMultibase":"z"}}],"x":{}{}}}"##,
+            "[".repeat(depth),
+            "]".repeat(depth)
+        );
+        let mut tagged = JSON_MULTICODEC.to_vec();
+        tagged.extend_from_slice(json.as_bytes());
+        let encoded_doc = format!("z{}", base58_unbounded(&tagged));
+        assert!(encoded_doc.len() <= 4097, "fits the decode limit");
+        let hash = multibase::encode(&multihash_sha256(encoded_doc.as_bytes())).unwrap();
+        let long_form = format!("did:peer:4{hash}:{encoded_doc}");
+        // 512 KiB, the iOS secondary thread stack: unbounded recursion here aborts the process.
+        let result = std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || decode(&long_form, None).map(|_| ()))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(
+            result,
+            Err(TokenError::invalid(
+                "JSON exceeds maximum nesting depth of 128"
+            ))
+        );
     }
 
     #[test]

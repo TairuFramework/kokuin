@@ -37,12 +37,12 @@ pub fn algorithm_and_public_key(bytes: &[u8]) -> Option<(SignatureAlgorithm, Vec
 
 /// Encode a public key as a `did:key` identifier (`getDID`).
 ///
-/// A key of any length encodes, as in TS; only a key over 2046 bytes, which no algorithm has,
-/// exceeds the base58 limit, and it yields the prefix alone.
-pub fn encode(algorithm: SignatureAlgorithm, public_key: &[u8]) -> String {
+/// A key of any length encodes, as in TS, up to the base58 limit: a key over 2046 bytes, which no
+/// algorithm has, fails with `invalid length`.
+pub fn encode(algorithm: SignatureAlgorithm, public_key: &[u8]) -> Result<String, TokenError> {
     let mut bytes = codec(algorithm).to_vec();
     bytes.extend_from_slice(public_key);
-    format!("{PREFIX}{}", base58_encode(&bytes).unwrap_or_default())
+    Ok(format!("{PREFIX}{}", base58_encode(&bytes)?))
 }
 
 /// The algorithm and raw public key a `did:key` carries (`getSignatureInfo`).
@@ -80,10 +80,14 @@ mod tests {
             "Invalid DID format: key too large"
         );
         assert_eq!(
-            error(&encode(SignatureAlgorithm::EdDSA, &[1; 31])),
+            error(&encode(SignatureAlgorithm::EdDSA, &[1; 31]).unwrap()),
             "Invalid public key size"
         );
         let unknown = format!("did:key:z{}", base58_encode(&[0xec, 0x01, 1, 2]).unwrap());
         assert_eq!(error(&unknown), "Unsupported DID signature codec");
+        assert_eq!(
+            encode(SignatureAlgorithm::EdDSA, &[1; 2047]),
+            Err(TokenError::invalid("invalid length"))
+        );
     }
 }

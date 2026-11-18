@@ -91,19 +91,10 @@ pub fn sign_token(
     }
     let mut payload = payload;
     payload.insert("iss".into(), id.into());
-    let header_value = Value::Object(header);
-    let payload_value = Value::Object(payload);
-    let data = format!(
-        "{}.{}",
-        b64u_from_json(&header_value)?,
-        b64u_from_json(&payload_value)?
-    );
+    let data = signing_input(&header, &payload)?;
     let signature = signer
         .sign(data.as_bytes())
         .map_err(|SignError(message)| TokenError::Invalid(message))?;
-    let (Value::Object(header), Value::Object(payload)) = (header_value, payload_value) else {
-        unreachable!("built as objects above");
-    };
     Ok(SignedToken {
         data,
         header,
@@ -112,26 +103,43 @@ pub fn sign_token(
     })
 }
 
-/// The compact form of a signed token: its canonical header and payload and its signature
-/// (`stringifyToken`).
-pub fn stringify_token(token: &SignedToken) -> String {
-    let header = b64u_from_json(&Value::Object(token.header.clone())).unwrap_or_default();
-    let payload = b64u_from_json(&Value::Object(token.payload.clone())).unwrap_or_default();
-    format!("{header}.{payload}.{}", token.signature)
+/// `<header>.<payload>`, each canonical JSON in base64url.
+fn signing_input(
+    header: &Map<String, Value>,
+    payload: &Map<String, Value>,
+) -> Result<String, TokenError> {
+    Ok(format!(
+        "{}.{}",
+        b64u_from_json(&Value::Object(header.clone()))?,
+        b64u_from_json(&Value::Object(payload.clone()))?
+    ))
 }
 
-fn into_object(value: Value) -> Map<String, Value> {
+/// The compact form of a signed token: its canonical header and payload and its signature
+/// (`stringifyToken`).
+pub fn stringify_token(token: &SignedToken) -> Result<String, TokenError> {
+    Ok(format!(
+        "{}.{}",
+        signing_input(&token.header, &token.payload)?,
+        token.signature
+    ))
+}
+
+/// A decoded segment that must be a JSON object, where TS would go on with any value.
+fn require_object(value: Value, segment: &str) -> Result<Map<String, Value>, TokenError> {
     match value {
-        Value::Object(object) => object,
-        _ => Map::new(),
+        Value::Object(object) => Ok(object),
+        _ => Err(TokenError::invalid(format!(
+            "Invalid token format: {segment} is not a JSON object"
+        ))),
     }
 }
 
 /// Parse a compact token without verifying it; `data` keeps the received segments
 /// (`decodeSignedToken`).
 ///
-/// TS returns whatever JSON the segments hold; a segment that is not an object decodes here to an
-/// empty map. Nothing is validated, so never authorize on the result.
+/// TS returns whatever JSON the segments hold. Here a header or payload that is not an object is
+/// an error. Nothing is validated, so never authorize on the result.
 pub fn decode_signed_token(token: &str) -> Result<SignedToken, TokenError> {
     let mut parts = token.split('.');
     let (Some(header), Some(payload), Some(signature), None) =
@@ -144,8 +152,8 @@ pub fn decode_signed_token(token: &str) -> Result<SignedToken, TokenError> {
     }
     Ok(SignedToken {
         data: format!("{header}.{payload}"),
-        header: into_object(b64u_to_json(header)?),
-        payload: into_object(b64u_to_json(payload)?),
+        header: require_object(b64u_to_json(header)?, "header")?,
+        payload: require_object(b64u_to_json(payload)?, "payload")?,
         signature: signature.to_owned(),
     })
 }
@@ -246,10 +254,16 @@ pub fn verify_token(token: &str, options: &VerifyOptions<'_>) -> Result<Verified
         return Err(TokenError::invalid(FORMAT_ERROR));
     };
 
-    let header = b64u_to_json(encoded_header)?;
-    if header.get("typ").and_then(Value::as_str) != Some("JWT") {
-        return Err(TokenError::invalid("Invalid token header type"));
-    }
+    let header = match b64u_to_json(encoded_header)? {
+        Value::Object(header) if header.get("typ").and_then(Value::as_str) == Some("JWT") => header,
+        // TS reads `header.typ`, which throws on `null` and is `undefined` for any other value.
+        Value::Null => {
+            return Err(TokenError::InvalidType(
+                "Cannot read properties of null (reading 'typ')".into(),
+            ));
+        }
+        _ => return Err(TokenError::invalid("Invalid token header type")),
+    };
     let alg = header.get("alg").and_then(Value::as_str);
     if alg == Some("none") {
         return Err(TokenError::invalid(if options.audience.is_some() {
@@ -268,8 +282,8 @@ pub fn verify_token(token: &str, options: &VerifyOptions<'_>) -> Result<Verified
     let signature_bytes = from_b64u(signature)?;
     let data = format!("{encoded_header}.{encoded_payload}");
 
-    let object = validate_signed_payload(&payload)?;
-    let iss = object["iss"].as_str().unwrap_or_default();
+    let payload = validate_signed_payload(payload)?;
+    let iss = payload["iss"].as_str().unwrap_or_default();
     let issuer_header = ResolveIssuerHeader {
         kid: header.get("kid").filter(|kid| !kid.is_null()).cloned(),
     };
@@ -302,12 +316,11 @@ pub fn verify_token(token: &str, options: &VerifyOptions<'_>) -> Result<Verified
         cache.set(short_form, doc.as_value())?;
     }
 
-    let payload = into_object(payload);
     assert_time_claims_valid(&payload, options)?;
     assert_audience_valid(&payload, options.audience)?;
     Ok(VerifiedToken {
         data,
-        header: into_object(header),
+        header,
         payload,
         signature: signature.to_owned(),
         public_key: resolved.public_key,
