@@ -65,6 +65,11 @@ Entry mode is independent of the parent key. There is no adoption or unrevocatio
 
 Branch reads return verified introducing operations. Wrappings and entries carry their signed branch as `provenance`.
 Candidate reads retain received authorised entry losers and prior tombstones.
+`listEntryCandidates` and `listPriorEntryTombstones` return `SignedRecord` candidates, including
+copies whose signatures can no longer be verified. Callers must verify every copy before use
+and keep repair pending when required evidence is unverifiable. Such a copy does not hide the
+other candidates. Malformed rows, authenticated payload/metadata mismatches and provider errors
+still throw; candidate reads never promote unverifiable copies to verified decisions.
 Exchange lists selected decisions and their signed copies, rather than all candidate history.
 Revocations permanently suppress recipient and DID-factor wrappings across versions.
 A survivor's same-decision endorsement can replace a removed signer's copy without losing content.
