@@ -80,7 +80,9 @@ export type VaultRecords = {
   listWrappingsWithBranch(
     address: KeyAddress & { keyVersion?: number },
   ): Promise<Array<WrappingRow>>
+  /** Received candidates, including unverifiable copies. Callers must verify before use. */
   listEntryCandidates(address: KeyAddress & { keyVersion: number }): Promise<Array<SignedRecord>>
+  /** Prior tombstone candidates, including unverifiable copies. Callers must verify before use. */
   listPriorEntryTombstones(
     address: KeyAddress & { beforeVersion: number },
   ): Promise<Array<SignedRecord>>
@@ -191,9 +193,19 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
       rows.map(async (row) => {
         const value = await checked(row, bound)
 
-        if (value === null) throw new VaultRecordRowError(row)
-
-        return value.copy
+        // A candidate is not a verified decision. Preserve failed signatures so repair can
+        // remain pending without hiding other copies or mistaking incomplete history for success.
+        return (
+          value?.copy ?? {
+            type: row.type,
+            owner: row.owner,
+            id: row.id,
+            hlc: row.hlc,
+            opJWT: row.op_jwt,
+            opHash: row.op_hash,
+            payload: row.payload === null ? null : new Uint8Array(row.payload),
+          }
+        )
       }),
     )
   }

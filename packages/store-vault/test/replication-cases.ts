@@ -1541,6 +1541,70 @@ export function replicationCases(harness: StoreHarness): void {
       expect(selectWinningBranch([...ops].reverse()).opHash).toBe(expected)
     })
 
+    test.each(['payload', 'deleted', 'meta'] as const)(
+      'candidate reads still reject corrupt stored %s',
+      async (field) => {
+        const source = await chain(owner)
+        await seed(source)
+        const entry = await dependent({ signer: owner, source, type: 'vault.entry' })
+        await left.records.apply({ records: [entry] })
+        const table = sql.table('vault_entry_candidates')
+        if (field === 'payload')
+          await sql`update ${table} set payload = ${left.db.adapter.encodeBinary(new Uint8Array([255]))} where id = ${entry.id}`.execute(
+            left.raw,
+          )
+        if (field === 'deleted')
+          await sql`update ${table} set deleted = 7 where id = ${entry.id}`.execute(left.raw)
+        if (field === 'meta')
+          await sql`update ${table} set meta = ${JSON.stringify({ corrupt: true })} where id = ${entry.id}`.execute(
+            left.raw,
+          )
+        await expect(
+          left.records.listEntryCandidates({ ...source.address, keyVersion: 1 }),
+        ).rejects.toThrow(VaultRecordRowError)
+      },
+    )
+
+    test.each([false, true])(
+      'candidate reads retain unverifiable copies alongside verified copies (tombstone: %s)',
+      async (deleted) => {
+        const source = await chain(owner)
+        await seed(source)
+        const bad = await dependent({
+          signer: owner,
+          source,
+          type: 'vault.entry',
+          options: { id: 'a-unverifiable', deleted },
+        })
+        const good = await dependent({
+          signer: owner,
+          source,
+          type: 'vault.entry',
+          options: { id: 'b-verified', deleted },
+        })
+        expect((await left.records.apply({ records: [bad, good] })).rejected).toEqual([])
+        // Corrupt persisted signatures after admission, using the real SQL store.
+        for (const name of ['vault_records', 'vault_entry_candidates']) {
+          const table = sql.table(name)
+          await sql`update ${table} set op_jwt = ${'invalid'} where id = ${bad.id}`.execute(
+            left.raw,
+          )
+        }
+        const candidates = deleted
+          ? await left.records.listPriorEntryTombstones({ ...source.address, beforeVersion: 2 })
+          : await left.records.listEntryCandidates({ ...source.address, keyVersion: 1 })
+        expect(candidates).toEqual([{ ...bad, opJWT: 'invalid' }, good])
+        const [unverifiable, verifiable] = candidates
+        if (unverifiable === undefined || verifiable === undefined)
+          throw new Error('Missing candidate fixture')
+        expect(await verifySignedRecord({ record: unverifiable, opKind: OP_KIND })).toBeNull()
+        expect(await verifySignedRecord({ record: verifiable, opKind: OP_KIND })).not.toBeNull()
+        // Candidate enumeration grants no authority and does not weaken decision reads.
+        await expect(left.records.adapter.get(bad)).rejects.toThrow(VaultRecordRowError)
+        expect((await left.records.adapter.get(good))?.copies).toEqual([good])
+      },
+    )
+
     test('authorised losing entries remain received candidates while refused entries do not', async () => {
       const source = await chain(owner)
       await seed(source)

@@ -145,6 +145,11 @@ Revocations suppress wrappings naming the denied DID as explicit recipient or DI
 Deleting an ordinary wrapping does not create a revocation.
 Signed entry tombstones preserve deletion intent across later re-encryption.
 Authorised losing entries remain received candidates. Exchange lists selected decisions and their copies, without guaranteeing complete candidate history.
+`listEntryCandidates` and `listPriorEntryTombstones` return `SignedRecord` copies, including those
+whose signatures can no longer be verified. These are candidates, not verified decisions:
+callers must verify them before use and keep repair pending when required evidence is unverifiable.
+One failed signature does not hide other candidates. Malformed rows, authenticated payload/metadata
+mismatches and provider errors still throw. Decision reads retain their fail-closed behaviour.
 
 Every type reserves one opaque signed field, `meta.consumer`.
 `validateConsumerMetadata(value, request)` must accept it before authority succeeds.
