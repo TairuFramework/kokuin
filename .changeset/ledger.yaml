@@ -264,6 +264,10 @@
   dir: packages/store-vault
   intents:
     - store-vault-cross-realm-bytes
+"@kokuin/store-vault@0.7.2":
+  dir: packages/store-vault
+  intents:
+    - vault-unverified-candidates
 "@kokuin/token@0.4.0":
   dir: packages/token
   intents:

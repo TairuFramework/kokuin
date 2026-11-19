@@ -50,15 +50,15 @@ versioning:
 catalog:
   '@electron-forge/cli': ^8.0.1
   '@electron-forge/plugin-vite': ^8.0.1
-  '@hozon/adapter': ^0.3.0
-  '@hozon/db': ^0.5.1
+  '@hozon/adapter': ^0.3.2
+  '@hozon/db': ^0.5.3
   '@hozon/node-sqlite': ^0.3.0
-  '@hozon/postgres': ^0.2.1
+  '@hozon/postgres': ^0.3.0
   '@opentelemetry/api': ^1.10.0
   '@opentelemetry/sdk-trace': ^3.1.1
   '@sozai/async': ^0.4.3
   '@sozai/codec': ^0.4.4
-  '@sozai/hlc': ^0.1.0
+  '@sozai/hlc': ^0.1.1
   '@sozai/http-util': ^0.1.0
   '@sozai/json': ^0.3.0
   '@sozai/lock': ^0.1.2
@@ -72,7 +72,7 @@ catalog:
   '@noble/ciphers': ^2.4.0
   '@noble/curves': ^2.4.0
   '@noble/hashes': ^2.4.0
-  '@playwright/test': 1.65.0
+  '@playwright/test': 1.65.1
   '@scure/base': ^2.4.0
   '@scure/bip39': ^2.4.0
   '@testcontainers/postgresql': ^12.2.1
@@ -80,24 +80,24 @@ catalog:
   '@types/react': ^19.3.0
   '@types/react-dom': ^19.3.0
   '@vitejs/plugin-react': ^6.3.0
-  electron: ^45.2.3
+  electron: ^45.3.4
   electron-store: ^12.0.0
-  expo: ^58.0.23
-  expo-crypto: ^58.0.7
-  expo-file-system: ~58.0.10
-  expo-sharing: ~58.0.22
-  expo-secure-store: ^58.0.2
-  expo-status-bar: ^58.0.4
-  kysely: ^0.29.8
+  expo: ^58.0.26
+  expo-crypto: ^58.0.8
+  expo-file-system: ~58.0.14
+  expo-sharing: ~58.0.23
+  expo-secure-store: ^58.0.3
+  expo-status-bar: ^58.0.5
+  kysely: ^0.29.9
   micro-key-producer: ^0.10.2
-  postgres: ^3.4.8
+  postgres: ^4.1.1
   react: 19.3.0
   react-dom: 19.3.0
   react-native: 0.88.1
   react-native-web: 0.21.4
   typescript: ^6.0.3
   uint8arrays: ^6.1.1
-  vite: ^8.3.7
+  vite: ^8.3.8
   '@kigu/dev': ^0.3.5
   nitrogen: 0.37.1
   react-native-nitro-modules: 0.37.1
