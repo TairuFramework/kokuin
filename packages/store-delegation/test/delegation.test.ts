@@ -1,12 +1,11 @@
-import { NodeSQLiteAdapter } from '@hozon/node-sqlite'
 import { describe } from 'vitest'
 
-import { delegationStoreCases } from './cases.js'
+import { delegationStoreCases, type StoreHarness } from './cases.js'
 
-describe('delegation store (node:sqlite memory)', () => {
-  return delegationStoreCases({
-    name: 'memory',
-    createAdapter: async () => new NodeSQLiteAdapter({ database: ':memory:' }),
-    cleanup: async () => {},
-  })
+// Reuse the integration backends without extending this package's TypeScript root.
+const harnessURL = new URL('../../../tests/integration/src/backends.ts', import.meta.url).href
+const { backends } = (await import(harnessURL)) as { backends(): Array<StoreHarness> }
+
+describe.each(backends())('delegation store ($name)', (backend) => {
+  delegationStoreCases(backend)
 })
