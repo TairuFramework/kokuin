@@ -1,5 +1,12 @@
 import type { CryptoProvider } from '@kokuin/crypto'
-import type { DIDCache, DIDResolver, MethodRegistry, SignedToken, Verifiers } from '@kokuin/token'
+import type {
+  DIDCache,
+  DIDResolver,
+  MethodRegistry,
+  SignedToken,
+  Verifiers,
+  YieldOptions,
+} from '@kokuin/token'
 
 /** Hook called for each token during verification. Throw to reject. */
 export type VerifyTokenHook = (params: VerifyTokenHookParams) => void | Promise<void>
@@ -31,7 +38,7 @@ export type DelegationChainOptions = {
    * subject revoked an **edge holder**; a stolen member is bounded by its lease instead.
    */
   maxMemberGrantLifetime?: number
-}
+} & YieldOptions
 
 /** Options for capability creation */
 export type CreateCapabilityOptions = {

@@ -142,33 +142,43 @@ test('raw payload and verifier entry points accept the yield policy', async () =
   expect(yieldSpy).toHaveBeenCalledTimes(1)
 })
 
-test('disabled verification does not wait for a concurrent yielding batch', async () => {
-  const identity = createSigningIdentity({ privateKey })
-  const first = await identity.signToken({ payload: { sequence: 1 } })
-  const second = await identity.signToken({ payload: { sequence: 2 } })
-  const third = await identity.signToken({ payload: { sequence: 3 } })
-  let release!: () => void
-  const gate = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  yieldSpy.mockImplementationOnce(() => gate)
-  let normalFinished = false
-  const normal = verifyToken({ token: first }).then((result) => {
-    normalFinished = true
-    return result
-  })
-  try {
-    const results = await Promise.all([
-      verifyToken({ token: second, yield: false }),
-      verifyToken({ token: third, yield: false }),
-    ])
-    expect(results.map((result) => result.payload.sequence)).toEqual([2, 3])
-    expect(normalFinished).toBe(false)
-  } finally {
-    release()
-    await normal
+for (const serialized of [false, true]) {
+  for (const disabledFirst of [false, true]) {
+    test(`same-signature ${serialized ? 'serialized' : 'object'} verification stays independent, disabled first: ${disabledFirst}`, async () => {
+      const identity = createSigningIdentity({ privateKey })
+      const token = await identity.signToken({ payload: { action: 'write' }, yield: false })
+      const input = serialized ? `${token.data}.${token.signature}` : token
+      const { promise: gate, resolve: release } = Promise.withResolvers<void>()
+      const { promise: entered, resolve: enter } = Promise.withResolvers<void>()
+      yieldSpy.mockImplementationOnce(() => {
+        enter()
+        return gate
+      })
+      let normalFinished = false
+      const startNormal = () => {
+        return verifyToken({ token: input }).then((result) => {
+          normalFinished = true
+          return result
+        })
+      }
+      const startDisabled = () => verifyToken({ token: input, yield: false })
+      const first = disabledFirst ? startDisabled() : startNormal()
+      const second = disabledFirst ? startNormal() : startDisabled()
+      const normal = disabledFirst ? second : first
+      const disabled = disabledFirst ? first : second
+      try {
+        await entered
+        expect(await disabled).toMatchObject({ ...token, verifiedPublicKey: identity.publicKey })
+        expect(normalFinished).toBe(false)
+      } finally {
+        release()
+        await Promise.all([normal, disabled])
+      }
+      expect(normalFinished).toBe(true)
+      expect(yieldSpy).toHaveBeenCalledTimes(1)
+    })
   }
-})
+}
 
 for (const policy of [{ yield: false }, {}]) {
   test(`issuer and signing-key checks remain active with yield ${policy.yield}`, async () => {

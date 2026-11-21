@@ -20,6 +20,10 @@ See [provider adoption](../../docs/reference/crypto-provider.md) for selection, 
 
 ## Named params migration
 
+`checkCapability` and `checkDelegationChain` accept `yield?: boolean` through `DelegationChainOptions`.
+Pass `yield: false` to skip Kokuin's cooperative yields for every verified chain link, including recursive ancestors.
+Omission and `true` preserve default yielding. Caller-supplied hooks, resolvers and verifiers retain their own scheduling.
+
 | Export | Named params type | Fields |
 | --- | --- | --- |
 | `createCapability` | `CreateCapabilityParams` | `signer, payload, header?, crypto?` |

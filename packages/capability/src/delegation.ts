@@ -242,6 +242,7 @@ export async function checkDelegationChain({
   const next = await verifyToken<CapabilityPayload>({
     token: head,
     atTime,
+    yield: options?.yield,
     crypto: options?.crypto,
     cache: options?.cache,
     resolver: options?.resolver,
@@ -367,6 +368,7 @@ export async function checkCapability({
   const capability = await verifyToken<CapabilityPayload>({
     token: head,
     atTime: time,
+    yield: options?.yield,
     crypto: options?.crypto,
     cache: options?.cache,
     resolver: options?.resolver,
