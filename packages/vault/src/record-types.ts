@@ -429,6 +429,7 @@ function createType(
   params: VaultRecordTypeParams,
   bindReceiver = true,
 ): RecordTypeDefinition {
+  const capturedParams = params
   const definition: RecordTypeDefinition = {
     type,
     policy:
@@ -443,6 +444,7 @@ function createType(
     precheck: async ({ op }) => await validStructure(type, op, params),
     dependencies: ({ record: _record, op }) => dependencies(type, op),
     async authorize({ op, ctx }) {
+      const params = { ...capturedParams, yield: ctx.yield ?? capturedParams.yield }
       // Enforce the factory's replay domain even when the engine is misconfigured.
       const checked = await verifySignedRecord({
         record: ctx.record,
@@ -513,6 +515,7 @@ function createType(
       )
     },
     async visibleTo({ record, ctx }) {
+      const params = { ...capturedParams, yield: ctx.yield ?? capturedParams.yield }
       if (ctx.opKind !== params.opKind) return false
 
       const op = await verifySignedRecord({

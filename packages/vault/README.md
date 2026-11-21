@@ -171,7 +171,8 @@ Their policies forward it through stored-record and introducing-op verification.
 Factory options are captured when created.
 
 `yield: false` skips cooperative timers for these signing and verification paths.
-Omitting the option preserves default yielding and all cryptographic checks.
+Record `authorize` and `visibleTo` hooks prefer per-call `ctx.yield` over the construction policy.
+Omitting the option preserves the construction policy, default yielding and all cryptographic checks.
 Callers must yield between transactions when disabling yields inside a transaction.
 
 Store adapters may provide a `yield` accessor alongside their scoped `methods` accessor to

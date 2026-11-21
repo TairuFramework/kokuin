@@ -12,6 +12,7 @@ import {
   isIssuerKeyNotFoundError,
   type MethodRegistry,
   normalizeDID,
+  type YieldOptions,
 } from '@kokuin/token'
 
 import type { DelegationStoreAPI } from './api.js'
@@ -81,7 +82,10 @@ function isPlainObject(value: unknown): boolean {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export type DelegationRevocationVerdictParams = { token: CapabilityToken; raw: string }
+export type DelegationRevocationVerdictParams = {
+  token: CapabilityToken
+  raw: string
+} & YieldOptions
 
 type Verdict = (params: DelegationRevocationVerdictParams) => Promise<boolean>
 
@@ -91,7 +95,7 @@ function createDelegationRevocationVerdict(
 ): Verdict {
   const options = input === undefined ? undefined : { ...input, methods: input.methods?.slice() }
   const backend = createDelegationRevocationBackend(api)
-  return async ({ token, raw }) => {
+  return async ({ token, raw, yield: yieldPolicy }) => {
     // Capability's checker reads an unresolvable or failing dependency in several ways, some of
     // which end in a normal return. Recording the first fault at its source keeps a resolver or
     // store that could not answer from ever reading as "not revoked".
@@ -159,7 +163,7 @@ function createDelegationRevocationVerdict(
         ...options,
         backend: trackedBackend,
         methods: trackedMethods,
-      })({ token, raw })
+      })({ token, raw, yield: yieldPolicy })
     } catch (error) {
       if (hadDependencyFault) throw dependencyFault
       if (isTokenRevokedError(error)) return true
@@ -182,8 +186,8 @@ export function createDelegationRevocationChecker({
   ...options
 }: CreateDelegationRevocationCheckerParams): VerifyTokenHook & { verdict: Verdict } {
   const verdict = createDelegationRevocationVerdict(api, options)
-  const checker: VerifyTokenHook = async ({ token, raw }) => {
-    if (await verdict({ token, raw })) {
+  const checker: VerifyTokenHook = async ({ token, raw, yield: yieldPolicy }) => {
+    if (await verdict({ token, raw, yield: yieldPolicy })) {
       throw new VerifiedRevocationError({ message: `Token revoked: ${token.payload.jti}` })
     }
   }
