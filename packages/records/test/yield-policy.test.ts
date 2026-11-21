@@ -5,7 +5,7 @@ import { fromB64U, toB64U } from '@sozai/codec'
 import { beforeEach, expect, test, vi } from 'vitest'
 
 import { clearRecordOpMemo } from '../../records/src/op.js'
-import { clearVerifiedSignatureMemo } from '../../token/src/verified-memo.js'
+import { clearVerifiedSignatureMemo } from '../../token/lib/verified-memo.js'
 import type { RecordStoreAdapter, RecordTypeDefinition, VisibilityContext } from '../src/index.js'
 import {
   applyRecordChunk,
@@ -246,7 +246,7 @@ test('apply forwards its policy to capability verification hooks', async () => {
     })
     expect(result.applied).toBe(1)
     expect(verifyCapability).toHaveBeenCalledOnce()
-    expect(verifyCapability.mock.calls[0]?.[0].yield).toBe(policy.yield)
+    expect(verifyCapability.mock.calls[0]?.[0].yield).toBe(false)
     expect(timers.mock.calls.length > 0).toBe(policy.yield !== false)
   }
 })
@@ -314,5 +314,52 @@ test('holder proofs forward the policy through stored rows and dependencies', as
     clearMemos()
     expect(await verifyHolderProof({ proof, ctx })).toBe(true)
     expect(timers.mock.calls.length > 0).toBe(policy.yield !== false)
+  }
+})
+
+test('apply disables yields in its own transaction but preserves ambient policy', async () => {
+  const f = await fixture()
+  for (const isTransaction of [false, true]) {
+    for (const policy of [undefined, true, false]) {
+      const verifyCapability = vi.fn(async (_options: { yield?: boolean }) => true)
+      const store: RecordStoreAdapter = {
+        isTransaction,
+        get: async () => null,
+        list: async () => [],
+        putCopy: async () => {},
+        pruneCopy: async () => {},
+        transaction: async (fn) => fn({ ...store, isTransaction: true }),
+      }
+      const definition: RecordTypeDefinition = {
+        type: f.record.type,
+        policy: { kind: 'lww' },
+        dependsOn: [],
+        dependencies: () => [],
+        authorize: async ({ ctx }) => {
+          expect(ctx.yield).toBe(isTransaction ? policy : false)
+          return ctx.verifyCapability({
+            tokens: [],
+            owner: f.identity.id,
+            issuer: f.identity.id,
+            yield: true,
+          })
+        },
+      }
+      const result = await applyRecordChunk({
+        yield: policy,
+        opKind: 'test/yield',
+        records: [f.record],
+        store,
+        types: new Map([[f.record.type, definition]]),
+        nowMS: Date.parse('2026-01-01'),
+        maxDriftMS: 1000,
+        receiveClock: () => {},
+        resolveController: async () => null,
+        verifyCapability,
+      })
+      expect(result.applied).toBe(1)
+      expect(verifyCapability.mock.calls).toHaveLength(1)
+      expect(verifyCapability.mock.calls[0]?.[0].yield).toBe(isTransaction ? true : false)
+    }
   }
 })

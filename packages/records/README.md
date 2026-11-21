@@ -85,3 +85,8 @@ Scoped verifiers capture the policy when created.
 `yield: false` skips cooperative timers for these signing and verification paths.
 Omitting the option preserves default yielding and all cryptographic checks.
 Callers must yield between transactions when disabling yields inside a transaction.
+
+Record apply preserves the caller's yield policy during base-store preflight. Inside a
+transaction it opens itself, verification and capability hooks receive `yield: false`.
+An adapter marked `isTransaction: true` keeps the caller's policy. Hooks that perform their
+own token work should forward the context's `yield` option.

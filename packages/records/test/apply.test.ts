@@ -586,7 +586,10 @@ describe('authorization', () => {
     expect(ctx?.store).not.toBe(store)
     expect((await ctx?.store.get(stored))?.copies).toEqual([incoming])
     expect(await ctx?.resolveController(normalizeDID(identity.id))).toBeNull()
-    expect(ctx?.verifyCapability).toBe(verifyCapability)
+    expect(ctx?.yield).toBe(false)
+    expect(
+      await ctx?.verifyCapability({ tokens: [], owner: identity.id, issuer: identity.id }),
+    ).toBe(false)
   })
 
   test('a device acting for its controller may write', async () => {
@@ -625,6 +628,7 @@ describe('authorization', () => {
       tokens: ['chain'],
       owner,
       issuer: normalizeDID(delegate.id),
+      yield: false,
     })
 
     const granted = await applyWith({

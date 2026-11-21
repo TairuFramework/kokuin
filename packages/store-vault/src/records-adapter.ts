@@ -43,6 +43,10 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         const innerBound: Bound = {
           ...bound,
           ...storage,
+          params: {
+            ...bound.params,
+            yield: bound.context.provider.isTransactionBound ? bound.params.yield : false,
+          },
           store: await getVaultStore(provider),
           locks: [],
         }

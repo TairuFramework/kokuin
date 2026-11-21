@@ -837,6 +837,9 @@ export async function applyRecordChunk(input: ApplyRecordChunkParams): Promise<A
       for (const key of keys) allKeys.set(JSON.stringify([key.type, key.key]), key)
     }
     return await store.transaction(async (tx) => {
+      // Preflight runs on the caller's store. Only transactions opened here override it.
+      const ownsTransaction = store.isTransaction !== true
+      const transactionYield = ownsTransaction ? false : params.yield
       if (allKeys.size > 0 && tx.lock === undefined) {
         throw new Error('Record store does not support transaction key locks')
       }
@@ -880,16 +883,19 @@ export async function applyRecordChunk(input: ApplyRecordChunkParams): Promise<A
         tx,
         opKind: params.opKind,
         crypto: params.crypto,
-        yield: params.yield,
+        yield: transactionYield,
         transportContext: params.transportContext,
         resolveController: async (did) => {
           return await (controllers.get(did) ?? params.resolveController(did))
         },
         verifyCapability:
-          params.yield === undefined
+          transactionYield === undefined
             ? params.verifyCapability
             : (options) =>
-                params.verifyCapability({ ...options, yield: options.yield ?? params.yield }),
+                params.verifyCapability({
+                  ...options,
+                  yield: ownsTransaction ? false : (options.yield ?? transactionYield),
+                }),
         methods: params.methods,
         decisions: new Map(),
         dependencies: new Map(
@@ -910,7 +916,7 @@ export async function applyRecordChunk(input: ApplyRecordChunkParams): Promise<A
           opKind: params.opKind,
           methods: params.methods,
           crypto: params?.crypto,
-          yield: params.yield,
+          yield: transactionYield,
         }),
       }
       // One batched read for every decision the chunk will consult: each record's own and its

@@ -14,8 +14,15 @@ import { settleAll, settledValue } from './settle.js'
 import { snapshotCall } from './snapshot.js'
 import type { EntryRow, VaultStoreAPI, WrappingRow } from './types.js'
 
-type WrappingParams = { row: WrappingRow; branch: Branch; consumer?: unknown; hlc?: string }
+type WrappingParams = {
+  store: VaultStoreAPI
+  row: WrappingRow
+  branch: Branch
+  consumer?: unknown
+  hlc?: string
+}
 type EntryParams = {
+  store: VaultStoreAPI
   row: EntryRow
   branch: Branch
   contentHLC: string
@@ -48,12 +55,14 @@ export type RecordFunctions = {
 
 export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions {
   async function wrapping({
+    store,
     row,
     branch,
     consumer = null,
     hlc,
   }: WrappingParams): Promise<SignedRecord> {
     return ctx.signed({
+      store,
       type: 'vault.wrapping',
       address: { ownerDID: row.ownerDID, id: row.wrappingID },
       payload: row,
@@ -70,6 +79,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
   }
 
   async function entry({
+    store,
     row,
     branch,
     contentHLC,
@@ -77,6 +87,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
     deleted = false,
   }: EntryParams): Promise<SignedRecord> {
     return ctx.signed({
+      store,
       type: 'vault.entry',
       address: { ownerDID: row.ownerDID, id: row.entryID },
       payload: deleted ? null : row,
@@ -224,7 +235,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
             claim: op.claim,
             opKind: params.records.opKind,
             crypto: params?.crypto,
-            yield: params.yield ?? params.records.yield,
+            yield: ctx.yieldFor(tx),
           })),
         })
       }

@@ -238,5 +238,9 @@ Adapters, record policies, effect ports, signing, and stored-record checks inher
 The coordinator uses its top-level option, falling back to `records.yield` when omitted.
 
 `yield: false` skips cooperative timers for these signing and verification paths.
-Omitting the option preserves default yielding and all cryptographic checks.
+Omitting the option preserves default yielding on base-provider work. Coordinators and record
+apply automatically forward `yield: false` inside transactions they open themselves, including
+signing, verification, vault record hooks and persistence checks. A coordinator or records
+instance constructed on a transaction-bound provider keeps the caller's policy. All
+cryptographic and authorization checks remain the same.
 Callers must yield between transactions when disabling yields inside a transaction.

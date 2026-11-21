@@ -621,11 +621,18 @@ function createType(
   return definition
 }
 
-function captureParams<Params extends CryptoOptions & { methods?: MethodRegistry }>(input: Params) {
+function captureParams<Params extends CryptoOptions & YieldOptions & { methods?: MethodRegistry }>(
+  input: Params,
+) {
   const getter: (() => MethodRegistry | undefined) | undefined = Object.getOwnPropertyDescriptor(
     input,
     'methods',
   )?.get
+  const yieldGetter: (() => boolean | undefined) | undefined = Object.getOwnPropertyDescriptor(
+    input,
+    'yield',
+  )?.get
+  const yieldPolicy = input.yield
   const methods = input.methods?.map((method) => {
     return {
       ...method,
@@ -638,6 +645,9 @@ function captureParams<Params extends CryptoOptions & { methods?: MethodRegistry
   return {
     ...input,
     crypto: input.crypto ?? nobleCrypto,
+    get yield() {
+      return yieldGetter === undefined ? yieldPolicy : yieldGetter.call(input)
+    },
     // Store adapters supply an accessor bound to their current transaction.
     get methods() {
       return getter === undefined ? methods : getter.call(input)

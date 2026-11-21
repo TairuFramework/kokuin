@@ -173,3 +173,8 @@ Factory options are captured when created.
 `yield: false` skips cooperative timers for these signing and verification paths.
 Omitting the option preserves default yielding and all cryptographic checks.
 Callers must yield between transactions when disabling yields inside a transaction.
+
+Store adapters may provide a `yield` accessor alongside their scoped `methods` accessor to
+`vaultRecordTypes`, `vaultKeyVersionReader` and `vaultProofAuthorizer`. The accessor follows
+the active store scope; ordinary boolean options are captured when the factory is called.
+This lets store-owned transactions suppress cooperative timers without changing any checks.

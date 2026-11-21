@@ -125,6 +125,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
           for (const row of rows)
             output.push(
               await records.wrapping({
+                store,
                 row,
                 branch: chain,
                 consumer: request.consumer ?? null,
@@ -214,12 +215,9 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
 
           const consumer =
             request.consumer === undefined ? evidence.op.claim.meta.consumer : request.consumer
-          const replacement = await records.wrapping({
-            row,
-            branch,
-            consumer,
-          })
+          const replacement = await records.wrapping({ store, row, branch, consumer })
           const deletion = await ctx.signed({
+            store,
             type: 'vault.wrapping',
             address: { ownerDID: key.ownerDID, id: existing.wrappingID },
             payload: null,
@@ -342,6 +340,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
           ctx.stored({ type: 'vault.key', owner: request.ownerDID, id: request.keyID }, store),
         ])
         const record = await ctx.signed({
+          store,
           type: 'vault.key',
           address: { ownerDID: key.ownerDID, id: key.keyID },
           payload: { suite: key.suite, state: request.state },
@@ -386,6 +385,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
         if (typeof keyUnique !== 'string') throw new VaultNotFound()
 
         const record = await ctx.signed({
+          store,
           type: 'vault.key',
           address: { ownerDID: key.ownerDID, id: key.keyID },
           payload: null,
@@ -468,6 +468,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
               ctx.branches(key, key.version, store),
             ])
             const record = await records.wrapping({
+              store,
               row,
               branch,
               consumer: request.consumer,
@@ -550,6 +551,7 @@ export function createVaultCoordinator(input: VaultCoordinatorParams): VaultCoor
         const hlc = await params.nextHLC()
         if (compareRecordDecisionHLC(hlc, evidence.record.hlc) <= 0) throw new VaultWriteConflict()
         const record = await ctx.signed({
+          store,
           type: 'vault.wrapping',
           address: { ownerDID: key.ownerDID, id: row.wrappingID },
           payload: decoded.payload,

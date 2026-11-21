@@ -148,6 +148,9 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
       get methods() {
         return current.methods
       },
+      get yield() {
+        return current.params.yield
+      },
       portsFor: vaultRecordPortsFor,
     })
     return applyRecordChunk({
@@ -156,7 +159,7 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
       types,
       opKind: params.opKind,
       crypto: params.crypto,
-      yield: params.yield,
+      yield: binding.params.yield,
       nowMS: params.nowMS(),
       maxDriftMS: params.maxDriftMS,
       receiveClock: params.receiveClock ?? (() => {}),
@@ -241,7 +244,7 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
               opKind: params.opKind,
               methods: inner.methods,
               crypto: params?.crypto,
-              yield: params.yield,
+              yield: inner.params.yield,
             })
 
             if (
@@ -283,7 +286,7 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
                   opKind: params.opKind,
                   methods: inner.methods,
                   crypto: params?.crypto,
-                  yield: params.yield,
+                  yield: inner.params.yield,
                 })
               }),
             )
@@ -328,6 +331,7 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
 
           const branches = await createVaultRecords({
             ...params,
+            yield: inner.params.yield,
             store: inner.store,
           }).listKeyBranches({ ...expectedKey, keyVersion: expectedKey.expectedVersion ?? 0 })
           const current = branches.map((branch) => branch.branchID).sort()
@@ -353,7 +357,7 @@ export function createVaultRecords(input: VaultRecordsParams): VaultRecords {
                 opKind: params.opKind,
                 methods: inner.methods,
                 crypto: params?.crypto,
-                yield: params.yield,
+                yield: inner.params.yield,
               })
             })
           }),

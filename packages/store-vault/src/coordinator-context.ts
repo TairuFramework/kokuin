@@ -46,6 +46,7 @@ type AuthorizeParams = {
   store?: VaultStoreAPI
 }
 type SignedParams<Type extends VaultRecordType> = {
+  store: VaultStoreAPI
   type: Type
   address: { ownerDID: string; id: string }
   payload: VaultRecordPayloads[Type] | null
@@ -154,6 +155,7 @@ export type CoordinatorContext = {
   cache: KeyCache
   cacheID(address: KeyAddress): string
   records: VaultRecords | undefined
+  yieldFor(store: VaultStoreAPI): boolean | undefined
   methodsFor(store: VaultStoreAPI): VaultMethods | undefined
   recordsFor(store: VaultStoreAPI): VaultRecords
   authorize(params: AuthorizeParams): Promise<void>
@@ -213,6 +215,21 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
   const generations = new Map<string, { ownerDID: string; value: number }>()
   const cacheID = (address: KeyAddress) => JSON.stringify([address.ownerDID, address.keyID])
   const methodsFor = (store: VaultStoreAPI) => storeMethods(store, params)
+  // Track the actual handle supplied by an owned transaction, without ambient mutable state.
+  const ownedStores = new WeakSet<VaultStoreAPI>()
+  const yieldFor = (store: VaultStoreAPI) =>
+    ownedStores.has(store)
+      ? false
+      : (params.yield ?? (params.mode === 'replicated' ? params.records.yield : undefined))
+  const inScope = async <Result>(store: VaultStoreAPI, fn: () => Promise<Result>) => {
+    const owns = vaultDatabases.get(params.store)?.context.provider.isTransactionBound === false
+    if (owns) ownedStores.add(store)
+    try {
+      return await fn()
+    } finally {
+      if (owns) ownedStores.delete(store)
+    }
+  }
   // One records object per store handle. It holds no per-call state: its adapter reads through the
   // handle's own database, and lock state lives only on adapters built inside `transaction`.
   const recordsByStore = new WeakMap<VaultStoreAPI, VaultRecords>()
@@ -224,7 +241,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     if (records === undefined) {
       records = createVaultRecords({
         ...params.records,
-        yield: params.yield ?? params.records.yield,
+        yield: yieldFor(store),
         methodsFor: params.records.methodsFor ?? params.methodsFor,
         store,
         authority: params.authority,
@@ -269,6 +286,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
   }
 
   async function signed<Type extends VaultRecordType>({
+    store,
     type,
     address,
     payload,
@@ -300,7 +318,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
         claim,
         opKind: params.records.opKind,
         crypto: params?.crypto,
-        yield: params.yield ?? params.records.yield,
+        yield: yieldFor(store),
       })),
     }
   }
@@ -316,7 +334,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
         methodsFor: params.records.methodsFor ?? params.methodsFor,
       }),
       crypto: params?.crypto,
-      yield: params.yield ?? params.records.yield,
+      yield: yieldFor(store),
     })
 
     if (op === null) throw new VaultNotFound()
@@ -587,6 +605,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     if (typeof keyUnique !== 'string') throw new VaultNotFound()
 
     const record = await signed({
+      store,
       type: 'vault.key',
       address: { ownerDID: row.ownerDID, id: row.keyID },
       payload: { suite: row.suite, state: row.state },
@@ -615,6 +634,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     if (branchRecordID === null) throw new Error('Branch has no payload digest')
 
     const proof = await signed({
+      store,
       type: 'vault.key-branch',
       address: { ownerDID: row.ownerDID, id: branchRecordID },
       payload,
@@ -649,7 +669,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
         if (transaction === undefined)
           throw new TypeError('Transaction-bound vault store is unavailable')
 
-        return withStoreTransaction(transaction.db, () => fn(store))
+        return withStoreTransaction(transaction.db, () => inScope(store, () => fn(store)))
       },
     )
   }
@@ -666,7 +686,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
       if (transaction === undefined)
         throw new TypeError('Transaction-bound vault store is unavailable')
 
-      return withStoreTransaction(transaction.db, () => fn(store))
+      return withStoreTransaction(transaction.db, () => inScope(store, () => fn(store)))
     })
   }
 
@@ -709,6 +729,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     records,
     recordsFor,
     methodsFor,
+    yieldFor,
     authorize,
     key,
     signed,
