@@ -13,9 +13,16 @@ function stamp(wallTime: number, counter = 0, nodeID = 'node-a'): string {
 test('decision comparison refuses a non-canonical HLC instead of ordering its text', () => {
   const loose = '2026-09-26T12:00:00.000Z:1:z'
   const canonical = stamp(NOW, 2, 'a')
-  expect(HLC.tryParse(loose)).not.toBeNull()
+  expect(HLC.tryParse(loose)).toBeNull()
   expect(() => compareRecordDecisionHLC(loose, canonical)).toThrow()
-  expect(compareRecordDecisionHLC(stamp(NOW, 10), stamp(NOW, 2))).toBeGreaterThan(0)
+  expect(() => compareRecordDecisionHLC(canonical, loose)).toThrow()
+})
+
+test('decision comparison orders canonical counters numerically before node IDs', () => {
+  const low = stamp(NOW, 2, 'z')
+  const high = stamp(NOW, 10, 'a')
+  expect(compareRecordDecisionHLC(high, low)).toBeGreaterThan(0)
+  expect(compareRecordDecisionHLC(low, high)).toBeLessThan(0)
 })
 
 test('decision comparison works directly as a sort comparator', () => {
@@ -63,8 +70,6 @@ describe('parseBoundedHLC', () => {
     expect(parseBoundedHLC({ hlc, nowMS: NOW, maxDriftMS: DRIFT })).toBeNull()
   })
 
-  // Each of these parses to finite fields with a wall time inside the drift bound, so only
-  // the round trip through `HLC.serialize` stands between them and the clock.
   test.each([
     ['2026-09-26T12:00:00.000Z:1:node-a'],
     ['2026-09-26T12:00:00Z:00000000:node-a'],
@@ -72,10 +77,19 @@ describe('parseBoundedHLC', () => {
     ['2026-09-26T12:00:00.000Z:+0000001:node-a'],
     ['2026-02-31T12:00:00.000Z:00000000:node-a'],
     ['2026-09-26T12:00:00.000Z:00000000'],
-  ])('%s parses permissively but is not canonical', (hlc) => {
-    const loose = HLC.tryParse(hlc)
-    expect(loose).not.toBeNull()
-    expect(loose?.wallTime).toBeLessThanOrEqual(NOW + DRIFT)
+  ])('%s is rejected by both the HLC parser and the bounded parser', (hlc) => {
+    expect(HLC.tryParse(hlc)).toBeNull()
+    expect(parseBoundedHLC({ hlc, nowMS: NOW, maxDriftMS: DRIFT })).toBeNull()
+  })
+
+  test.each([
+    ['2026-09-26T12:00:00.000Z:000000001:node-a'],
+    ['+002026-09-26T12:00:00.000Z:00000001:node-a'],
+  ])('%s parses but fails the records serialization round trip', (hlc) => {
+    const parsed = HLC.tryParse(hlc)
+    expect(parsed).toEqual({ wallTime: NOW, counter: 1, nodeID: 'node-a' })
+    if (parsed === null) throw new Error('expected a parseable HLC fixture')
+    expect(HLC.serialize(parsed)).toBe(stamp(NOW, 1))
     expect(parseBoundedHLC({ hlc, nowMS: NOW, maxDriftMS: DRIFT })).toBeNull()
   })
 
