@@ -1,6 +1,6 @@
 {
   "name": "@kokuin/records",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Signed, owner-authorized replicated records with merge policies and range reconciliation",
   "keywords": [
     "records",

@@ -38,6 +38,11 @@
   dir: packages/capability
   intents:
     - capability-crypto-provider
+"@kokuin/capability@0.7.1":
+  dir: packages/capability
+  intents:
+    - capability-revocation-creation-yield
+    - capability-yield-policy
 "@kokuin/controller@0.1.0":
   dir: packages/controller
   intents:
@@ -139,6 +144,10 @@
   dir: packages/jwe
   intents:
     - jwe-crypto-provider
+"@kokuin/jwe@0.7.1":
+  dir: packages/jwe
+  intents:
+    - jwe-envelope-yield-policy
 "@kokuin/ledger-device@0.2.5":
   dir: packages/ledger-device
   intents:
@@ -200,6 +209,11 @@
   dir: packages/records
   intents:
     - ancient-deers-sell
+"@kokuin/records@0.7.2":
+  dir: packages/records
+  intents:
+    - records-scope-yield
+    - records-yield-forwarding
 "@kokuin/store-controller@0.2.0":
   dir: packages/store-controller
   intents:
@@ -228,6 +242,11 @@
   dir: packages/store-delegation
   intents:
     - store-delegation-crypto-provider
+"@kokuin/store-delegation@0.7.1":
+  dir: packages/store-delegation
+  intents:
+    - store-delegation-expiry-boundary
+    - store-delegation-revocation-yield-override
 "@kokuin/store-vault@0.1.1":
   dir: packages/store-vault
   intents:
@@ -268,6 +287,11 @@
   dir: packages/store-vault
   intents:
     - vault-unverified-candidates
+"@kokuin/store-vault@0.7.3":
+  dir: packages/store-vault
+  intents:
+    - store-vault-scope-yield
+    - store-vault-yield-policy
 "@kokuin/token@0.4.0":
   dir: packages/token
   intents:
@@ -303,7 +327,17 @@
   dir: packages/token
   intents:
     - token-crypto-provider
+"@kokuin/token@0.7.1":
+  dir: packages/token
+  intents:
+    - token-yield-policy
 "@kokuin/vault@0.7.0":
   dir: packages/vault
   intents:
     - vault-crypto-provider
+"@kokuin/vault@0.7.1":
+  dir: packages/vault
+  intents:
+    - store-delegation-revocation-yield-override
+    - vault-record-yield-policy
+    - vault-scope-yield

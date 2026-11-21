@@ -1,5 +1,11 @@
 # @kokuin/jwe
 
+## 0.7.1
+
+### Patch Changes
+
+- Forward optional `yield: false` through signed envelope wrapping and unwrapping. Preserve default yielding, signed content, and verification checks.
+
 ## 0.7.0
 
 ### Minor Changes

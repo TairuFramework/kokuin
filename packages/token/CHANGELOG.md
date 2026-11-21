@@ -1,5 +1,11 @@
 # @kokuin/token
 
+## 0.7.1
+
+### Patch Changes
+
+- Add a per-call `yield: false` option to token signing and verification to skip cooperative yields within caller-managed transactions. Default yielding behaviour is unchanged.
+
 ## 0.7.0
 
 ### Minor Changes

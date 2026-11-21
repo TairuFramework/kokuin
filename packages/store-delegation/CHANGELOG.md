@@ -1,5 +1,13 @@
 # @kokuin/store-delegation
 
+## 0.7.1
+
+### Patch Changes
+
+- Include tokens expiring exactly at the query time in held-token and unrevoked superseded-token lookups, matching token verification.
+
+- Forward per-call yield overrides through delegation revocation checkers and verdicts. Honour record context yield overrides in vault authorization and visibility hooks, retaining construction policies when omitted.
+
 ## 0.7.0
 
 ### Minor Changes

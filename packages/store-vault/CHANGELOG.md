@@ -1,5 +1,13 @@
 # @kokuin/store-vault
 
+## 0.7.3
+
+### Patch Changes
+
+- Derive signing, verification, record hooks and persistence yield policy from coordinator-owned transaction handles. Preserve base-provider and caller-owned transaction scheduling.
+
+- Forward optional `yield: false` through replicated record stores and vault coordinators. Preserve default yielding, signed content, and verification checks.
+
 ## 0.7.2
 
 ### Patch Changes

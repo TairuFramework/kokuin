@@ -1,5 +1,15 @@
 # @kokuin/vault
 
+## 0.7.1
+
+### Patch Changes
+
+- Forward per-call yield overrides through delegation revocation checkers and verdicts. Honour record context yield overrides in vault authorization and visibility hooks, retaining construction policies when omitted.
+
+- Forward optional `yield: false` through vault record policies, key-version readers, and proof authorizers. Preserve default yielding, signed content, and verification checks.
+
+- Preserve a scope-aware yield accessor when binding vault record hooks and readers, alongside the existing scoped methods accessor.
+
 ## 0.7.0
 
 ### Minor Changes

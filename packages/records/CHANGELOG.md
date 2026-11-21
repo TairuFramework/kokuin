@@ -1,5 +1,13 @@
 # @kokuin/records
 
+## 0.7.2
+
+### Patch Changes
+
+- Disable cooperative verification and capability-hook yields inside transactions opened by record apply; preserve preflight and ambient transaction policies.
+
+- Forward optional `yield: false` through record signing, verification, apply, and visibility helpers. Preserve default yielding, signed content, and verification checks.
+
 ## 0.7.1
 
 ### Patch Changes
