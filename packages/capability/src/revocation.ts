@@ -6,6 +6,7 @@ import type {
   SignedToken,
   SigningIdentity,
   VerifyTokenOptions,
+  YieldOptions,
 } from '@kokuin/token'
 import {
   findMethodResolver,
@@ -102,7 +103,7 @@ export type RevocationOptions = {
   resolver?: DIDResolver
   /** DID cache for `did:peer:4` issuers. Populated on long-form first contact. */
   cache?: DIDCache
-}
+} & YieldOptions
 
 // Spread into both `verifyToken` calls so the two paths cannot drift. `historic` is set, not
 // forwarded: a revocation record is a past-minted artefact that must stay checkable, so without it a
@@ -111,9 +112,10 @@ export type RevocationOptions = {
 // generation). See `DIDMethodResolver.resolveHistoric`.
 function verifyOptions(
   options?: RevocationOptions,
-): Pick<VerifyTokenOptions, 'methods' | 'resolver' | 'cache' | 'historic' | 'crypto'> {
+): Pick<VerifyTokenOptions, 'methods' | 'resolver' | 'cache' | 'historic' | 'crypto' | 'yield'> {
   return {
     crypto: options?.crypto,
+    yield: options?.yield,
     methods: options?.methods,
     resolver: options?.resolver,
     cache: options?.cache,
@@ -237,7 +239,7 @@ export function createRevocationChecker({
   ...options
 }: CreateRevocationCheckerParams): VerifyTokenHook {
   const captured = captureOptions(options)
-  return async ({ token, raw: _raw }): Promise<void> => {
+  return async ({ token, raw: _raw, yield: yieldPolicy }): Promise<void> => {
     const jti = token.payload.jti
     if (jti == null) {
       return
@@ -252,7 +254,11 @@ export function createRevocationChecker({
     // unverified record. A record with an invalid signature does not revoke anything.
     let verified: RevocationRecord
     try {
-      verified = await verifyToken<RevocationClaims>({ ...verifyOptions(captured), token: record })
+      verified = await verifyToken<RevocationClaims>({
+        ...verifyOptions(captured),
+        yield: yieldPolicy ?? captured.yield,
+        token: record,
+      })
     } catch (error) {
       if (error instanceof ProviderFailure) throw error.cause
       // The two failures are not symmetric; collapsing them fails open. An *invalidly signed* record

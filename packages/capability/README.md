@@ -22,6 +22,10 @@ See [provider adoption](../../docs/reference/crypto-provider.md) for selection, 
 
 `checkCapability` and `checkDelegationChain` accept `yield?: boolean` through `DelegationChainOptions`.
 Pass `yield: false` to skip Kokuin's cooperative yields for every verified chain link, including recursive ancestors.
+`createCapability` also accepts the policy for parent verification and signing, including root and member grants.
+`createMemoryRevocationBackend` and `createRevocationChecker` accept it through `RevocationOptions` for record verification.
+Chain verification forwards the policy to each `VerifyTokenHook` through its optional `yield` parameter.
+The built-in revocation checker uses that per-call policy, falling back to its configured policy when omitted.
 Omission and `true` preserve default yielding. Caller-supplied hooks, resolvers and verifiers retain their own scheduling.
 
 | Export | Named params type | Fields |

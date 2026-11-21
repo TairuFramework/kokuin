@@ -71,7 +71,7 @@ export type CreateCapabilityOptions = {
    * grant by both. Ignored when the signer is the subject.
    */
   member?: MemberClaim
-}
+} & YieldOptions
 
 /**
  * The membership a grant issued by a management member names: the incarnation that admitted the
@@ -128,4 +128,4 @@ export type CapabilityToken<
 
 export type SignCapabilityPayload = Omit<CapabilityPayload, 'iss'> & { iss?: string }
 
-export type VerifyTokenHookParams = { token: CapabilityToken; raw: string }
+export type VerifyTokenHookParams = { token: CapabilityToken; raw: string } & YieldOptions
