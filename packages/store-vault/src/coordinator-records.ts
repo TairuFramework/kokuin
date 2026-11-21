@@ -224,6 +224,7 @@ export function createRecordFunctions(ctx: CoordinatorContext): RecordFunctions 
             claim: op.claim,
             opKind: params.records.opKind,
             crypto: params?.crypto,
+            yield: params.yield ?? params.records.yield,
           })),
         })
       }

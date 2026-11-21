@@ -29,6 +29,7 @@ export function vaultRecordPortsFor(store: RecordStoreAdapter): VaultRecordPorts
         opKind: bound.opKind,
         methods: bound.methods,
         crypto: bound.params?.crypto,
+        yield: bound.params.yield,
       })
 
       if (

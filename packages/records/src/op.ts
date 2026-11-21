@@ -10,6 +10,7 @@ import {
   stringifyToken,
   type VerifiedToken,
   verifyToken,
+  type YieldOptions,
 } from '@kokuin/token'
 import { fromB64U, fromUTF, toB64U, toUTF } from '@sozai/codec'
 
@@ -33,17 +34,20 @@ export type SignRecordOpParams = {
   identity: SigningIdentity
   claim: RecordClaim
   opKind: string
-} & CryptoOptions
+} & CryptoOptions &
+  YieldOptions
 export type VerifyRecordOpParams = {
   opJWT: string
   opKind: string
   methods?: MethodRegistry
-} & CryptoOptions
+} & CryptoOptions &
+  YieldOptions
 export type VerifySignedRecordParams = {
   record: SignedRecord
   opKind: string
   methods?: MethodRegistry
-} & CryptoOptions
+} & CryptoOptions &
+  YieldOptions
 
 /** A record op whose signature checked out. `issuer` is the verified signer, normalized. */
 export type VerifiedRecordOp = {
@@ -213,6 +217,7 @@ export async function signRecordOp({
     const signed = await identity.signToken({
       payload: { kind: opKind, claim: toB64U(bytes) },
       embedLongForm: true,
+      yield: options.yield,
     })
     const opJWT = stringifyToken(signed)
     const opHash = await recordOpHash(opJWT, { crypto })
@@ -290,6 +295,7 @@ export async function verifyRecordOp({
       token: opJWT,
       methods: capturedMethods,
       crypto: guardedProvider(crypto),
+      yield: options.yield,
     })
   } catch (error) {
     if (error instanceof ProviderFailure) throw error.cause
@@ -372,14 +378,15 @@ function bindRecord(
 export type CreateRecordVerifierParams = {
   opKind: string
   methods?: MethodRegistry
-} & CryptoOptions
+} & CryptoOptions &
+  YieldOptions
 
 export function createRecordVerifier({
   methods,
   opKind,
   ...options
 }: CreateRecordVerifierParams): (record: SignedRecord) => Promise<VerifiedRecordOp | null> {
-  const captured = { crypto: options.crypto ?? nobleCrypto }
+  const captured = { crypto: options.crypto ?? nobleCrypto, yield: options.yield }
   const capturedMethods = captureMethods(methods)
   const ops = new Map<string, Promise<VerifiedRecordOp | null>>()
   return async (input) => {

@@ -65,3 +65,11 @@ Existing params objects also flatten their options fields:
 | Existing params type | Updated params type | Field migration |
 | --- | --- | --- |
 | `CreateCapabilityParams` | `CreateCapabilityParams` | `Nested options fields → top-level fields` |
+
+## Cooperative yielding
+
+`createRevocationRecord` also accepts `yield?: boolean` and forwards it to the signing identity.
+
+`yield: false` skips cooperative timers for these signing and verification paths.
+Omitting the option preserves default yielding and all cryptographic checks.
+Callers must yield between transactions when disabling yields inside a transaction.

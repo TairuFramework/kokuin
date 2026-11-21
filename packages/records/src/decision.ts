@@ -1,4 +1,4 @@
-import type { CryptoOptions, MethodRegistry } from '@kokuin/token'
+import type { CryptoOptions, MethodRegistry, YieldOptions } from '@kokuin/token'
 
 import { compareRecordDecisionHLC, parseCanonicalHLC } from './clock.js'
 import { type VerifiedRecordOp, verifySignedRecord } from './op.js'
@@ -8,7 +8,8 @@ export type RecordDecisionDigestParams = {
   record: SignedRecord
   opKind: string
   methods?: MethodRegistry
-} & CryptoOptions
+} & CryptoOptions &
+  YieldOptions
 
 export type RecordDecision = {
   key: RecordKey

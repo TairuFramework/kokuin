@@ -139,6 +139,7 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
     opKind: ctx.opKind,
     methods: ctx.methods,
     crypto: ctx?.crypto,
+    yield: ctx.yield,
   })
   if (
     op === null ||
@@ -180,6 +181,7 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
           opKind: ctx.opKind,
           methods: ctx.methods,
           crypto: ctx?.crypto,
+          yield: ctx.yield,
         })
   if (!storedRowAdmits(op, storedOp, definition)) {
     return null
@@ -194,6 +196,7 @@ async function heldKey(proof: SignedRecord, ctx: VisibilityContext): Promise<Hol
         opKind: ctx.opKind,
         methods: ctx.methods,
         crypto: ctx?.crypto,
+        yield: ctx.yield,
       })
     }),
   )
@@ -362,6 +365,7 @@ export async function visibleTo({ ctx, rules, record }: VisibleToParams): Promis
     opKind: captured.opKind,
     methods: captured.methods,
     crypto: captured?.crypto,
+    yield: captured.yield,
   })
   if (op === null) {
     return false

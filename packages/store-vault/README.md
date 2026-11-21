@@ -230,3 +230,13 @@ Method and callback contracts follow the same convention.
 | `VaultRecords.apply` | `VaultRecordsApplyParams` | `apply(records, transportContext?)` |
 | `VaultCoordinator.lockAll` | `VaultCoordinatorLockAllParams` | `lockAll(ownerDID, call?)` |
 | `VaultCoordinator.listKeys` | `VaultCoordinatorListKeysParams` | `listKeys(ownerDID, call?)` |
+
+## Cooperative yielding
+
+`createVaultRecords` and `createVaultCoordinator` accept `yield?: boolean` from `@kokuin/token` (`YieldOptions`).
+Adapters, record policies, effect ports, signing, and stored-record checks inherit this captured policy.
+The coordinator uses its top-level option, falling back to `records.yield` when omitted.
+
+`yield: false` skips cooperative timers for these signing and verification paths.
+Omitting the option preserves default yielding and all cryptographic checks.
+Callers must yield between transactions when disabling yields inside a transaction.

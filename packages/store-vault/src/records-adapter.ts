@@ -189,6 +189,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         opKind: bound.opKind,
         methods: bound.methods,
         crypto: bound.params?.crypto,
+        yield: bound.params.yield,
       })
 
       if (
@@ -297,6 +298,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
               opKind: bound.opKind,
               methods: bound.methods,
               crypto: bound.params?.crypto,
+              yield: bound.params.yield,
             }),
           }
         }),

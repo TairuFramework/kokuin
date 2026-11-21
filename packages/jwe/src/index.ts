@@ -29,6 +29,7 @@ import {
   stringifyToken,
   type Verifiers,
   verifyToken,
+  type YieldOptions,
 } from '@kokuin/token'
 import { gcm } from '@noble/ciphers/aes.js'
 import { randomBytes } from '@noble/ciphers/utils.js'
@@ -442,13 +443,13 @@ export type UnwrappedEnvelope = {
   mode: EnvelopeMode
 }
 
-export type WrapOptions = {
+export type WrapOptions = YieldOptions & {
   signer?: SigningIdentity
   encrypter?: TokenEncrypter
   header?: Record<string, unknown>
 }
 
-export type UnwrapOptions = {
+export type UnwrapOptions = YieldOptions & {
   crypto?: CryptoProvider
   decrypter?: KeyAgreementIdentity
   verifiers?: Verifiers
@@ -478,6 +479,7 @@ export async function wrapEnvelope({
       const token = await options.signer.signToken({
         payload,
         header: options.header,
+        yield: options.yield,
       })
       return stringifyToken(token)
     }
@@ -487,6 +489,7 @@ export async function wrapEnvelope({
       const signed = await options.signer.signToken({
         payload,
         header: options.header,
+        yield: options.yield,
       })
       const jwsString = stringifyToken(signed)
       return encryptToken({
@@ -502,6 +505,7 @@ export async function wrapEnvelope({
       const signed = await options.signer.signToken({
         payload: { jwe },
         header: options.header,
+        yield: options.yield,
       })
       return stringifyToken(signed)
     }
@@ -525,7 +529,7 @@ export async function unwrapEnvelope({
     if (options.decrypter == null) throw new Error('Decrypter required for JWE message')
     const decrypted = await decryptToken({ decrypter: options.decrypter, jwe: message })
     const jwsString = new TextDecoder().decode(decrypted)
-    const token = await verifyToken({ token: jwsString, crypto, verifiers })
+    const token = await verifyToken({ token: jwsString, crypto, verifiers, yield: options.yield })
     return { payload: token.payload as Record<string, unknown>, mode: 'jws-in-jwe' }
   }
   if (parts.length === 3) {
@@ -535,6 +539,7 @@ export async function unwrapEnvelope({
       crypto,
       verifiers,
       allowUnsigned: true,
+      yield: options.yield,
     })
     if (isUnsignedToken(token)) {
       return { payload: token.payload as Record<string, unknown>, mode: 'plain' }

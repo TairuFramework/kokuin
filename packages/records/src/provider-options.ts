@@ -1,5 +1,5 @@
 import { type CryptoProvider, nobleCrypto } from '@kokuin/crypto'
-import type { CryptoOptions, MethodRegistry } from '@kokuin/token'
+import type { CryptoOptions, MethodRegistry, YieldOptions } from '@kokuin/token'
 
 export function captureMethods(methods?: MethodRegistry): MethodRegistry | undefined {
   return methods?.map((method) => {
@@ -54,6 +54,8 @@ export function guardedProvider(crypto: CryptoProvider): CryptoProvider {
   return guarded
 }
 
-export function captureOptions(options?: CryptoOptions): { crypto: CryptoProvider } {
-  return { crypto: options?.crypto ?? nobleCrypto }
+export function captureOptions(
+  options?: CryptoOptions & YieldOptions,
+): { crypto: CryptoProvider } & YieldOptions {
+  return { crypto: options?.crypto ?? nobleCrypto, yield: options?.yield }
 }

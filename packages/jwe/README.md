@@ -28,3 +28,12 @@ See [provider adoption](../../docs/reference/crypto-provider.md) for selection, 
 | `decryptToken` | `DecryptTokenParams` | `decryptToken(decrypter: KeyAgreementIdentity, jwe: string)` |
 | `wrapEnvelope` | `WrapEnvelopeParams` | `wrapEnvelope(mode: EnvelopeMode, payload: Record<string, unknown>, options: WrapOptions)` |
 | `unwrapEnvelope` | `UnwrapEnvelopeParams` | `unwrapEnvelope(message: string, options: UnwrapOptions)` |
+
+## Cooperative yielding
+
+`wrapEnvelope` and `unwrapEnvelope` accept `yield?: boolean` from `@kokuin/token` (`YieldOptions`).
+All signed envelope modes forward it to token signing and verification.
+
+`yield: false` skips cooperative timers for these signing and verification paths.
+Omitting the option preserves default yielding and all cryptographic checks.
+Callers must yield between transactions when disabling yields inside a transaction.

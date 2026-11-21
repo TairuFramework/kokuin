@@ -224,6 +224,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
     if (records === undefined) {
       records = createVaultRecords({
         ...params.records,
+        yield: params.yield ?? params.records.yield,
         methodsFor: params.records.methodsFor ?? params.methodsFor,
         store,
         authority: params.authority,
@@ -299,6 +300,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
         claim,
         opKind: params.records.opKind,
         crypto: params?.crypto,
+        yield: params.yield ?? params.records.yield,
       })),
     }
   }
@@ -314,6 +316,7 @@ export function createCoordinatorContext(input: VaultCoordinatorParams): Coordin
         methodsFor: params.records.methodsFor ?? params.methodsFor,
       }),
       crypto: params?.crypto,
+      yield: params.yield ?? params.records.yield,
     })
 
     if (op === null) throw new VaultNotFound()

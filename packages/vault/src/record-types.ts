@@ -20,7 +20,7 @@ import {
   verifyRecordOp,
   verifySignedRecord,
 } from '@kokuin/records'
-import type { CryptoOptions, MethodRegistry } from '@kokuin/token'
+import type { CryptoOptions, MethodRegistry, YieldOptions } from '@kokuin/token'
 import { normalizeDID } from '@kokuin/token'
 
 import type { FactorDescriptor } from './factors.js'
@@ -87,7 +87,8 @@ export type VaultRecordHooks = {
 }
 
 export type VaultRecordTypeParams = VaultRecordHooks &
-  CryptoOptions & { opKind: string; methods?: MethodRegistry }
+  CryptoOptions &
+  YieldOptions & { opKind: string; methods?: MethodRegistry }
 
 const KEY = 'vault.key'
 const BRANCH = 'vault.key-branch'
@@ -293,6 +294,7 @@ async function keyOwnerMatches(
         opKind: params.opKind,
         methods: params.methods,
         crypto: params?.crypto,
+        yield: params.yield,
       })
     }),
   )
@@ -352,6 +354,7 @@ async function authorizeBranch(
     opKind: params.opKind,
     methods: params.methods,
     crypto: params?.crypto,
+    yield: params.yield,
   })
   const key =
     introducing === null
@@ -446,6 +449,7 @@ function createType(
         opKind: params.opKind,
         methods: params.methods,
         crypto: params?.crypto,
+        yield: params.yield,
       })
 
       if (checked === null || checked.opHash !== op.opHash) return false
@@ -516,6 +520,7 @@ function createType(
         opKind: params.opKind,
         methods: params.methods,
         crypto: params?.crypto,
+        yield: params.yield,
       })
 
       if (
@@ -563,6 +568,7 @@ function createType(
             opKind: params.opKind,
             methods: params.methods,
             crypto: params?.crypto,
+            yield: params.yield,
           })
         }),
       )
@@ -601,6 +607,7 @@ function createType(
         opKind: params.opKind,
         methods: params.methods,
         crypto: params?.crypto,
+        yield: params.yield,
       })
 
       if (op === null) throw new Error('Applied record signature is invalid')
@@ -659,7 +666,7 @@ export function vaultHolderTypes(
 /** Read a live, owner-qualified key version in the explicit replay domain. */
 export type VaultKeyVersionReaderParams = {
   store: RecordStoreAdapter
-} & Pick<VaultRecordTypeParams, 'opKind' | 'methods' | 'crypto'>
+} & Pick<VaultRecordTypeParams, 'opKind' | 'methods' | 'crypto' | 'yield'>
 
 export function vaultKeyVersionReader(
   input: VaultKeyVersionReaderParams,
@@ -677,6 +684,7 @@ export function vaultKeyVersionReader(
             opKind: params.opKind,
             methods: params.methods,
             crypto: params?.crypto,
+            yield: params.yield,
           })
     const meta =
       op === null ? null : await vaultRecordMeta({ ...params, type: KEY, claim: op.claim })
@@ -708,6 +716,7 @@ export function vaultProofAuthorizer(
       opKind: params.opKind,
       methods: params.methods,
       crypto: params?.crypto,
+      yield: params.yield,
     })
 
     if (op === null) return false
