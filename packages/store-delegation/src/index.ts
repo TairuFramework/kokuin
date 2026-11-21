@@ -8,11 +8,14 @@ export type {
   DelegationStoreAPIGetRevocationByIssuerParams,
   DelegationStoreAPIIsRevokedByParams,
   DelegationStoreAPIMarkRevocationVerifiedParams,
+  HeldTokenPage,
+  HeldTokenStats,
   PurgeParams,
 } from './api.js'
 export {
   createDelegationStore,
   MAX_CAP_TTL_SECONDS,
+  MAX_HELD_TOKEN_PAGE_SIZE,
   MAX_REVOCATION_FUTURE_DRIFT_SECONDS,
   REVOCATION_GC_VERIFIED_GRACE_SECONDS,
 } from './api.js'
