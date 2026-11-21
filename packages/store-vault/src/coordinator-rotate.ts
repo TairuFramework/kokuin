@@ -506,6 +506,7 @@ export function createRotateFunctions(
 
           await sign(
             records.wrapping({
+              store,
               row,
               branch: chain,
               consumer:
@@ -551,6 +552,7 @@ export function createRotateFunctions(
           if (params.mode === 'replicated')
             await sign(
               ctx.signed({
+                store,
                 type: 'vault.entry',
                 address: { ownerDID: key.ownerDID, id: selected.entryID },
                 payload: null,
@@ -593,7 +595,7 @@ export function createRotateFunctions(
         entries.push(row)
 
         if (params.mode === 'replicated')
-          await sign(records.entry({ row, branch: chain, contentHLC, consumer }))
+          await sign(records.entry({ store, row, branch: chain, contentHLC, consumer }))
       }
 
       if (params.mode === 'replicated') {
@@ -603,6 +605,7 @@ export function createRotateFunctions(
 
           await sign(
             ctx.signed({
+              store,
               type: 'vault.revocation',
               address: { ownerDID: key.ownerDID, id },
               payload: {},

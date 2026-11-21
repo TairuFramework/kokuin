@@ -20,7 +20,7 @@ import {
   verifyRecordOp,
   verifySignedRecord,
 } from '@kokuin/records'
-import type { CryptoOptions, MethodRegistry } from '@kokuin/token'
+import type { CryptoOptions, MethodRegistry, YieldOptions } from '@kokuin/token'
 import { normalizeDID } from '@kokuin/token'
 
 import type { FactorDescriptor } from './factors.js'
@@ -87,7 +87,8 @@ export type VaultRecordHooks = {
 }
 
 export type VaultRecordTypeParams = VaultRecordHooks &
-  CryptoOptions & { opKind: string; methods?: MethodRegistry }
+  CryptoOptions &
+  YieldOptions & { opKind: string; methods?: MethodRegistry }
 
 const KEY = 'vault.key'
 const BRANCH = 'vault.key-branch'
@@ -293,6 +294,7 @@ async function keyOwnerMatches(
         opKind: params.opKind,
         methods: params.methods,
         crypto: params?.crypto,
+        yield: params.yield,
       })
     }),
   )
@@ -352,6 +354,7 @@ async function authorizeBranch(
     opKind: params.opKind,
     methods: params.methods,
     crypto: params?.crypto,
+    yield: params.yield,
   })
   const key =
     introducing === null
@@ -426,6 +429,7 @@ function createType(
   params: VaultRecordTypeParams,
   bindReceiver = true,
 ): RecordTypeDefinition {
+  const capturedParams = params
   const definition: RecordTypeDefinition = {
     type,
     policy:
@@ -440,12 +444,14 @@ function createType(
     precheck: async ({ op }) => await validStructure(type, op, params),
     dependencies: ({ record: _record, op }) => dependencies(type, op),
     async authorize({ op, ctx }) {
+      const params = { ...capturedParams, yield: ctx.yield ?? capturedParams.yield }
       // Enforce the factory's replay domain even when the engine is misconfigured.
       const checked = await verifySignedRecord({
         record: ctx.record,
         opKind: params.opKind,
         methods: params.methods,
         crypto: params?.crypto,
+        yield: params.yield,
       })
 
       if (checked === null || checked.opHash !== op.opHash) return false
@@ -509,6 +515,7 @@ function createType(
       )
     },
     async visibleTo({ record, ctx }) {
+      const params = { ...capturedParams, yield: ctx.yield ?? capturedParams.yield }
       if (ctx.opKind !== params.opKind) return false
 
       const op = await verifySignedRecord({
@@ -516,6 +523,7 @@ function createType(
         opKind: params.opKind,
         methods: params.methods,
         crypto: params?.crypto,
+        yield: params.yield,
       })
 
       if (
@@ -563,6 +571,7 @@ function createType(
             opKind: params.opKind,
             methods: params.methods,
             crypto: params?.crypto,
+            yield: params.yield,
           })
         }),
       )
@@ -601,6 +610,7 @@ function createType(
         opKind: params.opKind,
         methods: params.methods,
         crypto: params?.crypto,
+        yield: params.yield,
       })
 
       if (op === null) throw new Error('Applied record signature is invalid')
@@ -614,11 +624,18 @@ function createType(
   return definition
 }
 
-function captureParams<Params extends CryptoOptions & { methods?: MethodRegistry }>(input: Params) {
+function captureParams<Params extends CryptoOptions & YieldOptions & { methods?: MethodRegistry }>(
+  input: Params,
+) {
   const getter: (() => MethodRegistry | undefined) | undefined = Object.getOwnPropertyDescriptor(
     input,
     'methods',
   )?.get
+  const yieldGetter: (() => boolean | undefined) | undefined = Object.getOwnPropertyDescriptor(
+    input,
+    'yield',
+  )?.get
+  const yieldPolicy = input.yield
   const methods = input.methods?.map((method) => {
     return {
       ...method,
@@ -631,6 +648,9 @@ function captureParams<Params extends CryptoOptions & { methods?: MethodRegistry
   return {
     ...input,
     crypto: input.crypto ?? nobleCrypto,
+    get yield() {
+      return yieldGetter === undefined ? yieldPolicy : yieldGetter.call(input)
+    },
     // Store adapters supply an accessor bound to their current transaction.
     get methods() {
       return getter === undefined ? methods : getter.call(input)
@@ -659,7 +679,7 @@ export function vaultHolderTypes(
 /** Read a live, owner-qualified key version in the explicit replay domain. */
 export type VaultKeyVersionReaderParams = {
   store: RecordStoreAdapter
-} & Pick<VaultRecordTypeParams, 'opKind' | 'methods' | 'crypto'>
+} & Pick<VaultRecordTypeParams, 'opKind' | 'methods' | 'crypto' | 'yield'>
 
 export function vaultKeyVersionReader(
   input: VaultKeyVersionReaderParams,
@@ -677,6 +697,7 @@ export function vaultKeyVersionReader(
             opKind: params.opKind,
             methods: params.methods,
             crypto: params?.crypto,
+            yield: params.yield,
           })
     const meta =
       op === null ? null : await vaultRecordMeta({ ...params, type: KEY, claim: op.claim })
@@ -708,6 +729,7 @@ export function vaultProofAuthorizer(
       opKind: params.opKind,
       methods: params.methods,
       crypto: params?.crypto,
+      yield: params.yield,
     })
 
     if (op === null) return false

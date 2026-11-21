@@ -1,5 +1,5 @@
 import { nobleCrypto } from '@kokuin/crypto'
-import type { CryptoOptions, MethodRegistry } from '@kokuin/token'
+import type { CryptoOptions, MethodRegistry, YieldOptions } from '@kokuin/token'
 import type { HLCTimestamp } from '@sozai/hlc'
 
 import { parseBoundedHLC } from './clock.js'
@@ -36,13 +36,15 @@ type IsDependencyUnsatisfiedParams = {
   tx: RecordStoreAdapter
   opKind: string
   methods?: MethodRegistry
-} & CryptoOptions
+} & CryptoOptions &
+  YieldOptions
 type IsDependencyUnsatisfiedByParams = {
   dependency: RecordDependency
   stored: RecordDecision | null
   opKind: string
   methods?: MethodRegistry
-} & CryptoOptions
+} & CryptoOptions &
+  YieldOptions
 
 /** The authenticated peer asking for records, and the controller it acts for, if any. */
 export type RecordRequester = { peerDID: string; controllerDID: string | null }
@@ -64,19 +66,20 @@ export type RecordRequester = { peerDID: string; controllerDID: string | null }
  *   never a holding, whatever its `meta` says, so a revocation naming a key and a recipient
  *   cannot pass for a wrapping. Empty, no one is a key holder.
  */
-export type VisibilityContext = CryptoOptions & {
-  requester: RecordRequester
-  opKind: string
-  /** Caller-owned transport state, passed unchanged and never signed. */
-  transportContext?: unknown
-  proofs: ReadonlyArray<SignedRecord>
-  store: RecordStoreAdapter
-  authorizeProof: (params: VisibilityContextAuthorizeProofParams) => Promise<boolean>
-  currentKeyVersion: (params: VisibilityContextCurrentKeyVersionParams) => Promise<number | null>
-  isGroupMember: (params: VisibilityContextIsGroupMemberParams) => Promise<boolean>
-  holderTypes: ReadonlyMap<string, RecordTypeDefinition>
-  methods?: MethodRegistry
-}
+export type VisibilityContext = CryptoOptions &
+  YieldOptions & {
+    requester: RecordRequester
+    opKind: string
+    /** Caller-owned transport state, passed unchanged and never signed. */
+    transportContext?: unknown
+    proofs: ReadonlyArray<SignedRecord>
+    store: RecordStoreAdapter
+    authorizeProof: (params: VisibilityContextAuthorizeProofParams) => Promise<boolean>
+    currentKeyVersion: (params: VisibilityContextCurrentKeyVersionParams) => Promise<number | null>
+    isGroupMember: (params: VisibilityContextIsGroupMemberParams) => Promise<boolean>
+    holderTypes: ReadonlyMap<string, RecordTypeDefinition>
+    methods?: MethodRegistry
+  }
 
 /**
  * What an authorizer reads beside the verified op.
@@ -89,10 +92,11 @@ export type VisibilityContext = CryptoOptions & {
  *   responder's store for a holder proof. An authorizer reads other records through it,
  *   never through a store bound outside the transaction.
  */
-export type RecordReceiveContext = CryptoOptions & {
-  /** Caller-owned transport state, passed unchanged and never signed. */
-  transportContext?: unknown
-}
+export type RecordReceiveContext = CryptoOptions &
+  YieldOptions & {
+    /** Caller-owned transport state, passed unchanged and never signed. */
+    transportContext?: unknown
+  }
 
 export type RecordAuthorizeContext = RecordReceiveContext & {
   record: SignedRecord
@@ -540,6 +544,7 @@ async function applyCandidate(candidate: Candidate, ctx: ChunkContext): Promise<
       store: tx,
       decision,
       crypto: ctx.crypto,
+      yield: ctx.yield,
       transportContext: ctx.transportContext,
       resolveController: ctx.resolveController,
       verifyCapability: ctx.verifyCapability,
@@ -578,6 +583,7 @@ async function applyCandidate(candidate: Candidate, ctx: ChunkContext): Promise<
               store: tx,
               decision,
               crypto: ctx.crypto,
+              yield: ctx.yield,
               transportContext: ctx.transportContext,
               resolveController: ctx.resolveController,
               verifyCapability: ctx.verifyCapability,
@@ -690,6 +696,7 @@ export async function applyRecordChunk(input: ApplyRecordChunkParams): Promise<A
     opKind: params.opKind,
     methods: params.methods,
     crypto: params?.crypto,
+    yield: params.yield,
   })
   const rejected: ApplyResult['rejected'] = []
   const candidates: Array<Candidate> = []
@@ -830,6 +837,9 @@ export async function applyRecordChunk(input: ApplyRecordChunkParams): Promise<A
       for (const key of keys) allKeys.set(JSON.stringify([key.type, key.key]), key)
     }
     return await store.transaction(async (tx) => {
+      // Preflight runs on the caller's store. Only transactions opened here override it.
+      const ownsTransaction = store.isTransaction !== true
+      const transactionYield = ownsTransaction ? false : params.yield
       if (allKeys.size > 0 && tx.lock === undefined) {
         throw new Error('Record store does not support transaction key locks')
       }
@@ -873,11 +883,19 @@ export async function applyRecordChunk(input: ApplyRecordChunkParams): Promise<A
         tx,
         opKind: params.opKind,
         crypto: params.crypto,
+        yield: transactionYield,
         transportContext: params.transportContext,
         resolveController: async (did) => {
           return await (controllers.get(did) ?? params.resolveController(did))
         },
-        verifyCapability: params.verifyCapability,
+        verifyCapability:
+          transactionYield === undefined
+            ? params.verifyCapability
+            : (options) =>
+                params.verifyCapability({
+                  ...options,
+                  yield: ownsTransaction ? false : (options.yield ?? transactionYield),
+                }),
         methods: params.methods,
         decisions: new Map(),
         dependencies: new Map(
@@ -898,6 +916,7 @@ export async function applyRecordChunk(input: ApplyRecordChunkParams): Promise<A
           opKind: params.opKind,
           methods: params.methods,
           crypto: params?.crypto,
+          yield: transactionYield,
         }),
       }
       // One batched read for every decision the chunk will consult: each record's own and its
@@ -984,13 +1003,13 @@ export async function applyRecordChunk(input: ApplyRecordChunkParams): Promise<A
   }
 }
 
-export type ApplyRecordChunkParamsVerifyCapabilityParams = {
+export type ApplyRecordChunkParamsVerifyCapabilityParams = YieldOptions & {
   tokens: ReadonlyArray<string>
   owner: string
   issuer: string
 }
 
-export type RecordAuthorizeContextVerifyCapabilityParams = {
+export type RecordAuthorizeContextVerifyCapabilityParams = YieldOptions & {
   tokens: ReadonlyArray<string>
   owner: string
   issuer: string

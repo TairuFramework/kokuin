@@ -26,6 +26,9 @@ const store = await getDelegationStore(db)
 const verifyToken = createDelegationRevocationChecker({ api: store, methods })
 ```
 
+The checker and its `verdict` accept per-call `yield?: boolean`, forwarded by `checkCapability`.
+A supplied policy overrides the construction policy. Omitting it retains the captured policy and default yielding.
+
 Every write carries a caller-supplied `hlc` stamp, and the purge methods must be scheduled by the
 consumer. See [docs/reference/stores.md](../../docs/reference/stores.md).
 

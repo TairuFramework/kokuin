@@ -1,7 +1,7 @@
 import { type CryptoProvider, nobleCrypto, type VerifyItem } from '@kokuin/crypto'
 import { maybeYield } from '@sozai/async'
 
-import type { CryptoOptions } from './identity.js'
+import type { CryptoOptions, YieldOptions } from './identity.js'
 import type { SignatureAlgorithm } from './schemas.js'
 import { memoizeVerifier } from './verified-memo.js'
 
@@ -14,6 +14,8 @@ export type Verifier = (params: VerifierParams) => boolean | Promise<boolean>
 export type Verifiers = Partial<Record<SignatureAlgorithm, Verifier>>
 
 const providers = new WeakMap<CryptoProvider, Verifiers>()
+// Separate batches so disabled calls never wait for another caller's cooperative yield.
+const nonYieldingProviders = new WeakMap<CryptoProvider, Verifiers>()
 
 type VerificationBatch = {
   items: Array<VerifyItem>
@@ -21,8 +23,9 @@ type VerificationBatch = {
   result: Promise<Array<boolean>>
 }
 
-function providerVerifiers(crypto: CryptoProvider): Verifiers {
-  let verifiers = providers.get(crypto)
+function providerVerifiers(crypto: CryptoProvider, shouldYield = true): Verifiers {
+  const pool = shouldYield ? providers : nonYieldingProviders
+  let verifiers = pool.get(crypto)
   if (verifiers === undefined) {
     verifiers = {}
     let pending: VerificationBatch | undefined
@@ -52,7 +55,7 @@ function providerVerifiers(crypto: CryptoProvider): Verifiers {
       }
       const index = pending.items.length
       pending.items.push(item)
-      pending.yields.push(maybeYield())
+      if (shouldYield) pending.yields.push(maybeYield())
       return pending.result.then((results) => results[index] === true)
     }
     for (const alg of ['EdDSA', 'ES256'] as const) {
@@ -60,7 +63,7 @@ function providerVerifiers(crypto: CryptoProvider): Verifiers {
         return enqueue({ alg, signature, message, publicKey })
       })
     }
-    providers.set(crypto, verifiers)
+    pool.set(crypto, verifiers)
   }
   return verifiers
 }
@@ -72,7 +75,8 @@ export const defaultVerifiers: Verifiers = providerVerifiers(nobleCrypto)
 export type GetVerifierParams = {
   algorithm: SignatureAlgorithm
   verifiers?: Verifiers
-} & CryptoOptions
+} & CryptoOptions &
+  YieldOptions
 
 export function getVerifier({
   verifiers = {},
@@ -80,7 +84,8 @@ export function getVerifier({
   ...options
 }: GetVerifierParams): Verifier {
   const verifier =
-    verifiers[algorithm] ?? providerVerifiers(options.crypto ?? nobleCrypto)[algorithm]
+    verifiers[algorithm] ??
+    providerVerifiers(options.crypto ?? nobleCrypto, options.yield !== false)[algorithm]
   if (verifier == null) throw new Error('Unsupported signature algorithm')
   return verifier
 }

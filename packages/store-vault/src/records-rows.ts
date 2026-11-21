@@ -156,6 +156,7 @@ export async function checked(row: VaultRecordTable, bound: Bound): Promise<Chec
     opKind: bound.opKind,
     methods: bound.methods,
     crypto: bound.params?.crypto,
+    yield: bound.params.yield,
   })
   if (op === null) return null
   if (

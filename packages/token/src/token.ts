@@ -13,7 +13,7 @@ import { assertType, isType } from '@sozai/schema'
 
 import type { DIDCache, DIDResolver } from './cache.js'
 import { resolveIssuerWithDoc } from './did.js'
-import type { CryptoOptions, SigningIdentity } from './identity.js'
+import type { CryptoOptions, SigningIdentity, YieldOptions } from './identity.js'
 import type { DIDMethodResolver, MethodRegistry } from './method.js'
 import {
   type SignatureAlgorithm,
@@ -124,7 +124,8 @@ function samePolicy(known: Provenance, policy: VerificationPolicy): boolean {
 }
 
 export type VerifyTokenOptions = TimeValidationOptions &
-  CryptoOptions & {
+  CryptoOptions &
+  YieldOptions & {
     verifiers?: Verifiers
     resolver?: DIDResolver
     cache?: DIDCache
@@ -199,18 +200,19 @@ function assertUnsignedAllowed(allowUnsigned: boolean): void {
 
 export type VerifySignedPayloadInput<
   Payload extends Record<string, unknown> = Record<string, unknown>,
-> = CryptoOptions & {
-  signature: Uint8Array
-  payload: Payload
-  header: { alg?: string; kid?: string }
-  data: Uint8Array | string
-  verifiers?: Verifiers
-  resolver?: DIDResolver
-  cache?: DIDCache
-  methods?: MethodRegistry
-  /** See `VerifyTokenOptions.historic`. Defaults to `false` — the issuer's current keys only. */
-  historic?: boolean
-}
+> = CryptoOptions &
+  YieldOptions & {
+    signature: Uint8Array
+    payload: Payload
+    header: { alg?: string; kid?: string }
+    data: Uint8Array | string
+    verifiers?: Verifiers
+    resolver?: DIDResolver
+    cache?: DIDCache
+    methods?: MethodRegistry
+    /** See `VerifyTokenOptions.historic`. Defaults to `false` — the issuer's current keys only. */
+    historic?: boolean
+  }
 
 /**
  * Verify the signature of a signed payload and return the public key of the issuer.
@@ -250,7 +252,7 @@ async function verifySignedPayloadWithPolicy<
     methods,
     historic,
   })
-  const verify = getVerifier({ algorithm: alg, verifiers, crypto })
+  const verify = getVerifier({ algorithm: alg, verifiers, crypto, yield: input.yield })
   const key = new Uint8Array(publicKey)
   const verified = await verify({ signature, message, publicKey: key })
   if (!verified) {
@@ -332,17 +334,22 @@ export function createUnsignedToken<
 export type SignTokenParams<
   Payload extends Record<string, unknown>,
   Header extends Record<string, unknown>,
-> = { signer: SigningIdentity; token: Token<Payload, Header> }
+> = { signer: SigningIdentity; token: Token<Payload, Header> } & YieldOptions
 
 export async function signToken<
   Payload extends Record<string, unknown>,
   Header extends Record<string, unknown>,
->({ token, signer }: SignTokenParams<Payload, Header>): Promise<SignedToken<Payload, Header>> {
+>({
+  token,
+  signer,
+  ...options
+}: SignTokenParams<Payload, Header>): Promise<SignedToken<Payload, Header>> {
   return isSignedToken(token)
     ? (token as SignedToken<Payload, Header>)
     : ((await signer.signToken({
         payload: token.payload,
         header: token.header,
+        ...options,
       })) as SignedToken<Payload, Header>)
 }
 
@@ -403,6 +410,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
     audience: inputAudience,
     allowUnsigned = false,
     historic,
+    yield: shouldYield,
     methodPolicy: _methodPolicy,
     cacheGet: _cacheGet,
     cacheSet: _cacheSet,
@@ -454,6 +462,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
         cache,
         methods,
         historic,
+        yield: shouldYield,
       })
       assertTimeClaimsValid({
         payload: snapshot.payload as Record<string, unknown>,
@@ -516,6 +525,7 @@ async function verifyTokenInner<Payload extends Record<string, unknown> = Record
       cache,
       methods,
       historic,
+      yield: shouldYield,
     })
     assertTimeClaimsValid({ payload: payload as Record<string, unknown>, ...timeOptions })
     assertAudienceValid(payload as Record<string, unknown>, audience)

@@ -66,12 +66,7 @@ export function createEntryFunctions(
       ctx.branch({ address: key, version: key.version, store }),
       ctx.branches(key, key.version, store),
     ])
-    const record = await records.entry({
-      row,
-      branch,
-      contentHLC: row.hlc,
-      consumer,
-    })
+    const record = await records.entry({ store, row, branch, contentHLC: row.hlc, consumer })
 
     await ctx.write({
       store,
@@ -256,12 +251,7 @@ export function createEntryFunctions(
             await ctx.write({
               store,
               output: [
-                await records.entry({
-                  row,
-                  branch,
-                  contentHLC: info.contentHLC,
-                  consumer,
-                }),
+                await records.entry({ store, row, branch, contentHLC: info.contentHLC, consumer }),
               ],
               preconditions: {
                 key: {
@@ -330,6 +320,7 @@ export function createEntryFunctions(
       ])
       const row = { ...existing, hlc, keyVersion: key.version }
       const record = await records.entry({
+        store,
         row,
         branch,
         contentHLC: row.hlc,

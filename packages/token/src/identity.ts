@@ -32,7 +32,12 @@ export type CryptoOptions = { crypto?: CryptoProvider }
 
 export type Identity = { readonly id: DIDString }
 
-export type SignTokenOptions = {
+export type YieldOptions = {
+  /** Set false to skip cooperative yields for this call. Defaults to true. */
+  yield?: boolean
+}
+
+export type SignTokenOptions = YieldOptions & {
   /** Extra header fields merged into the signed JWS header. */
   header?: Record<string, unknown>
   /** Pick a non-primary signing key by fragment (e.g. "#key-1"). */
@@ -159,7 +164,7 @@ function buildSigningIdentity({
         const data = `${b64uFromJSON(fullHeader)}.${b64uFromJSON(fullPayload)}`
 
         const signingKey = new Uint8Array(privateKey)
-        await maybeYield()
+        if (options.yield !== false) await maybeYield()
         return {
           header: fullHeader,
           payload: fullPayload,
@@ -490,7 +495,7 @@ function buildIdentity({ id, longForm, doc, keys, crypto }: BuildIdentityParams)
     const data = `${b64uFromJSON(header)}.${b64uFromJSON(fullPayload)}`
     if (key.alg !== 'EdDSA') throw new Error('X25519 cannot sign')
     const signingKey = new Uint8Array(key.privateKey)
-    await maybeYield()
+    if (options.yield !== false) await maybeYield()
     return {
       header: header as SignedHeader & Record<string, unknown>,
       payload: fullPayload as Payload & { iss: string },

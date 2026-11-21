@@ -43,6 +43,10 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         const innerBound: Bound = {
           ...bound,
           ...storage,
+          params: {
+            ...bound.params,
+            yield: bound.context.provider.isTransactionBound ? bound.params.yield : false,
+          },
           store: await getVaultStore(provider),
           locks: [],
         }
@@ -189,6 +193,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
         opKind: bound.opKind,
         methods: bound.methods,
         crypto: bound.params?.crypto,
+        yield: bound.params.yield,
       })
 
       if (
@@ -297,6 +302,7 @@ export function makeAdapter(bound: Bound): RecordStoreAdapter {
               opKind: bound.opKind,
               methods: bound.methods,
               crypto: bound.params?.crypto,
+              yield: bound.params.yield,
             }),
           }
         }),

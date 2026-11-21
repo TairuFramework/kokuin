@@ -20,6 +20,14 @@ See [provider adoption](../../docs/reference/crypto-provider.md) for selection, 
 
 ## Named params migration
 
+`checkCapability` and `checkDelegationChain` accept `yield?: boolean` through `DelegationChainOptions`.
+Pass `yield: false` to skip Kokuin's cooperative yields for every verified chain link, including recursive ancestors.
+`createCapability` also accepts the policy for parent verification and signing, including root and member grants.
+`createMemoryRevocationBackend` and `createRevocationChecker` accept it through `RevocationOptions` for record verification.
+Chain verification forwards the policy to each `VerifyTokenHook` through its optional `yield` parameter.
+The built-in revocation checker uses that per-call policy, falling back to its configured policy when omitted.
+Omission and `true` preserve default yielding. Caller-supplied hooks, resolvers and verifiers retain their own scheduling.
+
 | Export | Named params type | Fields |
 | --- | --- | --- |
 | `createCapability` | `CreateCapabilityParams` | `signer, payload, header?, crypto?` |
@@ -57,3 +65,11 @@ Existing params objects also flatten their options fields:
 | Existing params type | Updated params type | Field migration |
 | --- | --- | --- |
 | `CreateCapabilityParams` | `CreateCapabilityParams` | `Nested options fields → top-level fields` |
+
+## Cooperative yielding
+
+`createRevocationRecord` also accepts `yield?: boolean` and forwards it to the signing identity.
+
+`yield: false` skips cooperative timers for these signing and verification paths.
+Omitting the option preserves default yielding and all cryptographic checks.
+Callers must yield between transactions when disabling yields inside a transaction.

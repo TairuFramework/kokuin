@@ -163,3 +163,19 @@ Existing params objects also flatten their options fields:
 | Existing params type | Updated params type | Field migration |
 | --- | --- | --- |
 | `DecodedAsParams` | `DecodedAsParams` | `Nested options fields → top-level fields` |
+
+## Cooperative yielding
+
+`vaultRecordTypes`, `vaultKeyVersionReader`, and `vaultProofAuthorizer` accept `yield?: boolean` from `@kokuin/token` (`YieldOptions`).
+Their policies forward it through stored-record and introducing-op verification.
+Factory options are captured when created.
+
+`yield: false` skips cooperative timers for these signing and verification paths.
+Record `authorize` and `visibleTo` hooks prefer per-call `ctx.yield` over the construction policy.
+Omitting the option preserves the construction policy, default yielding and all cryptographic checks.
+Callers must yield between transactions when disabling yields inside a transaction.
+
+Store adapters may provide a `yield` accessor alongside their scoped `methods` accessor to
+`vaultRecordTypes`, `vaultKeyVersionReader` and `vaultProofAuthorizer`. The accessor follows
+the active store scope; ordinary boolean options are captured when the factory is called.
+This lets store-owned transactions suppress cooperative timers without changing any checks.

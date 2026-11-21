@@ -79,7 +79,7 @@ export async function createCapability<
 
   // If signer is the subject, no parent validation needed (root capability)
   if (normalizeDID(payload.sub) === normalizeDID(signerID)) {
-    return await signer.signToken({ payload, header })
+    return await signer.signToken({ payload, header, yield: capturedOptions?.yield })
   }
 
   // A management member minting on the subject's behalf: also a chain root, its authority the
@@ -102,6 +102,7 @@ export async function createCapability<
     return await signer.signToken({
       payload: { ...payload, mbr: { add: member.add, g: member.g } },
       header,
+      yield: capturedOptions.yield,
     })
   }
 
@@ -113,6 +114,7 @@ export async function createCapability<
 
   const parent = await verifyToken<CapabilityPayload>({
     token: capturedOptions.parentCapability,
+    yield: capturedOptions.yield,
     crypto: capturedOptions.crypto,
     cache: capturedOptions.cache,
     resolver: capturedOptions.resolver,
@@ -147,7 +149,7 @@ export async function createCapability<
     throw new Error('Invalid capability: delegated permission exceeds parent capability')
   }
 
-  return await signer.signToken({ payload, header })
+  return await signer.signToken({ payload, header, yield: capturedOptions?.yield })
 }
 
 export type AssertValidDelegationParams = {
@@ -242,6 +244,7 @@ export async function checkDelegationChain({
   const next = await verifyToken<CapabilityPayload>({
     token: head,
     atTime,
+    yield: options?.yield,
     crypto: options?.crypto,
     cache: options?.cache,
     resolver: options?.resolver,
@@ -252,7 +255,7 @@ export async function checkDelegationChain({
   })
   assertCapabilityToken(next)
   if (options?.verifyToken != null) {
-    await options.verifyToken({ token: next, raw: head })
+    await options.verifyToken({ token: next, raw: head, yield: options.yield })
   }
   assertValidDelegation({ from: next.payload, to: payload, atTime })
   assertExpiryWithinParent(next.payload, payload)
@@ -367,6 +370,7 @@ export async function checkCapability({
   const capability = await verifyToken<CapabilityPayload>({
     token: head,
     atTime: time,
+    yield: options?.yield,
     crypto: options?.crypto,
     cache: options?.cache,
     resolver: options?.resolver,
@@ -377,7 +381,7 @@ export async function checkCapability({
   })
   assertCapabilityToken(capability)
   if (options?.verifyToken != null) {
-    await options.verifyToken({ token: capability, raw: head })
+    await options.verifyToken({ token: capability, raw: head, yield: options.yield })
   }
 
   // The presented capability's audience is the actual holder, and the one audience the walk never

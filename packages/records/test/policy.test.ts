@@ -167,10 +167,13 @@ describe('lww', () => {
 
   test('an incoming op with a non-canonical hlc cannot win, however late it looks', () => {
     const stored = op('a', { hlc: hlcAt(0) })
-    // One second later with an unpadded counter: parses to finite fields that would win.
+    // The canonical stamp wins, but its unpadded spelling must be rejected.
     const loose = new Date(T0 + 1000).toISOString()
     const incoming = op('z', { hlc: `${loose}:1:node` })
-    expect(HLC.tryParse(incoming.claim.hlc)).not.toBeNull()
+    expect(HLC.tryParse(incoming.claim.hlc)).toBeNull()
+    expect(
+      compareRecordOps({ incoming: op('z', { hlc: hlcAt(1000, 1) }), stored, policy: LWW }),
+    ).toEqual({ status: 'apply' })
     expect(compareRecordOps({ incoming, stored, policy: LWW })).toEqual({
       status: 'reject',
       reason: 'hlc-not-canonical',

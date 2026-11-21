@@ -72,3 +72,21 @@ Existing params objects also flatten their options fields:
 | `AdvanceRecordPullParams` | `AdvanceRecordPullParams` | `Nested options fields → top-level fields` |
 | `IsDependencyUnsatisfiedParams` | `IsDependencyUnsatisfiedParams` | `Nested options fields → top-level fields` |
 | `IsDependencyUnsatisfiedByParams` | `IsDependencyUnsatisfiedByParams` | `Nested options fields → top-level fields` |
+
+## Cooperative yielding
+
+`signRecordOp`, `verifyRecordOp`, `verifySignedRecord`, `createRecordVerifier`, and
+`recordDecisionDigest` accept `yield?: boolean` from `@kokuin/token` (`YieldOptions`).
+`applyRecordChunk` and its authorization context accept the same option.
+Visibility helpers read it from `VisibilityContext`, including holder proofs and dependency checks.
+The apply capability callback receives the policy when one was supplied.
+Scoped verifiers capture the policy when created.
+
+`yield: false` skips cooperative timers for these signing and verification paths.
+Omitting the option preserves default yielding and all cryptographic checks.
+Callers must yield between transactions when disabling yields inside a transaction.
+
+Record apply preserves the caller's yield policy during base-store preflight. Inside a
+transaction it opens itself, verification and capability hooks receive `yield: false`.
+An adapter marked `isTransaction: true` keeps the caller's policy. Hooks that perform their
+own token work should forward the context's `yield` option.

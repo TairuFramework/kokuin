@@ -646,6 +646,48 @@ export function delegationStoreCases(
       expect(await store.listDelegationTokensByJTI('jti-nobody-has')).toEqual([])
     })
 
+    test.each([
+      { exp: 2_999, held: false },
+      { exp: 3_000, held: true },
+      { exp: 3_001, held: true },
+    ])('getHeldTokens at 3000 with exp $exp returns held=$held', async ({ exp, held }) => {
+      const audience = `did:key:a-exp-boundary-${exp}`
+      await store.addDelegationToken(delegationToken({ audience, exp }))
+
+      const tokens = await store.getHeldTokens({ audience, atTime: 3_000 })
+      expect(tokens.map((token) => token.jti)).toEqual(held ? ['jti-1'] : [])
+    })
+
+    test.each([
+      { exp: 2_999, live: false },
+      { exp: 3_000, live: true },
+      { exp: 3_001, live: true },
+    ])(
+      'listUnrevokedSupersededTokens at 3000 with exp $exp returns live=$live',
+      async ({ exp, live }) => {
+        const audience = `did:key:a-superseded-exp-${exp}`
+        const params = { grantor: 'did:key:g-exp-boundary', audience, resource: 'doc:exp-boundary' }
+        await store.addDelegationToken(
+          delegationToken({ ...params, jti: 'jti-superseded', exp, hlc: hlc(1) }),
+        )
+        await store.addDelegationToken(
+          delegationToken({ ...params, jti: 'jti-active', hlc: hlc(2) }),
+        )
+
+        const tokens = await store.listUnrevokedSupersededTokens({ ...params, atTime: 3_000 })
+        expect(tokens.map((token) => token.jti)).toEqual(live ? ['jti-superseded'] : [])
+      },
+    )
+
+    test('delegation tokens still require an expiry', async () => {
+      const audience = 'did:key:a-no-exp'
+      const { exp: _exp, ...token } = delegationToken({ audience })
+      // The store requires expiry even when a JWT could omit the claim.
+      // @ts-expect-error Exercise an invalid row without the required expiry.
+      await expect(store.addDelegationToken(token)).rejects.toThrow()
+      expect(await store.getHeldTokens({ audience, atTime: 3_000 })).toEqual([])
+    })
+
     test('getHeldTokens excludes expired tokens', async () => {
       const audience = 'did:key:a-exp'
       await store.addDelegationToken(
