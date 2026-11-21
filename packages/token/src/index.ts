@@ -77,6 +77,7 @@ export {
   randomIdentity,
   type SigningIdentity,
   type SignTokenOptions,
+  type YieldOptions,
 } from './identity.js'
 export type { KeyEntry, KeyStore, MutableKeyEntry } from './keystore.js'
 export type {

@@ -6,6 +6,21 @@
 npm install @kokuin/token
 ```
 
+## Cooperative yields
+
+`YieldOptions` exports `{ yield?: boolean }`. Omit it or pass `true` to retain cooperative yielding.
+Pass `yield: false` per call when the caller manages scheduling, such as within a database write transaction.
+
+```ts
+const signed = await identity.signToken({ payload, yield: false })
+const verified = await verifyToken({ token: signed, yield: false })
+```
+
+The option is accepted by signing identities' `signToken`, the exported `signToken`, `verifyToken`, `verifySignedPayload`, and `getVerifier`.
+It skips Kokuin's cooperative yielder while preserving signature, issuer, key-binding and claim checks.
+Verification batches are separate for yielding and non-yielding calls, so one policy cannot delay the other.
+Custom signers, verifier overrides, crypto providers and resolvers retain control of their own scheduling.
+
 ## Crypto provider migration to 0.7.0
 
 `CryptoOptions` exports `{ crypto?: CryptoProvider }`.
