@@ -2,8 +2,8 @@ import { randomIdentity, verifyToken } from '@kokuin/token'
 import type * as SozaiAsync from '@sozai/async'
 import { beforeEach, expect, test, vi } from 'vitest'
 
-import { clearRecordOpMemo } from '../../records/src/op.js'
-import { clearVerifiedSignatureMemo } from '../../token/src/verified-memo.js'
+import { clearRecordOpMemo } from '../../records/lib/op.js'
+import { clearVerifiedSignatureMemo } from '../../token/lib/verified-memo.js'
 import { createRevocationRecord } from '../src/index.js'
 
 const timers = vi.hoisted(() =>
