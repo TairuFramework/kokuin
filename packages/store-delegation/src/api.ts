@@ -301,7 +301,7 @@ export function createDelegationStore({
         .selectAll('delegation_tokens')
         .where('audience', '=', normalizeDID(params.audience))
         .where('delegation_tokens.superseded', '=', 0)
-        .where('exp', '>', params.atTime)
+        .where('exp', '>=', params.atTime)
         // Pending revocations (verified_at IS NULL) are not binding until the
         // cap-arrival cross-check verifies them, so they don't filter tokens.
         .where((eb) => {
@@ -336,7 +336,7 @@ export function createDelegationStore({
         .where('audience', '=', normalizeDID(params.audience))
         .where('resource', '=', params.resource)
         .where('delegation_tokens.superseded', '=', 1)
-        .where('exp', '>', params.atTime)
+        .where('exp', '>=', params.atTime)
         .where('revoked_capabilities.jti', 'is', null)
         .orderBy('delegation_tokens.hlc')
         .orderBy('delegation_tokens.jti')
