@@ -1,5 +1,5 @@
 ---
-"@kokuin/records": minor
+"@kokuin/records": patch
 ---
 
 Forward optional `yield: false` through record signing, verification, apply, and visibility helpers. Preserve default yielding, signed content, and verification checks.
