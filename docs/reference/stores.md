@@ -134,6 +134,19 @@ Delegation tokens:
 - `getDelegationTokens({ grantor, audience })`, `listIssuedTokens(grantor)`: active rows only (`superseded = 0`).
 - `getHeldTokens({ audience, atTime })`: unexpired active tokens held by `audience`, excluding any whose
   grantor has a **verified** revocation. Pending revocations do not filter.
+- `getHeldTokenStats({ audience, atTime })`: returns exported `HeldTokenStats` (`{ count, bytes }`) using SQL aggregates without materialising tokens.
+  Shares all `getHeldTokens` filters, including normalised audiences and grantor-pinned verified revocations.
+  `bytes` sums token string bytes: PostgreSQL converts to UTF-8, SQLite measures the stored BLOB representation.
+  SQLite databases created by the adapters use UTF-8. An externally created UTF-16 SQLite database reports its stored encoding's byte length.
+  Empty sets return zeros. Totals outside JavaScript's safe integer range throw `RangeError`.
+- `getHeldTokenPage({ audience, atTime, after?, limit })`: returns exported `HeldTokenPage` (`{ tokens, next }`) with identical filters.
+  `limit` must be a positive integer, at most `MAX_HELD_TOKEN_PAGE_SIZE` (1,000). Invalid limits or malformed cursors throw `RangeError`.
+  Uses the composite table key: `(grantor, resource, jti)` within the fixed normalised audience, ordered by the database collation.
+  Treat `next` as opaque. Pass it as `after`, retaining audience and `atTime`, until `next` is `null`.
+  Each call fetches at most `limit` token rows. A separate key-only existence probe determines whether another page exists.
+  Concurrent inserts before the cursor are omitted. Inserts after it can appear on later pages.
+  Stats and pages are separate reads. Use a caller transaction with snapshot isolation when preflight and pages must describe one dataset.
+  The row limit does not bound individual token sizes. Concurrent writes can invalidate a byte preflight outside a snapshot.
 - `listUnrevokedSupersededTokens({ grantor, audience, resource, atTime })`: unexpired superseded grants for one normalised key.
   Excludes any revocation by the grantor, pending or verified. Other revokers cannot suppress these rows.
   Orders by `hlc`, then `jti`. This lists grants still needing revocation, rather than authorising their use.

@@ -1,7 +1,7 @@
 // Parameter audit: every statement binds a fixed, small count (at most 11) -- no `IN` lists
 // built from input and no multi-row values -- so none nears the 500-parameter limit.
 import type { Adapter } from '@hozon/adapter'
-import { type Kysely, type StoreContext, withKeyLock, withStoreTransaction } from '@hozon/db'
+import { type Kysely, type StoreContext, sql, withKeyLock, withStoreTransaction } from '@hozon/db'
 import { normalizeDID } from '@kokuin/token'
 
 import type {
@@ -19,6 +19,14 @@ import type {
  */
 export type PurgeParams = { graceSeconds?: number }
 
+/** SQL aggregate of held rows. `bytes` counts UTF-8 bytes (SQLite uses its database encoding). */
+export type HeldTokenStats = { count: number; bytes: number }
+
+export type HeldTokenPage = { tokens: Array<DelegationToken>; next: string | null }
+
+/** Maximum token rows materialised by one held-token page. */
+export const MAX_HELD_TOKEN_PAGE_SIZE = 1_000
+
 export type DelegationStoreAPI = {
   /**
    * Serialised last-writer-wins arbitration per `(grantor, audience, resource)`.
@@ -30,6 +38,22 @@ export type DelegationStoreAPI = {
     audience: string
   }): Promise<Array<DelegationToken>>
   getHeldTokens(params: { audience: string; atTime: number }): Promise<Array<DelegationToken>>
+  /** SQL-only preflight. Separate reads are not a snapshot of concurrent writes. */
+  getHeldTokenStats(params: { audience: string; atTime: number }): Promise<HeldTokenStats>
+  /**
+   * Keyset page in `(grantor, resource, jti)` order within the normalised audience.
+   * `limit` must be an integer from 1 to MAX_HELD_TOKEN_PAGE_SIZE, otherwise throws RangeError.
+   * `after` is an opaque cursor from `next`. Keep audience and atTime unchanged between pages.
+   * Concurrent inserts before the cursor are omitted. Use snapshot isolation in a caller
+   * transaction for consistent reads.
+   * The row limit does not bound individual token sizes or bytes added after a stats preflight.
+   */
+  getHeldTokenPage(params: {
+    audience: string
+    atTime: number
+    after?: string
+    limit: number
+  }): Promise<HeldTokenPage>
   listIssuedTokens(grantor: string): Promise<Array<DelegationToken>>
   /** Live superseded grants without any revocation by their grantor, including pending claims. */
   listUnrevokedSupersededTokens(params: {
@@ -178,6 +202,68 @@ export function createDelegationStore({
   adapter,
   db,
 }: CreateDelegationStoreParams): DelegationStoreAPI {
+  // The join carries the author predicate for two reasons. It is an
+  // authorization filter -- only the grantor's own claim may withhold a token
+  // from the audience holding it. It also keeps the result one row per token:
+  // `(jti, revoker_did)` is the revocation key, so pinning `revoker_did` to the
+  // token's grantor makes the fan-out at most 1. A duplicate would break a
+  // multi-hop delegation chain outright.
+  function heldTokens(params: { audience: string; atTime: number }) {
+    return (
+      db
+        .selectFrom('delegation_tokens')
+        .leftJoin('revoked_capabilities', (join) => {
+          return join
+            .onRef('revoked_capabilities.jti', '=', 'delegation_tokens.jti')
+            .onRef('revoked_capabilities.revoker_did', '=', 'delegation_tokens.grantor')
+        })
+        .where('audience', '=', normalizeDID(params.audience))
+        .where('delegation_tokens.superseded', '=', 0)
+        .where('exp', '>=', params.atTime)
+        // Pending revocations (verified_at IS NULL) are not binding until the
+        // cap-arrival cross-check verifies them, so they don't filter tokens.
+        .where((eb) => {
+          return eb.or([
+            eb('revoked_capabilities.jti', 'is', null),
+            eb('revoked_capabilities.verified_at', 'is', null),
+          ])
+        })
+    )
+  }
+
+  function heldTokensAfter(params: { audience: string; atTime: number }, after?: string) {
+    const query = heldTokens(params)
+    if (after === undefined) return query
+    let key: unknown
+    try {
+      key = JSON.parse(after)
+    } catch (cause) {
+      throw new RangeError('Invalid held-token cursor', { cause })
+    }
+    if (
+      !Array.isArray(key) ||
+      key.length !== 3 ||
+      !key.every((value) => typeof value === 'string')
+    ) {
+      throw new RangeError('Invalid held-token cursor')
+    }
+    const [grantor, resource, jti] = key as [string, string, string]
+    return query.where((eb) =>
+      eb.or([
+        eb('delegation_tokens.grantor', '>', grantor),
+        eb.and([
+          eb('delegation_tokens.grantor', '=', grantor),
+          eb('delegation_tokens.resource', '>', resource),
+        ]),
+        eb.and([
+          eb('delegation_tokens.grantor', '=', grantor),
+          eb('delegation_tokens.resource', '=', resource),
+          eb('delegation_tokens.jti', '>', jti),
+        ]),
+      ]),
+    )
+  }
+
   const api: DelegationStoreAPI = {
     // Lock before reading so arbitration preserves history even on one ambient transaction.
     async addDelegationToken(token: InsertDelegationToken): Promise<boolean> {
@@ -281,36 +367,55 @@ export function createDelegationStore({
         .execute()
     },
 
-    // The join carries the author predicate for two reasons. It is an
-    // authorization filter -- only the grantor's own claim may withhold a token
-    // from the audience holding it. It also keeps the result one row per token:
-    // `(jti, revoker_did)` is the revocation key, so pinning `revoker_did` to the
-    // token's grantor makes the fan-out at most 1. A duplicate would break a
-    // multi-hop delegation chain outright.
-    async getHeldTokens(params: {
-      audience: string
-      atTime: number
-    }): Promise<Array<DelegationToken>> {
-      return await db
-        .selectFrom('delegation_tokens')
-        .leftJoin('revoked_capabilities', (join) => {
-          return join
-            .onRef('revoked_capabilities.jti', '=', 'delegation_tokens.jti')
-            .onRef('revoked_capabilities.revoker_did', '=', 'delegation_tokens.grantor')
-        })
+    async getHeldTokens(params) {
+      return await heldTokens(params).selectAll('delegation_tokens').execute()
+    },
+
+    async getHeldTokenStats(params) {
+      const token = sql.ref('delegation_tokens.token')
+      const length =
+        adapter.kind === 'postgres'
+          ? sql`octet_length(convert_to(${token}, 'UTF8'))`
+          : sql`length(cast(${token} as blob))`
+      const row = await heldTokens(params)
+        .select((eb) => [
+          eb.fn.countAll().as('count'),
+          sql<number | string>`coalesce(sum(${length}), 0)`.as('bytes'),
+        ])
+        .executeTakeFirstOrThrow()
+      const count = Number(row.count)
+      const bytes = Number(row.bytes)
+      // Never silently underestimate a resource preflight through numeric rounding.
+      if (!Number.isSafeInteger(count) || !Number.isSafeInteger(bytes)) {
+        throw new RangeError('Held-token statistics exceed the safe integer range')
+      }
+      return { count, bytes }
+    },
+
+    async getHeldTokenPage(params) {
+      if (
+        !Number.isInteger(params.limit) ||
+        params.limit < 1 ||
+        params.limit > MAX_HELD_TOKEN_PAGE_SIZE
+      ) {
+        throw new RangeError(`limit must be an integer from 1 to ${MAX_HELD_TOKEN_PAGE_SIZE}`)
+      }
+      const tokens = await heldTokensAfter(params, params.after)
         .selectAll('delegation_tokens')
-        .where('audience', '=', normalizeDID(params.audience))
-        .where('delegation_tokens.superseded', '=', 0)
-        .where('exp', '>=', params.atTime)
-        // Pending revocations (verified_at IS NULL) are not binding until the
-        // cap-arrival cross-check verifies them, so they don't filter tokens.
-        .where((eb) => {
-          return eb.or([
-            eb('revoked_capabilities.jti', 'is', null),
-            eb('revoked_capabilities.verified_at', 'is', null),
-          ])
-        })
+        .orderBy('delegation_tokens.grantor')
+        .orderBy('delegation_tokens.resource')
+        .orderBy('delegation_tokens.jti')
+        .limit(params.limit)
         .execute()
+      const last = tokens.at(-1)
+      if (last == null || tokens.length < params.limit) return { tokens, next: null }
+      const cursor = JSON.stringify([last.grantor, last.resource, last.jti])
+      // Probe only a key, never an extra potentially oversized token string.
+      const more = await heldTokensAfter(params, cursor)
+        .select('delegation_tokens.jti')
+        .limit(1)
+        .executeTakeFirst()
+      return { tokens, next: more == null ? null : cursor }
     },
 
     async listIssuedTokens(grantor: string): Promise<Array<DelegationToken>> {

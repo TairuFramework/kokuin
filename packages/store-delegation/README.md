@@ -70,3 +70,16 @@ Method and callback contracts follow the same convention.
 | API | Named params type | Previous form |
 | --- | --- | --- |
 | `createDelegationRevocationChecker(...).verdict` | `DelegationRevocationVerdictParams` | `verdict(token, raw)` |
+
+## Bounded held-token reads
+
+`getHeldTokenStats({ audience, atTime })` returns `{ count, bytes }` using SQL aggregates without fetching token rows.
+`getHeldTokenPage({ audience, atTime, after?, limit })` returns `{ tokens, next }` with the same authority filters as `getHeldTokens`.
+The package exports `HeldTokenStats`, `HeldTokenPage` and `MAX_HELD_TOKEN_PAGE_SIZE` (1,000).
+Limits outside the integer range 1–1,000 throw `RangeError`.
+
+Pass `next` as `after` until it is `null`, keeping the audience and time fixed.
+Pages use the composite table key, since JTIs are not globally unique.
+Stats count UTF-8 token bytes on PostgreSQL and adapter-created SQLite databases.
+See the [store reference](../../docs/reference/stores.md) for encoding, cursor and concurrency contracts.
+A page bounds rows, not individual token bytes. Use a caller transaction with snapshot isolation for a consistent preflight and page traversal.
