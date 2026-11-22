@@ -74,12 +74,20 @@ Method and callback contracts follow the same convention.
 ## Bounded held-token reads
 
 `getHeldTokenStats({ audience, atTime })` returns `{ count, bytes }` using SQL aggregates without fetching token rows.
-`getHeldTokenPage({ audience, atTime, after?, limit })` returns `{ tokens, next }` with the same authority filters as `getHeldTokens`.
-The package exports `HeldTokenStats`, `HeldTokenPage` and `MAX_HELD_TOKEN_PAGE_SIZE` (1,000).
+`getHeldTokenPage({ audience, atTime, after?, limit, maxBytes? })` returns `{ tokens, next, oversized? }` with the same authority filters as `getHeldTokens`.
+The package exports `HeldTokenStats`, `HeldTokenPage`, `HeldTokenPageOversized` and `MAX_HELD_TOKEN_PAGE_SIZE` (1,000).
 Limits outside the integer range 1–1,000 throw `RangeError`.
 
 Pass `next` as `after` until it is `null`, keeping the audience and time fixed.
 Pages use the composite table key, since JTIs are not globally unique.
 Stats count UTF-8 token bytes on PostgreSQL and adapter-created SQLite databases.
 See the [store reference](../../docs/reference/stores.md) for encoding, cursor and concurrency contracts.
-A page bounds rows, not individual token bytes. Use a caller transaction with snapshot isolation for a consistent preflight and page traversal.
+Without `maxBytes`, pages retain their row-only bound.
+Optional `maxBytes` must be a positive safe integer, otherwise the call throws `RangeError`.
+SQL returns the longest key-ordered prefix within both limits, measuring token bytes with the stats expression.
+Bodies outside that prefix never reach the driver result, including after concurrent inserts or replacements.
+If the first eligible row exceeds the allowance, the page returns no tokens and `oversized: { jti, bytes }`.
+On that result, `next` equals the requested `after`, or `null` when `after` was omitted.
+Check `oversized` before treating `next: null` as completion. Retry with a larger allowance or stop.
+The byte allowance covers token bodies only, excluding row metadata and driver overhead.
+Use a caller transaction with snapshot isolation for a consistent preflight and page traversal.

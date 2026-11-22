@@ -139,14 +139,22 @@ Delegation tokens:
   `bytes` sums token string bytes: PostgreSQL converts to UTF-8, SQLite measures the stored BLOB representation.
   SQLite databases created by the adapters use UTF-8. An externally created UTF-16 SQLite database reports its stored encoding's byte length.
   Empty sets return zeros. Totals outside JavaScript's safe integer range throw `RangeError`.
-- `getHeldTokenPage({ audience, atTime, after?, limit })`: returns exported `HeldTokenPage` (`{ tokens, next }`) with identical filters.
+- `getHeldTokenPage({ audience, atTime, after?, limit, maxBytes? })`: returns exported `HeldTokenPage` (`{ tokens, next, oversized? }`) with identical filters.
   `limit` must be a positive integer, at most `MAX_HELD_TOKEN_PAGE_SIZE` (1,000). Invalid limits or malformed cursors throw `RangeError`.
   Uses the composite table key: `(grantor, resource, jti)` within the fixed normalised audience, ordered by the database collation.
   Treat `next` as opaque. Pass it as `after`, retaining audience and `atTime`, until `next` is `null`.
   Each call fetches at most `limit` token rows. A separate key-only existence probe determines whether another page exists.
   Concurrent inserts before the cursor are omitted. Inserts after it can appear on later pages.
   Stats and pages are separate reads. Use a caller transaction with snapshot isolation when preflight and pages must describe one dataset.
-  The row limit does not bound individual token sizes. Concurrent writes can invalidate a byte preflight outside a snapshot.
+  Without `maxBytes`, the row limit does not bound individual token sizes. Concurrent writes can invalidate a stats preflight outside a snapshot.
+  Optional `maxBytes` must be a positive safe integer. Invalid values throw `RangeError`.
+  SQL selects the longest ordered prefix within both limits, using the stats byte expression.
+  Only keys and lengths enter the limited window sum. The body join excludes keys exceeding the allowance in the same statement snapshot.
+  Concurrent inserts or replacements cannot make returned token bodies exceed `maxBytes`.
+  If the first eligible row exceeds it, returns no tokens and `oversized: HeldTokenPageOversized` (`{ jti, bytes }`).
+  This result retains `next: after ?? null`. Check `oversized` before interpreting a null cursor as completion.
+  Retry with a larger allowance or stop. Oversized JTIs identify the blocked row diagnostically, rather than providing a globally unique key.
+  The byte bound excludes row metadata and driver overhead.
 - `listUnrevokedSupersededTokens({ grantor, audience, resource, atTime })`: unexpired superseded grants for one normalised key.
   Excludes any revocation by the grantor, pending or verified. Other revokers cannot suppress these rows.
   Orders by `hlc`, then `jti`. This lists grants still needing revocation, rather than authorising their use.

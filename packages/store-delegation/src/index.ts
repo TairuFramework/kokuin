@@ -9,6 +9,7 @@ export type {
   DelegationStoreAPIIsRevokedByParams,
   DelegationStoreAPIMarkRevocationVerifiedParams,
   HeldTokenPage,
+  HeldTokenPageOversized,
   HeldTokenStats,
   PurgeParams,
 } from './api.js'

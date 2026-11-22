@@ -126,9 +126,45 @@ export function delegationStoreCases(
   describe('store', () => {
     let db: HozonDB
     let store: DelegationStoreAPI
+    const reads: Array<{
+      sql: string
+      parameters: ReadonlyArray<unknown>
+      rows: ReadonlyArray<unknown>
+    }> = []
 
     beforeAll(async () => {
-      db = new HozonDB({ adapter: await harness.createAdapter(), tablePrefix })
+      const adapter = await harness.createAdapter()
+      const dialect = adapter.dialect
+      const patched = new WeakSet<object>()
+      Object.defineProperty(adapter, 'dialect', {
+        value: {
+          createAdapter: () => dialect.createAdapter(),
+          createIntrospector: (raw: Kysely<unknown>) => dialect.createIntrospector(raw),
+          createQueryCompiler: () => dialect.createQueryCompiler(),
+          createDriver: () => {
+            const driver = dialect.createDriver()
+            const acquire = driver.acquireConnection.bind(driver)
+            driver.acquireConnection = async () => {
+              const connection = await acquire()
+              if (!patched.has(connection)) {
+                patched.add(connection)
+                const execute = connection.executeQuery.bind(connection)
+                connection.executeQuery = async <R>(
+                  query: Parameters<typeof execute>[0],
+                  options?: Parameters<typeof execute>[1],
+                ) => {
+                  const result = await execute<R>(query, options)
+                  reads.push({ ...query, rows: result.rows })
+                  return result
+                }
+              }
+              return connection
+            }
+            return driver
+          },
+        },
+      })
+      db = new HozonDB({ adapter, tablePrefix })
       db.register(delegationStoreDefinition)
       store = await getDelegationStore(db)
     }, 60_000)
@@ -688,83 +724,211 @@ export function delegationStoreCases(
       expect(await store.getHeldTokens({ audience, atTime: 3_000 })).toEqual([])
     })
 
-    test('held stats and pages match the complete read for mixed authority', async () => {
-      const peer = await peer4Identity()
-      const audience = peer.id
-      const grantor = 'did:key:g-bounded'
-      for (const [index, name] of [
-        'live',
-        'expired',
-        'verified',
-        'pending',
-        'foreign',
-        'old',
-        'new',
-      ].entries()) {
+    test.each([undefined, 40])(
+      'held stats and pages match the complete read for mixed authority (maxBytes=%s)',
+      async (maxBytes) => {
+        const peer = await peer4Identity()
+        const audience = peer.id
+        const grantor = 'did:key:g-bounded'
+        for (const [index, name] of [
+          'live',
+          'expired',
+          'verified',
+          'pending',
+          'foreign',
+          'old',
+          'new',
+        ].entries()) {
+          await store.addDelegationToken(
+            delegationToken({
+              audience,
+              grantor,
+              jti: `bounded-${name}`,
+              resource: name === 'old' || name === 'new' ? 'doc:replacement' : `doc:${name}`,
+              token: `signed-${name}-刻印-😀`,
+              exp: name === 'expired' ? 999 : 1_000,
+              hlc: hlc(index + 1),
+            }),
+          )
+        }
+        await store.addDelegationToken(delegationToken({ audience: 'did:key:other-bounded' }))
+        // Reused JTIs across grantors and resources must remain distinct page entries.
         await store.addDelegationToken(
-          delegationToken({
-            audience,
-            grantor,
-            jti: `bounded-${name}`,
-            resource: name === 'old' || name === 'new' ? 'doc:replacement' : `doc:${name}`,
-            token: `signed-${name}-刻印-😀`,
-            exp: name === 'expired' ? 999 : 1_000,
-            hlc: hlc(index + 1),
-          }),
+          delegationToken({ audience, grantor, jti: 'bounded-live', resource: 'doc:duplicate' }),
+        )
+        await store.addDelegationToken(
+          delegationToken({ audience, grantor: 'did:key:g-bounded-other', jti: 'bounded-live' }),
+        )
+        for (const name of ['verified', 'pending', 'foreign']) {
+          await store.addRevocation(
+            revocation({
+              jti: `bounded-${name}`,
+              revoker_did: name === 'foreign' ? REVOKER : grantor,
+              verified_at: name === 'pending' ? null : 1_000,
+            }),
+          )
+        }
+        const params = { audience: peer.longForm, atTime: 1_000 }
+        const all = await store.getHeldTokens(params)
+        expect(all.map((row) => row.jti).sort()).toEqual([
+          'bounded-foreign',
+          'bounded-live',
+          'bounded-live',
+          'bounded-live',
+          'bounded-new',
+          'bounded-pending',
+        ])
+        expect(await store.getHeldTokenStats(params)).toEqual({
+          count: all.length,
+          bytes: all.reduce((sum, row) => sum + Buffer.byteLength(row.token, 'utf8'), 0),
+        })
+        const paged = []
+        let after: string | undefined
+        do {
+          const page = await store.getHeldTokenPage({ ...params, after, limit: 2, maxBytes })
+          expect(page.tokens.length).toBeLessThanOrEqual(2)
+          paged.push(...page.tokens)
+          after = page.next ?? undefined
+        } while (after !== undefined)
+        const key = (row: { grantor: string; resource: string; jti: string }) =>
+          JSON.stringify([row.grantor, row.resource, row.jti])
+        expect(paged.map(key).sort()).toEqual(all.map(key).sort())
+        expect(await store.getHeldTokenStats({ audience, atTime: 1_001 })).toEqual({
+          count: 2,
+          bytes: 28,
+        })
+        expect(
+          await store.getHeldTokenStats({ audience: 'did:key:empty-bounded', atTime: 0 }),
+        ).toEqual({ count: 0, bytes: 0 })
+        expect(
+          await store.getHeldTokenPage({ audience: 'did:key:empty-bounded', atTime: 0, limit: 1 }),
+        ).toEqual({ tokens: [], next: null })
+      },
+    )
+
+    test('held byte pages return the longest ordered prefix and the complete union', async () => {
+      const params = { audience: 'did:key:a-byte-union', atTime: 0, limit: 3, maxBytes: 7 }
+      for (const [resource, token] of [
+        ['a', '刻'],
+        ['b', '😀'],
+        ['c', '12345'],
+        ['d', 'x'],
+      ]) {
+        await store.addDelegationToken(
+          delegationToken({ audience: params.audience, resource, token }),
         )
       }
-      await store.addDelegationToken(delegationToken({ audience: 'did:key:other-bounded' }))
-      // Reused JTIs across grantors and resources must remain distinct page entries.
-      await store.addDelegationToken(
-        delegationToken({ audience, grantor, jti: 'bounded-live', resource: 'doc:duplicate' }),
-      )
-      await store.addDelegationToken(
-        delegationToken({ audience, grantor: 'did:key:g-bounded-other', jti: 'bounded-live' }),
-      )
-      for (const name of ['verified', 'pending', 'foreign']) {
-        await store.addRevocation(
-          revocation({
-            jti: `bounded-${name}`,
-            revoker_did: name === 'foreign' ? REVOKER : grantor,
-            verified_at: name === 'pending' ? null : 1_000,
-          }),
-        )
-      }
-      const params = { audience: peer.longForm, atTime: 1_000 }
-      const all = await store.getHeldTokens(params)
-      expect(all.map((row) => row.jti).sort()).toEqual([
-        'bounded-foreign',
-        'bounded-live',
-        'bounded-live',
-        'bounded-live',
-        'bounded-new',
-        'bounded-pending',
-      ])
-      expect(await store.getHeldTokenStats(params)).toEqual({
-        count: all.length,
-        bytes: all.reduce((sum, row) => sum + Buffer.byteLength(row.token, 'utf8'), 0),
-      })
-      const paged = []
-      let after: string | undefined
-      do {
-        const page = await store.getHeldTokenPage({ ...params, after, limit: 2 })
-        expect(page.tokens.length).toBeLessThanOrEqual(2)
+      const first = await store.getHeldTokenPage(params)
+      expect(first.tokens.map((row) => row.resource)).toEqual(['a', 'b'])
+      expect(first.next).toBeTypeOf('string')
+      const paged = [...first.tokens]
+      let after = first.next
+      while (after != null) {
+        const page = await store.getHeldTokenPage({ ...params, after })
+        expect(page.oversized).toBeUndefined()
+        expect(
+          page.tokens.reduce((sum, row) => sum + Buffer.byteLength(row.token), 0),
+        ).toBeLessThanOrEqual(7)
+        expect(page.tokens.length).toBeLessThanOrEqual(params.limit)
         paged.push(...page.tokens)
-        after = page.next ?? undefined
-      } while (after !== undefined)
-      const key = (row: { grantor: string; resource: string; jti: string }) =>
-        JSON.stringify([row.grantor, row.resource, row.jti])
-      expect(paged.map(key).sort()).toEqual(all.map(key).sort())
-      expect(await store.getHeldTokenStats({ audience, atTime: 1_001 })).toEqual({
-        count: 2,
-        bytes: 28,
+        after = page.next
+      }
+      const unbounded = await store.getHeldTokenPage({ ...params, maxBytes: undefined })
+      const tail = await store.getHeldTokenPage({
+        ...params,
+        maxBytes: undefined,
+        after: unbounded.next ?? undefined,
       })
-      expect(
-        await store.getHeldTokenStats({ audience: 'did:key:empty-bounded', atTime: 0 }),
-      ).toEqual({ count: 0, bytes: 0 })
-      expect(
-        await store.getHeldTokenPage({ audience: 'did:key:empty-bounded', atTime: 0, limit: 1 }),
-      ).toEqual({ tokens: [], next: null })
+      expect(paged).toEqual([...unbounded.tokens, ...tail.tokens])
+    })
+
+    test('held byte pages never skip or fetch an oversized first body', async () => {
+      const params = { audience: 'did:key:a-byte-oversized', atTime: 0, limit: 3, maxBytes: 4 }
+      for (const [resource, token] of [
+        ['a', 'ok'],
+        ['b', '刻'.repeat(100_000)],
+        ['c', 'x'],
+      ]) {
+        await store.addDelegationToken(
+          delegationToken({ audience: params.audience, resource, token, jti: resource }),
+        )
+      }
+      const first = await store.getHeldTokenPage(params)
+      expect(first.tokens.map((row) => row.resource)).toEqual(['a'])
+      if (first.next == null) throw new Error('Expected cursor')
+      const start = reads.length
+      const blocked = await store.getHeldTokenPage({ ...params, after: first.next })
+      expect(blocked).toEqual({
+        tokens: [],
+        next: first.next,
+        oversized: { jti: 'b', bytes: 300_000 },
+      })
+      // Observe driver rows before the store can discard a materialised body.
+      const fetched = reads.slice(start)
+      expect(fetched.flatMap((query) => query.rows)).toEqual([
+        expect.objectContaining({ token: null }),
+      ])
+      expect(fetched.every((query) => query.parameters.length <= 12)).toBe(true)
+      const retry = await store.getHeldTokenPage({
+        ...params,
+        after: first.next,
+        maxBytes: 300_001,
+      })
+      expect(retry.tokens.map((row) => row.resource)).toEqual(['b', 'c'])
+      expect(retry.next).toBeNull()
+      const initial = await store.getHeldTokenPage({ ...params, maxBytes: 1 })
+      expect(initial).toEqual({ tokens: [], next: null, oversized: { jti: 'a', bytes: 2 } })
+    })
+
+    test('held byte pages stay bounded after inserts invalidate stats', async () => {
+      const params = { audience: 'did:key:a-byte-stale', atTime: 0, limit: 64, maxBytes: 131_072 }
+      expect(await store.getHeldTokenStats(params)).toEqual({ count: 0, bytes: 0 })
+      await Promise.all(
+        Array.from({ length: 8 }, (_, index) =>
+          store.addDelegationToken(
+            delegationToken({
+              audience: params.audience,
+              resource: String(index),
+              token: 'x'.repeat(65_536),
+            }),
+          ),
+        ),
+      )
+      const start = reads.length
+      const page = await store.getHeldTokenPage(params)
+      const bodies = reads
+        .slice(start)
+        .flatMap((query) => query.rows)
+        .filter((row) => typeof row === 'object' && row != null && 'token' in row)
+      expect(bodies).toHaveLength(2)
+      expect(page.tokens).toHaveLength(2)
+      expect(page.tokens.reduce((sum, row) => sum + Buffer.byteLength(row.token), 0)).toBe(131_072)
+      expect(page.next).toBeTypeOf('string')
+    })
+
+    test.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
+      'held byte pages reject invalid maxBytes %s',
+      async (maxBytes) => {
+        await expect(
+          store.getHeldTokenPage({
+            audience: 'did:key:a-byte-invalid',
+            atTime: 0,
+            limit: 1,
+            maxBytes,
+          }),
+        ).rejects.toThrow(RangeError)
+      },
+    )
+
+    test('held byte pages accept a safe maximum and preserve empty and cursor validation', async () => {
+      const params = {
+        audience: 'did:key:a-byte-empty',
+        atTime: 0,
+        limit: 1,
+        maxBytes: Number.MAX_SAFE_INTEGER,
+      }
+      expect(await store.getHeldTokenPage(params)).toEqual({ tokens: [], next: null })
+      await expect(store.getHeldTokenPage({ ...params, after: '{}' })).rejects.toThrow(RangeError)
     })
 
     test('held keyset pages stay stable with inserts before and after the cursor', async () => {
