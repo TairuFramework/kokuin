@@ -1,4 +1,4 @@
-// Parameter audit: every statement binds a fixed, small count (at most 11) -- no `IN` lists
+// Parameter audit: every statement binds a fixed, small count (at most 12) -- no `IN` lists
 // built from input and no multi-row values -- so none nears the 500-parameter limit.
 import type { Adapter } from '@hozon/adapter'
 import { type Kysely, type StoreContext, sql, withKeyLock, withStoreTransaction } from '@hozon/db'
@@ -22,7 +22,13 @@ export type PurgeParams = { graceSeconds?: number }
 /** SQL aggregate of held rows. `bytes` counts UTF-8 bytes (SQLite uses its database encoding). */
 export type HeldTokenStats = { count: number; bytes: number }
 
-export type HeldTokenPage = { tokens: Array<DelegationToken>; next: string | null }
+export type HeldTokenPageOversized = { jti: string; bytes: number }
+
+export type HeldTokenPage = {
+  tokens: Array<DelegationToken>
+  next: string | null
+  oversized?: HeldTokenPageOversized
+}
 
 /** Maximum token rows materialised by one held-token page. */
 export const MAX_HELD_TOKEN_PAGE_SIZE = 1_000
@@ -46,13 +52,17 @@ export type DelegationStoreAPI = {
    * `after` is an opaque cursor from `next`. Keep audience and atTime unchanged between pages.
    * Concurrent inserts before the cursor are omitted. Use snapshot isolation in a caller
    * transaction for consistent reads.
-   * The row limit does not bound individual token sizes or bytes added after a stats preflight.
+   * Optional `maxBytes` must be a positive safe integer, otherwise throws RangeError.
+   * SQL bounds the longest ordered prefix by token bytes, using the stats byte expression.
+   * An oversized first row returns no bodies and `oversized`. `next` stays `after ?? null`.
+   * Retry with a larger allowance or stop on `oversized`, even when `next` is null.
    */
   getHeldTokenPage(params: {
     audience: string
     atTime: number
     after?: string
     limit: number
+    maxBytes?: number
   }): Promise<HeldTokenPage>
   listIssuedTokens(grantor: string): Promise<Array<DelegationToken>>
   /** Live superseded grants without any revocation by their grantor, including pending claims. */
@@ -264,6 +274,13 @@ export function createDelegationStore({
     )
   }
 
+  function tokenBytes() {
+    const token = sql.ref('delegation_tokens.token')
+    return adapter.kind === 'postgres'
+      ? sql<number | string>`octet_length(convert_to(${token}, 'UTF8'))`
+      : sql<number | string>`length(cast(${token} as blob))`
+  }
+
   const api: DelegationStoreAPI = {
     // Lock before reading so arbitration preserves history even on one ambient transaction.
     async addDelegationToken(token: InsertDelegationToken): Promise<boolean> {
@@ -372,11 +389,7 @@ export function createDelegationStore({
     },
 
     async getHeldTokenStats(params) {
-      const token = sql.ref('delegation_tokens.token')
-      const length =
-        adapter.kind === 'postgres'
-          ? sql`octet_length(convert_to(${token}, 'UTF8'))`
-          : sql`length(cast(${token} as blob))`
+      const length = tokenBytes()
       const row = await heldTokens(params)
         .select((eb) => [
           eb.fn.countAll().as('count'),
@@ -399,6 +412,84 @@ export function createDelegationStore({
         params.limit > MAX_HELD_TOKEN_PAGE_SIZE
       ) {
         throw new RangeError(`limit must be an integer from 1 to ${MAX_HELD_TOKEN_PAGE_SIZE}`)
+      }
+      const { maxBytes } = params
+      if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)) {
+        throw new RangeError('maxBytes must be a positive safe integer')
+      }
+      if (maxBytes !== undefined) {
+        // The limited candidate set contains only keys and lengths. Window totals and the
+        // body join share one statement snapshot, including concurrent replacements/inserts.
+        const candidates = heldTokensAfter(params, params.after)
+          .select([
+            'delegation_tokens.grantor',
+            'delegation_tokens.audience',
+            'delegation_tokens.resource',
+            'delegation_tokens.jti',
+            tokenBytes().as('bytes'),
+          ])
+          .orderBy('delegation_tokens.grantor')
+          .orderBy('delegation_tokens.resource')
+          .orderBy('delegation_tokens.jti')
+          .limit(params.limit)
+        const rows = await db
+          .with('held_candidates', () => candidates)
+          .with('held_running', (qb) =>
+            qb
+              .selectFrom('held_candidates')
+              .selectAll()
+              .select([
+                sql<
+                  number | string
+                >`sum(bytes) over (order by grantor, resource, jti rows unbounded preceding)`.as(
+                  'total',
+                ),
+                sql<number>`row_number() over (order by grantor, resource, jti)`.as('position'),
+              ]),
+          )
+          .selectFrom('held_running')
+          .leftJoin('delegation_tokens', (join) =>
+            join
+              .onRef('delegation_tokens.grantor', '=', 'held_running.grantor')
+              .onRef('delegation_tokens.audience', '=', 'held_running.audience')
+              .onRef('delegation_tokens.resource', '=', 'held_running.resource')
+              .onRef('delegation_tokens.jti', '=', 'held_running.jti')
+              // Rejected keys cannot join a body, even for the oversized metadata row.
+              .on('held_running.total', '<=', maxBytes),
+          )
+          .selectAll('delegation_tokens')
+          .select(['held_running.jti as candidate_jti', 'held_running.bytes'])
+          .where((eb) =>
+            eb.or([
+              eb('held_running.total', '<=', maxBytes),
+              eb('held_running.position', '=', sql.lit(1)),
+            ]),
+          )
+          .orderBy('held_running.grantor')
+          .orderBy('held_running.resource')
+          .orderBy('held_running.jti')
+          .execute()
+        const first = rows[0]
+        if (first == null) return { tokens: [], next: null }
+        if (first.jti == null) {
+          return {
+            tokens: [],
+            next: params.after ?? null,
+            oversized: { jti: first.candidate_jti, bytes: Number(first.bytes) },
+          }
+        }
+        const tokens = rows.map(
+          ({ candidate_jti: _key, bytes: _bytes, ...token }) =>
+            // The join either provides a complete row or only the first oversized marker.
+            token as DelegationToken,
+        )
+        const last = rows.at(-1) ?? first
+        const cursor = JSON.stringify([last.grantor, last.resource, last.jti])
+        const more = await heldTokensAfter(params, cursor)
+          .select('delegation_tokens.jti')
+          .limit(1)
+          .executeTakeFirst()
+        return { tokens, next: more == null ? null : cursor }
       }
       const tokens = await heldTokensAfter(params, params.after)
         .selectAll('delegation_tokens')
