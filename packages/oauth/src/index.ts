@@ -1,5 +1,14 @@
 export { type BuildAuthorizationURLParams, buildAuthorizationURL } from './authorization.js'
 export { type CreateHTTPBrokerTransportParams, createHTTPBrokerTransport } from './broker.js'
+export {
+  CLIENT_ASSERTION_TYPE,
+  type ClientAssertionAlgorithm,
+  type ClientAssertionSigner,
+  type CreateClientAssertionParams,
+  type CreateWebCryptoAssertionSignerParams,
+  createClientAssertion,
+  createWebCryptoAssertionSigner,
+} from './client-assertion.js'
 export { type DeviceAuthorization, pollDeviceToken, startDeviceAuthorization } from './device.js'
 export { exchangeCode, type RefreshTokenParams, refreshToken } from './exchange.js'
 export {
