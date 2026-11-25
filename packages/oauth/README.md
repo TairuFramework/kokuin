@@ -15,7 +15,8 @@ authorization policy).
 `requestClientCredentialsToken` sends it to the token endpoint with the
 `client_credentials` grant. The assertion `audience` is the authorisation
 server's `issuer`. `createWebCryptoAssertionSigner` provides a signer backed by
-`crypto.subtle`; any `ClientAssertionSigner` works.
+`crypto.subtle`; any `ClientAssertionSigner` works. Algorithms other than `EdDSA`
+and `ES256` are rejected at runtime with `Unsupported client assertion algorithm`.
 
 ```ts
 import {
@@ -29,6 +30,7 @@ const assertion = await createClientAssertion({
   signer,
   clientID: 'my-client',
   audience: 'https://auth.example.com', // the authorisation server issuer
+  runtime, // optional, source of randomness for `jti`, defaults to `globalThis.crypto`
 })
 const token = await requestClientCredentialsToken({
   runtime,

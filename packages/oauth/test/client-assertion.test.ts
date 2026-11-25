@@ -1,4 +1,4 @@
-import { fromB64U, fromUTF, toUTF } from '@sozai/codec'
+import { fromB64U, fromUTF, toB64U, toUTF } from '@sozai/codec'
 import { describe, expect, test } from 'vitest'
 
 import {
@@ -7,6 +7,7 @@ import {
   createClientAssertion,
   createWebCryptoAssertionSigner,
 } from '../src/index.js'
+import { fakeRuntime } from './fake-runtime.js'
 
 type Keys = { publicKey: CryptoKey; privateKey: CryptoKey }
 
@@ -105,5 +106,37 @@ describe('createClientAssertion()', () => {
     const a = decode(await createClientAssertion(params))
     const b = decode(await createClientAssertion(params))
     expect(a.claims.jti).not.toBe(b.claims.jti)
+  })
+
+  test('uses runtime randomness for jti', async () => {
+    const keys = await generateKeys('EdDSA')
+    const signer = createWebCryptoAssertionSigner({ alg: 'EdDSA', privateKey: keys.privateKey })
+    const jws = await createClientAssertion({
+      signer,
+      clientID: 'client-a',
+      audience: 'https://as.example.com',
+      runtime: fakeRuntime(),
+    })
+    const expected = toB64U(Uint8Array.from({ length: 16 }, (_, i) => i + 1))
+    expect(decode(jws).claims.jti).toBe(expected)
+  })
+
+  test.each(['none', 'RS256'])('rejects unsupported alg %s', async (alg) => {
+    const signer = { alg: alg as ClientAssertionAlgorithm, sign: async () => new Uint8Array(1) }
+    await expect(
+      createClientAssertion({ signer, clientID: 'c', audience: 'https://as.example.com' }),
+    ).rejects.toThrow(`Unsupported client assertion algorithm: ${alg}`)
+  })
+})
+
+describe('createWebCryptoAssertionSigner()', () => {
+  test.each(['none', 'RS256'])('rejects unsupported alg %s', async (alg) => {
+    const keys = await generateKeys('ES256')
+    expect(() =>
+      createWebCryptoAssertionSigner({
+        alg: alg as ClientAssertionAlgorithm,
+        privateKey: keys.privateKey,
+      }),
+    ).toThrow(`Unsupported client assertion algorithm: ${alg}`)
   })
 })
