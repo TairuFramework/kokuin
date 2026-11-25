@@ -42,6 +42,8 @@ export type DelegationChainOptions = {
 
 /** Options for capability creation */
 export type CreateCapabilityOptions = {
+  /** Unix seconds used for parent capability time checks. Defaults to now(). */
+  atTime?: number
   crypto?: CryptoProvider
   /**
    * Parent capability token (stringified) that authorizes this delegation.
