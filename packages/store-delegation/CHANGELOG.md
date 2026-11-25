@@ -1,5 +1,13 @@
 # @kokuin/store-delegation
 
+## 0.7.2
+
+### Patch Changes
+
+- Add optional SQL-enforced token body byte limits to held-token pages, with an oversized-row indication that preserves the request cursor.
+
+- Add SQL held-token count and byte statistics, plus bounded keyset pages with the same audience, expiry, supersession and grantor-qualified revocation filters as getHeldTokens.
+
 ## 0.7.1
 
 ### Patch Changes

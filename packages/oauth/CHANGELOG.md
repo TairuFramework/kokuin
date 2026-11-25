@@ -1,5 +1,11 @@
 # @kokuin/oauth
 
+## 0.7.6
+
+### Patch Changes
+
+- Add the OAuth client credentials grant with `private_key_jwt` client authentication (EdDSA and ES256): `createClientAssertion`, `createWebCryptoAssertionSigner` and `requestClientCredentialsToken`.
+
 ## 0.7.5
 
 ### Patch Changes
