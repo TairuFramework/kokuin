@@ -9,6 +9,37 @@ A true leaf package — depends only on `@sozai/runtime`, `@noble/hashes`, and
 wrapping, no connector registry, no MCP resource discovery, no provider-specific
 authorization policy).
 
+## Client credentials (private_key_jwt)
+
+`createClientAssertion` builds a signed JWT client assertion (EdDSA or ES256) and
+`requestClientCredentialsToken` sends it to the token endpoint with the
+`client_credentials` grant. The assertion `audience` is the authorisation
+server's `issuer`. `createWebCryptoAssertionSigner` provides a signer backed by
+`crypto.subtle`; any `ClientAssertionSigner` works.
+
+```ts
+import {
+  createClientAssertion,
+  createWebCryptoAssertionSigner,
+  requestClientCredentialsToken,
+} from '@kokuin/oauth'
+
+const signer = createWebCryptoAssertionSigner({ alg: 'ES256', privateKey, kid: 'key-1' })
+const assertion = await createClientAssertion({
+  signer,
+  clientID: 'my-client',
+  audience: 'https://auth.example.com', // the authorisation server issuer
+})
+const token = await requestClientCredentialsToken({
+  runtime,
+  tokenEndpoint: 'https://auth.example.com/token',
+  clientID: 'my-client',
+  assertion,
+  scope: 'read',
+  extraParams: { resource: 'https://mcp.example.com/' },
+})
+```
+
 ## Named params migration
 
 | Export | Named params type | Fields |

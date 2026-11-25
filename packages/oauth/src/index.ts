@@ -9,6 +9,7 @@ export {
   createClientAssertion,
   createWebCryptoAssertionSigner,
 } from './client-assertion.js'
+export { requestClientCredentialsToken } from './client-credentials.js'
 export { type DeviceAuthorization, pollDeviceToken, startDeviceAuthorization } from './device.js'
 export { exchangeCode, type RefreshTokenParams, refreshToken } from './exchange.js'
 export {

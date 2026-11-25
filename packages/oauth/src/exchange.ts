@@ -124,7 +124,7 @@ const CODE_GRANT_FIELDS = new Set([
 const REFRESH_GRANT_FIELDS = new Set(['grant_type', 'refresh_token', 'client_id', 'client_secret'])
 
 /** A form holding the caller's extra fields, minus the fields the grant itself owns. */
-function extraForm(
+export function extraForm(
   extraParams: Record<string, string> | undefined,
   protectedFields: ReadonlySet<string>,
 ): URLSearchParams {
