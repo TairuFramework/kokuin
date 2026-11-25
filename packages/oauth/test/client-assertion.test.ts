@@ -127,6 +127,24 @@ describe('createClientAssertion()', () => {
       createClientAssertion({ signer, clientID: 'c', audience: 'https://as.example.com' }),
     ).rejects.toThrow(`Unsupported client assertion algorithm: ${alg}`)
   })
+
+  test.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects lifetimeSeconds %s',
+    async (lifetimeSeconds) => {
+      const sign = vi.fn(async () => new Uint8Array(1))
+      await expect(
+        createClientAssertion({
+          signer: { alg: 'EdDSA', sign },
+          clientID: 'c',
+          audience: 'https://as.example.com',
+          lifetimeSeconds,
+        }),
+      ).rejects.toThrow(
+        `Client assertion lifetimeSeconds must be a positive integer, got: ${lifetimeSeconds}`,
+      )
+      expect(sign).not.toHaveBeenCalled()
+    },
+  )
 })
 
 describe('module load', () => {
