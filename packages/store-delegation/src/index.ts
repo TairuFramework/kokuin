@@ -3,6 +3,7 @@ export type { RevocationClaims } from '@kokuin/capability'
 export type {
   CreateDelegationStoreParams,
   DelegationStoreAPI,
+  DelegationStoreAPIAddDelegationTokenParams,
   DelegationStoreAPIDeletePendingRevocationsFromOtherIssuersParams,
   DelegationStoreAPIGetPendingRevocationByIssuerParams,
   DelegationStoreAPIGetRevocationByIssuerParams,

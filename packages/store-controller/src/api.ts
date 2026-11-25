@@ -4,6 +4,7 @@ import {
   type ControllerLog,
   isControllerLog,
   type LogStore,
+  type LogStoreMergeParams,
   type SignedEvent,
 } from '@kokuin/controller'
 
@@ -11,13 +12,18 @@ import type { ControllerStoreTables } from './tables.js'
 
 // Typed against `@kokuin/controller`'s `LogStore` so a drift in that interface
 // surfaces here as a type error rather than at a call site.
-export type ControllerStoreAPI = LogStore & {
+export type ControllerStoreAPI = Omit<LogStore, 'merge'> & {
+  merge(params: ControllerStoreMergeParams): Promise<ControllerLog>
   /** Shares merge's DID lock until host commit/rollback, or until this standalone call returns. */
   getForUpdate(did: string): Promise<ControllerLog | undefined>
   /** Updates only observation time. Unknown DIDs are a no-op. */
   markObserved(params: ControllerStoreAPIMarkObservedParams): Promise<void>
   /** Last explicit store write, including a locally seeded controller log. */
   getObservedAt(did: string): Promise<Date | undefined>
+}
+
+function now(): number {
+  return Date.now()
 }
 
 const storeDatabases = new WeakMap<ControllerStoreAPI, Kysely<ControllerStoreTables>>()
@@ -88,11 +94,14 @@ export function createControllerStore({
       })
     },
 
-    async markObserved({ did, at = new Date() }): Promise<void> {
+    async markObserved({ did, at, atTime }): Promise<void> {
+      const observedAt = at ?? new Date(atTime == null ? now() : atTime * 1000)
       await withLockedDatabase(did, async (trx) => {
         await trx
           .updateTable('controller_logs')
-          .set({ updated_at: adapter.encodeTimestamp(at) as number })
+          .set({
+            updated_at: adapter.encodeTimestamp(observedAt) as number,
+          })
           .where('did', '=', did)
           .execute()
       })
@@ -120,14 +129,16 @@ export function createControllerStore({
     // The key lock serialises merges even within one transaction, including a
     // DID with no row. Postgres also locks the row on read and re-reads after a
     // lost insert race against a writer that does not hold the key lock.
-    async merge({ did, update }): Promise<ControllerLog> {
+    async merge({ did, update, atTime }: ControllerStoreMergeParams): Promise<ControllerLog> {
       return await withLockedDatabase(did, async (trx) => {
         const lock = adapter.kind === 'postgres'
         const values = (next: ControllerLog) => {
           return {
             did,
             log: adapter.encodeJSON(next) as ControllerLog,
-            updated_at: adapter.encodeTimestamp(new Date()) as number,
+            updated_at: adapter.encodeTimestamp(
+              new Date(atTime == null ? now() : atTime * 1000),
+            ) as number,
           }
         }
         const write = async (next: ControllerLog): Promise<void> => {
@@ -176,4 +187,7 @@ export function createControllerStore({
   return api
 }
 
-export type ControllerStoreAPIMarkObservedParams = { did: string; at?: Date }
+export type ControllerStoreAPIMarkObservedParams = { did: string; at?: Date; atTime?: number }
+
+/** Write time in Unix seconds, preserving fractional milliseconds. */
+export type ControllerStoreMergeParams = LogStoreMergeParams & { atTime?: number }

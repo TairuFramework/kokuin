@@ -218,6 +218,15 @@ export function controllerStoreCases(
     await harness.cleanup()
   })
 
+  test('merge and observation persist caller wall time', async () => {
+    const atTime = 1_700_000_000
+    const did = 'did:key:clock'
+    await store.merge({ did, atTime, update: async () => ({ chain: [], events: [] }) })
+    expect((await store.getObservedAt(did))?.getTime()).toBe(atTime * 1000)
+    await store.markObserved({ did, atTime: atTime + 1 })
+    expect((await store.getObservedAt(did))?.getTime()).toBe((atTime + 1) * 1000)
+  })
+
   test('registers and round-trips a stored log', async () => {
     const { did, log } = await buildRotatedLog()
     await put(did, log)
