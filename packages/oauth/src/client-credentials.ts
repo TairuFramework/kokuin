@@ -13,21 +13,23 @@ const CLIENT_CREDENTIALS_FIELDS = new Set([
   'scope',
 ])
 
+export type RequestClientCredentialsTokenParams = RequestOptions & {
+  runtime: Runtime
+  tokenEndpoint: string
+  clientID: string
+  /** Signed client assertion, see `createClientAssertion`. */
+  assertion: string
+  scope?: string
+  /**
+   * Additional form fields, such as `resource` (RFC 8707). They never override the grant's own
+   * fields (`grant_type`, `client_id`, `client_assertion_type`, `client_assertion`, `scope`).
+   */
+  extraParams?: Record<string, string>
+}
+
 /** Request an access token with the client credentials grant, authenticating via `private_key_jwt`. */
 export async function requestClientCredentialsToken(
-  params: {
-    runtime: Runtime
-    tokenEndpoint: string
-    clientID: string
-    /** Signed client assertion, see `createClientAssertion`. */
-    assertion: string
-    scope?: string
-    /**
-     * Additional form fields, such as `resource` (RFC 8707). They never override the grant's own
-     * fields (`grant_type`, `client_id`, `client_assertion_type`, `client_assertion`, `scope`).
-     */
-    extraParams?: Record<string, string>
-  } & RequestOptions,
+  params: RequestClientCredentialsTokenParams,
 ): Promise<TokenResponse> {
   const {
     runtime,
