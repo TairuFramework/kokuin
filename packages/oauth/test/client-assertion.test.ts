@@ -1,5 +1,5 @@
 import { fromB64U, fromUTF, toB64U, toUTF } from '@sozai/codec'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import {
   CLIENT_ASSERTION_TYPE,
@@ -126,6 +126,19 @@ describe('createClientAssertion()', () => {
     await expect(
       createClientAssertion({ signer, clientID: 'c', audience: 'https://as.example.com' }),
     ).rejects.toThrow(`Unsupported client assertion algorithm: ${alg}`)
+  })
+})
+
+describe('module load', () => {
+  test('imports without globalThis.crypto', async () => {
+    vi.resetModules()
+    vi.stubGlobal('crypto', undefined)
+    try {
+      const mod = await import('../src/client-assertion.js')
+      expect(typeof mod.createClientAssertion).toBe('function')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

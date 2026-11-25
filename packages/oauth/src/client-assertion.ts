@@ -5,11 +5,6 @@ export const CLIENT_ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-typ
 
 const DEFAULT_TYP = 'client-authentication+jwt'
 const DEFAULT_LIFETIME_SECONDS = 60
-const DEFAULT_RUNTIME: Pick<Runtime, 'getRandomValues'> = {
-  getRandomValues: globalThis.crypto.getRandomValues.bind(
-    globalThis.crypto,
-  ) as Runtime['getRandomValues'],
-}
 
 export type ClientAssertionAlgorithm = 'EdDSA' | 'ES256'
 
@@ -76,10 +71,14 @@ export async function createClientAssertion(params: CreateClientAssertionParams)
     lifetimeSeconds = DEFAULT_LIFETIME_SECONDS,
     now = () => Math.floor(Date.now() / 1000),
     typ = DEFAULT_TYP,
-    runtime = DEFAULT_RUNTIME,
+    runtime,
   } = params
 
   assertSupportedAlgorithm(signer.alg)
+  const randomBytes = (length: number) =>
+    runtime == null
+      ? globalThis.crypto.getRandomValues(new Uint8Array(length))
+      : runtime.getRandomValues(new Uint8Array(length))
   const iat = now()
   const header: Record<string, string> = { alg: signer.alg, typ }
   if (signer.kid != null) {
@@ -91,7 +90,7 @@ export async function createClientAssertion(params: CreateClientAssertionParams)
     aud: audience,
     iat,
     exp: iat + lifetimeSeconds,
-    jti: toB64U(runtime.getRandomValues(new Uint8Array(16))),
+    jti: toB64U(randomBytes(16)),
   }
 
   const signingInput = `${toB64U(fromUTF(JSON.stringify(header)))}.${toB64U(fromUTF(JSON.stringify(claims)))}`
