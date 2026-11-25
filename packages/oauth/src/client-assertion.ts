@@ -54,6 +54,7 @@ export type CreateClientAssertionParams = {
   signer: ClientAssertionSigner
   clientID: string
   audience: string
+  /** Seconds from `iat` to `exp`: a positive integer, default `60`. */
   lifetimeSeconds?: number
   /** Current time in seconds since epoch. */
   now?: () => number
@@ -75,6 +76,12 @@ export async function createClientAssertion(params: CreateClientAssertionParams)
   } = params
 
   assertSupportedAlgorithm(signer.alg)
+  // Anything else gives an assertion that is already expired or has a malformed `exp`.
+  if (!Number.isInteger(lifetimeSeconds) || lifetimeSeconds <= 0) {
+    throw new Error(
+      `Client assertion lifetimeSeconds must be a positive integer, got: ${lifetimeSeconds}`,
+    )
+  }
   const randomBytes = (length: number) =>
     runtime == null
       ? globalThis.crypto.getRandomValues(new Uint8Array(length))
