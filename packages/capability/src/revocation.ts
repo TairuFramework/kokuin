@@ -311,18 +311,24 @@ export function createRevocationChecker({
   }
 }
 
-export type CreateRevocationRecordParams = YieldOptions & { signer: SigningIdentity; jti: string }
+export type CreateRevocationRecordParams = YieldOptions & {
+  signer: SigningIdentity
+  jti: string
+  /** Issued-at time in Unix seconds; defaults to the system clock. */
+  atTime?: number
+}
 
 export async function createRevocationRecord({
   jti,
   signer,
+  atTime,
   ...options
 }: CreateRevocationRecordParams): Promise<RevocationRecord> {
   // `signToken` injects the signer's own DID as `iss`, so a caller cannot mint a record for
   // another issuer. The record names no audience, so a `did:peer:4` signer embeds its long form
   // there — the checker above normalizes both sides before comparing, so either form matches.
   return (await signer.signToken({
-    payload: { jti, rev: true, iat: now() },
+    payload: { jti, rev: true, iat: atTime ?? now() },
     yield: options.yield,
   })) as RevocationRecord
 }

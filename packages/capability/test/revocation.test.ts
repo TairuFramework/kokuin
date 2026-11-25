@@ -60,6 +60,12 @@ function buildProfile(): { identity: SigningIdentity; resolver: DIDMethodResolve
 }
 
 describe('revocation', () => {
+  test.each([1_700_000_000, 0])('signs a revocation atTime %s', async (atTime) => {
+    const signer = randomIdentity()
+    const record = await createRevocationRecord({ signer, jti: 'explicit-time', atTime })
+    expect(record.payload.iat).toBe(atTime)
+  })
+
   test('createMemoryRevocationBackend stores signed records by issuer and jti', async () => {
     const signer = randomIdentity()
     const other = randomIdentity()
