@@ -1,5 +1,11 @@
 # @kokuin/oauth
 
+## 0.7.7
+
+### Patch Changes
+
+- `createClientAssertion` throws when `lifetimeSeconds` is not a positive integer, instead of signing an assertion that is already expired or has a malformed `exp`.
+
 ## 0.7.6
 
 ### Patch Changes
