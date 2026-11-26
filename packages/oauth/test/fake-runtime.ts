@@ -12,6 +12,8 @@ export function fakeRuntime(overrides: Partial<Runtime> = {}): Runtime {
       }
       return array
     },
+    now: () => Date.now(),
+    monotonicNow: () => performance.now(),
     ...overrides,
   }
 }

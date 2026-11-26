@@ -43,6 +43,10 @@
   intents:
     - capability-revocation-creation-yield
     - capability-yield-policy
+"@kokuin/capability@0.7.2":
+  dir: packages/capability
+  intents:
+    - runtime-clock
 "@kokuin/controller@0.1.0":
   dir: packages/controller
   intents:
@@ -238,6 +242,10 @@
   dir: packages/store-controller
   intents:
     - store-controller-crypto-provider
+"@kokuin/store-controller@0.7.1":
+  dir: packages/store-controller
+  intents:
+    - runtime-clock
 "@kokuin/store-delegation@0.1.1":
   dir: packages/store-delegation
   intents:
@@ -260,6 +268,10 @@
   intents:
     - held-token-page-bytes
     - held-tokens-bounded-read
+"@kokuin/store-delegation@0.7.3":
+  dir: packages/store-delegation
+  intents:
+    - runtime-clock
 "@kokuin/store-vault@0.1.1":
   dir: packages/store-vault
   intents:
