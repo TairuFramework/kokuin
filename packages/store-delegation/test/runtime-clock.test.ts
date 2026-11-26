@@ -51,6 +51,7 @@ test('token replacement, revocation upsert and promotion persist caller wall tim
       atTime: now() / 1000,
     })
     expect((await store.listRevocations(token.jti))[0]?.updated_at).toBe(timestamp())
+    expect((await store.listRevocations(token.jti))[0]?.verified_at).toBe(Math.floor(now() / 1000))
   } finally {
     await db.close()
   }

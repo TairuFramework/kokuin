@@ -86,14 +86,15 @@ export type DelegationStoreAPI = {
   /**
    * Last-writer-wins upsert keyed by `(jti, revoker_did)`. A `revoked_iat` beyond
    * `(atTime ?? now) + MAX_REVOCATION_FUTURE_DRIFT_SECONDS` is floored to that bound.
-   * `atTime` is Unix seconds and defaults to the system clock. Returns whether the stored row changed. The result is an approximate change signal for emission gating: the
+   * `atTime` is Unix seconds and defaults to the system clock. Returns whether the stored row
+   * changed. The result is an approximate change signal for emission gating: the
    * pre-read takes no lock, so two concurrent writers can both see `true`.
    *
    * A row written verified (`verified_at` set) with `cap_exp: null` is never purged: the expired
    * purge needs a `cap_exp` and the pending purge only takes unverified rows. Pass `cap_exp` with
    * `verified_at`, or verify through `markRevocationVerified`, which requires it.
    */
-  addRevocation(input: InsertRevokedCapability & { atTime?: number }): Promise<boolean>
+  addRevocation(input: DelegationStoreAPIAddRevocationParams): Promise<boolean>
   getRevocationByIssuer(
     params: DelegationStoreAPIGetRevocationByIssuerParams,
   ): Promise<RevokedCapability | null>
@@ -602,7 +603,7 @@ export function createDelegationStore({
     // Same LWW arbitration as `addDelegationToken`. Both the pre-read and the
     // conflict target are scoped to `(jti, revoker_did)`: several revokers may
     // name the same `jti`, and each may only arbitrate against its own row.
-    async addRevocation(input: InsertRevokedCapability & { atTime?: number }): Promise<boolean> {
+    async addRevocation(input: DelegationStoreAPIAddRevocationParams): Promise<boolean> {
       const revokerDID = normalizeDID(input.revoker_did)
       // `revoked_iat` comes from a signed broadcast, and on a pending row no
       // issuer has been matched yet -- so any co-member could name a `jti` with a
@@ -610,7 +611,7 @@ export function createDelegationStore({
       // record still binds, only its retention is bounded.
       const revokedIat = Math.min(
         input.revoked_iat,
-        (input.atTime ?? nowSeconds()) + MAX_REVOCATION_FUTURE_DRIFT_SECONDS,
+        Math.floor(input.atTime ?? nowSeconds()) + MAX_REVOCATION_FUTURE_DRIFT_SECONDS,
       )
       const verifiedAt = input.verified_at ?? null
       const capExp = input.cap_exp ?? null
@@ -746,7 +747,7 @@ export function createDelegationStore({
       const result = await db
         .updateTable('revoked_capabilities')
         .set({
-          verified_at: verified_at ?? atTime ?? nowSeconds(),
+          verified_at: Math.floor(verified_at ?? atTime ?? nowSeconds()),
           cap_exp,
           updated_at: adapter.encodeTimestamp(
             new Date(atTime == null ? now() : atTime * 1000),
@@ -785,7 +786,7 @@ export function createDelegationStore({
     // `cap_exp` is plain integer seconds, so the cutoff stays in integer space on
     // both back-ends. Pending rows have `cap_exp` NULL and are excluded.
     async purgeExpiredRevocations(params?: PurgeParams): Promise<number> {
-      const cutoff = (params?.atTime ?? nowSeconds()) - resolveGraceSeconds(params)
+      const cutoff = Math.floor(params?.atTime ?? nowSeconds()) - resolveGraceSeconds(params)
       const result = await db
         .deleteFrom('revoked_capabilities')
         .where('verified_at', 'is not', null)
@@ -801,7 +802,9 @@ export function createDelegationStore({
     // must not go through `adapter.encodeTimestamp`.
     async purgeDeadPendingRevocations(params?: PurgeParams): Promise<number> {
       const cutoff =
-        (params?.atTime ?? nowSeconds()) - MAX_CAP_TTL_SECONDS - resolveGraceSeconds(params)
+        Math.floor(params?.atTime ?? nowSeconds()) -
+        MAX_CAP_TTL_SECONDS -
+        resolveGraceSeconds(params)
       const result = await db
         .deleteFrom('revoked_capabilities')
         .where('verified_at', 'is', null)
@@ -837,3 +840,5 @@ export type DelegationStoreAPIDeletePendingRevocationsFromOtherIssuersParams = {
 
 /** Store write time in Unix seconds. Fractional seconds preserve the caller clock. */
 export type DelegationStoreAPIAddDelegationTokenParams = InsertDelegationToken & { atTime?: number }
+
+export type DelegationStoreAPIAddRevocationParams = InsertRevokedCapability & { atTime?: number }

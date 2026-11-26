@@ -1887,23 +1887,29 @@ export function delegationStoreCases(
       await db?.close()
     })
 
-    test.each([1_700_000_000, 0])('clamps revocation time using atTime %s', async (atTime) => {
-      const jti = `explicit-clamp-${atTime}`
-      await store.addRevocation({
-        ...revocation({ jti, revoked_iat: 5_000_000_000 }),
-        atTime,
-      })
-      const row = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
-      expect(row?.revoked_iat).toBe(atTime + MAX_REVOCATION_FUTURE_DRIFT_SECONDS)
-    })
+    test.each([1_700_000_000, 1_700_000_000.9, 0])(
+      'clamps revocation time using atTime %s',
+      async (atTime) => {
+        const jti = `explicit-clamp-${atTime}`
+        await store.addRevocation({
+          ...revocation({ jti, revoked_iat: 5_000_000_000 }),
+          atTime,
+        })
+        const row = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
+        expect(row?.revoked_iat).toBe(Math.floor(atTime) + MAX_REVOCATION_FUTURE_DRIFT_SECONDS)
+      },
+    )
 
-    test.each([1_700_000_000, 0])('verifies a revocation atTime %s', async (atTime) => {
-      const jti = `explicit-verify-${atTime}`
-      await store.addRevocation(revocation({ jti }))
-      await store.markRevocationVerified({ jti, issuer: REVOKER, cap_exp: 5_000_000_000, atTime })
-      const row = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
-      expect(row?.verified_at).toBe(atTime)
-    })
+    test.each([1_700_000_000, 1_700_000_000.9, 0])(
+      'verifies a revocation atTime %s',
+      async (atTime) => {
+        const jti = `explicit-verify-${atTime}`
+        await store.addRevocation(revocation({ jti }))
+        await store.markRevocationVerified({ jti, issuer: REVOKER, cap_exp: 5_000_000_000, atTime })
+        const row = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
+        expect(row?.verified_at).toBe(Math.floor(atTime))
+      },
+    )
 
     test('verified_at takes precedence over atTime', async () => {
       const jti = 'explicit-verified-precedence'
@@ -1924,7 +1930,7 @@ export function delegationStoreCases(
       const atTime = 1_700_000_000
       await store.addRevocation(revocation({ jti, verified_at: atTime, cap_exp: atTime }))
       await store.purgeExpiredRevocations({ atTime: 0, graceSeconds: 0 })
-      await store.purgeExpiredRevocations({ atTime, graceSeconds: 0 })
+      await store.purgeExpiredRevocations({ atTime: atTime + 0.9, graceSeconds: 0 })
       expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).not.toBeNull()
       await store.purgeExpiredRevocations({ atTime: atTime + 1, graceSeconds: 0 })
       expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).toBeNull()
@@ -1935,7 +1941,7 @@ export function delegationStoreCases(
       const atTime = 1_700_000_000
       await store.addRevocation(revocation({ jti, revoked_iat: atTime - MAX_CAP_TTL_SECONDS }))
       await store.purgeDeadPendingRevocations({ atTime: 0, graceSeconds: 0 })
-      await store.purgeDeadPendingRevocations({ atTime, graceSeconds: 0 })
+      await store.purgeDeadPendingRevocations({ atTime: atTime + 0.9, graceSeconds: 0 })
       expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).not.toBeNull()
       await store.purgeDeadPendingRevocations({ atTime: atTime + 1, graceSeconds: 0 })
       expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).toBeNull()

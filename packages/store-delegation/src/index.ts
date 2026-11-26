@@ -4,6 +4,7 @@ export type {
   CreateDelegationStoreParams,
   DelegationStoreAPI,
   DelegationStoreAPIAddDelegationTokenParams,
+  DelegationStoreAPIAddRevocationParams,
   DelegationStoreAPIDeletePendingRevocationsFromOtherIssuersParams,
   DelegationStoreAPIGetPendingRevocationByIssuerParams,
   DelegationStoreAPIGetRevocationByIssuerParams,
