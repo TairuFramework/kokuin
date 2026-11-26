@@ -114,6 +114,7 @@ export async function createCapability<
 
   const parent = await verifyToken<CapabilityPayload>({
     token: capturedOptions.parentCapability,
+    atTime: capturedOptions.atTime,
     yield: capturedOptions.yield,
     crypto: capturedOptions.crypto,
     cache: capturedOptions.cache,
@@ -133,7 +134,7 @@ export async function createCapability<
     throw new Error('Invalid capability: subject mismatch with parent capability')
   }
 
-  assertNonExpired({ payload: parent.payload })
+  assertNonExpired({ payload: parent.payload, atTime: capturedOptions.atTime })
   assertExpiryWithinParent(parent.payload, payload)
 
   const newPermission: Permission = {

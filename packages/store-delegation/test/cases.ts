@@ -1872,6 +1872,82 @@ export function delegationStoreCases(
     )
   })
 
+  describe('explicit atTime', () => {
+    let db: HozonDB
+    let store: DelegationStoreAPI
+
+    beforeAll(async () => {
+      const adapter = await harness.createAdapter()
+      db = new HozonDB({ adapter, tablePrefix })
+      db.register(delegationStoreDefinition)
+      store = await getDelegationStore(db)
+    })
+
+    afterAll(async () => {
+      await db?.close()
+    })
+
+    test.each([1_700_000_000, 1_700_000_000.9, 0])(
+      'clamps revocation time using atTime %s',
+      async (atTime) => {
+        const jti = `explicit-clamp-${atTime}`
+        await store.addRevocation({
+          ...revocation({ jti, revoked_iat: 5_000_000_000 }),
+          atTime,
+        })
+        const row = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
+        expect(row?.revoked_iat).toBe(Math.floor(atTime) + MAX_REVOCATION_FUTURE_DRIFT_SECONDS)
+      },
+    )
+
+    test.each([1_700_000_000, 1_700_000_000.9, 0])(
+      'verifies a revocation atTime %s',
+      async (atTime) => {
+        const jti = `explicit-verify-${atTime}`
+        await store.addRevocation(revocation({ jti }))
+        await store.markRevocationVerified({ jti, issuer: REVOKER, cap_exp: 5_000_000_000, atTime })
+        const row = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
+        expect(row?.verified_at).toBe(Math.floor(atTime))
+      },
+    )
+
+    test('verified_at takes precedence over atTime', async () => {
+      const jti = 'explicit-verified-precedence'
+      await store.addRevocation(revocation({ jti }))
+      await store.markRevocationVerified({
+        jti,
+        issuer: REVOKER,
+        cap_exp: 5_000_000_000,
+        verified_at: 0,
+        atTime: 1_700_000_000,
+      })
+      const row = await store.getRevocationByIssuer({ jti, issuer: REVOKER })
+      expect(row?.verified_at).toBe(0)
+    })
+
+    test('purges expired revocations using atTime and the strict boundary', async () => {
+      const jti = 'explicit-expired'
+      const atTime = 1_700_000_000
+      await store.addRevocation(revocation({ jti, verified_at: atTime, cap_exp: atTime }))
+      await store.purgeExpiredRevocations({ atTime: 0, graceSeconds: 0 })
+      await store.purgeExpiredRevocations({ atTime: atTime + 0.9, graceSeconds: 0 })
+      expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).not.toBeNull()
+      await store.purgeExpiredRevocations({ atTime: atTime + 1, graceSeconds: 0 })
+      expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).toBeNull()
+    })
+
+    test('purges pending revocations using atTime and the strict boundary', async () => {
+      const jti = 'explicit-pending'
+      const atTime = 1_700_000_000
+      await store.addRevocation(revocation({ jti, revoked_iat: atTime - MAX_CAP_TTL_SECONDS }))
+      await store.purgeDeadPendingRevocations({ atTime: 0, graceSeconds: 0 })
+      await store.purgeDeadPendingRevocations({ atTime: atTime + 0.9, graceSeconds: 0 })
+      expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).not.toBeNull()
+      await store.purgeDeadPendingRevocations({ atTime: atTime + 1, graceSeconds: 0 })
+      expect(await store.getRevocationByIssuer({ jti, issuer: REVOKER })).toBeNull()
+    })
+  })
+
   // `0-init` runs through the migrator on a raw Kysely rather than through
   // HozonDB, so the schema these cases assert against is the one the migration
   // produces and not one a store factory could have repaired.

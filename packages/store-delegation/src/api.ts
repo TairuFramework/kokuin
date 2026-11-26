@@ -17,7 +17,11 @@ import type {
  * Purge parameters. `graceSeconds` defaults to `REVOCATION_GC_VERIFIED_GRACE_SECONDS` and must be
  * a non-negative safe integer, otherwise the purge throws `RangeError`.
  */
-export type PurgeParams = { graceSeconds?: number }
+export type PurgeParams = {
+  graceSeconds?: number
+  /** Evaluation time in Unix seconds; defaults to the system clock. */
+  atTime?: number
+}
 
 /** SQL aggregate of held rows. `bytes` counts UTF-8 bytes (SQLite uses its database encoding). */
 export type HeldTokenStats = { count: number; bytes: number }
@@ -38,7 +42,7 @@ export type DelegationStoreAPI = {
    * Serialised last-writer-wins arbitration per `(grantor, audience, resource)`.
    * Losing and replaced JTIs remain superseded for revocation. Returns whether active content changed.
    */
-  addDelegationToken(token: InsertDelegationToken): Promise<boolean>
+  addDelegationToken(token: DelegationStoreAPIAddDelegationTokenParams): Promise<boolean>
   getDelegationTokens(params: {
     grantor: string
     audience: string
@@ -81,15 +85,16 @@ export type DelegationStoreAPI = {
 
   /**
    * Last-writer-wins upsert keyed by `(jti, revoker_did)`. A `revoked_iat` beyond
-   * `now + MAX_REVOCATION_FUTURE_DRIFT_SECONDS` is floored to that bound. Returns whether the
-   * stored row changed. The result is an approximate change signal for emission gating: the
+   * `(atTime ?? now) + MAX_REVOCATION_FUTURE_DRIFT_SECONDS` is floored to that bound.
+   * `atTime` is Unix seconds and defaults to the system clock. Returns whether the stored row
+   * changed. The result is an approximate change signal for emission gating: the
    * pre-read takes no lock, so two concurrent writers can both see `true`.
    *
    * A row written verified (`verified_at` set) with `cap_exp: null` is never purged: the expired
    * purge needs a `cap_exp` and the pending purge only takes unverified rows. Pass `cap_exp` with
    * `verified_at`, or verify through `markRevocationVerified`, which requires it.
    */
-  addRevocation(input: InsertRevokedCapability): Promise<boolean>
+  addRevocation(input: DelegationStoreAPIAddRevocationParams): Promise<boolean>
   getRevocationByIssuer(
     params: DelegationStoreAPIGetRevocationByIssuerParams,
   ): Promise<RevokedCapability | null>
@@ -177,8 +182,12 @@ export const REVOCATION_GC_VERIFIED_GRACE_SECONDS = 86_400 * 30
  */
 export const MAX_REVOCATION_FUTURE_DRIFT_SECONDS = 3_600
 
+function now(): number {
+  return Date.now()
+}
+
 function nowSeconds(): number {
-  return Math.floor(Date.now() / 1000)
+  return Math.floor(now() / 1000)
 }
 
 // A negative grace deletes revocations of still-valid capabilities, un-revoking
@@ -283,7 +292,7 @@ export function createDelegationStore({
 
   const api: DelegationStoreAPI = {
     // Lock before reading so arbitration preserves history even on one ambient transaction.
-    async addDelegationToken(token: InsertDelegationToken): Promise<boolean> {
+    async addDelegationToken(token: DelegationStoreAPIAddDelegationTokenParams): Promise<boolean> {
       const grantor = normalizeDID(token.grantor)
       const audience = normalizeDID(token.audience)
       const key = { grantor, audience, resource: token.resource }
@@ -327,7 +336,12 @@ export function createDelegationStore({
           if (existing != null && existing.jti !== token.jti) {
             await trx
               .updateTable('delegation_tokens')
-              .set({ superseded: 1, updated_at: adapter.encodeTimestamp(new Date()) as number })
+              .set({
+                superseded: 1,
+                updated_at: adapter.encodeTimestamp(
+                  new Date(token.atTime == null ? now() : token.atTime * 1000),
+                ) as number,
+              })
               .where('grantor', '=', grantor)
               .where('audience', '=', audience)
               .where('resource', '=', token.resource)
@@ -354,7 +368,9 @@ export function createDelegationStore({
                   exp: eb.ref('excluded.exp'),
                   hlc: eb.ref('excluded.hlc'),
                   superseded: 0,
-                  updated_at: adapter.encodeTimestamp(new Date()) as number,
+                  updated_at: adapter.encodeTimestamp(
+                    new Date(token.atTime == null ? now() : token.atTime * 1000),
+                  ) as number,
                 }
               })
             })
@@ -587,7 +603,7 @@ export function createDelegationStore({
     // Same LWW arbitration as `addDelegationToken`. Both the pre-read and the
     // conflict target are scoped to `(jti, revoker_did)`: several revokers may
     // name the same `jti`, and each may only arbitrate against its own row.
-    async addRevocation(input: InsertRevokedCapability): Promise<boolean> {
+    async addRevocation(input: DelegationStoreAPIAddRevocationParams): Promise<boolean> {
       const revokerDID = normalizeDID(input.revoker_did)
       // `revoked_iat` comes from a signed broadcast, and on a pending row no
       // issuer has been matched yet -- so any co-member could name a `jti` with a
@@ -595,7 +611,7 @@ export function createDelegationStore({
       // record still binds, only its retention is bounded.
       const revokedIat = Math.min(
         input.revoked_iat,
-        nowSeconds() + MAX_REVOCATION_FUTURE_DRIFT_SECONDS,
+        Math.floor(input.atTime ?? nowSeconds()) + MAX_REVOCATION_FUTURE_DRIFT_SECONDS,
       )
       const verifiedAt = input.verified_at ?? null
       const capExp = input.cap_exp ?? null
@@ -628,7 +644,9 @@ export function createDelegationStore({
                   verified_at: eb.ref('excluded.verified_at'),
                   cap_exp: eb.ref('excluded.cap_exp'),
                   hlc: eb.ref('excluded.hlc'),
-                  updated_at: adapter.encodeTimestamp(new Date()) as number,
+                  updated_at: adapter.encodeTimestamp(
+                    new Date(input.atTime == null ? now() : input.atTime * 1000),
+                  ) as number,
                 }
               })
               .where((eb) => eb('excluded.hlc', '>', eb.ref('revoked_capabilities.hlc')))
@@ -725,13 +743,15 @@ export function createDelegationStore({
 
     // Promotion is an authorization decision about one author's claim: the
     // arriving capability proves only that its own issuer's record is genuine.
-    async markRevocationVerified({ jti, issuer, cap_exp, verified_at }): Promise<boolean> {
+    async markRevocationVerified({ jti, issuer, cap_exp, verified_at, atTime }): Promise<boolean> {
       const result = await db
         .updateTable('revoked_capabilities')
         .set({
-          verified_at: verified_at ?? nowSeconds(),
+          verified_at: Math.floor(verified_at ?? atTime ?? nowSeconds()),
           cap_exp,
-          updated_at: adapter.encodeTimestamp(new Date()) as number,
+          updated_at: adapter.encodeTimestamp(
+            new Date(atTime == null ? now() : atTime * 1000),
+          ) as number,
         })
         .where('jti', '=', jti)
         .where('revoker_did', '=', normalizeDID(issuer))
@@ -766,7 +786,7 @@ export function createDelegationStore({
     // `cap_exp` is plain integer seconds, so the cutoff stays in integer space on
     // both back-ends. Pending rows have `cap_exp` NULL and are excluded.
     async purgeExpiredRevocations(params?: PurgeParams): Promise<number> {
-      const cutoff = nowSeconds() - resolveGraceSeconds(params)
+      const cutoff = Math.floor(params?.atTime ?? nowSeconds()) - resolveGraceSeconds(params)
       const result = await db
         .deleteFrom('revoked_capabilities')
         .where('verified_at', 'is not', null)
@@ -781,7 +801,10 @@ export function createDelegationStore({
     // bigint of unix seconds, not an adapter-encoded timestamp, so the cutoff
     // must not go through `adapter.encodeTimestamp`.
     async purgeDeadPendingRevocations(params?: PurgeParams): Promise<number> {
-      const cutoff = nowSeconds() - MAX_CAP_TTL_SECONDS - resolveGraceSeconds(params)
+      const cutoff =
+        Math.floor(params?.atTime ?? nowSeconds()) -
+        MAX_CAP_TTL_SECONDS -
+        resolveGraceSeconds(params)
       const result = await db
         .deleteFrom('revoked_capabilities')
         .where('verified_at', 'is', null)
@@ -804,6 +827,8 @@ export type DelegationStoreAPIMarkRevocationVerifiedParams = {
   issuer: string
   cap_exp: number
   verified_at?: number
+  /** Verification time in Unix seconds, used when verified_at is omitted. */
+  atTime?: number
 }
 
 export type DelegationStoreAPIGetPendingRevocationByIssuerParams = { jti: string; issuer: string }
@@ -812,3 +837,8 @@ export type DelegationStoreAPIDeletePendingRevocationsFromOtherIssuersParams = {
   jti: string
   issuer: string
 }
+
+/** Store write time in Unix seconds. Fractional seconds preserve the caller clock. */
+export type DelegationStoreAPIAddDelegationTokenParams = InsertDelegationToken & { atTime?: number }
+
+export type DelegationStoreAPIAddRevocationParams = InsertRevokedCapability & { atTime?: number }
